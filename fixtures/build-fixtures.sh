@@ -16,6 +16,8 @@ b200d6d6587af820c258aad12eed1b482d335a8f92f44972e08b0c4f1277d072 x86_64-only-hel
 bec5bb22e25742ac9368876de4a94575d14e91232fbdd3a1ba655d29cb9b550b import-rich
 b34622e74db24f3829cb2bda8040e80c02eff8fe479339bd654be438a7a701bc import-lazy
 4cece37e15eaed6ebbc8a8961f8d2e000e0eadf3aa43fc5c9b6ebf3aad259f7f semantic-switch
+37c5b3410915429b00209ec5821ba156988e937c2126e5b6b93be266cc43a16f export-kinds
+dce3105dcd21070bda8c77658f6b4f965da94072f09d979141dabbf5be14a5f8 indirect-dispatch
 5d46560896550803303f6f92027d1c8e622c18761e20cc1b39d7a64b57e2b5dc malformed-dysymtab-indirect
 fd33e4f22bf94f6f75b9bb33e2b99d5c3888a1a7fdc907dd13638f2aba816b66 malformed-truncated
 61ac976ddaf21d6d427c202dfab484a9557ebe7fbb04509443726abc9e95de8d malformed-stub-helper-size
@@ -142,6 +144,22 @@ build_fixtures() {
     -O2 \
     "$SRC/semantic-switch.c" \
     -o "$BIN/semantic-switch"
+
+  "$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    -O2 \
+    "$SRC/export-kinds.c" \
+    -o "$BIN/export-kinds"
+
+  "$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    -O2 \
+    "$SRC/indirect-dispatch.c" \
+    -o "$BIN/indirect-dispatch"
 
   "$CLANG" \
     -arch arm64 \

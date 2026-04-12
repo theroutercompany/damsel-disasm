@@ -99,6 +99,21 @@ fn dyld_json_contract_exposes_bindings_and_stubs() {
     assert!(json["data"]["import_bindings"].is_array());
     assert!(json["data"]["stubs"].is_array());
     assert!(json["data"]["stub_helpers"].is_array());
+    let exports = json["data"]["exports"].as_array().expect("exports array");
+    if let Some(export) = exports.first() {
+        assert_exact_object_keys(
+            export,
+            &[
+                "name",
+                "address",
+                "raw_flags",
+                "flags",
+                "kind",
+                "reexport_target",
+                "resolver_target",
+            ],
+        );
+    }
     assert_exact_object_keys(
         &json["data"],
         &[
@@ -111,6 +126,7 @@ fn dyld_json_contract_exposes_bindings_and_stubs() {
             "source_filter",
             "binding_kind_filter",
             "stub_kind_filter",
+            "export_kind_filter",
             "ordinal_filter",
             "dylibs",
             "rpaths",
@@ -235,6 +251,29 @@ fn dyld_json_filters_by_kind_and_ordinal() {
 }
 
 #[test]
+fn dyld_json_filters_exports_by_kind() {
+    let path = fixture("arm64-symbolized");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "dyld",
+        path.to_str().expect("utf8 path"),
+        "--exports",
+        "--export-kind",
+        "regular",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["data"]["export_kind_filter"], "Regular");
+    let exports = json["data"]["exports"].as_array().expect("exports array");
+    assert!(!exports.is_empty(), "{out}");
+    assert!(
+        exports
+            .iter()
+            .all(|export| export["kind"]["type"] == "regular")
+    );
+}
+
+#[test]
 fn dyld_json_exposes_stub_helpers_for_lazy_fixture() {
     let path = fixture("import-lazy");
     let out = run_json_ok(&[
@@ -306,6 +345,7 @@ fn dyld_json_section_toggles_keep_key_stability() {
             "source_filter",
             "binding_kind_filter",
             "stub_kind_filter",
+            "export_kind_filter",
             "ordinal_filter",
             "dylibs",
             "rpaths",
@@ -341,6 +381,7 @@ fn objc_json_contract_exposes_structured_runtime_records() {
             "owner_filter",
             "name_source_filter",
             "selector_source_filter",
+            "category_source_filter",
             "image_info_flags",
             "class_names",
             "selector_names",
@@ -357,6 +398,12 @@ fn objc_json_contract_exposes_structured_runtime_records() {
     let classes = json["data"]["classes"].as_array().expect("class array");
     if let Some(class) = classes.first() {
         assert!(class["name_source"].is_string());
+    }
+    let categories = json["data"]["categories"]
+        .as_array()
+        .expect("category array");
+    if let Some(category) = categories.first() {
+        assert!(category["record_source"].is_string());
     }
 }
 
@@ -455,6 +502,32 @@ fn objc_json_provenance_filters_are_applied() {
 }
 
 #[test]
+fn objc_json_category_source_filter_is_applied() {
+    let path = fixture("objc-sample");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "objc",
+        path.to_str().expect("utf8 path"),
+        "--detail",
+        "all",
+        "--category-source",
+        "symbol-synthesis",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["data"]["category_source_filter"], "SymbolSynthesis");
+    let categories = json["data"]["categories"]
+        .as_array()
+        .expect("categories array");
+    assert!(!categories.is_empty(), "{out}");
+    assert!(
+        categories
+            .iter()
+            .all(|category| category["record_source"] == "SymbolSynthesis")
+    );
+}
+
+#[test]
 fn objc_json_detail_toggle_keeps_empty_sections_and_stable_keys() {
     let path = fixture("objc-sample");
     let out = run_json_ok(&[
@@ -485,6 +558,7 @@ fn objc_json_detail_toggle_keeps_empty_sections_and_stable_keys() {
             "owner_filter",
             "name_source_filter",
             "selector_source_filter",
+            "category_source_filter",
             "image_info_flags",
             "class_names",
             "selector_names",

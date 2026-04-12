@@ -1,5 +1,6 @@
 ---
 source: damsel-cli/tests/cli_snapshots.rs
+assertion_line: 76
 expression: stdout
 ---
 dyld: dylibs=1 rpaths=0 exports=2 function_starts=2 bindings=16 stubs=6 helpers=0 rebases=false binds=true chained_fixups=true
@@ -7,8 +8,8 @@ dylibs:
   /usr/lib/libSystem.B.dylib
 rpaths:
 exports (2/2):
-                 0x0 Regular { address: 0, flags: 0 };offset=0x0 __mh_execute_header
-               0x460 Regular { address: 1120, flags: 0 };offset=0x460 _main
+                 0x0 Regular { address: 0, flags: 0 };offset=0x0 kind=Regular reexport=- resolver=- __mh_execute_header
+               0x460 Regular { address: 1120, flags: 0 };offset=0x460 kind=Regular reexport=- resolver=- _main
 function_starts:
   0x100000460
   0x100000510

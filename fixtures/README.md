@@ -10,6 +10,8 @@ Fixture inventory (checked in under `fixtures/bin`):
 - `duplicate-symbol-ordinal`: two-dylib duplicate-symbol fixture used to prove ordinal-backed attribution.
 - `import-lazy`: helper-bearing lazy-binding fixture used for stub/helper linkage and helper-target disassembly.
 - `import-rich`: arm64 Mach-O with multiple external imports/stubs.
+- `export-kinds`: arm64 export-bearing fixture used for regular, weak, and thread-local export truth.
+- `indirect-dispatch`: arm64 function-pointer dispatch fixture used for alias-aware value-flow and indirect target recovery.
 - `objc-sample`: Objective-C sample used for ObjC metadata tests.
 - `semantic-switch`: arm64 semantic-analysis fixture with literal loads, `adrp` addressing, and switch-style setup.
 - `malformed-dysymtab-indirect`: intentionally broken indirect-symbol metadata fixture.
@@ -20,6 +22,8 @@ Fixture inventory (checked in under `fixtures/bin`):
 Sources:
 - `src/hello.c` builds the symbolized/stripped/universal C fixtures.
 - `src/import-rich.c` and `src/import-lazy.c` build the import/stub-heavy fixtures.
+- `src/export-kinds.c` builds the export-kind fixture.
+- `src/indirect-dispatch.c` builds the function-pointer dispatch fixture.
 - `src/objc-sample.m` builds the Objective-C metadata fixture.
 - `src/semantic-switch.c` builds the semantic-analysis fixture.
 - `src/dup-alpha.c`, `src/dup-beta.c`, and `src/duplicate-symbol-main.c` build the duplicate-symbol fixture.

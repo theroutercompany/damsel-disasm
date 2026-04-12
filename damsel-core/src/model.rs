@@ -395,8 +395,11 @@ pub enum ExportKind {
 pub struct ExportRecord {
     pub name: String,
     pub address: Option<u64>,
-    pub flags: String,
+    pub raw_flags: String,
+    pub flags: ExportFlags,
     pub kind: ExportKind,
+    pub reexport_target: Option<(String, Option<String>)>,
+    pub resolver_target: Option<u64>,
 }
 
 pub type ExportedSymbol = ExportRecord;
@@ -422,7 +425,7 @@ impl fmt::Display for ExportFlags {
 
 impl ExportRecord {
     pub fn flags_typed(&self) -> ExportFlags {
-        ExportFlags::parse(self.flags.clone())
+        self.flags.clone()
     }
 }
 
@@ -491,6 +494,7 @@ pub struct ObjcCategoryRecord {
     pub pointer: u64,
     pub name: Option<String>,
     pub name_source: ObjcNameSource,
+    pub record_source: ObjcCategoryRecordSource,
     pub class_pointer: Option<u64>,
     pub class_name: Option<String>,
     pub class_name_source: ObjcNameSource,
@@ -498,6 +502,12 @@ pub struct ObjcCategoryRecord {
     pub class_methods: Vec<ObjcMethodRecord>,
     pub properties: Vec<ObjcPropertyRecord>,
     pub adopted_protocols: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjcCategoryRecordSource {
+    RuntimeList,
+    SymbolSynthesis,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -598,6 +608,17 @@ impl ObjcMetadata {
             .find(|category_record| category_record.pointer == pointer)
     }
 
+    pub fn category_by_class_and_name(
+        &self,
+        class_name: &str,
+        category_name: &str,
+    ) -> Option<&ObjcCategoryRecord> {
+        self.categories.iter().find(|category_record| {
+            category_record.class_name.as_deref() == Some(class_name)
+                && category_record.name.as_deref() == Some(category_name)
+        })
+    }
+
     pub fn methods_with_selector_source(
         &self,
         source: ObjcSelectorSource,
@@ -637,6 +658,24 @@ pub struct DyldMetadata {
 }
 
 impl DyldMetadata {
+    pub fn export_by_name(&self, name: &str) -> Option<&ExportRecord> {
+        self.exported_symbols
+            .iter()
+            .find(|export_record| export_record.name == name)
+    }
+
+    pub fn export_by_address(&self, address: u64) -> Option<&ExportRecord> {
+        self.exported_symbols
+            .iter()
+            .find(|export_record| export_record.address == Some(address))
+    }
+
+    pub fn exports_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a ExportRecord> {
+        self.exported_symbols
+            .iter()
+            .filter(move |export_record| export_record.name == name)
+    }
+
     pub fn binding_for_symbol(&self, dylib: &str, name: &str) -> Option<&ImportBindingRecord> {
         self.import_bindings
             .iter()

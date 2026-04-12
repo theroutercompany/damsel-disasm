@@ -3,8 +3,8 @@ mod output;
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
     BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2,
-    DisassemblyTarget, Import, ImportBindingKind, ObjcNameSource, ObjcSelectorSource, Relocation,
-    Section, StubKind, Symbol,
+    DisassemblyTarget, Import, ImportBindingKind, ObjcCategoryRecordSource, ObjcNameSource,
+    ObjcSelectorSource, Relocation, Section, StubKind, Symbol,
 };
 use damsel_macho::{disassemble_v2, load};
 use std::error::Error;
@@ -136,6 +136,33 @@ impl From<DyldStubKindArg> for StubKind {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+enum DyldExportKindArg {
+    Regular,
+    Reexport,
+    Resolver,
+    StubAndResolver,
+    WeakDefinition,
+    Absolute,
+    ThreadLocal,
+    Unknown,
+}
+
+impl From<DyldExportKindArg> for output::ExportKindFilter {
+    fn from(value: DyldExportKindArg) -> Self {
+        match value {
+            DyldExportKindArg::Regular => output::ExportKindFilter::Regular,
+            DyldExportKindArg::Reexport => output::ExportKindFilter::Reexport,
+            DyldExportKindArg::Resolver => output::ExportKindFilter::Resolver,
+            DyldExportKindArg::StubAndResolver => output::ExportKindFilter::StubAndResolver,
+            DyldExportKindArg::WeakDefinition => output::ExportKindFilter::WeakDefinition,
+            DyldExportKindArg::Absolute => output::ExportKindFilter::Absolute,
+            DyldExportKindArg::ThreadLocal => output::ExportKindFilter::ThreadLocal,
+            DyldExportKindArg::Unknown => output::ExportKindFilter::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum ObjcDetailArg {
     Summary,
     Classes,
@@ -187,6 +214,21 @@ enum ObjcSelectorSourceArg {
     Relative,
     LegacyPool,
     Unresolved,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ObjcCategorySourceArg {
+    RuntimeList,
+    SymbolSynthesis,
+}
+
+impl From<ObjcCategorySourceArg> for ObjcCategoryRecordSource {
+    fn from(value: ObjcCategorySourceArg) -> Self {
+        match value {
+            ObjcCategorySourceArg::RuntimeList => ObjcCategoryRecordSource::RuntimeList,
+            ObjcCategorySourceArg::SymbolSynthesis => ObjcCategoryRecordSource::SymbolSynthesis,
+        }
+    }
 }
 
 impl From<ObjcSelectorSourceArg> for ObjcSelectorSource {
@@ -277,6 +319,8 @@ enum Command {
         binding_kind: Option<DyldBindingKindArg>,
         #[arg(long, value_enum)]
         stub_kind: Option<DyldStubKindArg>,
+        #[arg(long, value_enum)]
+        export_kind: Option<DyldExportKindArg>,
         #[arg(long)]
         ordinal: Option<u32>,
         #[arg(long, value_enum)]
@@ -295,6 +339,8 @@ enum Command {
         name_source: Option<ObjcNameSourceArg>,
         #[arg(long, value_enum)]
         selector_source: Option<ObjcSelectorSourceArg>,
+        #[arg(long, value_enum)]
+        category_source: Option<ObjcCategorySourceArg>,
     },
     #[command(group(
         ArgGroup::new("target")
@@ -507,6 +553,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             source,
             binding_kind,
             stub_kind,
+            export_kind,
             ordinal,
             sort,
         } => {
@@ -527,6 +574,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
                     source_filter: None,
                     binding_kind_filter: None,
                     stub_kind_filter: None,
+                    export_kind_filter: None,
                     ordinal_filter: None,
                     sort: None,
                 }
@@ -538,6 +586,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             view_options.source_filter = source.map(Into::into);
             view_options.binding_kind_filter = binding_kind.map(Into::into);
             view_options.stub_kind_filter = stub_kind.map(Into::into);
+            view_options.export_kind_filter = export_kind.map(Into::into);
             view_options.ordinal_filter = ordinal;
             view_options.sort = sort.map(Into::into);
             output::print_dyld(&image, &view_options, &output_settings);
@@ -552,6 +601,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             owner,
             name_source,
             selector_source,
+            category_source,
         } => {
             let image = load_image(path)?;
             output::print_objc(
@@ -561,6 +611,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
                     owner_filter: owner,
                     name_source_filter: name_source.map(Into::into),
                     selector_source_filter: selector_source.map(Into::into),
+                    category_source_filter: category_source.map(Into::into),
                 },
                 &output_settings,
             );

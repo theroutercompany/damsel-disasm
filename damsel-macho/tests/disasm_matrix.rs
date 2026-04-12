@@ -360,6 +360,56 @@ fn disasm_emits_jump_table_candidate_for_semantic_fixture_when_present() {
 }
 
 #[test]
+fn disasm_emits_indirect_target_resolved_for_semantic_fixture_when_present() {
+    let path = fixture("semantic-switch");
+    if !path.exists() {
+        eprintln!("semantic-switch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load semantic fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(256),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble semantic fixture");
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.annotations.iter().any(|annotation| {
+            matches!(annotation, Annotation::IndirectTargetResolved { .. })
+        })
+    }));
+}
+
+#[test]
+fn disasm_emits_indirect_target_annotations_for_indirect_dispatch_fixture_when_present() {
+    let path = fixture("indirect-dispatch");
+    if !path.exists() {
+        eprintln!("indirect-dispatch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load indirect-dispatch fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(256),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble indirect-dispatch fixture");
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.annotations.iter().any(|annotation| {
+            matches!(annotation, Annotation::IndirectTargetResolved { .. })
+        })
+    }));
+}
+
+#[test]
 fn disasm_avoids_generic_indirect_annotation_when_authenticated_variant_exists() {
     let path = fixture("arm64e-sample");
     if !path.exists() {
@@ -405,4 +455,43 @@ fn disasm_avoids_generic_indirect_annotation_when_authenticated_variant_exists()
             );
         }
     }
+}
+
+#[test]
+fn disasm_authenticated_annotations_present_without_value_flow() {
+    let path = fixture("arm64e-sample");
+    if !path.exists() {
+        eprintln!("arm64e-sample fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load arm64e fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(256),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: false,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble arm64e fixture");
+    let has_authenticated_indirect = result.instructions.iter().any(|instruction| {
+        matches!(
+            instruction.mnemonic.as_str(),
+            "blraa" | "blraaz" | "blrab" | "blrabz" | "braa" | "braaz" | "brab" | "brabz"
+        )
+    });
+    if !has_authenticated_indirect {
+        eprintln!("arm64e fixture does not contain authenticated indirect branch/call; skipping");
+        return;
+    }
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::IndirectControlFlow { kind, .. }
+                    if kind.starts_with("authenticated-")
+            )
+        })
+    }));
 }

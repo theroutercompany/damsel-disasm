@@ -280,6 +280,7 @@ fn objc_category_provenance_is_constructible() {
         pointer: 0x5000,
         name: Some("Excited".to_string()),
         name_source: ObjcNameSource::Runtime,
+        record_source: damsel_core::ObjcCategoryRecordSource::RuntimeList,
         class_pointer: Some(0x5100),
         class_name: Some("Greeter".to_string()),
         class_name_source: ObjcNameSource::PointerTable,
@@ -291,6 +292,10 @@ fn objc_category_provenance_is_constructible() {
 
     assert_eq!(category.name_source, ObjcNameSource::Runtime);
     assert_eq!(category.class_name_source, ObjcNameSource::PointerTable);
+    assert_eq!(
+        category.record_source,
+        damsel_core::ObjcCategoryRecordSource::RuntimeList
+    );
 }
 
 #[test]
@@ -319,6 +324,7 @@ fn objc_records_are_queryable_by_pointer_and_selector_source() {
             pointer: 0x5000,
             name: Some("Excited".to_string()),
             name_source: ObjcNameSource::LegacyPool,
+            record_source: damsel_core::ObjcCategoryRecordSource::SymbolSynthesis,
             class_pointer: Some(0x6000),
             class_name: Some("Greeter".to_string()),
             class_name_source: ObjcNameSource::PointerTable,
@@ -339,6 +345,12 @@ fn objc_records_are_queryable_by_pointer_and_selector_source() {
     assert_eq!(
         metadata
             .category_by_pointer(0x5000)
+            .and_then(|record| record.name.as_deref()),
+        Some("Excited")
+    );
+    assert_eq!(
+        metadata
+            .category_by_class_and_name("Greeter", "Excited")
             .and_then(|record| record.name.as_deref()),
         Some("Excited")
     );
@@ -424,8 +436,11 @@ fn recovered_value_and_export_kind_variants_are_constructible() {
     let export = damsel_core::ExportRecord {
         name: "_main".to_string(),
         address: Some(0x1000),
-        flags: "regular".to_string(),
+        raw_flags: "regular".to_string(),
+        flags: damsel_core::ExportFlags::parse("regular"),
         kind: damsel_core::ExportKind::Regular,
+        reexport_target: None,
+        resolver_target: None,
     };
 
     assert!(matches!(
@@ -437,6 +452,53 @@ fn recovered_value_and_export_kind_variants_are_constructible() {
         damsel_core::RecoveredValueKind::FunctionPointer
     ));
     assert!(matches!(export.kind, damsel_core::ExportKind::Regular));
+    assert_eq!(export.flags_typed().as_str(), "regular");
+}
+
+#[test]
+fn dyld_export_lookup_helpers_are_queryable() {
+    let image = sample_image();
+    let export = damsel_core::ExportRecord {
+        name: "_main".to_string(),
+        address: Some(0x1000),
+        raw_flags: "Regular".to_string(),
+        flags: damsel_core::ExportFlags::parse("Regular"),
+        kind: damsel_core::ExportKind::Regular,
+        reexport_target: Some(("/usr/lib/libSystem.B.dylib".to_string(), Some("_main".to_string()))),
+        resolver_target: Some(0x2000),
+    };
+    let bytes: Arc<[u8]> = image.slice_bytes().to_vec().into();
+    let rebuilt = BinaryImage::builder(
+        image.source().clone(),
+        image.path().to_path_buf(),
+        image.format(),
+        image.architecture(),
+        image.endianness(),
+        image.entry_point(),
+        image.platform().cloned(),
+        image.selected_slice().clone(),
+        image.segments().to_vec(),
+        image.sections().to_vec(),
+        image.symbols().to_vec(),
+        image.imports().to_vec(),
+        image.relocations().to_vec(),
+        image.objc().clone(),
+        damsel_core::DyldMetadata {
+            exported_symbols: vec![export.clone()],
+            ..image.dyld().clone()
+        },
+        bytes,
+    )
+    .with_available_slices(image.available_slices().to_vec())
+    .build()
+    .expect("rebuild image with export");
+
+    assert_eq!(rebuilt.dyld().export_by_name("_main"), Some(&export));
+    assert_eq!(rebuilt.dyld().export_by_address(0x1000), Some(&export));
+    assert_eq!(
+        rebuilt.dyld().exports_named("_main").collect::<Vec<_>>(),
+        vec![&export]
+    );
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use damsel_core::{
-    ObjcCategoryRecord, ObjcClassRecord, ObjcIvarRecord, ObjcMetadata, ObjcMethodOwnerKind,
-    ObjcMethodRecord, ObjcNameSource, ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord,
-    ObjcProtocolRecord, ObjcSelectorSource, Section, Symbol,
+    ObjcCategoryRecord, ObjcCategoryRecordSource, ObjcClassRecord, ObjcIvarRecord, ObjcMetadata,
+    ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource, ObjcPointerKind, ObjcPointerRef,
+    ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource, Section, Symbol,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -111,12 +111,22 @@ struct ObjcSymbolMaps {
     metaclass_names: BTreeMap<u64, String>,
     protocol_names: BTreeMap<u64, String>,
     category_hints_by_list_pointer: BTreeMap<u64, ObjcCategorySymbolHint>,
+    category_method_symbols: Vec<ObjcCategoryMethodSymbol>,
 }
 
 #[derive(Debug, Clone)]
 struct ObjcCategorySymbolHint {
     class_name: String,
     category_name: String,
+}
+
+#[derive(Debug, Clone)]
+struct ObjcCategoryMethodSymbol {
+    class_name: String,
+    category_name: String,
+    selector: String,
+    implementation: u64,
+    is_class_method: bool,
 }
 
 fn collect_objc_symbol_maps(symbols: &[Symbol]) -> ObjcSymbolMaps {
@@ -134,6 +144,8 @@ fn collect_objc_symbol_maps(symbols: &[Symbol]) -> ObjcSymbolMaps {
         } else if let Some(hint) = parse_category_hint_symbol(&symbol.name) {
             maps.category_hints_by_list_pointer
                 .insert(symbol.address, hint);
+        } else if let Some(hints) = parse_category_method_symbol(&symbol.name, symbol.address) {
+            maps.category_method_symbols.extend(hints);
         }
     }
     maps
@@ -171,6 +183,48 @@ fn parse_category_hint_rest(value: &str) -> Option<(String, String)> {
         return None;
     }
     Some((class_name.to_string(), category_name.to_string()))
+}
+
+fn parse_category_method_symbol(
+    symbol_name: &str,
+    implementation: u64,
+) -> Option<Vec<ObjcCategoryMethodSymbol>> {
+    let (is_class_method, rest) = if let Some(rest) = symbol_name.strip_prefix("+[") {
+        (true, rest)
+    } else if let Some(rest) = symbol_name.strip_prefix("-[") {
+        (false, rest)
+    } else {
+        return None;
+    };
+    let body = rest.strip_suffix(']')?;
+    let space_index = body.rfind(' ')?;
+    let owner = body[..space_index].trim();
+    let selector = body[space_index + 1..].trim();
+    if !is_plausible_selector_name(selector) {
+        return None;
+    }
+    let (class_name, category_name) = parse_category_hint_rest(owner)?;
+    let category_names = category_name
+        .split('|')
+        .map(str::trim)
+        .filter(|name| is_plausible_objc_type_name(name))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if category_names.is_empty() {
+        return None;
+    }
+    Some(
+        category_names
+            .into_iter()
+            .map(|category_name| ObjcCategoryMethodSymbol {
+                class_name: class_name.clone(),
+                category_name,
+                selector: selector.to_string(),
+                implementation,
+                is_class_method,
+            })
+            .collect(),
+    )
 }
 
 fn pointer_kind_sort_key(kind: ObjcPointerKind) -> u8 {
@@ -650,6 +704,7 @@ fn collect_category_records(
                 pointer,
                 name: category_name,
                 name_source: category_name_source,
+                record_source: ObjcCategoryRecordSource::RuntimeList,
                 class_pointer,
                 class_name,
                 class_name_source,
@@ -685,9 +740,80 @@ fn collect_category_records(
         }
     }
 
+    if records.is_empty() {
+        records.extend(collect_synthetic_category_records(classes, symbol_maps));
+    }
+
     records.sort_by_key(|record| record.pointer);
     records.dedup_by(|left, right| left.pointer == right.pointer);
     records
+}
+
+fn collect_synthetic_category_records(
+    classes: &[ObjcClassRecord],
+    symbol_maps: &ObjcSymbolMaps,
+) -> Vec<ObjcCategoryRecord> {
+    let class_lookup = classes
+        .iter()
+        .filter_map(|record| {
+            record.name.as_ref().map(|name| {
+                (
+                    name.clone(),
+                    (Some(record.class_pointer), record.name_source),
+                )
+            })
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut grouped = BTreeMap::<(String, String), Vec<&ObjcCategoryMethodSymbol>>::new();
+    for symbol in &symbol_maps.category_method_symbols {
+        grouped
+            .entry((symbol.class_name.clone(), symbol.category_name.clone()))
+            .or_default()
+            .push(symbol);
+    }
+
+    grouped
+        .into_iter()
+        .filter_map(|((class_name, category_name), mut symbols)| {
+            symbols.sort_by_key(|symbol| (symbol.implementation, symbol.selector.clone()));
+            let pointer = symbols.first()?.implementation;
+            let (class_pointer, class_name_source) = class_lookup
+                .get(&class_name)
+                .cloned()
+                .unwrap_or((None, ObjcNameSource::LegacyPool));
+            let mut methods = Vec::new();
+            let mut class_methods = Vec::new();
+            for symbol in symbols {
+                let method = ObjcMethodRecord {
+                    owner_pointer: pointer,
+                    owner_kind: ObjcMethodOwnerKind::Category,
+                    is_class_method: symbol.is_class_method,
+                    selector: Some(symbol.selector.clone()),
+                    selector_source: ObjcSelectorSource::LegacyPool,
+                    implementation: Some(symbol.implementation),
+                    type_encoding: None,
+                };
+                if symbol.is_class_method {
+                    class_methods.push(method);
+                } else {
+                    methods.push(method);
+                }
+            }
+            Some(ObjcCategoryRecord {
+                pointer,
+                name: Some(category_name),
+                name_source: ObjcNameSource::LegacyPool,
+                record_source: ObjcCategoryRecordSource::SymbolSynthesis,
+                class_pointer,
+                class_name: Some(class_name),
+                class_name_source,
+                methods,
+                class_methods,
+                properties: Vec::new(),
+                adopted_protocols: Vec::new(),
+            })
+        })
+        .collect()
 }
 
 fn infer_image_base(sections: &[Section]) -> Option<u64> {

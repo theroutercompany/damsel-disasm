@@ -1,9 +1,10 @@
 use damsel_core::{
     Annotation, BinaryImage, DecodedInstruction, ExportKind, Import, ImportBindingKind,
-    ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcClassRecord, ObjcIvarRecord,
-    ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource, ObjcPointerKind, ObjcPointerRef,
-    ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource, RecoveredValue, Reference,
-    Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry, StubKind, Symbol,
+    ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource,
+    ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
+    ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
+    RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry,
+    StubKind, Symbol,
 };
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
@@ -34,6 +35,7 @@ pub(crate) struct DyldViewOptions {
     pub source_filter: Option<ImportBindingSource>,
     pub binding_kind_filter: Option<ImportBindingKind>,
     pub stub_kind_filter: Option<StubKind>,
+    pub export_kind_filter: Option<ExportKindFilter>,
     pub ordinal_filter: Option<u32>,
     pub sort: Option<DyldSortKey>,
 }
@@ -53,10 +55,23 @@ impl DyldViewOptions {
             source_filter: None,
             binding_kind_filter: None,
             stub_kind_filter: None,
+            export_kind_filter: None,
             ordinal_filter: None,
             sort: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExportKindFilter {
+    Regular,
+    Reexport,
+    Resolver,
+    StubAndResolver,
+    WeakDefinition,
+    Absolute,
+    ThreadLocal,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +88,7 @@ pub(crate) struct ObjcViewOptions {
     pub owner_filter: Option<String>,
     pub name_source_filter: Option<ObjcNameSource>,
     pub selector_source_filter: Option<ObjcSelectorSource>,
+    pub category_source_filter: Option<ObjcCategoryRecordSource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,10 +336,11 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 );
                 for record in &filtered.categories {
                     println!(
-                        "  {:#x} name={} name_source={:?} class={} class_source={:?} class_ptr={} methods={} class_methods={} properties={} protocols={}",
+                        "  {:#x} name={} name_source={:?} record_source={:?} class={} class_source={:?} class_ptr={} methods={} class_methods={} properties={} protocols={}",
                         record.pointer,
                         record.name.as_deref().unwrap_or("-"),
                         record.name_source,
+                        record.record_source,
                         record.class_name.as_deref().unwrap_or("-"),
                         record.class_name_source,
                         record
@@ -470,12 +487,26 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 );
                 for export in &filtered.exports {
                     println!(
-                        "  {:>#18} {:<24} {}",
+                        "  {:>#18} {:<24} kind={:?} reexport={} resolver={} {}",
                         export
                             .address
                             .map(|address| format!("{address:#x}"))
                             .unwrap_or_else(|| "-".to_string()),
-                        export.flags,
+                        export.raw_flags,
+                        export.kind,
+                        export
+                            .reexport_target
+                            .as_ref()
+                            .map(|(dylib, symbol)| format!(
+                                "{}:{}",
+                                dylib,
+                                symbol.as_deref().unwrap_or("-")
+                            ))
+                            .unwrap_or_else(|| "-".to_string()),
+                        export
+                            .resolver_target
+                            .map(|address| format!("{address:#x}"))
+                            .unwrap_or_else(|| "-".to_string()),
                         export.name
                     );
                 }
@@ -782,6 +813,9 @@ fn filter_dyld_view<'a>(
             view.name_filter
                 .as_deref()
                 .is_none_or(|needle| contains_case_insensitive(&export.name, needle))
+                && view
+                    .export_kind_filter
+                    .is_none_or(|kind| export_matches_kind(export, kind))
         })
         .collect::<Vec<_>>();
     sort_exports(&mut exports, view.sort);
@@ -918,6 +952,7 @@ fn filter_objc_view<'a>(
                 record,
                 view.owner_filter.as_deref(),
                 view.name_source_filter,
+                view.category_source_filter,
             )
         })
         .collect::<Vec<_>>();
@@ -1077,7 +1112,7 @@ fn sort_exports(exports: &mut Vec<&damsel_core::ExportRecord>, sort: Option<Dyld
         }
         DyldSortKey::Name => exports.sort_by_key(|export| export.name.clone()),
         DyldSortKey::Dylib | DyldSortKey::Source => {
-            exports.sort_by_key(|export| (export.flags.clone(), export.name.clone()))
+            exports.sort_by_key(|export| (export.raw_flags.clone(), export.name.clone()))
         }
     }
 }
@@ -1180,6 +1215,20 @@ fn binding_matches_stub_kind(binding_kind: ImportBindingKind, stub_kind: &StubKi
     )
 }
 
+fn export_matches_kind(export: &damsel_core::ExportRecord, kind: ExportKindFilter) -> bool {
+    matches!(
+        (&export.kind, kind),
+        (ExportKind::Regular, ExportKindFilter::Regular)
+            | (ExportKind::Reexport { .. }, ExportKindFilter::Reexport)
+            | (ExportKind::Resolver { .. }, ExportKindFilter::Resolver)
+            | (ExportKind::StubAndResolver { .. }, ExportKindFilter::StubAndResolver)
+            | (ExportKind::WeakDefinition, ExportKindFilter::WeakDefinition)
+            | (ExportKind::Absolute, ExportKindFilter::Absolute)
+            | (ExportKind::ThreadLocal, ExportKindFilter::ThreadLocal)
+            | (ExportKind::Unknown(_), ExportKindFilter::Unknown)
+    )
+}
+
 fn stub_matches_binding_kind(stub_kind: &StubKind, binding_kind: ImportBindingKind) -> bool {
     match binding_kind {
         ImportBindingKind::Lazy => matches!(stub_kind, StubKind::Lazy),
@@ -1205,6 +1254,9 @@ fn dyld_active_filter_text(view: &DyldViewOptions) -> Option<String> {
     if let Some(stub_kind) = &view.stub_kind_filter {
         parts.push(format!("stub_kind={stub_kind:?}"));
     }
+    if let Some(export_kind) = view.export_kind_filter {
+        parts.push(format!("export_kind={export_kind:?}"));
+    }
     if let Some(ordinal) = view.ordinal_filter {
         parts.push(format!("ordinal={ordinal}"));
     }
@@ -1225,6 +1277,9 @@ fn objc_active_filter_text(view: &ObjcViewOptions) -> Option<String> {
     }
     if let Some(source) = view.selector_source_filter {
         parts.push(format!("selector_source={source:?}"));
+    }
+    if let Some(source) = view.category_source_filter {
+        parts.push(format!("category_source={source:?}"));
     }
     if parts.is_empty() {
         None
@@ -1314,6 +1369,7 @@ fn objc_category_matches(
     record: &ObjcCategoryRecord,
     owner_filter: Option<&str>,
     name_source_filter: Option<ObjcNameSource>,
+    category_source_filter: Option<ObjcCategoryRecordSource>,
 ) -> bool {
     owner_filter.is_none_or(|needle| {
         record
@@ -1326,6 +1382,7 @@ fn objc_category_matches(
                 .is_some_and(|value| contains_case_insensitive(value, needle))
     }) && name_source_filter
         .is_none_or(|source| record.name_source == source || record.class_name_source == source)
+        && category_source_filter.is_none_or(|source| record.record_source == source)
 }
 
 fn objc_method_owner_kind_text(kind: ObjcMethodOwnerKind) -> &'static str {
@@ -1698,6 +1755,13 @@ impl JsonDto for ObjcJsonDto<'_> {
                     .unwrap_or(JsonValue::Null),
             ),
             (
+                "category_source_filter".to_string(),
+                self.view
+                    .category_source_filter
+                    .map(|value| JsonValue::String(format!("{value:?}")))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
                 "image_info_flags".to_string(),
                 objc.image_info_flags
                     .map(u64::from)
@@ -1909,6 +1973,13 @@ impl JsonDto for DyldJsonDto<'_> {
                     .unwrap_or(JsonValue::Null),
             ),
             (
+                "export_kind_filter".to_string(),
+                self.view
+                    .export_kind_filter
+                    .map(|value| JsonValue::String(format!("{value:?}")))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
                 "ordinal_filter".to_string(),
                 self.view
                     .ordinal_filter
@@ -2075,10 +2146,40 @@ fn export_json(export: &damsel_core::ExportRecord) -> JsonValue {
             export.address.map(u64_num).unwrap_or(JsonValue::Null),
         ),
         (
+            "raw_flags".to_string(),
+            JsonValue::String(export.raw_flags.clone()),
+        ),
+        (
             "flags".to_string(),
             JsonValue::String(export.flags.to_string()),
         ),
         ("kind".to_string(), export_kind_json(&export.kind)),
+        (
+            "reexport_target".to_string(),
+            export
+                .reexport_target
+                .as_ref()
+                .map(|(dylib, symbol)| {
+                    JsonValue::Object(vec![
+                        ("dylib".to_string(), JsonValue::String(dylib.clone())),
+                        (
+                            "symbol".to_string(),
+                            symbol
+                                .as_ref()
+                                .map(|value| JsonValue::String(value.clone()))
+                                .unwrap_or(JsonValue::Null),
+                        ),
+                    ])
+                })
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolver_target".to_string(),
+            export
+                .resolver_target
+                .map(u64_num)
+                .unwrap_or(JsonValue::Null),
+        ),
     ])
 }
 
@@ -2511,6 +2612,10 @@ fn objc_category_record_json(record: &ObjcCategoryRecord) -> JsonValue {
         (
             "class_name_source".to_string(),
             JsonValue::String(format!("{:?}", record.class_name_source)),
+        ),
+        (
+            "record_source".to_string(),
+            JsonValue::String(format!("{:?}", record.record_source)),
         ),
         (
             "adopted_protocols".to_string(),

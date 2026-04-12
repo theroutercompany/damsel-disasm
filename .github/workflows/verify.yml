@@ -69,7 +69,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Run targeted malformed/duplicate fixture tests
-        run: cargo test -p damsel-macho --test load_matrix --test import_binding_matrix --test disasm_matrix
+        run: cargo test -p damsel-macho --test load_matrix --test import_binding_matrix --test disasm_matrix --test export_matrix --test objc_matrix
 
   decode-throughput-smoke:
     name: decode throughput smoke (linux arm64)

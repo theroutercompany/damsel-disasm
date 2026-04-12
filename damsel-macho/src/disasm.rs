@@ -362,6 +362,7 @@ fn annotate_instructions(
 
     for instruction in instructions {
         let mut derived = Vec::new();
+        let lower = instruction.mnemonic.to_ascii_lowercase();
         if include_annotations {
             push_instruction_address_annotations(&mut derived, &symbol_map, instruction.address);
         }
@@ -446,26 +447,36 @@ fn annotate_instructions(
                     );
                 }
                 Reference::IndirectCall { via } => {
+                    let kind = indirect_control_kind(&lower);
                     if include_annotations
-                        && !has_indirect_control_flow_annotation(&instruction.annotations, &via)
+                        && !has_indirect_control_flow_annotation(
+                            &instruction.annotations,
+                            &via,
+                            &kind,
+                        )
                     {
                         push_derived(
                             &mut derived,
                             DerivedAnnotation::IndirectControlFlow {
-                                kind: "call".to_string(),
+                                kind,
                                 via,
                             },
                         );
                     }
                 }
                 Reference::IndirectBranch { via } => {
+                    let kind = indirect_control_kind(&lower);
                     if include_annotations
-                        && !has_indirect_control_flow_annotation(&instruction.annotations, &via)
+                        && !has_indirect_control_flow_annotation(
+                            &instruction.annotations,
+                            &via,
+                            &kind,
+                        )
                     {
                         push_derived(
                             &mut derived,
                             DerivedAnnotation::IndirectControlFlow {
-                                kind: "branch".to_string(),
+                                kind,
                                 via,
                             },
                         );
@@ -673,13 +684,14 @@ fn synthesize_analysis_references(
             if let (Some(target), Some(register)) =
                 (page_reference_target(instruction), destination.as_ref())
             {
+                let target = normalize_value_for_write(register, target);
                 let recovered = RecoveredValue {
                     register: register.clone(),
                     value: target,
                     kind: classify_recovered_value(image, target, RecoveredValueKind::Address),
                     source: RecoveredValueSource::Adr,
                 };
-                known_values.insert(register.clone(), recovered.clone());
+                store_known_value(&mut known_values, recovered.clone());
                 push_recovered_value(&mut instruction.recovered_values, recovered);
                 destination_updated = true;
                 if include_annotations {
@@ -692,22 +704,24 @@ fn synthesize_analysis_references(
         }
 
         if let Some((register, value)) = synthesize_mov_wide_value(instruction, &known_values) {
+            let value = normalize_value_for_write(&register, value);
             let recovered = RecoveredValue {
                 register: register.clone(),
                 value,
                 kind: classify_recovered_value(image, value, RecoveredValueKind::Literal),
                 source: RecoveredValueSource::MoveWide,
             };
-            known_values.insert(register, recovered.clone());
+            store_known_value(&mut known_values, recovered.clone());
             push_recovered_value(&mut instruction.recovered_values, recovered);
             destination_updated = true;
         }
 
         let add_inputs = add_immediate_inputs(instruction);
         if let Some((dest, base_register, displacement)) = add_inputs {
-            if let Some(base) = known_values.get(base_register.as_str()).cloned() {
+            if let Some(base) = read_known_value(&known_values, base_register.as_str()) {
                 if let Some(target) = add_signed(base.value, displacement) {
                     if let Some(dest) = dest {
+                        let target = normalize_value_for_write(&dest, target);
                         let recovered = RecoveredValue {
                             register: dest.clone(),
                             value: target,
@@ -718,7 +732,7 @@ fn synthesize_analysis_references(
                             ),
                             source: RecoveredValueSource::AdrpAdd,
                         };
-                        known_values.insert(dest.clone(), recovered.clone());
+                        store_known_value(&mut known_values, recovered.clone());
                         push_recovered_value(&mut instruction.recovered_values, recovered);
                         destination_updated = true;
                     }
@@ -742,13 +756,13 @@ fn synthesize_analysis_references(
         if let Some((target, recovered)) = synthesize_literal_load(image, instruction, &lower) {
             push_reference_if_missing(&mut instruction.references, Reference::Data { target });
             push_recovered_value(&mut instruction.recovered_values, recovered.clone());
-            known_values.insert(recovered.register.clone(), recovered);
+            store_known_value(&mut known_values, recovered);
             destination_updated = true;
         }
 
         let memory_inputs = memory_base_index_displacement(instruction);
         if let Some((base_register, index_register, displacement)) = memory_inputs {
-            if let Some(base) = known_values.get(base_register.as_str()).cloned() {
+            if let Some(base) = read_known_value(&known_values, base_register.as_str()) {
                 if let Some(target) = add_signed(base.value, displacement) {
                     push_reference_if_missing(
                         &mut instruction.references,
@@ -756,23 +770,18 @@ fn synthesize_analysis_references(
                     );
                     if let Some(index_register) = index_register.clone() {
                         let element_size = jump_table_element_size(instruction);
-                        jump_table_sources.insert(
-                            destination.clone().unwrap_or_else(|| base_register.clone()),
-                            (target, index_register.clone(), element_size),
-                        );
-                        if include_annotations {
-                            push_annotation(
-                                &mut instruction.annotations,
-                                Annotation::JumpTableCandidate {
-                                    base: target,
-                                    index_register,
-                                    element_size,
-                                },
-                            );
+                        if let Some(jump_key) = destination
+                            .as_deref()
+                            .or(Some(base_register.as_str()))
+                            .and_then(canonical_state_key)
+                        {
+                            jump_table_sources
+                                .insert(jump_key, (target, index_register.clone(), element_size));
                         }
                     }
                     if let Some(dest) = destination.as_ref() {
                         if lower.starts_with("ldr") || lower.starts_with("ldur") {
+                            let target = normalize_value_for_write(dest, target);
                             let recovered = RecoveredValue {
                                 register: dest.clone(),
                                 value: target,
@@ -783,7 +792,7 @@ fn synthesize_analysis_references(
                                 ),
                                 source: RecoveredValueSource::AdrpLoad,
                             };
-                            known_values.insert(dest.clone(), recovered.clone());
+                            store_known_value(&mut known_values, recovered.clone());
                             push_recovered_value(&mut instruction.recovered_values, recovered);
                             destination_updated = true;
                         }
@@ -815,7 +824,7 @@ fn synthesize_analysis_references(
             };
             push_reference_if_missing(&mut instruction.references, indirect_reference);
 
-            if let Some(target) = known_values.get(register.as_str()).map(|value| value.value) {
+            if let Some(target) = read_known_value(&known_values, register.as_str()).map(|value| value.value) {
                 let resolved_reference = if is_call_mnemonic(&lower) {
                     Reference::Call { target }
                 } else {
@@ -830,6 +839,14 @@ fn synthesize_analysis_references(
                             via: register.clone(),
                         },
                     );
+                    push_annotation(
+                        &mut instruction.annotations,
+                        Annotation::IndirectTargetResolved {
+                            via: register.clone(),
+                            target,
+                            reason: indirect_target_reason(image, target),
+                        },
+                    );
                 }
             } else if include_annotations {
                 push_annotation(
@@ -841,9 +858,8 @@ fn synthesize_analysis_references(
                 );
             }
             if include_annotations
-                && matches!(lower.as_str(), "br" | "braa" | "braaz" | "brab" | "brabz")
-                && let Some((base, index_register, element_size)) =
-                    jump_table_sources.get(&register).cloned()
+                && let Some((base, index_register, element_size)) = canonical_state_key(&register)
+                    .and_then(|key| jump_table_sources.get(&key).cloned())
             {
                 push_annotation(
                     &mut instruction.annotations,
@@ -858,7 +874,7 @@ fn synthesize_analysis_references(
 
         if let Some(destination) = destination {
             if !destination_updated && instruction_writes_destination(&lower) {
-                known_values.remove(&destination);
+                remove_known_value(&mut known_values, &destination);
             }
         }
 
@@ -866,6 +882,56 @@ fn synthesize_analysis_references(
             known_values.clear();
             jump_table_sources.clear();
         }
+    }
+}
+
+fn canonical_state_key(register: &str) -> Option<String> {
+    let lower = register.to_ascii_lowercase();
+    if matches!(lower.as_str(), "xzr" | "wzr" | "sp" | "wsp") {
+        return None;
+    }
+    if let Some(index) = lower.strip_prefix('x').or_else(|| lower.strip_prefix('w')) {
+        if !index.is_empty() && index.chars().all(|ch| ch.is_ascii_digit()) {
+            return Some(format!("x{index}"));
+        }
+    }
+    Some(lower)
+}
+
+fn normalize_value_for_write(register: &str, value: u64) -> u64 {
+    if register.to_ascii_lowercase().starts_with('w') {
+        value & u64::from(u32::MAX)
+    } else {
+        value
+    }
+}
+
+fn read_known_value(
+    known_values: &BTreeMap<String, RecoveredValue>,
+    register: &str,
+) -> Option<RecoveredValue> {
+    let key = canonical_state_key(register)?;
+    let mut recovered = known_values.get(&key)?.clone();
+    recovered.register = register.to_string();
+    recovered.value = normalize_value_for_write(register, recovered.value);
+    Some(recovered)
+}
+
+fn store_known_value(
+    known_values: &mut BTreeMap<String, RecoveredValue>,
+    mut recovered: RecoveredValue,
+) {
+    let Some(key) = canonical_state_key(&recovered.register) else {
+        return;
+    };
+    recovered.value = normalize_value_for_write(&recovered.register, recovered.value);
+    recovered.register = key.clone();
+    known_values.insert(key, recovered);
+}
+
+fn remove_known_value(known_values: &mut BTreeMap<String, RecoveredValue>, register: &str) {
+    if let Some(key) = canonical_state_key(register) {
+        known_values.remove(&key);
     }
 }
 
@@ -1066,7 +1132,7 @@ fn synthesize_mov_wide_value(
     } else if lower.starts_with("movn") {
         !shifted_imm
     } else {
-        let previous = known_values.get(&destination)?.value;
+        let previous = read_known_value(known_values, &destination)?.value;
         (previous & !lane_mask) | shifted_imm
     };
 
@@ -1136,6 +1202,16 @@ fn classify_recovered_value(
     if image.dyld().stub_for_address(value).is_some() {
         return RecoveredValueKind::StubAddress;
     }
+    if image.dyld().export_by_address(value).is_some() {
+        return RecoveredValueKind::ExportAddress;
+    }
+    if image
+        .symbols()
+        .iter()
+        .any(|symbol| symbol.address == value && matches!(symbol.kind, damsel_core::SymbolKind::Text))
+    {
+        return RecoveredValueKind::FunctionPointer;
+    }
     if image.objc_selector_name_at_address(value).is_some() {
         return RecoveredValueKind::ObjcSelector;
     }
@@ -1152,6 +1228,26 @@ fn classify_recovered_value(
         return RecoveredValueKind::Address;
     }
     fallback
+}
+
+fn indirect_target_reason(image: &BinaryImage, target: u64) -> String {
+    if image.dyld().helper_for_address(target).is_some() {
+        "helper-target".to_string()
+    } else if image.dyld().stub_for_address(target).is_some() {
+        "stub-target".to_string()
+    } else if image.dyld().export_by_address(target).is_some() {
+        "export-address".to_string()
+    } else if image.dyld().bindings_at_address(target).next().is_some() {
+        "import-pointer".to_string()
+    } else if image
+        .symbols()
+        .iter()
+        .any(|symbol| symbol.address == target && matches!(symbol.kind, damsel_core::SymbolKind::Text))
+    {
+        "function-pointer".to_string()
+    } else {
+        "register-state".to_string()
+    }
 }
 
 fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
@@ -1497,14 +1593,14 @@ fn normalize_import_name(name: &str) -> String {
     name.trim_start_matches('_').to_ascii_lowercase()
 }
 
-fn has_indirect_control_flow_annotation(annotations: &[Annotation], via: &str) -> bool {
+fn has_indirect_control_flow_annotation(annotations: &[Annotation], via: &str, kind: &str) -> bool {
     annotations.iter().any(|annotation| {
         matches!(
             annotation,
             Annotation::IndirectControlFlow {
+                kind: existing_kind,
                 via: existing_via,
-                ..
-            } if existing_via == via
+            } if existing_via == via && existing_kind == kind
         )
     })
 }
@@ -1588,6 +1684,177 @@ impl DerivedAnnotation {
                 source,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use damsel_core::{
+        Architecture, BinaryFormat, BinaryImage, Endianness, ExportFlags, ExportKind,
+        ObjcMetadata, Platform, Section, SliceInfo, Symbol, SymbolKind,
+    };
+    use std::sync::Arc;
+
+    fn synthetic_image() -> BinaryImage {
+        let bytes: Arc<[u8]> = vec![0u8; 64].into();
+        BinaryImage::from_memory_bytes(
+            Some("disasm-synthetic".to_string()),
+            BinaryFormat::MachO,
+            Architecture::Arm64,
+            Endianness::Little,
+            None,
+            Some(Platform::unknown("macos")),
+            SliceInfo {
+                offset: 0,
+                size: 64,
+                is_universal: false,
+                cpu_subtype: 0,
+            },
+            vec![],
+            vec![Section {
+                segment_name: "__TEXT".to_string(),
+                name: "__text".to_string(),
+                address: 0x3000,
+                size: 64,
+                file_offset: Some(0),
+                file_size: 64,
+                kind: "Text".to_string(),
+                executable: true,
+            }],
+            vec![Symbol {
+                name: "_dispatch_target".to_string(),
+                address: 0x3000,
+                size: 16,
+                kind: SymbolKind::Text,
+                defined: true,
+                global: true,
+                weak: false,
+                section: Some("__text".to_string()),
+            }],
+            vec![],
+            vec![],
+            ObjcMetadata::default(),
+            damsel_core::DyldMetadata {
+                exported_symbols: vec![damsel_core::ExportRecord {
+                    name: "_exported".to_string(),
+                    address: Some(0x2000),
+                    raw_flags: "Regular".to_string(),
+                    flags: ExportFlags::parse("Regular"),
+                    kind: ExportKind::Regular,
+                    reexport_target: None,
+                    resolver_target: None,
+                }],
+                ..damsel_core::DyldMetadata::default()
+            },
+            bytes,
+        )
+    }
+
+    fn instruction(address: u64, mnemonic: &str, operands: Vec<Operand>) -> DecodedInstruction {
+        DecodedInstruction {
+            address,
+            size: 4,
+            opcode: 0,
+            mnemonic: mnemonic.to_string(),
+            operands,
+            recovered_values: Vec::new(),
+            references: Vec::new(),
+            annotations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_w_to_x_aliases() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "movz",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(0x1004, "blr", vec![Operand::Register("x8".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[1]
+            .references
+            .contains(&Reference::Call { target: 0x1234 }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_x_to_w_to_x_aliases() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "movz",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "add",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+            instruction(0x1008, "blr", vec![Operand::Register("x9".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[2]
+            .references
+            .contains(&Reference::Call { target: 0x1238 }));
+    }
+
+    #[test]
+    fn synthesize_literal_load_classifies_export_addresses() {
+        let image = synthetic_image();
+        let mut instructions = vec![DecodedInstruction {
+            references: vec![Reference::Data { target: 0x2000 }],
+            ..instruction(
+                0x1000,
+                "ldr",
+                vec![Operand::Register("x0".to_string())],
+            )
+        }];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[0].recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::ExportAddress && value.value == 0x2000
+        }));
+    }
+
+    #[test]
+    fn synthesize_literal_load_classifies_function_pointers() {
+        let image = synthetic_image();
+        let mut instructions = vec![DecodedInstruction {
+            references: vec![Reference::Data { target: 0x3000 }],
+            ..instruction(
+                0x1000,
+                "ldr",
+                vec![Operand::Register("x0".to_string())],
+            )
+        }];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[0].recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::FunctionPointer && value.value == 0x3000
+        }));
     }
 }
 

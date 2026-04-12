@@ -1,9 +1,10 @@
 ---
 source: damsel-cli/tests/cli_snapshots.rs
+assertion_line: 127
 expression: stdout
 ---
 image_info_flags: 0x40
-summary: class_names=9 selectors=52 methods=52 pointer_refs=52 classes=2 protocols=4 categories=0
+summary: class_names=9 selectors=52 methods=52 pointer_refs=52 classes=2 protocols=4 categories=3
 classes:
   DiagnosticProviding
   Diagnostics
@@ -128,7 +129,11 @@ protocol_records (4/4):
   0x100008750 GreetingProviding source=Runtime required_inst=2 required_class=1 optional_inst=1 optional_class=0 properties=1
   0x1000087b0 Excitement source=Runtime required_inst=1 required_class=1 optional_inst=0 optional_class=0 properties=0
   0x100008810 DiagnosticProviding source=Runtime required_inst=1 required_class=0 optional_inst=1 optional_class=0 properties=0
-method_records (55/55):
+category_records (3/3):
+  0x100000e24 name=Excited name_source=LegacyPool record_source=SymbolSynthesis class=Greeter class_source=PointerTable class_ptr=0x1000086a0 methods=3 class_methods=1 properties=0 protocols=0
+  0x100000ee8 name=Diagnostics name_source=LegacyPool record_source=SymbolSynthesis class=Speaker class_source=PointerTable class_ptr=0x100008650 methods=3 class_methods=1 properties=0 protocols=0
+  0x100000fc4 name=Metrics name_source=LegacyPool record_source=SymbolSynthesis class=Greeter class_source=PointerTable class_ptr=0x1000086a0 methods=3 class_methods=1 properties=0 protocols=0
+method_records (67/67):
   owner=Speaker kind=class class_method=false selector=diagnosticLabel selector_source=Relative impl=0x100000ee8 types=@16@0:8
   owner=Speaker kind=class class_method=false selector=diagnosticToken selector_source=Relative impl=0x100000f20 types=@16@0:8
   owner=Speaker kind=class class_method=false selector=diagnosticSummary selector_source=Relative impl=0x100000f3c types=@16@0:8
@@ -184,6 +189,18 @@ method_records (55/55):
   owner=Excitement kind=protocol class_method=true selector=categoryKind selector_source=Relative impl=0x100001538 types=@16@0:8
   owner=DiagnosticProviding kind=protocol class_method=false selector=diagnosticSummary selector_source=Relative impl=0x100001568 types=@16@0:8
   owner=DiagnosticProviding kind=protocol class_method=false selector=diagnosticToken selector_source=Relative impl=0x1000016a8 types=@16@0:8
+  owner=Excited kind=category class_method=false selector=categoryToken selector_source=LegacyPool impl=0x100000e24 types=-
+  owner=Excited kind=category class_method=false selector=emphasizedGreeting selector_source=LegacyPool impl=0x100000e5c types=-
+  owner=Excited kind=category class_method=false selector=excitedGreeting selector_source=LegacyPool impl=0x100000e90 types=-
+  owner=Excited kind=category class_method=true selector=categoryKind selector_source=LegacyPool impl=0x100000e40 types=-
+  owner=Diagnostics kind=category class_method=false selector=diagnosticLabel selector_source=LegacyPool impl=0x100000ee8 types=-
+  owner=Diagnostics kind=category class_method=false selector=diagnosticToken selector_source=LegacyPool impl=0x100000f20 types=-
+  owner=Diagnostics kind=category class_method=false selector=diagnosticSummary selector_source=LegacyPool impl=0x100000f3c types=-
+  owner=Diagnostics kind=category class_method=true selector=diagnosticCategory selector_source=LegacyPool impl=0x100000f04 types=-
+  owner=Metrics kind=category class_method=false selector=metricsToken selector_source=LegacyPool impl=0x100000fc4 types=-
+  owner=Metrics kind=category class_method=false selector=metricsSummary selector_source=LegacyPool impl=0x100000ffc types=-
+  owner=Metrics kind=category class_method=false selector=metricsSummaryWithPrefix: selector_source=LegacyPool impl=0x100001084 types=-
+  owner=Metrics kind=category class_method=true selector=metricsCategory selector_source=LegacyPool impl=0x100000fe0 types=-
 property_records (24/24):
   owner=Speaker name=diagnosticLabel source=Runtime attrs=T@"NSString",R,N
   owner=Speaker name=hash source=Runtime attrs=TQ,R

@@ -254,6 +254,8 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
     let mut saw_category_properties = false;
     let mut saw_category_with_name_source = false;
     let mut saw_category_with_class_source = false;
+    let mut saw_synthetic_category = false;
+    let mut runtime_category_present = false;
     for (index, category_record) in image.objc().categories.iter().enumerate() {
         assert!(
             category_record.pointer != 0,
@@ -295,6 +297,14 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
             );
             saw_category_with_class_source = true;
         }
+        saw_synthetic_category |= matches!(
+            category_record.record_source,
+            damsel_core::ObjcCategoryRecordSource::SymbolSynthesis
+        );
+        runtime_category_present |= matches!(
+            category_record.record_source,
+            damsel_core::ObjcCategoryRecordSource::RuntimeList
+        );
         saw_category_methods |=
             !category_record.methods.is_empty() || !category_record.class_methods.is_empty();
         saw_category_properties |= !category_record.properties.is_empty();
@@ -324,10 +334,12 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
             saw_category_methods,
             "expected structured category methods to be decoded"
         );
-        assert!(
-            saw_category_properties,
-            "expected structured category properties to be decoded"
-        );
+        if runtime_category_present {
+            assert!(
+                saw_category_properties,
+                "expected runtime-backed category properties to be decoded"
+            );
+        }
         assert!(
             saw_category_with_name_source,
             "expected at least one category with resolved provenance-labeled name"
@@ -335,6 +347,10 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
         assert!(
             saw_category_with_class_source,
             "expected at least one category with resolved provenance-labeled class name"
+        );
+        assert!(
+            saw_synthetic_category,
+            "expected synthetic category recovery when the fixture lacks __objc_catlist"
         );
     }
 

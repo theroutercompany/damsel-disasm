@@ -1,6 +1,6 @@
 use crate::errors::{MachoError, Result};
 use damsel_core::{
-    DyldMetadata, ExportKind, ExportedSymbol, ImportBindingKind, ImportBindingRecord,
+    DyldMetadata, ExportFlags, ExportKind, ExportRecord, ImportBindingKind, ImportBindingRecord,
     ImportBindingSource, Segment, StubEntry, StubHelperEntry, StubKind,
 };
 use goblin::mach::exports::{
@@ -80,12 +80,7 @@ pub(crate) fn collect_dyld_metadata(
             MachoError::MalformedDyldPayload(format!("failed to parse export trie: {error}"))
         })?
         .into_iter()
-        .map(|export| ExportedSymbol {
-            name: export.name,
-            address: image_base.checked_add(export.offset),
-            flags: format!("{:?};offset={:#x}", export.info, export.offset),
-            kind: map_export_kind(&export.info, image_base),
-        })
+        .map(|export| build_export_record(export.name, export.offset, &export.info, image_base))
         .collect::<Vec<_>>();
 
     let mut has_rebases = false;
@@ -204,6 +199,42 @@ fn validate_export_payload_ranges(
         }
     }
     Ok(())
+}
+
+fn build_export_record(
+    name: String,
+    offset: u64,
+    info: &ExportInfo<'_>,
+    image_base: u64,
+) -> ExportRecord {
+    let raw_flags = format!("{info:?};offset={offset:#x}");
+    let kind = map_export_kind(info, image_base);
+    ExportRecord {
+        name,
+        address: image_base.checked_add(offset),
+        raw_flags: raw_flags.clone(),
+        flags: ExportFlags::parse(raw_flags),
+        reexport_target: export_reexport_target(&kind),
+        resolver_target: export_resolver_target(&kind),
+        kind,
+    }
+}
+
+fn export_reexport_target(kind: &ExportKind) -> Option<(String, Option<String>)> {
+    match kind {
+        ExportKind::Reexport { dylib, symbol } => Some((dylib.clone(), symbol.clone())),
+        _ => None,
+    }
+}
+
+fn export_resolver_target(kind: &ExportKind) -> Option<u64> {
+    match kind {
+        ExportKind::Resolver { resolver_address } => *resolver_address,
+        ExportKind::StubAndResolver {
+            resolver_address, ..
+        } => *resolver_address,
+        _ => None,
+    }
 }
 
 fn map_export_kind(info: &ExportInfo<'_>, image_base: u64) -> ExportKind {
@@ -711,7 +742,7 @@ fn walk_fixup_chain(
 
 fn materialize_stub_entries(
     bindings: &[ImportBindingRecord],
-    exported_symbols: &[ExportedSymbol],
+    exported_symbols: &[ExportRecord],
 ) -> Vec<StubEntry> {
     let mut exports_by_address = std::collections::BTreeMap::<u64, String>::new();
     for export in exported_symbols {

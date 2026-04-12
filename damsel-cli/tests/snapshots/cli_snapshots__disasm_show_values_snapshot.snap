@@ -1,5 +1,6 @@
 ---
 source: damsel-cli/tests/cli_snapshots.rs
+assertion_line: 217
 expression: stdout
 ---
 target: __TEXT:__text start=0x1000004b0 end=0x1000004f0 bytes=0x40 decoded=0x40 instructions=16 stop=InstructionLimitReached
@@ -18,4 +19,4 @@ target: __TEXT:__text start=0x1000004b0 end=0x1000004f0 bytes=0x40 decoded=0x40 
        0x1000004e0  92400908  and x8, x8, #0x7 ; ref data 0x7
        0x1000004e4  90000029  adrp x9, 0x100004000 ; page base x9 -> 0x100004000 | import /usr/lib/libSystem.B.dylib:___stderrp | binding-evidence /usr/lib/libSystem.B.dylib:___stderrp addr=0x100004000 off=0x4000 addend=0 kind=ChainedFixup source=ChainedFixup | binding-evidence /usr/lib/libSystem.B.dylib:___stderrp addr=0x100004000 off=0x4000 addend=0 kind=NonLazy source=IndirectSymbol | ref page 0x100004000 | ref import-binding /usr/lib/libSystem.B.dylib:___stderrp addr=0x100004000 off=0x4000 addend=0 kind=ChainedFixup source=ChainedFixup weak=false | ref import /usr/lib/libSystem.B.dylib:___stderrp (0x100004000) | ref import-binding /usr/lib/libSystem.B.dylib:___stderrp addr=0x100004000 off=0x4000 addend=0 kind=NonLazy source=IndirectSymbol weak=false | value x9=0x100004000 kind=ImportPointer source=Adr
        0x1000004e8  91012129  add x9, x9, #0x48 ; add synthesis x9 + 0x48 -> 0x100004048 | ref data 0x48 | ref data 0x100004048 | value x9=0x100004048 kind=Address source=AdrpAdd
-       0x1000004ec  f8687933  ldr x19, [x9, x8] ; jump-table base=0x100004048 index=x8 elem_size=8 | memory synthesis x9 + 0x0 -> 0x100004048 | ref data 0x100004048 | value x19=0x100004048 kind=Address source=AdrpLoad
+       0x1000004ec  f8687933  ldr x19, [x9, x8] ; memory synthesis x9 + 0x0 -> 0x100004048 | ref data 0x100004048 | value x19=0x100004048 kind=Address source=AdrpLoad
