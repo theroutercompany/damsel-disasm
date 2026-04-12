@@ -22,7 +22,7 @@ struct Scenario {
 }
 
 fn runtime_bench_supported() -> bool {
-    std::env::consts::ARCH == "aarch64"
+    std::env::consts::OS == "linux" && std::env::consts::ARCH == "aarch64"
 }
 
 fn decode_benchmarks(criterion: &mut Criterion) {
