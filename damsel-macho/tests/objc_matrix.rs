@@ -255,6 +255,7 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
     let mut saw_category_with_name_source = false;
     let mut saw_category_with_class_source = false;
     let mut saw_synthetic_category = false;
+    let mut saw_synthetic_category_with_list_pointer = false;
     let mut runtime_category_present = false;
     for (index, category_record) in image.objc().categories.iter().enumerate() {
         assert!(
@@ -305,9 +306,20 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
             category_record.record_source,
             damsel_core::ObjcCategoryRecordSource::RuntimeList
         );
+        saw_synthetic_category_with_list_pointer |= matches!(
+            category_record.record_source,
+            damsel_core::ObjcCategoryRecordSource::SymbolSynthesis
+        ) && (category_record.protocol_list_pointer.is_some()
+            || category_record.property_list_pointer.is_some());
         saw_category_methods |=
             !category_record.methods.is_empty() || !category_record.class_methods.is_empty();
         saw_category_properties |= !category_record.properties.is_empty();
+        if category_record.protocol_list_pointer.is_some() {
+            assert!(
+                !category_record.adopted_protocols.is_empty(),
+                "file-backed synthetic/runtime category protocol lists should decode adopted protocols"
+            );
+        }
         for property in &category_record.properties {
             if property.name.is_some() {
                 assert!(
@@ -352,6 +364,10 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
             saw_synthetic_category,
             "expected synthetic category recovery when the fixture lacks __objc_catlist"
         );
+        assert!(
+            saw_synthetic_category_with_list_pointer,
+            "expected at least one synthetic category with list-backed protocol/property metadata"
+        );
     }
 
     let mut saw_class_with_name_source = false;
@@ -393,6 +409,37 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
     assert!(
         saw_selector_with_source,
         "expected resolved selectors in structured class method records"
+    );
+}
+
+#[test]
+fn malformed_objc_protocol_list_fixture_stays_bounded() {
+    let path = fixture("malformed-objc-protocol-list");
+    if !path.exists() {
+        eprintln!("malformed-objc-protocol-list fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load malformed objc fixture");
+    assert!(
+        !image.objc().categories.is_empty(),
+        "malformed objc list fixture should still parse structural category metadata"
+    );
+    assert!(
+        image.objc()
+            .categories
+            .iter()
+            .filter_map(|record| record.protocol_list_pointer)
+            .count()
+            > 0,
+        "malformed objc list fixture should still expose protocol-backed categories"
+    );
+    assert!(
+        image
+            .objc()
+            .categories
+            .iter()
+            .all(|record| record.adopted_protocols.len() <= 128),
+        "malformed objc list parsing must stay bounded"
     );
 }
 

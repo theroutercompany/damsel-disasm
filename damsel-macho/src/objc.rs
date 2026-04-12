@@ -112,6 +112,7 @@ struct ObjcSymbolMaps {
     protocol_names: BTreeMap<u64, String>,
     category_hints_by_list_pointer: BTreeMap<u64, ObjcCategorySymbolHint>,
     category_method_symbols: Vec<ObjcCategoryMethodSymbol>,
+    category_list_symbols: Vec<ObjcCategoryListSymbol>,
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +130,20 @@ struct ObjcCategoryMethodSymbol {
     is_class_method: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObjcCategoryListKind {
+    Properties,
+    Protocols,
+}
+
+#[derive(Debug, Clone)]
+struct ObjcCategoryListSymbol {
+    class_name: String,
+    category_name: String,
+    pointer: u64,
+    kind: ObjcCategoryListKind,
+}
+
 fn collect_objc_symbol_maps(symbols: &[Symbol]) -> ObjcSymbolMaps {
     let mut maps = ObjcSymbolMaps::default();
     for symbol in symbols {
@@ -141,6 +156,12 @@ fn collect_objc_symbol_maps(symbols: &[Symbol]) -> ObjcSymbolMaps {
             maps.protocol_names.insert(symbol.address, name.to_string());
         } else if let Some(name) = symbol.name.strip_prefix("_OBJC_PROTOCOL_$_") {
             maps.protocol_names.insert(symbol.address, name.to_string());
+        } else if let Some(hints) = parse_category_list_symbol(&symbol.name, symbol.address) {
+            maps.category_list_symbols.extend(hints);
+            if let Some(hint) = parse_category_hint_symbol(&symbol.name) {
+                maps.category_hints_by_list_pointer
+                    .insert(symbol.address, hint);
+            }
         } else if let Some(hint) = parse_category_hint_symbol(&symbol.name) {
             maps.category_hints_by_list_pointer
                 .insert(symbol.address, hint);
@@ -183,6 +204,40 @@ fn parse_category_hint_rest(value: &str) -> Option<(String, String)> {
         return None;
     }
     Some((class_name.to_string(), category_name.to_string()))
+}
+
+fn parse_category_list_symbol(
+    symbol_name: &str,
+    pointer: u64,
+) -> Option<Vec<ObjcCategoryListSymbol>> {
+    let (kind, rest) = if let Some(rest) = symbol_name.strip_prefix("__OBJC_$_PROP_LIST_") {
+        (ObjcCategoryListKind::Properties, rest)
+    } else if let Some(rest) = symbol_name.strip_prefix("__OBJC_CLASS_PROTOCOLS_$_") {
+        (ObjcCategoryListKind::Protocols, rest)
+    } else {
+        return None;
+    };
+    let (class_name, category_names) = parse_category_hint_rest(rest)?;
+    let category_names = category_names
+        .split('|')
+        .map(str::trim)
+        .filter(|name| is_plausible_objc_type_name(name))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if category_names.is_empty() {
+        return None;
+    }
+    Some(
+        category_names
+            .into_iter()
+            .map(|category_name| ObjcCategoryListSymbol {
+                class_name: class_name.clone(),
+                category_name,
+                pointer,
+                kind,
+            })
+            .collect(),
+    )
 }
 
 fn parse_category_method_symbol(
@@ -708,6 +763,8 @@ fn collect_category_records(
                 class_pointer,
                 class_name,
                 class_name_source,
+                property_list_pointer,
+                protocol_list_pointer,
                 methods: read_method_list_at_pointer(
                     slices,
                     method_list_pointer,
@@ -741,7 +798,12 @@ fn collect_category_records(
     }
 
     if records.is_empty() {
-        records.extend(collect_synthetic_category_records(classes, symbol_maps));
+        records.extend(collect_synthetic_category_records(
+            slices,
+            image_base,
+            classes,
+            symbol_maps,
+        ));
     }
 
     records.sort_by_key(|record| record.pointer);
@@ -750,6 +812,8 @@ fn collect_category_records(
 }
 
 fn collect_synthetic_category_records(
+    slices: &[SectionSlice<'_>],
+    image_base: Option<u64>,
     classes: &[ObjcClassRecord],
     symbol_maps: &ObjcSymbolMaps,
 ) -> Vec<ObjcCategoryRecord> {
@@ -764,6 +828,20 @@ fn collect_synthetic_category_records(
             })
         })
         .collect::<BTreeMap<_, _>>();
+    let mut list_lookup =
+        BTreeMap::<(String, String), (Option<u64>, Option<u64>)>::new();
+    for list_symbol in &symbol_maps.category_list_symbols {
+        let entry = list_lookup
+            .entry((
+                list_symbol.class_name.clone(),
+                list_symbol.category_name.clone(),
+            ))
+            .or_insert((None, None));
+        match list_symbol.kind {
+            ObjcCategoryListKind::Properties => entry.0 = Some(list_symbol.pointer),
+            ObjcCategoryListKind::Protocols => entry.1 = Some(list_symbol.pointer),
+        }
+    }
     let mut grouped = BTreeMap::<(String, String), Vec<&ObjcCategoryMethodSymbol>>::new();
     for symbol in &symbol_maps.category_method_symbols {
         grouped
@@ -781,6 +859,10 @@ fn collect_synthetic_category_records(
                 .get(&class_name)
                 .cloned()
                 .unwrap_or((None, ObjcNameSource::LegacyPool));
+            let (property_list_pointer, protocol_list_pointer) = list_lookup
+                .get(&(class_name.clone(), category_name.clone()))
+                .copied()
+                .unwrap_or((None, None));
             let mut methods = Vec::new();
             let mut class_methods = Vec::new();
             for symbol in symbols {
@@ -807,10 +889,22 @@ fn collect_synthetic_category_records(
                 class_pointer,
                 class_name: Some(class_name),
                 class_name_source,
+                property_list_pointer,
+                protocol_list_pointer,
                 methods,
                 class_methods,
-                properties: Vec::new(),
-                adopted_protocols: Vec::new(),
+                properties: read_property_list_at_pointer(
+                    slices,
+                    property_list_pointer,
+                    pointer,
+                    image_base,
+                ),
+                adopted_protocols: read_protocol_name_list(
+                    slices,
+                    protocol_list_pointer,
+                    image_base,
+                    symbol_maps,
+                ),
             })
         })
         .collect()

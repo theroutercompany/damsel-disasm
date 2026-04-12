@@ -3,8 +3,8 @@ use damsel_core::{
     Annotation, BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyRequest,
     DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
     DisassemblyTarget, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
-    Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource, Reference, Relocation,
-    Section, StubHelperEntry, Symbol,
+    IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
+    Reference, Relocation, Section, StubHelperEntry, Symbol,
 };
 use std::collections::BTreeMap;
 
@@ -457,10 +457,7 @@ fn annotate_instructions(
                     {
                         push_derived(
                             &mut derived,
-                            DerivedAnnotation::IndirectControlFlow {
-                                kind,
-                                via,
-                            },
+                            DerivedAnnotation::IndirectControlFlow { kind, via },
                         );
                     }
                 }
@@ -475,10 +472,7 @@ fn annotate_instructions(
                     {
                         push_derived(
                             &mut derived,
-                            DerivedAnnotation::IndirectControlFlow {
-                                kind,
-                                via,
-                            },
+                            DerivedAnnotation::IndirectControlFlow { kind, via },
                         );
                     }
                 }
@@ -716,6 +710,21 @@ fn synthesize_analysis_references(
             destination_updated = true;
         }
 
+        if let Some((register, value, source)) =
+            synthesize_simple_register_value(instruction, &known_values)
+        {
+            let value = normalize_value_for_write(&register, value);
+            let recovered = RecoveredValue {
+                register: register.clone(),
+                value,
+                kind: classify_recovered_value(image, value, RecoveredValueKind::Literal),
+                source,
+            };
+            store_known_value(&mut known_values, recovered.clone());
+            push_recovered_value(&mut instruction.recovered_values, recovered);
+            destination_updated = true;
+        }
+
         let add_inputs = add_immediate_inputs(instruction);
         if let Some((dest, base_register, displacement)) = add_inputs {
             if let Some(base) = read_known_value(&known_values, base_register.as_str()) {
@@ -763,33 +772,59 @@ fn synthesize_analysis_references(
         let memory_inputs = memory_base_index_displacement(instruction);
         if let Some((base_register, index_register, displacement)) = memory_inputs {
             if let Some(base) = read_known_value(&known_values, base_register.as_str()) {
-                if let Some(target) = add_signed(base.value, displacement) {
+                if let Some(base_target) = add_signed(base.value, displacement) {
+                    let element_size = jump_table_element_size(instruction);
+                    let effective_target = resolve_memory_effective_address(
+                        base_target,
+                        index_register.as_deref(),
+                        &known_values,
+                        element_size,
+                    );
+                    let reference_target = effective_target.unwrap_or(base_target);
                     push_reference_if_missing(
                         &mut instruction.references,
-                        Reference::Data { target },
+                        Reference::Data {
+                            target: reference_target,
+                        },
                     );
                     if let Some(index_register) = index_register.clone() {
-                        let element_size = jump_table_element_size(instruction);
                         if let Some(jump_key) = destination
                             .as_deref()
                             .or(Some(base_register.as_str()))
                             .and_then(canonical_state_key)
                         {
-                            jump_table_sources
-                                .insert(jump_key, (target, index_register.clone(), element_size));
+                            jump_table_sources.insert(
+                                jump_key,
+                                (base_target, index_register.clone(), element_size),
+                            );
                         }
                     }
                     if let Some(dest) = destination.as_ref() {
                         if lower.starts_with("ldr") || lower.starts_with("ldur") {
-                            let target = normalize_value_for_write(dest, target);
+                            let loaded_value = effective_target.and_then(|slot_address| {
+                                resolve_loaded_pointer_value(
+                                    image,
+                                    slot_address,
+                                    lower.as_str(),
+                                    dest.as_str(),
+                                )
+                            });
+                            let value = loaded_value
+                                .as_ref()
+                                .map(|(resolved, _)| *resolved)
+                                .unwrap_or(reference_target);
                             let recovered = RecoveredValue {
                                 register: dest.clone(),
-                                value: target,
-                                kind: classify_recovered_value(
-                                    image,
-                                    target,
-                                    RecoveredValueKind::Address,
-                                ),
+                                value: normalize_value_for_write(dest, value),
+                                kind: loaded_value
+                                    .map(|(_, kind)| kind)
+                                    .unwrap_or_else(|| {
+                                        classify_recovered_value(
+                                            image,
+                                            value,
+                                            RecoveredValueKind::Address,
+                                        )
+                                    }),
                                 source: RecoveredValueSource::AdrpLoad,
                             };
                             store_known_value(&mut known_values, recovered.clone());
@@ -801,7 +836,7 @@ fn synthesize_analysis_references(
                         push_annotation(
                             &mut instruction.annotations,
                             Annotation::Note(format!(
-                                "memory synthesis {} + {displacement:#x} -> {target:#x}",
+                                "memory synthesis {} + {displacement:#x} -> {reference_target:#x}",
                                 base_register
                             )),
                         );
@@ -824,7 +859,39 @@ fn synthesize_analysis_references(
             };
             push_reference_if_missing(&mut instruction.references, indirect_reference);
 
-            if let Some(target) = read_known_value(&known_values, register.as_str()).map(|value| value.value) {
+            let jump_table_source = canonical_state_key(&register)
+                .and_then(|key| jump_table_sources.get(&key).cloned());
+            let mut resolved_target = read_known_value(&known_values, register.as_str())
+                .map(|value| (value.value, indirect_target_reason(image, value.value)));
+
+            if let Some((base, index_register, element_size)) = jump_table_source.clone()
+                && let Some(index_value) = read_known_value(&known_values, index_register.as_str())
+                    .map(|value| value.value)
+            {
+                if let Some((slot_address, target, reason)) =
+                    resolve_table_slot_target(image, base, index_value, element_size)
+                {
+                    push_reference_if_missing(
+                        &mut instruction.references,
+                        Reference::Data {
+                            target: slot_address,
+                        },
+                    );
+                    resolved_target = Some((target, reason));
+                }
+                if include_annotations {
+                    push_annotation(
+                        &mut instruction.annotations,
+                        Annotation::JumpTableCandidate {
+                            base,
+                            index_register,
+                            element_size,
+                        },
+                    );
+                }
+            }
+
+            if let Some((target, reason)) = resolved_target {
                 let resolved_reference = if is_call_mnemonic(&lower) {
                     Reference::Call { target }
                 } else {
@@ -844,7 +911,7 @@ fn synthesize_analysis_references(
                         Annotation::IndirectTargetResolved {
                             via: register.clone(),
                             target,
-                            reason: indirect_target_reason(image, target),
+                            reason,
                         },
                     );
                 }
@@ -854,19 +921,6 @@ fn synthesize_analysis_references(
                     Annotation::IndirectControlFlow {
                         kind: indirect_kind.clone(),
                         via: register.clone(),
-                    },
-                );
-            }
-            if include_annotations
-                && let Some((base, index_register, element_size)) = canonical_state_key(&register)
-                    .and_then(|key| jump_table_sources.get(&key).cloned())
-            {
-                push_annotation(
-                    &mut instruction.annotations,
-                    Annotation::JumpTableCandidate {
-                        base,
-                        index_register,
-                        element_size,
                     },
                 );
             }
@@ -1139,6 +1193,52 @@ fn synthesize_mov_wide_value(
     Some((destination, value))
 }
 
+fn synthesize_simple_register_value(
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<(String, u64, RecoveredValueSource)> {
+    let lower = instruction.mnemonic.to_ascii_lowercase();
+    match lower.as_str() {
+        "mov" => {
+            let destination = match instruction.operands.first()? {
+                Operand::Register(register) => register.clone(),
+                _ => return None,
+            };
+            let source = match instruction.operands.get(1)? {
+                Operand::Register(register) => register,
+                _ => return None,
+            };
+            Some((
+                destination,
+                read_known_value(known_values, source)?.value,
+                RecoveredValueSource::Other,
+            ))
+        }
+        "and" => {
+            let destination = match instruction.operands.first()? {
+                Operand::Register(register) => register.clone(),
+                _ => return None,
+            };
+            let source = match instruction.operands.get(1)? {
+                Operand::Register(register) => register,
+                _ => return None,
+            };
+            let mask = match instruction.operands.get(2)? {
+                Operand::ImmediateUnsigned(value) => *value,
+                Operand::ImmediateSigned(value) if *value >= 0 => *value as u64,
+                Operand::Label(value) => *value,
+                _ => return None,
+            };
+            Some((
+                destination,
+                read_known_value(known_values, source)?.value & mask,
+                RecoveredValueSource::Other,
+            ))
+        }
+        _ => None,
+    }
+}
+
 fn parse_shift_bits(operand: &Operand) -> Option<u32> {
     let shift = match operand {
         Operand::ImmediateUnsigned(value) => u32::try_from(*value).ok()?,
@@ -1162,6 +1262,49 @@ fn parse_shift_from_text(text: &str) -> Option<u32> {
         return None;
     }
     digits.parse::<u32>().ok()
+}
+
+fn resolve_memory_effective_address(
+    base_target: u64,
+    index_register: Option<&str>,
+    known_values: &BTreeMap<String, RecoveredValue>,
+    element_size: u8,
+) -> Option<u64> {
+    let Some(index_register) = index_register else {
+        return Some(base_target);
+    };
+    let index = read_known_value(known_values, index_register)?.value;
+    let slot_offset = index.checked_mul(u64::from(element_size))?;
+    base_target.checked_add(slot_offset)
+}
+
+fn resolve_loaded_pointer_value(
+    image: &BinaryImage,
+    slot_address: u64,
+    mnemonic: &str,
+    destination: &str,
+) -> Option<(u64, RecoveredValueKind)> {
+    if mnemonic.starts_with("ldrsw") || destination.starts_with('w') {
+        return None;
+    }
+    if image.dyld().bindings_at_address(slot_address).next().is_some()
+        || image.dyld().stub_for_pointer_address(slot_address).is_some()
+    {
+        return None;
+    }
+    let (_, bytes) = image.bytes_for_virtual_range(slot_address, 8)?;
+    let raw = u64::from_le_bytes(bytes.try_into().ok()?);
+    if raw == 0 {
+        return None;
+    }
+    if image.dyld().helper_for_address(raw).is_some() {
+        return Some((raw, RecoveredValueKind::Address));
+    }
+    let kind = classify_recovered_value(image, raw, RecoveredValueKind::Address);
+    if matches!(kind, RecoveredValueKind::Address | RecoveredValueKind::CString) {
+        return None;
+    }
+    Some((raw, kind))
 }
 
 fn synthesize_literal_load(
@@ -1205,11 +1348,9 @@ fn classify_recovered_value(
     if image.dyld().export_by_address(value).is_some() {
         return RecoveredValueKind::ExportAddress;
     }
-    if image
-        .symbols()
-        .iter()
-        .any(|symbol| symbol.address == value && matches!(symbol.kind, damsel_core::SymbolKind::Text))
-    {
+    if image.symbols().iter().any(|symbol| {
+        symbol.address == value && matches!(symbol.kind, damsel_core::SymbolKind::Text)
+    }) {
         return RecoveredValueKind::FunctionPointer;
     }
     if image.objc_selector_name_at_address(value).is_some() {
@@ -1230,24 +1371,74 @@ fn classify_recovered_value(
     fallback
 }
 
-fn indirect_target_reason(image: &BinaryImage, target: u64) -> String {
+fn indirect_target_reason(image: &BinaryImage, target: u64) -> IndirectTargetReason {
     if image.dyld().helper_for_address(target).is_some() {
-        "helper-target".to_string()
+        IndirectTargetReason::HelperTarget
     } else if image.dyld().stub_for_address(target).is_some() {
-        "stub-target".to_string()
+        IndirectTargetReason::StubTarget
     } else if image.dyld().export_by_address(target).is_some() {
-        "export-address".to_string()
+        IndirectTargetReason::ExportAddress
     } else if image.dyld().bindings_at_address(target).next().is_some() {
-        "import-pointer".to_string()
-    } else if image
-        .symbols()
-        .iter()
-        .any(|symbol| symbol.address == target && matches!(symbol.kind, damsel_core::SymbolKind::Text))
-    {
-        "function-pointer".to_string()
+        IndirectTargetReason::ImportPointer
+    } else if image.symbols().iter().any(|symbol| {
+        symbol.address == target && matches!(symbol.kind, damsel_core::SymbolKind::Text)
+    }) {
+        IndirectTargetReason::FunctionPointer
     } else {
-        "register-state".to_string()
+        IndirectTargetReason::RegisterState
     }
+}
+
+fn is_executable_target(image: &BinaryImage, target: u64) -> bool {
+    image
+        .containing_section(target)
+        .map(|section| section.executable)
+        .unwrap_or(false)
+}
+
+fn resolve_table_slot_target(
+    image: &BinaryImage,
+    base: u64,
+    index_value: u64,
+    element_size: u8,
+) -> Option<(u64, u64, IndirectTargetReason)> {
+    if element_size != 4 && element_size != 8 {
+        return None;
+    }
+    if index_value > 0x1000 {
+        return None;
+    }
+    let slot_offset = index_value.checked_mul(u64::from(element_size))?;
+    let slot_address = base.checked_add(slot_offset)?;
+    let (_, bytes) = image.bytes_for_virtual_range(slot_address, usize::from(element_size))?;
+
+    if element_size == 8 {
+        let raw = u64::from_le_bytes(bytes.try_into().ok()?);
+        if is_executable_target(image, raw) || image.dyld().export_by_address(raw).is_some() {
+            return Some((slot_address, raw, indirect_target_reason(image, raw)));
+        }
+        return None;
+    }
+
+    let raw_u32 = u32::from_le_bytes(bytes.try_into().ok()?);
+    let absolute = u64::from(raw_u32);
+    if is_executable_target(image, absolute) || image.dyld().export_by_address(absolute).is_some() {
+        return Some((slot_address, absolute, indirect_target_reason(image, absolute)));
+    }
+
+    let relative = i32::from_le_bytes(raw_u32.to_le_bytes()) as i64;
+    let relative_target = add_signed(base, relative)?;
+    if is_executable_target(image, relative_target)
+        || image.dyld().export_by_address(relative_target).is_some()
+    {
+        return Some((
+            slot_address,
+            relative_target,
+            indirect_target_reason(image, relative_target),
+        ));
+    }
+
+    None
 }
 
 fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
@@ -1556,22 +1747,18 @@ fn resolve_helper_binding<'a>(
     }
 
     match (&helper.dylib, &helper.name) {
-        (Some(dylib), Some(name)) => image
-            .dyld()
-            .import_bindings
-            .iter()
-            .find(|binding| {
+        (Some(dylib), Some(name)) => {
+            let mut matches = image.dyld().import_bindings.iter().filter(|binding| {
                 binding.dylib == *dylib
                     && binding.name == *name
                     && binding.binding_kind == ImportBindingKind::Lazy
-            })
-            .or_else(|| {
-                image
-                    .dyld()
-                    .import_bindings
-                    .iter()
-                    .find(|binding| binding.dylib == *dylib && binding.name == *name)
-            }),
+            });
+            let first = matches.next()?;
+            if matches.next().is_some() {
+                return None;
+            }
+            Some(first)
+        }
         _ => None,
     }
 }
@@ -1691,8 +1878,8 @@ impl DerivedAnnotation {
 mod tests {
     use super::*;
     use damsel_core::{
-        Architecture, BinaryFormat, BinaryImage, Endianness, ExportFlags, ExportKind,
-        ObjcMetadata, Platform, Section, SliceInfo, Symbol, SymbolKind,
+        Architecture, BinaryFormat, BinaryImage, Endianness, ExportFlags, ExportKind, ObjcMetadata,
+        Platform, Section, SliceInfo, Symbol, SymbolKind,
     };
     use std::sync::Arc;
 
@@ -1740,7 +1927,7 @@ mod tests {
                     name: "_exported".to_string(),
                     address: Some(0x2000),
                     raw_flags: "Regular".to_string(),
-                    flags: ExportFlags::parse("Regular"),
+                    flags: ExportFlags::from_bits(0),
                     kind: ExportKind::Regular,
                     reexport_target: None,
                     resolver_target: None,
@@ -1782,9 +1969,11 @@ mod tests {
 
         synthesize_analysis_references(&image, &mut instructions, true);
 
-        assert!(instructions[1]
-            .references
-            .contains(&Reference::Call { target: 0x1234 }));
+        assert!(
+            instructions[1]
+                .references
+                .contains(&Reference::Call { target: 0x1234 })
+        );
     }
 
     #[test]
@@ -1814,9 +2003,11 @@ mod tests {
 
         synthesize_analysis_references(&image, &mut instructions, true);
 
-        assert!(instructions[2]
-            .references
-            .contains(&Reference::Call { target: 0x1238 }));
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Call { target: 0x1238 })
+        );
     }
 
     #[test]
@@ -1824,11 +2015,7 @@ mod tests {
         let image = synthetic_image();
         let mut instructions = vec![DecodedInstruction {
             references: vec![Reference::Data { target: 0x2000 }],
-            ..instruction(
-                0x1000,
-                "ldr",
-                vec![Operand::Register("x0".to_string())],
-            )
+            ..instruction(0x1000, "ldr", vec![Operand::Register("x0".to_string())])
         }];
 
         synthesize_analysis_references(&image, &mut instructions, true);
@@ -1843,11 +2030,7 @@ mod tests {
         let image = synthetic_image();
         let mut instructions = vec![DecodedInstruction {
             references: vec![Reference::Data { target: 0x3000 }],
-            ..instruction(
-                0x1000,
-                "ldr",
-                vec![Operand::Register("x0".to_string())],
-            )
+            ..instruction(0x1000, "ldr", vec![Operand::Register("x0".to_string())])
         }];
 
         synthesize_analysis_references(&image, &mut instructions, true);

@@ -284,6 +284,8 @@ fn objc_category_provenance_is_constructible() {
         class_pointer: Some(0x5100),
         class_name: Some("Greeter".to_string()),
         class_name_source: ObjcNameSource::PointerTable,
+        property_list_pointer: Some(0x5200),
+        protocol_list_pointer: Some(0x5300),
         methods: Vec::new(),
         class_methods: Vec::new(),
         properties: Vec::new(),
@@ -328,6 +330,8 @@ fn objc_records_are_queryable_by_pointer_and_selector_source() {
             class_pointer: Some(0x6000),
             class_name: Some("Greeter".to_string()),
             class_name_source: ObjcNameSource::PointerTable,
+            property_list_pointer: None,
+            protocol_list_pointer: Some(0x6100),
             methods: Vec::new(),
             class_methods: Vec::new(),
             properties: Vec::new(),
@@ -353,6 +357,13 @@ fn objc_records_are_queryable_by_pointer_and_selector_source() {
             .category_by_class_and_name("Greeter", "Excited")
             .and_then(|record| record.name.as_deref()),
         Some("Excited")
+    );
+    assert_eq!(
+        metadata
+            .categories_for_class("Greeter")
+            .map(|record| record.name.as_deref().unwrap_or("-"))
+            .collect::<Vec<_>>(),
+        vec!["Excited"]
     );
     assert_eq!(
         metadata
@@ -437,7 +448,7 @@ fn recovered_value_and_export_kind_variants_are_constructible() {
         name: "_main".to_string(),
         address: Some(0x1000),
         raw_flags: "regular".to_string(),
-        flags: damsel_core::ExportFlags::parse("regular"),
+        flags: damsel_core::ExportFlags::from_bits(0),
         kind: damsel_core::ExportKind::Regular,
         reexport_target: None,
         resolver_target: None,
@@ -452,7 +463,9 @@ fn recovered_value_and_export_kind_variants_are_constructible() {
         damsel_core::RecoveredValueKind::FunctionPointer
     ));
     assert!(matches!(export.kind, damsel_core::ExportKind::Regular));
-    assert_eq!(export.flags_typed().as_str(), "regular");
+    assert_eq!(export.flags_typed().raw_bits, 0);
+    assert_eq!(export.flags_typed().kind_bits, 0);
+    assert!(!export.flags_typed().is_weak_definition);
 }
 
 #[test]
@@ -462,7 +475,7 @@ fn dyld_export_lookup_helpers_are_queryable() {
         name: "_main".to_string(),
         address: Some(0x1000),
         raw_flags: "Regular".to_string(),
-        flags: damsel_core::ExportFlags::parse("Regular"),
+        flags: damsel_core::ExportFlags::from_bits(0),
         kind: damsel_core::ExportKind::Regular,
         reexport_target: Some(("/usr/lib/libSystem.B.dylib".to_string(), Some("_main".to_string()))),
         resolver_target: Some(0x2000),

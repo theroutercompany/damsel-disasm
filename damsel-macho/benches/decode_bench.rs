@@ -134,6 +134,20 @@ fn decode_benchmarks(criterion: &mut Criterion) {
             kind: ScenarioKind::ValueFlow(true),
         },
         Scenario {
+            name: "indirect_dispatch::_dispatch_second_slot:value_flow_on",
+            fixture: "indirect-dispatch",
+            target: DisassemblyTarget::Symbol("_dispatch_second_slot".to_string()),
+            max_instructions: 32,
+            kind: ScenarioKind::ValueFlow(true),
+        },
+        Scenario {
+            name: "indirect_dispatch::_load_export_target:value_flow_on",
+            fixture: "indirect-dispatch",
+            target: DisassemblyTarget::Symbol("_load_export_target".to_string()),
+            max_instructions: 32,
+            kind: ScenarioKind::ValueFlow(true),
+        },
+        Scenario {
             name: "duplicate_symbol_ordinal::__text",
             fixture: "duplicate-symbol-ordinal",
             target: DisassemblyTarget::Section("__text".to_string()),

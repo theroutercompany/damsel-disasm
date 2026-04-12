@@ -25,6 +25,28 @@ fn export_kinds_fixture_exposes_typed_export_kinds_when_present() {
     assert!(exports
         .iter()
         .any(|export| matches!(export.kind, ExportKind::ThreadLocal)));
+    assert!(exports
+        .iter()
+        .any(|export| matches!(export.kind, ExportKind::Absolute)));
+
+    let absolute = exports
+        .iter()
+        .find(|export| export.name == "_exported_absolute")
+        .expect("absolute export present");
+    assert_eq!(absolute.address, Some(0x1234));
+    assert!(absolute.flags.is_absolute);
+
+    let weak = exports
+        .iter()
+        .find(|export| export.name == "_exported_weak")
+        .expect("weak export present");
+    assert!(weak.flags.is_weak_definition);
+
+    let thread_local = exports
+        .iter()
+        .find(|export| export.name == "_exported_tls")
+        .expect("thread-local export present");
+    assert!(thread_local.flags.is_thread_local);
 
     for export in exports {
         if let Some(address) = export.address {

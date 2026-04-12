@@ -163,6 +163,27 @@ impl From<DyldExportKindArg> for output::ExportKindFilter {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+enum DyldExportFlagArg {
+    WeakDefinition,
+    Reexport,
+    StubAndResolver,
+    ThreadLocal,
+    Absolute,
+}
+
+impl From<DyldExportFlagArg> for output::ExportFlagFilter {
+    fn from(value: DyldExportFlagArg) -> Self {
+        match value {
+            DyldExportFlagArg::WeakDefinition => output::ExportFlagFilter::WeakDefinition,
+            DyldExportFlagArg::Reexport => output::ExportFlagFilter::Reexport,
+            DyldExportFlagArg::StubAndResolver => output::ExportFlagFilter::StubAndResolver,
+            DyldExportFlagArg::ThreadLocal => output::ExportFlagFilter::ThreadLocal,
+            DyldExportFlagArg::Absolute => output::ExportFlagFilter::Absolute,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum ObjcDetailArg {
     Summary,
     Classes,
@@ -321,6 +342,8 @@ enum Command {
         stub_kind: Option<DyldStubKindArg>,
         #[arg(long, value_enum)]
         export_kind: Option<DyldExportKindArg>,
+        #[arg(long, value_enum)]
+        export_flag: Option<DyldExportFlagArg>,
         #[arg(long)]
         ordinal: Option<u32>,
         #[arg(long, value_enum)]
@@ -554,6 +577,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             binding_kind,
             stub_kind,
             export_kind,
+            export_flag,
             ordinal,
             sort,
         } => {
@@ -575,6 +599,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
                     binding_kind_filter: None,
                     stub_kind_filter: None,
                     export_kind_filter: None,
+                    export_flag_filter: None,
                     ordinal_filter: None,
                     sort: None,
                 }
@@ -587,6 +612,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             view_options.binding_kind_filter = binding_kind.map(Into::into);
             view_options.stub_kind_filter = stub_kind.map(Into::into);
             view_options.export_kind_filter = export_kind.map(Into::into);
+            view_options.export_flag_filter = export_flag.map(Into::into);
             view_options.ordinal_filter = ordinal;
             view_options.sort = sort.map(Into::into);
             output::print_dyld(&image, &view_options, &output_settings);

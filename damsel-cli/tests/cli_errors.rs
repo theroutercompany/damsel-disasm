@@ -187,6 +187,22 @@ fn dyld_rejects_invalid_export_kind_value() {
 }
 
 #[test]
+fn dyld_rejects_invalid_export_flag_value() {
+    let path = fixture("import-lazy");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "dyld",
+            path.to_str().expect("utf8 path"),
+            "--export-flag",
+            "bogus",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
+}
+
+#[test]
 fn dyld_rejects_invalid_source_value() {
     let path = fixture("import-lazy");
     Command::cargo_bin("damsel-cli")

@@ -221,10 +221,10 @@ fn display_for_indirect_target_resolved_annotation_is_stable() {
     let annotation = Annotation::IndirectTargetResolved {
         via: "x16".to_string(),
         target: 0x2000,
-        reason: "helper".to_string(),
+        reason: damsel_core::IndirectTargetReason::HelperTarget,
     };
     assert_eq!(
         annotation.to_string(),
-        "indirect-target via x16 -> 0x2000 (helper)"
+        "indirect-target via x16 -> 0x2000 (helper-target)"
     );
 }

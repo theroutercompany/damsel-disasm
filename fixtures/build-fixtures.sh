@@ -16,8 +16,9 @@ b200d6d6587af820c258aad12eed1b482d335a8f92f44972e08b0c4f1277d072 x86_64-only-hel
 bec5bb22e25742ac9368876de4a94575d14e91232fbdd3a1ba655d29cb9b550b import-rich
 b34622e74db24f3829cb2bda8040e80c02eff8fe479339bd654be438a7a701bc import-lazy
 4cece37e15eaed6ebbc8a8961f8d2e000e0eadf3aa43fc5c9b6ebf3aad259f7f semantic-switch
-37c5b3410915429b00209ec5821ba156988e937c2126e5b6b93be266cc43a16f export-kinds
-dce3105dcd21070bda8c77658f6b4f965da94072f09d979141dabbf5be14a5f8 indirect-dispatch
+678eb57e8b45c8be5904a2c1301fa2b6315252e68a7fe579ada23ffcfdb0ec1e export-kinds
+5c459bac25fae382836bee6ff5a0ecde1de8f9594dc7fa7d7be65cef3ff58fc8 indirect-dispatch
+3ad866e5b98bbaebee790d46d1963319f38d6cc96aeda4e1e3f2f305abb2736c malformed-objc-protocol-list
 5d46560896550803303f6f92027d1c8e622c18761e20cc1b39d7a64b57e2b5dc malformed-dysymtab-indirect
 fd33e4f22bf94f6f75b9bb33e2b99d5c3888a1a7fdc907dd13638f2aba816b66 malformed-truncated
 61ac976ddaf21d6d427c202dfab484a9557ebe7fbb04509443726abc9e95de8d malformed-stub-helper-size
@@ -151,6 +152,11 @@ build_fixtures() {
     -mmacosx-version-min=13.0 \
     -O2 \
     "$SRC/export-kinds.c" \
+    "$SRC/export-absolute.s" \
+    -Wl,-exported_symbol,_exported_regular \
+    -Wl,-exported_symbol,_exported_weak \
+    -Wl,-exported_symbol,_exported_tls \
+    -Wl,-exported_symbol,_exported_absolute \
     -o "$BIN/export-kinds"
 
   "$CLANG" \
@@ -158,6 +164,8 @@ build_fixtures() {
     -isysroot "$SDKROOT" \
     -mmacosx-version-min=13.0 \
     -O2 \
+    -Wl,-no_fixup_chains \
+    -Wl,-exported_symbol,_exported_gamma \
     "$SRC/indirect-dispatch.c" \
     -o "$BIN/indirect-dispatch"
 
@@ -168,6 +176,55 @@ build_fixtures() {
     -framework Foundation \
     "$SRC/objc-sample.m" \
     -o "$BIN/objc-sample"
+
+  ROOT_BIN="$BIN" python3 - <<'PY'
+from pathlib import Path
+import os
+import struct
+import subprocess
+
+MH_MAGIC_64 = 0xfeedfacf
+LC_SEGMENT_64 = 0x19
+
+root = Path(os.environ["ROOT_BIN"])
+src = root / "objc-sample"
+out = root / "malformed-objc-protocol-list"
+data = bytearray(src.read_bytes())
+
+def find_symbol_address(path: Path, name: str) -> int:
+    output = subprocess.check_output(["nm", "-a", str(path)], text=True)
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[-1] == name:
+            return int(parts[0], 16)
+    raise SystemExit(f"missing symbol: {name}")
+
+def va_to_file_offset(buf: bytearray, address: int) -> int:
+    magic, = struct.unpack_from("<I", buf, 0)
+    if magic != MH_MAGIC_64:
+        raise SystemExit("unexpected Mach-O magic")
+    ncmds, = struct.unpack_from("<I", buf, 16)
+    offset = 32
+    for _ in range(ncmds):
+        cmd, cmdsize = struct.unpack_from("<II", buf, offset)
+        if cmd == LC_SEGMENT_64:
+            nsects, = struct.unpack_from("<I", buf, offset + 64)
+            section_offset = offset + 72
+            for _ in range(nsects):
+                addr, size = struct.unpack_from("<QQ", buf, section_offset + 32)
+                file_offset, = struct.unpack_from("<I", buf, section_offset + 48)
+                if addr <= address < addr + size:
+                    return file_offset + (address - addr)
+                section_offset += 80
+        offset += cmdsize
+    raise SystemExit(f"address not mapped: {address:#x}")
+
+symbol = "__OBJC_CLASS_PROTOCOLS_$_Speaker(Diagnostics)"
+symbol_address = find_symbol_address(src, symbol)
+protocol_list_offset = va_to_file_offset(data, symbol_address)
+struct.pack_into("<Q", data, protocol_list_offset, 0x200)
+out.write_bytes(data)
+PY
 
   dup_tmp="$BIN/.dup-build"
   rm -rf "$dup_tmp"

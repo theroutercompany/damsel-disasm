@@ -378,9 +378,10 @@ fn disasm_emits_indirect_target_resolved_for_semantic_fixture_when_present() {
     };
     let result = disassemble_v2(&image, &request).expect("disassemble semantic fixture");
     assert!(result.instructions.iter().any(|instruction| {
-        instruction.annotations.iter().any(|annotation| {
-            matches!(annotation, Annotation::IndirectTargetResolved { .. })
-        })
+        instruction
+            .annotations
+            .iter()
+            .any(|annotation| matches!(annotation, Annotation::IndirectTargetResolved { .. }))
     }));
 }
 
@@ -403,9 +404,73 @@ fn disasm_emits_indirect_target_annotations_for_indirect_dispatch_fixture_when_p
     };
     let result = disassemble_v2(&image, &request).expect("disassemble indirect-dispatch fixture");
     assert!(result.instructions.iter().any(|instruction| {
+        instruction
+            .annotations
+            .iter()
+            .any(|annotation| matches!(annotation, Annotation::IndirectTargetResolved { .. }))
+    }));
+}
+
+#[test]
+fn disasm_resolves_function_pointer_table_slot_for_dispatch_fixture() {
+    let path = fixture("indirect-dispatch");
+    if !path.exists() {
+        eprintln!("indirect-dispatch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load indirect-dispatch fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Symbol("_dispatch_second_slot".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(32),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble indirect-dispatch symbol");
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction
+            .recovered_values
+            .iter()
+            .any(|value| value.kind == RecoveredValueKind::FunctionPointer)
+    }));
+    assert!(result.instructions.iter().any(|instruction| {
         instruction.annotations.iter().any(|annotation| {
-            matches!(annotation, Annotation::IndirectTargetResolved { .. })
+            matches!(
+                annotation,
+                Annotation::IndirectTargetResolved {
+                    reason: damsel_core::IndirectTargetReason::FunctionPointer,
+                    ..
+                }
+            )
         })
+    }));
+}
+
+#[test]
+fn disasm_resolves_export_address_table_slot_for_dispatch_fixture() {
+    let path = fixture("indirect-dispatch");
+    if !path.exists() {
+        eprintln!("indirect-dispatch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load indirect-dispatch fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Symbol("_load_export_target".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(32),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble export-target symbol");
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction
+            .recovered_values
+            .iter()
+            .any(|value| value.kind == RecoveredValueKind::ExportAddress)
     }));
 }
 
@@ -493,5 +558,122 @@ fn disasm_authenticated_annotations_present_without_value_flow() {
                     if kind.starts_with("authenticated-")
             )
         })
+    }));
+}
+
+#[test]
+fn disasm_indirect_target_resolved_reasons_are_bounded_when_present() {
+    let path = fixture("semantic-switch");
+    if !path.exists() {
+        eprintln!("semantic-switch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load semantic fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(256),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble semantic fixture");
+    let mut saw_reason = false;
+    for instruction in &result.instructions {
+        for annotation in &instruction.annotations {
+            if let Annotation::IndirectTargetResolved { reason, .. } = annotation {
+                saw_reason = true;
+                assert!(
+                    matches!(
+                        reason,
+                        damsel_core::IndirectTargetReason::RegisterState
+                            | damsel_core::IndirectTargetReason::HelperTarget
+                            | damsel_core::IndirectTargetReason::StubTarget
+                            | damsel_core::IndirectTargetReason::ImportPointer
+                            | damsel_core::IndirectTargetReason::ExportAddress
+                            | damsel_core::IndirectTargetReason::FunctionPointer
+                    ),
+                    "unexpected indirect-target reason: {reason}"
+                );
+            }
+        }
+    }
+    assert!(
+        saw_reason,
+        "expected at least one IndirectTargetResolved annotation"
+    );
+}
+
+#[test]
+fn disasm_jump_table_candidate_absent_on_non_switch_fixture() {
+    let image = load(fixture("arm64-symbolized")).expect("load fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(256),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble symbolized fixture");
+    assert!(result.instructions.iter().all(|instruction| {
+        instruction
+            .annotations
+            .iter()
+            .all(|annotation| !matches!(annotation, Annotation::JumpTableCandidate { .. }))
+    }));
+}
+
+#[test]
+fn disasm_emits_function_pointer_recovered_values_for_dispatch_fixture_when_present() {
+    let path = fixture("indirect-dispatch");
+    if !path.exists() {
+        eprintln!("indirect-dispatch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load indirect-dispatch fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Symbol("_dispatch_second_slot".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(32),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble indirect-dispatch fixture");
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction
+            .recovered_values
+            .iter()
+            .any(|value| value.kind == RecoveredValueKind::FunctionPointer)
+    }));
+}
+
+#[test]
+fn disasm_emits_export_address_recovered_values_for_export_fixture_when_present() {
+    let path = fixture("indirect-dispatch");
+    if !path.exists() {
+        eprintln!("indirect-dispatch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load indirect-dispatch fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Symbol("_load_export_target".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(32),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble indirect-dispatch fixture");
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction
+            .recovered_values
+            .iter()
+            .any(|value| value.kind == RecoveredValueKind::ExportAddress)
     }));
 }

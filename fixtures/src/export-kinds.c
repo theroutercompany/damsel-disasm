@@ -10,7 +10,7 @@ int exported_weak(int value) {
     return value + 2;
 }
 
-__thread int exported_tls = 7;
+__attribute__((visibility("default"))) __thread int exported_tls = 7;
 
 static int use_exports(int value) {
     return exported_regular(value) + exported_weak(value) + exported_tls;

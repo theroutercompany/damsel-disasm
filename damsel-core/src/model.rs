@@ -404,22 +404,100 @@ pub struct ExportRecord {
 
 pub type ExportedSymbol = ExportRecord;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ExportFlags(String);
+const EXPORT_FLAG_KIND_MASK: u64 = 0x03;
+const EXPORT_FLAG_KIND_REGULAR: u8 = 0x00;
+const EXPORT_FLAG_KIND_THREAD_LOCAL: u8 = 0x01;
+const EXPORT_FLAG_KIND_ABSOLUTE: u8 = 0x02;
+const EXPORT_FLAG_WEAK_DEFINITION: u64 = 0x04;
+const EXPORT_FLAG_REEXPORT: u64 = 0x08;
+const EXPORT_FLAG_STUB_AND_RESOLVER: u64 = 0x10;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExportFlags {
+    pub raw_bits: u64,
+    pub kind_bits: u8,
+    pub is_weak_definition: bool,
+    pub is_reexport: bool,
+    pub is_stub_and_resolver: bool,
+    pub is_thread_local: bool,
+    pub is_absolute: bool,
+    pub unknown_bits: u64,
+}
 
 impl ExportFlags {
-    pub fn parse(value: impl Into<String>) -> Self {
-        Self(value.into())
+    pub const fn from_bits(raw_bits: u64) -> Self {
+        let kind_bits = (raw_bits & EXPORT_FLAG_KIND_MASK) as u8;
+        let known_bits = EXPORT_FLAG_KIND_MASK
+            | EXPORT_FLAG_WEAK_DEFINITION
+            | EXPORT_FLAG_REEXPORT
+            | EXPORT_FLAG_STUB_AND_RESOLVER;
+        Self {
+            raw_bits,
+            kind_bits,
+            is_weak_definition: raw_bits & EXPORT_FLAG_WEAK_DEFINITION != 0,
+            is_reexport: raw_bits & EXPORT_FLAG_REEXPORT != 0,
+            is_stub_and_resolver: raw_bits & EXPORT_FLAG_STUB_AND_RESOLVER != 0,
+            is_thread_local: kind_bits == EXPORT_FLAG_KIND_THREAD_LOCAL,
+            is_absolute: kind_bits == EXPORT_FLAG_KIND_ABSOLUTE,
+            unknown_bits: raw_bits & !known_bits,
+        }
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
+    // Compatibility helper for older tests/callers that constructed flags from descriptive text.
+    pub fn parse(value: impl AsRef<str>) -> Self {
+        let value = value.as_ref().to_ascii_lowercase();
+        let mut raw_bits = 0u64;
+        if value.contains("weak") {
+            raw_bits |= EXPORT_FLAG_WEAK_DEFINITION;
+        }
+        if value.contains("reexport") {
+            raw_bits |= EXPORT_FLAG_REEXPORT;
+        }
+        if value.contains("stub-and-resolver")
+            || value.contains("stub_and_resolver")
+            || value.contains("stub and resolver")
+            || (value.contains("stub") && value.contains("resolver"))
+        {
+            raw_bits |= EXPORT_FLAG_STUB_AND_RESOLVER;
+        }
+        if value.contains("thread-local")
+            || value.contains("thread_local")
+            || value.contains("threadlocal")
+        {
+            raw_bits |= u64::from(EXPORT_FLAG_KIND_THREAD_LOCAL);
+        } else if value.contains("absolute") {
+            raw_bits |= u64::from(EXPORT_FLAG_KIND_ABSOLUTE);
+        } else {
+            raw_bits |= u64::from(EXPORT_FLAG_KIND_REGULAR);
+        }
+        Self::from_bits(raw_bits)
+    }
+
+    pub const fn kind_name(&self) -> &'static str {
+        match self.kind_bits {
+            EXPORT_FLAG_KIND_REGULAR => "regular",
+            EXPORT_FLAG_KIND_THREAD_LOCAL => "thread_local",
+            EXPORT_FLAG_KIND_ABSOLUTE => "absolute",
+            _ => "unknown",
+        }
     }
 }
 
 impl fmt::Display for ExportFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        write!(
+            f,
+            "raw_bits={:#x} kind_bits={:#x} kind={} weak={} reexport={} stub_and_resolver={} thread_local={} absolute={} unknown_bits={:#x}",
+            self.raw_bits,
+            self.kind_bits,
+            self.kind_name(),
+            self.is_weak_definition,
+            self.is_reexport,
+            self.is_stub_and_resolver,
+            self.is_thread_local,
+            self.is_absolute,
+            self.unknown_bits
+        )
     }
 }
 
@@ -498,6 +576,8 @@ pub struct ObjcCategoryRecord {
     pub class_pointer: Option<u64>,
     pub class_name: Option<String>,
     pub class_name_source: ObjcNameSource,
+    pub property_list_pointer: Option<u64>,
+    pub protocol_list_pointer: Option<u64>,
     pub methods: Vec<ObjcMethodRecord>,
     pub class_methods: Vec<ObjcMethodRecord>,
     pub properties: Vec<ObjcPropertyRecord>,
@@ -616,6 +696,15 @@ impl ObjcMetadata {
         self.categories.iter().find(|category_record| {
             category_record.class_name.as_deref() == Some(class_name)
                 && category_record.name.as_deref() == Some(category_name)
+        })
+    }
+
+    pub fn categories_for_class<'a>(
+        &'a self,
+        class_name: &'a str,
+    ) -> impl Iterator<Item = &'a ObjcCategoryRecord> {
+        self.categories.iter().filter(move |category_record| {
+            category_record.class_name.as_deref() == Some(class_name)
         })
     }
 
@@ -1005,9 +1094,33 @@ pub enum Annotation {
     IndirectTargetResolved {
         via: String,
         target: u64,
-        reason: String,
+        reason: IndirectTargetReason,
     },
     Note(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IndirectTargetReason {
+    HelperTarget,
+    StubTarget,
+    ExportAddress,
+    FunctionPointer,
+    ImportPointer,
+    RegisterState,
+}
+
+impl fmt::Display for IndirectTargetReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::HelperTarget => "helper-target",
+            Self::StubTarget => "stub-target",
+            Self::ExportAddress => "export-address",
+            Self::FunctionPointer => "function-pointer",
+            Self::ImportPointer => "import-pointer",
+            Self::RegisterState => "register-state",
+        };
+        f.write_str(text)
+    }
 }
 
 impl fmt::Display for Annotation {

@@ -13,6 +13,7 @@ pub use model::{
     ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcClassRecord, ObjcIvarRecord,
     ObjcCategoryRecordSource, ObjcMetadata, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
     ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
+    IndirectTargetReason,
     Operand, Platform, RecoveredValue, RecoveredValueKind, RecoveredValueSource, Reference, Relocation,
     RelocationEncodingId, RelocationKindId, RelocationTargetKind, Section, SectionKind, Segment,
     SliceDescriptor, SliceInfo, StubEntry, StubHelperEntry, StubKind, Symbol, SymbolKind,

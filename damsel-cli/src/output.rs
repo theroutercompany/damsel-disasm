@@ -36,6 +36,7 @@ pub(crate) struct DyldViewOptions {
     pub binding_kind_filter: Option<ImportBindingKind>,
     pub stub_kind_filter: Option<StubKind>,
     pub export_kind_filter: Option<ExportKindFilter>,
+    pub export_flag_filter: Option<ExportFlagFilter>,
     pub ordinal_filter: Option<u32>,
     pub sort: Option<DyldSortKey>,
 }
@@ -56,6 +57,7 @@ impl DyldViewOptions {
             binding_kind_filter: None,
             stub_kind_filter: None,
             export_kind_filter: None,
+            export_flag_filter: None,
             ordinal_filter: None,
             sort: None,
         }
@@ -72,6 +74,15 @@ pub(crate) enum ExportKindFilter {
     Absolute,
     ThreadLocal,
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExportFlagFilter {
+    WeakDefinition,
+    Reexport,
+    StubAndResolver,
+    ThreadLocal,
+    Absolute,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -336,7 +347,7 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 );
                 for record in &filtered.categories {
                     println!(
-                        "  {:#x} name={} name_source={:?} record_source={:?} class={} class_source={:?} class_ptr={} methods={} class_methods={} properties={} protocols={}",
+                        "  {:#x} name={} name_source={:?} record_source={:?} class={} class_source={:?} class_ptr={} prop_list={} proto_list={} methods={} class_methods={} properties={} protocols={}",
                         record.pointer,
                         record.name.as_deref().unwrap_or("-"),
                         record.name_source,
@@ -345,6 +356,14 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                         record.class_name_source,
                         record
                             .class_pointer
+                            .map(|value| format!("{value:#x}"))
+                            .unwrap_or_else(|| "-".to_string()),
+                        record
+                            .property_list_pointer
+                            .map(|value| format!("{value:#x}"))
+                            .unwrap_or_else(|| "-".to_string()),
+                        record
+                            .protocol_list_pointer
                             .map(|value| format!("{value:#x}"))
                             .unwrap_or_else(|| "-".to_string()),
                         record.methods.len(),
@@ -487,12 +506,13 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 );
                 for export in &filtered.exports {
                     println!(
-                        "  {:>#18} {:<24} kind={:?} reexport={} resolver={} {}",
+                        "  {:>#18} raw={} flags={} kind={:?} reexport={} resolver={} {}",
                         export
                             .address
                             .map(|address| format!("{address:#x}"))
                             .unwrap_or_else(|| "-".to_string()),
                         export.raw_flags,
+                        export.flags,
                         export.kind,
                         export
                             .reexport_target
@@ -816,6 +836,9 @@ fn filter_dyld_view<'a>(
                 && view
                     .export_kind_filter
                     .is_none_or(|kind| export_matches_kind(export, kind))
+                && view
+                    .export_flag_filter
+                    .is_none_or(|flag| export_matches_flag(export, flag))
         })
         .collect::<Vec<_>>();
     sort_exports(&mut exports, view.sort);
@@ -1229,6 +1252,16 @@ fn export_matches_kind(export: &damsel_core::ExportRecord, kind: ExportKindFilte
     )
 }
 
+fn export_matches_flag(export: &damsel_core::ExportRecord, flag: ExportFlagFilter) -> bool {
+    match flag {
+        ExportFlagFilter::WeakDefinition => export.flags.is_weak_definition,
+        ExportFlagFilter::Reexport => export.flags.is_reexport,
+        ExportFlagFilter::StubAndResolver => export.flags.is_stub_and_resolver,
+        ExportFlagFilter::ThreadLocal => export.flags.is_thread_local,
+        ExportFlagFilter::Absolute => export.flags.is_absolute,
+    }
+}
+
 fn stub_matches_binding_kind(stub_kind: &StubKind, binding_kind: ImportBindingKind) -> bool {
     match binding_kind {
         ImportBindingKind::Lazy => matches!(stub_kind, StubKind::Lazy),
@@ -1256,6 +1289,9 @@ fn dyld_active_filter_text(view: &DyldViewOptions) -> Option<String> {
     }
     if let Some(export_kind) = view.export_kind_filter {
         parts.push(format!("export_kind={export_kind:?}"));
+    }
+    if let Some(export_flag) = view.export_flag_filter {
+        parts.push(format!("export_flag={export_flag:?}"));
     }
     if let Some(ordinal) = view.ordinal_filter {
         parts.push(format!("ordinal={ordinal}"));
@@ -1980,6 +2016,13 @@ impl JsonDto for DyldJsonDto<'_> {
                     .unwrap_or(JsonValue::Null),
             ),
             (
+                "export_flag_filter".to_string(),
+                self.view
+                    .export_flag_filter
+                    .map(|value| JsonValue::String(format!("{value:?}")))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
                 "ordinal_filter".to_string(),
                 self.view
                     .ordinal_filter
@@ -2151,7 +2194,7 @@ fn export_json(export: &damsel_core::ExportRecord) -> JsonValue {
         ),
         (
             "flags".to_string(),
-            JsonValue::String(export.flags.to_string()),
+            export_flags_json(&export.flags),
         ),
         ("kind".to_string(), export_kind_json(&export.kind)),
         (
@@ -2179,6 +2222,40 @@ fn export_json(export: &damsel_core::ExportRecord) -> JsonValue {
                 .resolver_target
                 .map(u64_num)
                 .unwrap_or(JsonValue::Null),
+        ),
+    ])
+}
+
+fn export_flags_json(flags: &damsel_core::ExportFlags) -> JsonValue {
+    JsonValue::Object(vec![
+        ("raw_bits".to_string(), u64_num(flags.raw_bits)),
+        (
+            "kind_bits".to_string(),
+            u64_num(u64::from(flags.kind_bits)),
+        ),
+        (
+            "is_weak_definition".to_string(),
+            JsonValue::Bool(flags.is_weak_definition),
+        ),
+        (
+            "is_reexport".to_string(),
+            JsonValue::Bool(flags.is_reexport),
+        ),
+        (
+            "is_stub_and_resolver".to_string(),
+            JsonValue::Bool(flags.is_stub_and_resolver),
+        ),
+        (
+            "is_thread_local".to_string(),
+            JsonValue::Bool(flags.is_thread_local),
+        ),
+        (
+            "is_absolute".to_string(),
+            JsonValue::Bool(flags.is_absolute),
+        ),
+        (
+            "unknown_bits".to_string(),
+            u64_num(flags.unknown_bits),
         ),
     ])
 }
@@ -2612,6 +2689,20 @@ fn objc_category_record_json(record: &ObjcCategoryRecord) -> JsonValue {
         (
             "class_name_source".to_string(),
             JsonValue::String(format!("{:?}", record.class_name_source)),
+        ),
+        (
+            "property_list_pointer".to_string(),
+            record
+                .property_list_pointer
+                .map(u64_num)
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "protocol_list_pointer".to_string(),
+            record
+                .protocol_list_pointer
+                .map(u64_num)
+                .unwrap_or(JsonValue::Null),
         ),
         (
             "record_source".to_string(),
@@ -3425,7 +3516,7 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             ),
             ("via".to_string(), JsonValue::String(via.clone())),
             ("target".to_string(), u64_num(*target)),
-            ("reason".to_string(), JsonValue::String(reason.clone())),
+            ("reason".to_string(), JsonValue::String(reason.to_string())),
         ]),
         Annotation::Note(note) => JsonValue::Object(vec![
             ("type".to_string(), JsonValue::String("note".to_string())),

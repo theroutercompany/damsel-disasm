@@ -5,7 +5,8 @@ use damsel_core::{
 };
 use goblin::mach::exports::{
     EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE, EXPORT_SYMBOL_FLAGS_KIND_MASK,
-    EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL, EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION, ExportInfo,
+    EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL, EXPORT_SYMBOL_FLAGS_REEXPORT,
+    EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER, EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION, ExportInfo,
 };
 use goblin::mach::{load_command, segment};
 
@@ -64,6 +65,7 @@ pub(crate) fn collect_dyld_metadata(
 ) -> Result<DyldAnalysis> {
     let image_base = segments
         .iter()
+        .filter(|segment| segment.file_size > 0 && segment.address > 0)
         .map(|segment| segment.address)
         .min()
         .unwrap_or_default();
@@ -207,16 +209,47 @@ fn build_export_record(
     info: &ExportInfo<'_>,
     image_base: u64,
 ) -> ExportRecord {
+    let raw_bits = export_raw_bits(info);
     let raw_flags = format!("{info:?};offset={offset:#x}");
     let kind = map_export_kind(info, image_base);
     ExportRecord {
         name,
-        address: image_base.checked_add(offset),
+        address: export_record_address(offset, info, image_base, &kind),
         raw_flags: raw_flags.clone(),
-        flags: ExportFlags::parse(raw_flags),
+        flags: ExportFlags::from_bits(raw_bits),
         reexport_target: export_reexport_target(&kind),
         resolver_target: export_resolver_target(&kind),
         kind,
+    }
+}
+
+fn export_raw_bits(info: &ExportInfo<'_>) -> u64 {
+    match info {
+        ExportInfo::Regular { flags, .. }
+        | ExportInfo::Reexport { flags, .. }
+        | ExportInfo::Stub { flags, .. } => u64::from(*flags),
+    }
+}
+
+fn export_record_address(
+    offset: u64,
+    info: &ExportInfo<'_>,
+    image_base: u64,
+    kind: &ExportKind,
+) -> Option<u64> {
+    match info {
+        ExportInfo::Regular { flags, .. } => {
+            if (*flags & EXPORT_SYMBOL_FLAGS_KIND_MASK) == EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE {
+                Some(offset)
+            } else {
+                image_base.checked_add(offset)
+            }
+        }
+        ExportInfo::Reexport { .. } => None,
+        ExportInfo::Stub { .. } => match kind {
+            ExportKind::StubAndResolver { stub_address, .. } => *stub_address,
+            _ => None,
+        },
     }
 }
 
@@ -238,6 +271,8 @@ fn export_resolver_target(kind: &ExportKind) -> Option<u64> {
 }
 
 fn map_export_kind(info: &ExportInfo<'_>, image_base: u64) -> ExportKind {
+    let raw_bits = export_raw_bits(info);
+    let kind_bits = raw_bits & u64::from(EXPORT_SYMBOL_FLAGS_KIND_MASK);
     match info {
         ExportInfo::Regular { flags, .. } => {
             if flags & EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION != 0 {
@@ -248,6 +283,8 @@ fn map_export_kind(info: &ExportInfo<'_>, image_base: u64) -> ExportKind {
                 == EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL
             {
                 ExportKind::ThreadLocal
+            } else if kind_bits != 0 {
+                ExportKind::Unknown(format!("flags={raw_bits:#x}"))
             } else {
                 ExportKind::Regular
             }
@@ -256,18 +293,30 @@ fn map_export_kind(info: &ExportInfo<'_>, image_base: u64) -> ExportKind {
             lib,
             lib_symbol_name,
             ..
-        } => ExportKind::Reexport {
-            dylib: (*lib).to_string(),
-            symbol: lib_symbol_name.map(ToString::to_string),
-        },
+        } => {
+            if raw_bits & u64::from(EXPORT_SYMBOL_FLAGS_REEXPORT) == 0 {
+                ExportKind::Unknown(format!("flags={raw_bits:#x}"))
+            } else {
+                ExportKind::Reexport {
+                    dylib: (*lib).to_string(),
+                    symbol: lib_symbol_name.map(ToString::to_string),
+                }
+            }
+        }
         ExportInfo::Stub {
             stub_offset,
             resolver_offset,
             ..
-        } => ExportKind::StubAndResolver {
-            stub_address: image_base.checked_add((*stub_offset).into()),
-            resolver_address: image_base.checked_add((*resolver_offset).into()),
-        },
+        } => {
+            if raw_bits & u64::from(EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER) == 0 {
+                ExportKind::Unknown(format!("flags={raw_bits:#x}"))
+            } else {
+                ExportKind::StubAndResolver {
+                    stub_address: image_base.checked_add((*stub_offset).into()),
+                    resolver_address: image_base.checked_add((*resolver_offset).into()),
+                }
+            }
+        }
     }
 }
 
@@ -971,4 +1020,97 @@ fn read_u64(data: &[u8], offset: usize) -> Option<u64> {
     Some(u64::from_le_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_export_record_keeps_structured_flag_bits_for_regular_and_absolute_exports() {
+        let regular = build_export_record(
+            "_regular".to_string(),
+            0x44,
+            &ExportInfo::Regular {
+                address: 0x44,
+                flags: 0,
+            },
+            0x1000,
+        );
+        assert_eq!(regular.address, Some(0x1044));
+        assert_eq!(regular.flags.raw_bits, 0);
+        assert_eq!(regular.flags.kind_bits, 0);
+        assert!(!regular.flags.is_absolute);
+
+        let absolute = build_export_record(
+            "_absolute".to_string(),
+            0x1234,
+            &ExportInfo::Regular {
+                address: 0x1234,
+                flags: EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE,
+            },
+            0x1000,
+        );
+        assert!(matches!(absolute.kind, ExportKind::Absolute));
+        assert_eq!(absolute.address, Some(0x1234));
+        assert!(absolute.flags.is_absolute);
+        assert_eq!(absolute.flags.raw_bits, u64::from(EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE));
+    }
+
+    #[test]
+    fn build_export_record_handles_hand_authored_reexport_and_stub_exports() {
+        let libs = ["", "/usr/lib/libSystem.B.dylib"];
+        let reexport_info = ExportInfo::parse(
+            &[0x01, b'_', b'p', b'u', b't', b's', 0x00],
+            &libs,
+            EXPORT_SYMBOL_FLAGS_REEXPORT,
+            0,
+        )
+        .expect("parse reexport info");
+        let reexport = build_export_record("_alias_puts".to_string(), 0, &reexport_info, 0x1000);
+        assert!(matches!(
+            reexport.kind,
+            ExportKind::Reexport {
+                ref dylib,
+                symbol: Some(ref symbol)
+            } if dylib == "/usr/lib/libSystem.B.dylib" && symbol == "_puts"
+        ));
+        assert_eq!(reexport.address, None);
+        assert!(reexport.flags.is_reexport);
+
+        let stub_info = ExportInfo::parse(
+            &[0x20, 0x30],
+            &[],
+            EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER,
+            0,
+        )
+        .expect("parse stub export info");
+        let stub = build_export_record("_resolver".to_string(), 0, &stub_info, 0x2000);
+        assert!(matches!(
+            stub.kind,
+            ExportKind::StubAndResolver {
+                stub_address: Some(0x2020),
+                resolver_address: Some(0x2030)
+            }
+        ));
+        assert_eq!(stub.address, Some(0x2020));
+        assert_eq!(stub.resolver_target, Some(0x2030));
+        assert!(stub.flags.is_stub_and_resolver);
+    }
+
+    #[test]
+    fn build_export_record_preserves_unknown_export_flag_bits() {
+        let export = build_export_record(
+            "_mystery".to_string(),
+            0x88,
+            &ExportInfo::Regular {
+                address: 0x88,
+                flags: 0x80,
+            },
+            0x1000,
+        );
+        assert!(matches!(export.kind, ExportKind::Regular));
+        assert_eq!(export.flags.raw_bits, 0x80);
+        assert_eq!(export.flags.unknown_bits, 0x80);
+    }
 }

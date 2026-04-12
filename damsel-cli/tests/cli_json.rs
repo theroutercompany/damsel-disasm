@@ -113,6 +113,19 @@ fn dyld_json_contract_exposes_bindings_and_stubs() {
                 "resolver_target",
             ],
         );
+        assert_exact_object_keys(
+            &export["flags"],
+            &[
+                "raw_bits",
+                "kind_bits",
+                "is_weak_definition",
+                "is_reexport",
+                "is_stub_and_resolver",
+                "is_thread_local",
+                "is_absolute",
+                "unknown_bits",
+            ],
+        );
     }
     assert_exact_object_keys(
         &json["data"],
@@ -127,6 +140,7 @@ fn dyld_json_contract_exposes_bindings_and_stubs() {
             "binding_kind_filter",
             "stub_kind_filter",
             "export_kind_filter",
+            "export_flag_filter",
             "ordinal_filter",
             "dylibs",
             "rpaths",
@@ -252,7 +266,7 @@ fn dyld_json_filters_by_kind_and_ordinal() {
 
 #[test]
 fn dyld_json_filters_exports_by_kind() {
-    let path = fixture("arm64-symbolized");
+    let path = fixture("export-kinds");
     let out = run_json_ok(&[
         "--format",
         "json",
@@ -271,6 +285,25 @@ fn dyld_json_filters_exports_by_kind() {
             .iter()
             .all(|export| export["kind"]["type"] == "regular")
     );
+}
+
+#[test]
+fn dyld_json_filters_exports_by_flag() {
+    let path = fixture("export-kinds");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "dyld",
+        path.to_str().expect("utf8 path"),
+        "--exports",
+        "--export-flag",
+        "absolute",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["data"]["export_flag_filter"], "Absolute");
+    let exports = json["data"]["exports"].as_array().expect("exports array");
+    assert!(!exports.is_empty(), "{out}");
+    assert!(exports.iter().all(|export| export["flags"]["is_absolute"] == true));
 }
 
 #[test]
@@ -346,6 +379,7 @@ fn dyld_json_section_toggles_keep_key_stability() {
             "binding_kind_filter",
             "stub_kind_filter",
             "export_kind_filter",
+            "export_flag_filter",
             "ordinal_filter",
             "dylibs",
             "rpaths",
@@ -404,6 +438,8 @@ fn objc_json_contract_exposes_structured_runtime_records() {
         .expect("category array");
     if let Some(category) = categories.first() {
         assert!(category["record_source"].is_string());
+        assert!(category["property_list_pointer"].is_null() || category["property_list_pointer"].is_number());
+        assert!(category["protocol_list_pointer"].is_null() || category["protocol_list_pointer"].is_number());
     }
 }
 
@@ -525,6 +561,9 @@ fn objc_json_category_source_filter_is_applied() {
             .iter()
             .all(|category| category["record_source"] == "SymbolSynthesis")
     );
+    assert!(categories.iter().any(|category| {
+        category["protocol_list_pointer"].is_number() || category["property_list_pointer"].is_number()
+    }));
 }
 
 #[test]
@@ -680,6 +719,63 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
             "recovered_values",
         ],
     );
+}
+
+#[test]
+fn disasm_json_exposes_typed_indirect_target_reasons() {
+    let path = fixture("indirect-dispatch");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--symbol",
+        "_dispatch_second_slot",
+        "--show-references",
+        "--show-values",
+    ]);
+    let json = parse_json(&out);
+    let instructions = json["data"]["instructions"]
+        .as_array()
+        .expect("instruction array");
+    assert!(instructions.iter().any(|instruction| {
+        instruction["annotations"]
+            .as_array()
+            .is_some_and(|annotations| {
+                annotations.iter().any(|annotation| {
+                    annotation["type"] == "indirect_target_resolved"
+                        && annotation["reason"] == "function-pointer"
+                })
+            })
+    }));
+}
+
+#[test]
+fn disasm_json_exposes_export_address_recovered_values() {
+    let path = fixture("indirect-dispatch");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--symbol",
+        "_load_export_target",
+        "--show-references",
+        "--show-values",
+    ]);
+    let json = parse_json(&out);
+    let instructions = json["data"]["instructions"]
+        .as_array()
+        .expect("instruction array");
+    assert!(instructions.iter().any(|instruction| {
+        instruction["recovered_values"]
+            .as_array()
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|value| value["kind"] == "ExportAddress")
+            })
+    }));
 }
 
 #[test]
