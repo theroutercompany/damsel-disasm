@@ -155,6 +155,54 @@ fn dyld_rejects_invalid_binding_kind_value() {
 }
 
 #[test]
+fn dyld_rejects_invalid_stub_kind_value() {
+    let path = fixture("import-lazy");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "dyld",
+            path.to_str().expect("utf8 path"),
+            "--stub-kind",
+            "bogus",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
+}
+
+#[test]
+fn dyld_rejects_invalid_source_value() {
+    let path = fixture("import-lazy");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "dyld",
+            path.to_str().expect("utf8 path"),
+            "--source",
+            "bogus",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
+}
+
+#[test]
+fn dyld_rejects_invalid_ordinal_value() {
+    let path = fixture("import-lazy");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "dyld",
+            path.to_str().expect("utf8 path"),
+            "--ordinal",
+            "bogus",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
+}
+
+#[test]
 fn objc_rejects_invalid_name_source_value() {
     let path = fixture("objc-sample");
     Command::cargo_bin("damsel-cli")
@@ -163,6 +211,22 @@ fn objc_rejects_invalid_name_source_value() {
             "objc",
             path.to_str().expect("utf8 path"),
             "--name-source",
+            "bogus",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
+}
+
+#[test]
+fn objc_rejects_invalid_selector_source_value() {
+    let path = fixture("objc-sample");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "objc",
+            path.to_str().expect("utf8 path"),
+            "--selector-source",
             "bogus",
         ])
         .assert()

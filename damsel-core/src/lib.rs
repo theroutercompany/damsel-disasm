@@ -2,6 +2,8 @@ mod decode;
 mod model;
 
 pub use decode::DecodeError;
+pub use decode::decode_aarch64_v2;
+pub use decode::decode_aarch64_with_limit;
 pub use model::{
     Annotation, Architecture, BinaryFormat, BinaryImage, BinaryImageBuilder,
     BinaryImageValidationError, BinarySource, DecodedInstruction, DisassemblyLimit,

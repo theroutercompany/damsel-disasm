@@ -6,13 +6,13 @@ dyld: dylibs=1 rpaths=0 exports=2 function_starts=2 bindings=16 stubs=6 helpers=
 dylibs:
   /usr/lib/libSystem.B.dylib
 rpaths:
-exports:
+exports (2/2):
                  0x0 Regular { address: 0, flags: 0 };offset=0x0 __mh_execute_header
                0x460 Regular { address: 1120, flags: 0 };offset=0x460 _main
 function_starts:
   0x100000460
   0x100000510
-import_bindings:
+import_bindings (16/16):
          0x100004000             0x4000 /usr/lib/libSystem.B.dylib     ___snprintf_chk          addend=0 kind=ChainedFixup source=ChainedFixup ordinal=0 symidx=- weak=false
          0x100004000             0x4000 /usr/lib/libSystem.B.dylib     ___snprintf_chk          addend=0 kind=NonLazy source=IndirectSymbol ordinal=1 symidx=3 weak=false
          0x100004008             0x4008 /usr/lib/libSystem.B.dylib     ___stack_chk_fail        addend=0 kind=ChainedFixup source=ChainedFixup ordinal=1 symidx=- weak=false
@@ -29,11 +29,11 @@ import_bindings:
          0x100004030             0x4030 /usr/lib/libSystem.B.dylib     _strcmp                  addend=0 kind=NonLazy source=IndirectSymbol ordinal=1 symidx=9 weak=false
          0x100004038             0x4038 /usr/lib/libSystem.B.dylib     _strlen                  addend=0 kind=ChainedFixup source=ChainedFixup ordinal=7 symidx=- weak=false
          0x100004038             0x4038 /usr/lib/libSystem.B.dylib     _strlen                  addend=0 kind=NonLazy source=IndirectSymbol ordinal=1 symidx=10 weak=false
-stubs:
+stubs (6/6):
          0x100000588 section=__TEXT:__stubs ptr_section=__DATA_CONST:__got ptr=0x100004000 helper=- ordinal=1 kind=NonLazy /usr/lib/libSystem.B.dylib:___snprintf_chk source=Stub
          0x100000594 section=__TEXT:__stubs ptr_section=__DATA_CONST:__got ptr=0x100004008 helper=- ordinal=1 kind=NonLazy /usr/lib/libSystem.B.dylib:___stack_chk_fail source=Stub
          0x1000005a0 section=__TEXT:__stubs ptr_section=__DATA_CONST:__got ptr=0x100004020 helper=- ordinal=1 kind=NonLazy /usr/lib/libSystem.B.dylib:_fprintf source=Stub
          0x1000005ac section=__TEXT:__stubs ptr_section=__DATA_CONST:__got ptr=0x100004028 helper=- ordinal=1 kind=NonLazy /usr/lib/libSystem.B.dylib:_puts source=Stub
          0x1000005b8 section=__TEXT:__stubs ptr_section=__DATA_CONST:__got ptr=0x100004030 helper=- ordinal=1 kind=NonLazy /usr/lib/libSystem.B.dylib:_strcmp source=Stub
          0x1000005c4 section=__TEXT:__stubs ptr_section=__DATA_CONST:__got ptr=0x100004038 helper=- ordinal=1 kind=NonLazy /usr/lib/libSystem.B.dylib:_strlen source=Stub
-stub_helpers:
+stub_helpers (0/0):

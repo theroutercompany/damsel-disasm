@@ -47,6 +47,26 @@ fn parse_json(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid json: {error}\n{text}"))
 }
 
+fn sorted_object_keys(value: &Value) -> Vec<String> {
+    let mut keys = value
+        .as_object()
+        .unwrap_or_else(|| panic!("expected object: {value}"))
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    keys.sort();
+    keys
+}
+
+fn assert_exact_object_keys(value: &Value, expected: &[&str]) {
+    let mut expected_keys = expected
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+    expected_keys.sort();
+    assert_eq!(sorted_object_keys(value), expected_keys);
+}
+
 #[test]
 fn info_json_contract() {
     let path = fixture("arm64-symbolized");
@@ -79,10 +99,66 @@ fn dyld_json_contract_exposes_bindings_and_stubs() {
     assert!(json["data"]["import_bindings"].is_array());
     assert!(json["data"]["stubs"].is_array());
     assert!(json["data"]["stub_helpers"].is_array());
+    assert_exact_object_keys(
+        &json["data"],
+        &[
+            "has_rebases",
+            "has_binds",
+            "has_chained_fixups",
+            "included_sections",
+            "name_filter",
+            "dylib_filter",
+            "source_filter",
+            "binding_kind_filter",
+            "stub_kind_filter",
+            "ordinal_filter",
+            "dylibs",
+            "rpaths",
+            "exports",
+            "function_starts",
+            "import_bindings",
+            "stubs",
+            "stub_helpers",
+        ],
+    );
     let stubs = json["data"]["stubs"].as_array().expect("stub array");
     assert!(!stubs.is_empty(), "{out}");
     assert_eq!(stubs[0]["section"], "__TEXT:__stubs");
     assert!(stubs[0]["stub_kind"].is_string());
+    assert_exact_object_keys(
+        &stubs[0],
+        &[
+            "stub_address",
+            "section",
+            "pointer_address",
+            "pointer_section",
+            "helper_address",
+            "binding_ordinal",
+            "stub_kind",
+            "dylib",
+            "name",
+            "source",
+        ],
+    );
+    let bindings = json["data"]["import_bindings"]
+        .as_array()
+        .expect("binding array");
+    assert!(!bindings.is_empty(), "{out}");
+    assert_exact_object_keys(
+        &bindings[0],
+        &[
+            "dylib",
+            "name",
+            "address",
+            "offset",
+            "addend",
+            "source",
+            "ordinal",
+            "symbol_index",
+            "binding_kind",
+            "is_weak",
+        ],
+    );
 }
 
 #[test]
@@ -176,6 +252,70 @@ fn dyld_json_exposes_stub_helpers_for_lazy_fixture() {
     assert!(helpers[0]["stub_section"].is_string() || helpers[0]["stub_section"].is_null());
     assert!(helpers[0]["pointer_section"].is_string() || helpers[0]["pointer_section"].is_null());
     assert!(helpers[0]["pointer_address"].is_number() || helpers[0]["pointer_address"].is_null());
+    assert_exact_object_keys(
+        &helpers[0],
+        &[
+            "helper_address",
+            "target_stub",
+            "binding_ordinal",
+            "stub_section",
+            "pointer_address",
+            "pointer_section",
+            "dylib",
+            "name",
+        ],
+    );
+}
+
+#[test]
+fn dyld_json_section_toggles_keep_key_stability() {
+    let path = fixture("import-lazy");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "dyld",
+        path.to_str().expect("utf8 path"),
+        "--bindings",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "dyld");
+    assert_eq!(
+        json["data"]["included_sections"],
+        Value::Array(vec![Value::String("import_bindings".to_string())])
+    );
+    assert!(
+        json["data"]["import_bindings"]
+            .as_array()
+            .is_some_and(|entries| !entries.is_empty())
+    );
+    assert_eq!(json["data"]["dylibs"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["rpaths"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["exports"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["function_starts"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["stubs"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["stub_helpers"], Value::Array(Vec::new()));
+    assert_exact_object_keys(
+        &json["data"],
+        &[
+            "has_rebases",
+            "has_binds",
+            "has_chained_fixups",
+            "included_sections",
+            "name_filter",
+            "dylib_filter",
+            "source_filter",
+            "binding_kind_filter",
+            "stub_kind_filter",
+            "ordinal_filter",
+            "dylibs",
+            "rpaths",
+            "exports",
+            "function_starts",
+            "import_bindings",
+            "stubs",
+            "stub_helpers",
+        ],
+    );
 }
 
 #[test]
@@ -194,6 +334,26 @@ fn objc_json_contract_exposes_structured_runtime_records() {
     assert!(json["data"]["classes"].is_array());
     assert!(json["data"]["protocols"].is_array());
     assert!(json["data"]["categories"].is_array());
+    assert_exact_object_keys(
+        &json["data"],
+        &[
+            "requested_detail",
+            "owner_filter",
+            "name_source_filter",
+            "selector_source_filter",
+            "image_info_flags",
+            "class_names",
+            "selector_names",
+            "method_names",
+            "pointer_refs",
+            "classes",
+            "protocols",
+            "categories",
+            "methods",
+            "properties",
+            "ivars",
+        ],
+    );
     let classes = json["data"]["classes"].as_array().expect("class array");
     if let Some(class) = classes.first() {
         assert!(class["name_source"].is_string());
@@ -295,6 +455,52 @@ fn objc_json_provenance_filters_are_applied() {
 }
 
 #[test]
+fn objc_json_detail_toggle_keeps_empty_sections_and_stable_keys() {
+    let path = fixture("objc-sample");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "objc",
+        path.to_str().expect("utf8 path"),
+        "--detail",
+        "methods",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["data"]["requested_detail"], "methods");
+    assert!(
+        json["data"]["methods"]
+            .as_array()
+            .is_some_and(|entries| !entries.is_empty())
+    );
+    assert_eq!(json["data"]["classes"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["protocols"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["categories"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["properties"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["ivars"], Value::Array(Vec::new()));
+    assert_eq!(json["data"]["pointer_refs"], Value::Array(Vec::new()));
+    assert_exact_object_keys(
+        &json["data"],
+        &[
+            "requested_detail",
+            "owner_filter",
+            "name_source_filter",
+            "selector_source_filter",
+            "image_info_flags",
+            "class_names",
+            "selector_names",
+            "method_names",
+            "pointer_refs",
+            "classes",
+            "protocols",
+            "categories",
+            "methods",
+            "properties",
+            "ivars",
+        ],
+    );
+}
+
+#[test]
 fn slices_json_contract_exposes_full_inventory() {
     let path = fixture("universal-hello");
     let out = run_json_ok(&[
@@ -355,7 +561,51 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
         assert!(reference["helper_address"].is_number());
         assert!(reference["target_stub"].is_number() || reference["target_stub"].is_null());
         assert!(reference["pointer_address"].is_number() || reference["pointer_address"].is_null());
+        assert!(reference["stub_section"].is_string() || reference["stub_section"].is_null());
+        assert!(reference["pointer_section"].is_string() || reference["pointer_section"].is_null());
+        assert_exact_object_keys(
+            reference,
+            &[
+                "type",
+                "helper_address",
+                "target_stub",
+                "stub_section",
+                "pointer_address",
+                "pointer_section",
+                "binding_ordinal",
+                "dylib",
+                "name",
+            ],
+        );
     }
+    assert_exact_object_keys(
+        &json["data"],
+        &[
+            "target",
+            "start_address",
+            "end_address",
+            "window_end",
+            "bytes_len",
+            "decoded_bytes",
+            "instruction_count",
+            "stop_reason",
+            "instructions",
+        ],
+    );
+    assert_exact_object_keys(
+        &instructions[0],
+        &[
+            "address",
+            "size",
+            "opcode",
+            "mnemonic",
+            "operands",
+            "rendered",
+            "references",
+            "annotations",
+            "recovered_values",
+        ],
+    );
 }
 
 #[test]

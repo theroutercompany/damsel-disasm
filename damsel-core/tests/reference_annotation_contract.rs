@@ -215,3 +215,16 @@ fn display_for_relocation_evidence_annotation_uses_reloc_evidence_prefix() {
         "reloc-evidence kind=Absolute encoding=Generic target=absolute addend=11 addr=0x3004"
     );
 }
+
+#[test]
+fn display_for_indirect_target_resolved_annotation_is_stable() {
+    let annotation = Annotation::IndirectTargetResolved {
+        via: "x16".to_string(),
+        target: 0x2000,
+        reason: "helper".to_string(),
+    };
+    assert_eq!(
+        annotation.to_string(),
+        "indirect-target via x16 -> 0x2000 (helper)"
+    );
+}

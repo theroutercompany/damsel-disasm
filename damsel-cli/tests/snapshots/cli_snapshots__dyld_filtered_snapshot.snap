@@ -3,8 +3,9 @@ source: damsel-cli/tests/cli_snapshots.rs
 expression: stdout
 ---
 dyld: dylibs=1 rpaths=0 exports=2 function_starts=2 bindings=2 stubs=1 helpers=0 rebases=false binds=true chained_fixups=true
-import_bindings:
+active_filters: name=puts
+import_bindings (2/16):
          0x100004028             0x4028 /usr/lib/libSystem.B.dylib     _puts                    addend=0 kind=ChainedFixup source=ChainedFixup ordinal=5 symidx=- weak=false
          0x100004028             0x4028 /usr/lib/libSystem.B.dylib     _puts                    addend=0 kind=NonLazy source=IndirectSymbol ordinal=1 symidx=8 weak=false
-stubs:
+stubs (1/6):
          0x1000005ac section=__TEXT:__stubs ptr_section=__DATA_CONST:__got ptr=0x100004028 helper=- ordinal=1 kind=NonLazy /usr/lib/libSystem.B.dylib:_puts source=Stub

@@ -1,6 +1,6 @@
 use damsel_core::{ImportBindingKind, ImportBindingSource, StubKind};
 use damsel_macho::load;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -170,4 +170,31 @@ fn lazy_fixture_stub_helpers_link_back_to_stub_and_pointer_metadata() {
             assert_eq!(linked.pointer_address, helper.pointer_address);
         }
     }
+}
+
+#[test]
+fn duplicate_symbol_fixture_prefers_ordinal_backed_attribution_when_present() {
+    let Some(path) = optional_fixture(&["duplicate-symbol-ordinal"]) else {
+        eprintln!("duplicate-symbol-ordinal fixture not present; skipping");
+        return;
+    };
+    let image = load(&path).expect("load duplicate symbol fixture");
+    let mut grouped = BTreeMap::<String, (BTreeSet<String>, BTreeSet<u32>)>::new();
+    for binding in image.dyld().import_bindings.iter().filter(|binding| {
+        binding.source == ImportBindingSource::IndirectSymbol && binding.ordinal.is_some()
+    }) {
+        let entry = grouped
+            .entry(binding.name.clone())
+            .or_insert_with(|| (BTreeSet::new(), BTreeSet::new()));
+        entry.0.insert(binding.dylib.clone());
+        entry.1.insert(binding.ordinal.expect("checked is_some"));
+    }
+
+    let has_ordinal_disambiguation = grouped
+        .values()
+        .any(|(dylibs, ordinals)| dylibs.len() > 1 && ordinals.len() > 1);
+    assert!(
+        has_ordinal_disambiguation,
+        "expected at least one symbol name to resolve across multiple dylibs with distinct ordinals"
+    );
 }

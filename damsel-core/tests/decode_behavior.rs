@@ -1,4 +1,7 @@
-use damsel_core::{Annotation, Reference, decode_aarch64};
+use damsel_core::{
+    Annotation, DisassemblyLimit, DisassemblyOptions, Reference, decode_aarch64, decode_aarch64_v2,
+    decode_aarch64_with_limit,
+};
 
 fn decode(bytes: &[u8], start: u64, max: Option<usize>) -> Vec<damsel_core::DecodedInstruction> {
     decode_aarch64(bytes, start, max).expect("decode succeeds")
@@ -101,4 +104,58 @@ fn decode_rejects_truncated_instruction_stream() {
             );
         }
     }
+}
+
+#[test]
+fn decode_with_limit_respects_byte_limit_and_annotation_flag() {
+    let bytes = [
+        0xc0, 0x03, 0x5f, 0xd6, // ret
+        0xc0, 0x03, 0x5f, 0xd6, // ret
+    ];
+    let instructions = decode_aarch64_with_limit(
+        &bytes,
+        0x1000,
+        DisassemblyLimit::Bytes(4),
+        DisassemblyOptions {
+            include_annotations: false,
+            include_value_flow: false,
+        },
+    )
+    .expect("decode succeeds");
+    assert_eq!(instructions.len(), 1);
+    assert!(instructions[0].annotations.is_empty());
+}
+
+#[test]
+fn decode_v2_entrypoint_is_equivalent_to_with_limit() {
+    let bytes = [
+        0xc0, 0x03, 0x5f, 0xd6, // ret
+        0xc0, 0x03, 0x5f, 0xd6, // ret
+    ];
+    let limit = DisassemblyLimit::Instructions(1);
+    let options = DisassemblyOptions {
+        include_annotations: false,
+        include_value_flow: false,
+    };
+
+    let via_limit = decode_aarch64_with_limit(&bytes, 0x1000, limit, options).expect("decode");
+    let via_v2 = decode_aarch64_v2(&bytes, 0x1000, limit, options).expect("decode");
+    assert_eq!(via_limit, via_v2);
+}
+
+#[test]
+fn decode_legacy_adapter_matches_with_limit_defaults() {
+    let bytes = [
+        0xc0, 0x03, 0x5f, 0xd6, // ret
+        0xc0, 0x03, 0x5f, 0xd6, // ret
+    ];
+    let via_legacy = decode_aarch64(&bytes, 0x1000, Some(1)).expect("decode");
+    let via_limit = decode_aarch64_with_limit(
+        &bytes,
+        0x1000,
+        DisassemblyLimit::Instructions(1),
+        DisassemblyOptions::default(),
+    )
+    .expect("decode");
+    assert_eq!(via_legacy, via_limit);
 }

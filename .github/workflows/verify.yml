@@ -59,6 +59,18 @@ jobs:
       - name: Bench compile smoke
         run: cargo bench -p damsel-macho --bench decode_bench --no-run
 
+  targeted-macho-fixtures:
+    name: targeted macho fixtures (linux arm64)
+    runs-on: ubuntu-24.04-arm
+    needs: fixture-drift
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run targeted malformed/duplicate fixture tests
+        run: cargo test -p damsel-macho --test load_matrix --test import_binding_matrix --test disasm_matrix
+
   decode-throughput-smoke:
     name: decode throughput smoke (linux arm64)
     runs-on: ubuntu-24.04-arm

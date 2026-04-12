@@ -240,6 +240,9 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 objc.protocols.len(),
                 objc.categories.len(),
             );
+            if let Some(filters) = objc_active_filter_text(view) {
+                println!("active_filters: {filters}");
+            }
             if matches!(view.detail, ObjcDetail::All) {
                 println!("classes:");
                 for class_name in &objc.class_names {
@@ -255,7 +258,11 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 }
             }
             if !filtered.classes.is_empty() && objc_detail_includes_classes(view.detail) {
-                println!("class_records:");
+                println!(
+                    "class_records ({}/{}):",
+                    filtered.classes.len(),
+                    objc.classes.len()
+                );
                 for record in &filtered.classes {
                     println!(
                         "  {:#x} name={} source={:?} superclass={} metaclass={} ro={} methods={} class_methods={} properties={} ivars={} protocols={}",
@@ -286,12 +293,17 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 }
             }
             if !filtered.protocols.is_empty() && objc_detail_includes_protocols(view.detail) {
-                println!("protocol_records:");
+                println!(
+                    "protocol_records ({}/{}):",
+                    filtered.protocols.len(),
+                    objc.protocols.len()
+                );
                 for record in &filtered.protocols {
                     println!(
-                        "  {:#x} {} required_inst={} required_class={} optional_inst={} optional_class={} properties={}",
+                        "  {:#x} {} source={:?} required_inst={} required_class={} optional_inst={} optional_class={} properties={}",
                         record.pointer,
                         record.name.as_deref().unwrap_or("-"),
+                        record.name_source,
                         record.required_instance_methods.len(),
                         record.required_class_methods.len(),
                         record.optional_instance_methods.len(),
@@ -301,7 +313,11 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 }
             }
             if !filtered.categories.is_empty() && objc_detail_includes_categories(view.detail) {
-                println!("category_records:");
+                println!(
+                    "category_records ({}/{}):",
+                    filtered.categories.len(),
+                    objc.categories.len()
+                );
                 for record in &filtered.categories {
                     println!(
                         "  {:#x} name={} name_source={:?} class={} class_source={:?} class_ptr={} methods={} class_methods={} properties={} protocols={}",
@@ -322,7 +338,11 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 }
             }
             if !filtered.methods.is_empty() && objc_detail_includes_methods(view.detail) {
-                println!("method_records:");
+                println!(
+                    "method_records ({}/{}):",
+                    filtered.methods.len(),
+                    objc_total_methods(objc)
+                );
                 for entry in &filtered.methods {
                     println!(
                         "  owner={} kind={} class_method={} selector={} selector_source={:?} impl={} types={}",
@@ -341,23 +361,33 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 }
             }
             if !filtered.properties.is_empty() && objc_detail_includes_properties(view.detail) {
-                println!("property_records:");
+                println!(
+                    "property_records ({}/{}):",
+                    filtered.properties.len(),
+                    objc_total_properties(objc)
+                );
                 for entry in &filtered.properties {
                     println!(
-                        "  owner={} name={} attrs={}",
+                        "  owner={} name={} source={:?} attrs={}",
                         entry.owner_name.as_deref().unwrap_or("-"),
                         entry.record.name.as_deref().unwrap_or("-"),
+                        entry.record.name_source,
                         entry.record.attributes.as_deref().unwrap_or("-"),
                     );
                 }
             }
             if !filtered.ivars.is_empty() && objc_detail_includes_ivars(view.detail) {
-                println!("ivar_records:");
+                println!(
+                    "ivar_records ({}/{}):",
+                    filtered.ivars.len(),
+                    objc_total_ivars(objc)
+                );
                 for entry in &filtered.ivars {
                     println!(
-                        "  owner={} name={} type={} offset={}",
+                        "  owner={} name={} source={:?} type={} offset={}",
                         entry.owner_name.as_deref().unwrap_or("-"),
                         entry.record.name.as_deref().unwrap_or("-"),
+                        entry.record.name_source,
                         entry.record.type_encoding.as_deref().unwrap_or("-"),
                         entry
                             .record
@@ -368,7 +398,11 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 }
             }
             if !filtered.pointer_refs.is_empty() && matches!(view.detail, ObjcDetail::All) {
-                println!("pointer_refs:");
+                println!(
+                    "pointer_refs ({}/{}):",
+                    filtered.pointer_refs.len(),
+                    objc.pointer_refs.len()
+                );
                 for entry in &filtered.pointer_refs {
                     println!(
                         "  {:<10} table={:#x} raw={:#x} resolved_addr={} resolved_name={}",
@@ -413,6 +447,9 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 dyld.has_binds,
                 dyld.has_chained_fixups
             );
+            if let Some(filters) = dyld_active_filter_text(view) {
+                println!("active_filters: {filters}");
+            }
             if view.show_dylibs {
                 println!("dylibs:");
                 for dylib in &dyld.imported_dylibs {
@@ -426,7 +463,11 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 }
             }
             if view.show_exports {
-                println!("exports:");
+                println!(
+                    "exports ({}/{}):",
+                    filtered.exports.len(),
+                    dyld.exported_symbols.len()
+                );
                 for export in &filtered.exports {
                     println!(
                         "  {:>#18} {:<24} {}",
@@ -446,7 +487,11 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 }
             }
             if view.show_bindings {
-                println!("import_bindings:");
+                println!(
+                    "import_bindings ({}/{}):",
+                    filtered.import_bindings.len(),
+                    dyld.import_bindings.len()
+                );
                 for binding in &filtered.import_bindings {
                     println!(
                         "  {:>#18} {:>#18} {:<30} {:<24} addend={} kind={:?} source={:?} ordinal={} symidx={} weak={}",
@@ -476,7 +521,7 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 }
             }
             if view.show_stubs {
-                println!("stubs:");
+                println!("stubs ({}/{}):", filtered.stubs.len(), dyld.stubs.len());
                 for stub in &filtered.stubs {
                     println!(
                         "  {:#18x} section={} ptr_section={} ptr={} helper={} ordinal={} kind={:?} {}:{} source={:?}",
@@ -500,7 +545,11 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 }
             }
             if view.show_helpers {
-                println!("stub_helpers:");
+                println!(
+                    "stub_helpers ({}/{}):",
+                    filtered.stub_helpers.len(),
+                    dyld.stub_helpers.len()
+                );
                 for helper in &filtered.stub_helpers {
                     println!(
                         "  {:#18x} stub={} stub_section={} ptr_section={} ptr={} ordinal={} {}:{}",
@@ -755,6 +804,10 @@ fn filter_dyld_view<'a>(
                     .binding_kind_filter
                     .is_none_or(|kind| binding.binding_kind == kind)
                 && view
+                    .stub_kind_filter
+                    .as_ref()
+                    .is_none_or(|kind| binding_matches_stub_kind(binding.binding_kind, kind))
+                && view
                     .ordinal_filter
                     .is_none_or(|ordinal| binding.ordinal == Some(ordinal))
         })
@@ -777,6 +830,9 @@ fn filter_dyld_view<'a>(
                 .source_filter
                 .is_none_or(|source| stub.source == source)
                 && view
+                    .binding_kind_filter
+                    .is_none_or(|kind| stub_matches_binding_kind(&stub.stub_kind, kind))
+                && view
                     .stub_kind_filter
                     .as_ref()
                     .is_none_or(|kind| &stub.stub_kind == kind)
@@ -794,6 +850,7 @@ fn filter_dyld_view<'a>(
     let restrict_helpers_to_stubs = view.name_filter.is_some()
         || view.dylib_filter.is_some()
         || view.source_filter.is_some()
+        || view.binding_kind_filter.is_some()
         || view.stub_kind_filter.is_some()
         || view.ordinal_filter.is_some();
     let mut stub_helpers = dyld
@@ -845,7 +902,13 @@ fn filter_objc_view<'a>(
     let protocols = objc
         .protocols
         .iter()
-        .filter(|record| objc_protocol_matches(record, view.owner_filter.as_deref()))
+        .filter(|record| {
+            objc_protocol_matches(
+                record,
+                view.owner_filter.as_deref(),
+                view.name_source_filter,
+            )
+        })
         .collect::<Vec<_>>();
     let categories = objc
         .categories
@@ -951,6 +1014,10 @@ fn filter_objc_view<'a>(
 
     if let Some(selector_source) = view.selector_source_filter {
         methods.retain(|entry| entry.record.selector_source == selector_source);
+    }
+    if let Some(name_source) = view.name_source_filter {
+        properties.retain(|entry| entry.record.name_source == name_source);
+        ivars.retain(|entry| entry.record.name_source == name_source);
     }
 
     let pointer_refs = if view.owner_filter.is_some() {
@@ -1106,6 +1173,113 @@ fn sort_stub_helpers(helpers: &mut Vec<&StubHelperEntry>, sort: Option<DyldSortK
     }
 }
 
+fn binding_matches_stub_kind(binding_kind: ImportBindingKind, stub_kind: &StubKind) -> bool {
+    matches!(
+        (binding_kind, stub_kind),
+        (ImportBindingKind::Lazy, StubKind::Lazy) | (ImportBindingKind::NonLazy, StubKind::NonLazy)
+    )
+}
+
+fn stub_matches_binding_kind(stub_kind: &StubKind, binding_kind: ImportBindingKind) -> bool {
+    match binding_kind {
+        ImportBindingKind::Lazy => matches!(stub_kind, StubKind::Lazy),
+        ImportBindingKind::NonLazy => matches!(stub_kind, StubKind::NonLazy),
+        ImportBindingKind::ChainedFixup => false,
+    }
+}
+
+fn dyld_active_filter_text(view: &DyldViewOptions) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(name) = &view.name_filter {
+        parts.push(format!("name={name}"));
+    }
+    if let Some(dylib) = &view.dylib_filter {
+        parts.push(format!("dylib={dylib}"));
+    }
+    if let Some(source) = view.source_filter {
+        parts.push(format!("source={source:?}"));
+    }
+    if let Some(binding_kind) = view.binding_kind_filter {
+        parts.push(format!("binding_kind={binding_kind:?}"));
+    }
+    if let Some(stub_kind) = &view.stub_kind_filter {
+        parts.push(format!("stub_kind={stub_kind:?}"));
+    }
+    if let Some(ordinal) = view.ordinal_filter {
+        parts.push(format!("ordinal={ordinal}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+fn objc_active_filter_text(view: &ObjcViewOptions) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(owner) = &view.owner_filter {
+        parts.push(format!("owner={owner}"));
+    }
+    if let Some(source) = view.name_source_filter {
+        parts.push(format!("name_source={source:?}"));
+    }
+    if let Some(source) = view.selector_source_filter {
+        parts.push(format!("selector_source={source:?}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+fn objc_total_methods(objc: &damsel_core::ObjcMetadata) -> usize {
+    let class_methods = objc
+        .classes
+        .iter()
+        .map(|record| record.methods.len() + record.class_methods.len())
+        .sum::<usize>();
+    let protocol_methods = objc
+        .protocols
+        .iter()
+        .map(|record| {
+            record.required_instance_methods.len()
+                + record.required_class_methods.len()
+                + record.optional_instance_methods.len()
+                + record.optional_class_methods.len()
+        })
+        .sum::<usize>();
+    let category_methods = objc
+        .categories
+        .iter()
+        .map(|record| record.methods.len() + record.class_methods.len())
+        .sum::<usize>();
+    class_methods + protocol_methods + category_methods
+}
+
+fn objc_total_properties(objc: &damsel_core::ObjcMetadata) -> usize {
+    let class_properties = objc
+        .classes
+        .iter()
+        .map(|record| record.properties.len())
+        .sum::<usize>();
+    let protocol_properties = objc
+        .protocols
+        .iter()
+        .map(|record| record.properties.len())
+        .sum::<usize>();
+    let category_properties = objc
+        .categories
+        .iter()
+        .map(|record| record.properties.len())
+        .sum::<usize>();
+    class_properties + protocol_properties + category_properties
+}
+
+fn objc_total_ivars(objc: &damsel_core::ObjcMetadata) -> usize {
+    objc.classes.iter().map(|record| record.ivars.len()).sum()
+}
+
 fn objc_class_matches(
     record: &ObjcClassRecord,
     owner_filter: Option<&str>,
@@ -1123,13 +1297,17 @@ fn objc_class_matches(
     }) && name_source_filter.is_none_or(|source| record.name_source == source)
 }
 
-fn objc_protocol_matches(record: &ObjcProtocolRecord, owner_filter: Option<&str>) -> bool {
+fn objc_protocol_matches(
+    record: &ObjcProtocolRecord,
+    owner_filter: Option<&str>,
+    name_source_filter: Option<ObjcNameSource>,
+) -> bool {
     owner_filter.is_none_or(|needle| {
         record
             .name
             .as_deref()
             .is_some_and(|value| contains_case_insensitive(value, needle))
-    })
+    }) && name_source_filter.is_none_or(|source| record.name_source == source)
 }
 
 fn objc_category_matches(
@@ -2247,6 +2425,10 @@ fn objc_protocol_record_json(record: &ObjcProtocolRecord) -> JsonValue {
                 .unwrap_or(JsonValue::Null),
         ),
         (
+            "name_source".to_string(),
+            JsonValue::String(format!("{:?}", record.name_source)),
+        ),
+        (
             "required_instance_methods".to_string(),
             JsonValue::Array(
                 record
@@ -2429,6 +2611,10 @@ fn objc_property_record_json(record: &ObjcPropertyRecord) -> JsonValue {
                 .unwrap_or(JsonValue::Null),
         ),
         (
+            "name_source".to_string(),
+            JsonValue::String(format!("{:?}", record.name_source)),
+        ),
+        (
             "attributes".to_string(),
             record
                 .attributes
@@ -2449,6 +2635,10 @@ fn objc_ivar_record_json(record: &ObjcIvarRecord) -> JsonValue {
                 .as_ref()
                 .map(|value| JsonValue::String(value.clone()))
                 .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "name_source".to_string(),
+            JsonValue::String(format!("{:?}", record.name_source)),
         ),
         (
             "type_encoding".to_string(),
@@ -2716,19 +2906,23 @@ fn reference_to_text(reference: &Reference) -> String {
         Reference::StubHelper {
             helper_address,
             target_stub,
+            stub_section,
             pointer_address,
+            pointer_section,
             binding_ordinal,
             dylib,
             name,
             ..
         } => format!(
-            "stub-helper {helper_address:#x} stub={} ptr={} ordinal={} {}:{}",
+            "stub-helper {helper_address:#x} stub={} stub_section={} ptr={} ptr_section={} ordinal={} {}:{}",
             target_stub
                 .map(|value| format!("{value:#x}"))
                 .unwrap_or_else(|| "-".to_string()),
+            stub_section.clone().unwrap_or_else(|| "-".to_string()),
             pointer_address
                 .map(|value| format!("{value:#x}"))
                 .unwrap_or_else(|| "-".to_string()),
+            pointer_section.clone().unwrap_or_else(|| "-".to_string()),
             binding_ordinal
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "-".to_string()),
@@ -2894,7 +3088,9 @@ fn reference_json(reference: &Reference) -> JsonValue {
         Reference::StubHelper {
             helper_address,
             target_stub,
+            stub_section,
             pointer_address,
+            pointer_section,
             binding_ordinal,
             dylib,
             name,
@@ -2910,8 +3106,22 @@ fn reference_json(reference: &Reference) -> JsonValue {
                 target_stub.map(u64_num).unwrap_or(JsonValue::Null),
             ),
             (
+                "stub_section".to_string(),
+                stub_section
+                    .as_ref()
+                    .map(|value| JsonValue::String(value.clone()))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
                 "pointer_address".to_string(),
                 pointer_address.map(u64_num).unwrap_or(JsonValue::Null),
+            ),
+            (
+                "pointer_section".to_string(),
+                pointer_section
+                    .as_ref()
+                    .map(|value| JsonValue::String(value.clone()))
+                    .unwrap_or(JsonValue::Null),
             ),
             (
                 "binding_ordinal".to_string(),
@@ -3098,6 +3308,19 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             ("encoding".to_string(), JsonValue::String(encoding.clone())),
             ("target".to_string(), JsonValue::String(target.clone())),
             ("addend".to_string(), i64_num(*addend)),
+        ]),
+        Annotation::IndirectTargetResolved {
+            via,
+            target,
+            reason,
+        } => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("indirect_target_resolved".to_string()),
+            ),
+            ("via".to_string(), JsonValue::String(via.clone())),
+            ("target".to_string(), u64_num(*target)),
+            ("reason".to_string(), JsonValue::String(reason.clone())),
         ]),
         Annotation::Note(note) => JsonValue::Object(vec![
             ("type".to_string(), JsonValue::String("note".to_string())),

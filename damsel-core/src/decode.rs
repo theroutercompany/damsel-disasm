@@ -1,4 +1,6 @@
-use crate::{Annotation, DecodedInstruction, Operand, Reference};
+use crate::{
+    Annotation, DecodedInstruction, DisassemblyLimit, DisassemblyOptions, Operand, Reference,
+};
 use capstone::arch;
 use capstone::arch::ArchDetail;
 use capstone::arch::arm64::{Arm64Operand, Arm64OperandType};
@@ -18,7 +20,8 @@ trait InstructionDecoder {
         &self,
         bytes: &[u8],
         start_address: u64,
-        max_instructions: Option<usize>,
+        limit: DisassemblyLimit,
+        options: DisassemblyOptions,
     ) -> Result<Vec<DecodedInstruction>, DecodeError>;
 }
 
@@ -27,7 +30,32 @@ pub(crate) fn decode_aarch64(
     start_address: u64,
     max_instructions: Option<usize>,
 ) -> Result<Vec<DecodedInstruction>, DecodeError> {
-    Bad64Decoder.decode(bytes, start_address, max_instructions)
+    decode_aarch64_with_limit(
+        bytes,
+        start_address,
+        max_instructions
+            .map(DisassemblyLimit::Instructions)
+            .unwrap_or(DisassemblyLimit::Unlimited),
+        DisassemblyOptions::default(),
+    )
+}
+
+pub fn decode_aarch64_with_limit(
+    bytes: &[u8],
+    start_address: u64,
+    limit: DisassemblyLimit,
+    options: DisassemblyOptions,
+) -> Result<Vec<DecodedInstruction>, DecodeError> {
+    Bad64Decoder.decode(bytes, start_address, limit, options)
+}
+
+pub fn decode_aarch64_v2(
+    bytes: &[u8],
+    start_address: u64,
+    limit: DisassemblyLimit,
+    options: DisassemblyOptions,
+) -> Result<Vec<DecodedInstruction>, DecodeError> {
+    decode_aarch64_with_limit(bytes, start_address, limit, options)
 }
 
 struct Bad64Decoder;
@@ -37,7 +65,8 @@ impl InstructionDecoder for Bad64Decoder {
         &self,
         bytes: &[u8],
         start_address: u64,
-        max_instructions: Option<usize>,
+        limit: DisassemblyLimit,
+        options: DisassemblyOptions,
     ) -> Result<Vec<DecodedInstruction>, DecodeError> {
         let cs = Capstone::new()
             .arm64()
@@ -48,10 +77,10 @@ impl InstructionDecoder for Bad64Decoder {
         let insns = cs
             .disasm_all(bytes, start_address)
             .map_err(|err| DecodeError::InvalidInstruction(err.to_string()))?;
-        let limit = max_instructions.unwrap_or(usize::MAX);
+        let instruction_cap = limit.instruction_cap().unwrap_or(usize::MAX);
         let mut instructions = Vec::new();
 
-        for insn in insns.iter().take(limit) {
+        for insn in insns.iter().take(instruction_cap) {
             let mnemonic = insn.mnemonic().unwrap_or("unknown").to_string();
             let detail = cs
                 .insn_detail(insn)
@@ -66,11 +95,13 @@ impl InstructionDecoder for Bad64Decoder {
             let mut references = derivation.references;
             let mut annotations = Vec::new();
 
-            if insn.address() == start_address {
+            if options.include_annotations && insn.address() == start_address {
                 annotations.push(Annotation::Note("range start".to_string()));
             }
-            for note in derivation.notes {
-                annotations.push(Annotation::Note(note));
+            if options.include_annotations {
+                for note in derivation.notes {
+                    annotations.push(Annotation::Note(note));
+                }
             }
 
             if references.is_empty() {

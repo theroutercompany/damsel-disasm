@@ -3,21 +3,22 @@ source: damsel-cli/tests/cli_snapshots.rs
 expression: stdout
 ---
 dyld: dylibs=1 rpaths=0 exports=2 function_starts=2 bindings=6 stubs=6 helpers=6 rebases=true binds=true chained_fixups=false
-import_bindings:
+active_filters: binding_kind=Lazy stub_kind=Lazy ordinal=1
+import_bindings (6/9):
          0x100008000             0x8000 /usr/lib/libSystem.B.dylib     ___snprintf_chk          addend=0 kind=Lazy source=IndirectSymbol ordinal=1 symidx=4 weak=false
          0x100008008             0x8008 /usr/lib/libSystem.B.dylib     ___stack_chk_fail        addend=0 kind=Lazy source=IndirectSymbol ordinal=1 symidx=5 weak=false
          0x100008010             0x8010 /usr/lib/libSystem.B.dylib     _fprintf                 addend=0 kind=Lazy source=IndirectSymbol ordinal=1 symidx=8 weak=false
          0x100008018             0x8018 /usr/lib/libSystem.B.dylib     _puts                    addend=0 kind=Lazy source=IndirectSymbol ordinal=1 symidx=9 weak=false
          0x100008020             0x8020 /usr/lib/libSystem.B.dylib     _strcmp                  addend=0 kind=Lazy source=IndirectSymbol ordinal=1 symidx=10 weak=false
          0x100008028             0x8028 /usr/lib/libSystem.B.dylib     _strlen                  addend=0 kind=Lazy source=IndirectSymbol ordinal=1 symidx=11 weak=false
-stubs:
+stubs (6/6):
          0x1000006e0 section=__TEXT:__stubs ptr_section=__DATA:__la_symbol_ptr ptr=0x100008000 helper=0x100000740 ordinal=1 kind=Lazy /usr/lib/libSystem.B.dylib:___snprintf_chk source=Stub
          0x1000006ec section=__TEXT:__stubs ptr_section=__DATA:__la_symbol_ptr ptr=0x100008008 helper=0x10000074c ordinal=1 kind=Lazy /usr/lib/libSystem.B.dylib:___stack_chk_fail source=Stub
          0x1000006f8 section=__TEXT:__stubs ptr_section=__DATA:__la_symbol_ptr ptr=0x100008010 helper=0x100000758 ordinal=1 kind=Lazy /usr/lib/libSystem.B.dylib:_fprintf source=Stub
          0x100000704 section=__TEXT:__stubs ptr_section=__DATA:__la_symbol_ptr ptr=0x100008018 helper=0x100000764 ordinal=1 kind=Lazy /usr/lib/libSystem.B.dylib:_puts source=Stub
          0x100000710 section=__TEXT:__stubs ptr_section=__DATA:__la_symbol_ptr ptr=0x100008020 helper=0x100000770 ordinal=1 kind=Lazy /usr/lib/libSystem.B.dylib:_strcmp source=Stub
          0x10000071c section=__TEXT:__stubs ptr_section=__DATA:__la_symbol_ptr ptr=0x100008028 helper=0x10000077c ordinal=1 kind=Lazy /usr/lib/libSystem.B.dylib:_strlen source=Stub
-stub_helpers:
+stub_helpers (6/6):
          0x100000740 stub=0x1000006e0 stub_section=__TEXT:__stubs ptr_section=__DATA:__la_symbol_ptr ptr=0x100008000 ordinal=1 /usr/lib/libSystem.B.dylib:___snprintf_chk
          0x10000074c stub=0x1000006ec stub_section=__TEXT:__stubs ptr_section=__DATA:__la_symbol_ptr ptr=0x100008008 ordinal=1 /usr/lib/libSystem.B.dylib:___stack_chk_fail
          0x100000758 stub=0x1000006f8 stub_section=__TEXT:__stubs ptr_section=__DATA:__la_symbol_ptr ptr=0x100008010 ordinal=1 /usr/lib/libSystem.B.dylib:_fprintf

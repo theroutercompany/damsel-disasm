@@ -3,7 +3,10 @@ use damsel_core::{
     DyldMetadata, ExportKind, ExportedSymbol, ImportBindingKind, ImportBindingRecord,
     ImportBindingSource, Segment, StubEntry, StubHelperEntry, StubKind,
 };
-use goblin::mach::exports::ExportInfo;
+use goblin::mach::exports::{
+    EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE, EXPORT_SYMBOL_FLAGS_KIND_MASK,
+    EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL, EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION, ExportInfo,
+};
 use goblin::mach::{load_command, segment};
 
 const DYLD_CHAINED_PTR_START_NONE: u16 = 0xFFFF;
@@ -70,9 +73,12 @@ pub(crate) fn collect_dyld_metadata(
         .map(|segment| segment.address)
         .unwrap_or_default();
     let function_starts = parse_function_starts(bytes, text_base, &macho.load_commands);
+    validate_export_payload_ranges(bytes, &macho.load_commands)?;
     let exported_symbols = macho
         .exports()
-        .unwrap_or_default()
+        .map_err(|error| {
+            MachoError::MalformedDyldPayload(format!("failed to parse export trie: {error}"))
+        })?
         .into_iter()
         .map(|export| ExportedSymbol {
             name: export.name,
@@ -106,14 +112,12 @@ pub(crate) fn collect_dyld_metadata(
     }
 
     if let Some(linkedit) = chained_fixups {
-        if let Ok(summary) =
-            parse_chained_fixups(bytes, &linkedit, macho.libs.as_slice(), &macho.segments)
-        {
-            has_binds |= summary.has_binds;
-            has_rebases |= summary.has_rebases;
-            import_hints = summary.import_hints;
-            import_bindings = summary.import_bindings;
-        }
+        let summary =
+            parse_chained_fixups(bytes, &linkedit, macho.libs.as_slice(), &macho.segments)?;
+        has_binds |= summary.has_binds;
+        has_rebases |= summary.has_rebases;
+        import_hints = summary.import_hints;
+        import_bindings = summary.import_bindings;
     }
 
     import_hints.sort_by_key(|hint| {
@@ -169,11 +173,50 @@ pub(crate) fn collect_dyld_metadata(
     })
 }
 
+fn validate_export_payload_ranges(
+    bytes: &[u8],
+    commands: &[goblin::mach::load_command::LoadCommand],
+) -> Result<()> {
+    for command in commands {
+        match &command.command {
+            load_command::CommandVariant::DyldInfo(info)
+            | load_command::CommandVariant::DyldInfoOnly(info) => {
+                if info.export_size > 0 {
+                    linkedit_range(bytes, info.export_off as u64, info.export_size as u64)
+                        .map_err(|error| {
+                            MachoError::MalformedDyldPayload(format!(
+                                "invalid export trie range from LC_DYLD_INFO*: {error}"
+                            ))
+                        })?;
+                }
+            }
+            load_command::CommandVariant::DyldExportsTrie(linkedit) => {
+                if linkedit.datasize > 0 {
+                    linkedit_range(bytes, linkedit.dataoff as u64, linkedit.datasize as u64)
+                        .map_err(|error| {
+                            MachoError::MalformedDyldPayload(format!(
+                                "invalid dyld export trie range: {error}"
+                            ))
+                        })?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn map_export_kind(info: &ExportInfo<'_>, image_base: u64) -> ExportKind {
     match info {
         ExportInfo::Regular { flags, .. } => {
-            if flags & goblin::mach::exports::EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION != 0 {
+            if flags & EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION != 0 {
                 ExportKind::WeakDefinition
+            } else if (flags & EXPORT_SYMBOL_FLAGS_KIND_MASK) == EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE {
+                ExportKind::Absolute
+            } else if (flags & EXPORT_SYMBOL_FLAGS_KIND_MASK)
+                == EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL
+            {
+                ExportKind::ThreadLocal
             } else {
                 ExportKind::Regular
             }
@@ -343,44 +386,73 @@ fn parse_chained_fixups(
         if seg_info_offset == 0 {
             continue;
         }
-        let Some(segment) = segments.get(seg_index) else {
-            continue;
-        };
-        let Some(seg_info) = starts.get(seg_info_offset..) else {
-            continue;
-        };
+        let segment = segments.get(seg_index).ok_or_else(|| {
+            MachoError::MalformedDyldPayload(format!(
+                "chained segment index {seg_index} out of range"
+            ))
+        })?;
+        let seg_info = starts.get(seg_info_offset..).ok_or_else(|| {
+            MachoError::MalformedDyldPayload(format!(
+                "chained segment {seg_index} info offset {seg_info_offset:#x} out of range"
+            ))
+        })?;
 
-        let Some(seg_info_size) = read_u32(seg_info, 0).map(|value| value as usize) else {
-            continue;
-        };
-        if seg_info_size < 22 || seg_info_size > seg_info.len() {
-            continue;
+        let seg_info_size = read_u32(seg_info, 0).ok_or_else(|| {
+            MachoError::MalformedDyldPayload(format!(
+                "missing chained segment {seg_index} info size"
+            ))
+        })? as usize;
+        if seg_info_size < 22 {
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "chained segment {seg_index} info too small: {seg_info_size}"
+            )));
+        }
+        if seg_info_size > seg_info.len() {
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "chained segment {seg_index} info truncated: size={seg_info_size} available={}",
+                seg_info.len()
+            )));
         }
         let seg_info = &seg_info[..seg_info_size];
-        let Some(page_size) = read_u16(seg_info, 4).map(u64::from) else {
-            continue;
-        };
-        let Some(pointer_format) = read_u16(seg_info, 6) else {
-            continue;
-        };
-        let Some(page_count) = read_u16(seg_info, 20).map(|value| value as usize) else {
-            continue;
-        };
+        let page_size = read_u16(seg_info, 4).map(u64::from).ok_or_else(|| {
+            MachoError::MalformedDyldPayload(format!(
+                "missing chained segment {seg_index} page size"
+            ))
+        })?;
+        let pointer_format = read_u16(seg_info, 6).ok_or_else(|| {
+            MachoError::MalformedDyldPayload(format!(
+                "missing chained segment {seg_index} pointer format"
+            ))
+        })?;
+        let page_count = read_u16(seg_info, 20)
+            .map(|value| value as usize)
+            .ok_or_else(|| {
+                MachoError::MalformedDyldPayload(format!(
+                    "missing chained segment {seg_index} page count"
+                ))
+            })?;
         if page_size == 0 {
-            continue;
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "chained segment {seg_index} declared zero page size"
+            )));
         }
 
         let page_starts_offset = 22usize;
         let page_starts_len = page_count.saturating_mul(2);
         let page_starts_end = page_starts_offset.saturating_add(page_starts_len);
         if page_starts_end > seg_info.len() {
-            continue;
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "chained segment {seg_index} page-start table is truncated"
+            )));
         }
 
         for page_index in 0..page_count {
-            let Some(page_start) = read_u16(seg_info, page_starts_offset + page_index * 2) else {
-                continue;
-            };
+            let page_start =
+                read_u16(seg_info, page_starts_offset + page_index * 2).ok_or_else(|| {
+                    MachoError::MalformedDyldPayload(format!(
+                        "missing chained segment {seg_index} page-start entry {page_index}"
+                    ))
+                })?;
             if page_start == DYLD_CHAINED_PTR_START_NONE {
                 continue;
             }
@@ -388,7 +460,14 @@ fn parse_chained_fixups(
             let mut starts_for_page = Vec::new();
             if (page_start & DYLD_CHAINED_PTR_START_MULTI) != 0 {
                 let mut chain_index = usize::from(page_start & !DYLD_CHAINED_PTR_START_MULTI);
-                while let Some(raw_start) = read_u16(seg_info, page_starts_end + chain_index * 2) {
+                loop {
+                    let raw_start = read_u16(seg_info, page_starts_end + chain_index * 2).ok_or_else(
+                        || {
+                            MachoError::MalformedDyldPayload(format!(
+                                "truncated chained segment {seg_index} multi-start list for page {page_index}"
+                            ))
+                        },
+                    )?;
                     starts_for_page.push(raw_start & !DYLD_CHAINED_PTR_START_LAST);
                     chain_index = chain_index.saturating_add(1);
                     if (raw_start & DYLD_CHAINED_PTR_START_LAST) != 0 {
@@ -409,7 +488,7 @@ fn parse_chained_fixups(
                     u64::from(start),
                     &imports,
                     &mut summary,
-                );
+                )?;
             }
         }
     }
@@ -437,17 +516,33 @@ fn parse_chained_imports(
         }
     };
 
-    let symbols = chain_data.get(symbols_offset..).unwrap_or_default();
+    if symbols_format != 0 {
+        return Err(MachoError::MalformedDyldPayload(format!(
+            "unsupported chained symbols format {symbols_format}"
+        )));
+    }
+    let symbols = chain_data.get(symbols_offset..).ok_or_else(|| {
+        MachoError::MalformedDyldPayload(format!(
+            "chained symbols offset out of range: {symbols_offset:#x}"
+        ))
+    })?;
     let mut imports = Vec::with_capacity(imports_count);
 
     for index in 0..imports_count {
-        let Some(entry_offset) = imports_offset.checked_add(index.saturating_mul(entry_size))
-        else {
-            break;
-        };
-        let Some(entry) = chain_data.get(entry_offset..entry_offset + entry_size) else {
-            break;
-        };
+        let entry_offset = imports_offset
+            .checked_add(index.saturating_mul(entry_size))
+            .ok_or_else(|| {
+                MachoError::MalformedDyldPayload(format!(
+                    "chained imports entry offset overflow at index {index}"
+                ))
+            })?;
+        let entry = chain_data
+            .get(entry_offset..entry_offset + entry_size)
+            .ok_or_else(|| {
+                MachoError::MalformedDyldPayload(format!(
+                    "truncated chained imports entry at index {index}"
+                ))
+            })?;
 
         let (lib_ordinal, is_weak, name_offset, addend) = match imports_format {
             DYLD_CHAINED_IMPORT => {
@@ -482,12 +577,11 @@ fn parse_chained_imports(
             _ => unreachable!(),
         };
 
-        let name = if symbols_format == 0 {
-            read_c_string(symbols, name_offset)
-                .unwrap_or_else(|| format!("<import@{name_offset:#x}>"))
-        } else {
-            format!("<compressed-symbol@{name_offset:#x}>")
-        };
+        let name = read_c_string(symbols, name_offset).ok_or_else(|| {
+            MachoError::MalformedDyldPayload(format!(
+                "invalid chained import name offset {name_offset:#x} at index {index}"
+            ))
+        })?;
         let dylib = resolve_chained_dylib_name(libs, lib_ordinal);
         imports.push(ChainedImportEntry {
             name,
@@ -502,20 +596,25 @@ fn parse_chained_imports(
 
 fn walk_fixup_chain(
     segment: &segment::Segment<'_>,
-    _segment_name: Option<&str>,
+    segment_name: Option<&str>,
     pointer_format: u16,
     page_size: u64,
     page_index: u64,
     chain_start: u64,
     imports: &[ChainedImportEntry],
     summary: &mut ChainedFixupSummary,
-) {
-    let Some(stride) = pointer_stride(pointer_format) else {
-        return;
-    };
-    let Some(pointer_width) = pointer_width(pointer_format) else {
-        return;
-    };
+) -> Result<()> {
+    let segment_name = segment_name.unwrap_or("<unknown>");
+    let stride = pointer_stride(pointer_format).ok_or_else(|| {
+        MachoError::MalformedDyldPayload(format!(
+            "unsupported chained pointer format {pointer_format} in segment {segment_name}"
+        ))
+    })?;
+    let pointer_width = pointer_width(pointer_format).ok_or_else(|| {
+        MachoError::MalformedDyldPayload(format!(
+            "unsupported chained pointer width format {pointer_format} in segment {segment_name}"
+        ))
+    })?;
     let mut offset_in_segment = page_index
         .saturating_mul(page_size)
         .saturating_add(chain_start);
@@ -526,20 +625,28 @@ fn walk_fixup_chain(
             break;
         };
         if entry_end > segment.filesize {
-            break;
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "chained pointer ran past segment bounds in {segment_name}: page={page_index} offset={offset_in_segment:#x}"
+            )));
         }
-        let Ok(segment_offset) = usize::try_from(offset_in_segment) else {
-            break;
-        };
-        let Some(raw_entry) = segment
+        let segment_offset = usize::try_from(offset_in_segment).map_err(|_| {
+            MachoError::MalformedDyldPayload(format!(
+                "invalid chained pointer offset in {segment_name}: {offset_in_segment:#x}"
+            ))
+        })?;
+        let raw_entry = segment
             .data
             .get(segment_offset..segment_offset + pointer_width)
-        else {
-            break;
-        };
-        let Some(pointer) = decode_chained_pointer(pointer_format, raw_entry) else {
-            break;
-        };
+            .ok_or_else(|| {
+                MachoError::MalformedDyldPayload(format!(
+                    "truncated chained pointer entry in {segment_name}: page={page_index} offset={offset_in_segment:#x}"
+                ))
+            })?;
+        let pointer = decode_chained_pointer(pointer_format, raw_entry).ok_or_else(|| {
+            MachoError::MalformedDyldPayload(format!(
+                "failed to decode chained pointer in {segment_name}: format={pointer_format} page={page_index} offset={offset_in_segment:#x}"
+            ))
+        })?;
 
         let address = segment.vmaddr.saturating_add(offset_in_segment);
         let file_offset = segment.fileoff.saturating_add(offset_in_segment);
@@ -551,20 +658,23 @@ fn walk_fixup_chain(
             let mut binding_addend = 0i64;
             let mut binding_is_weak = false;
             if let Some(ordinal) = pointer.bind_ordinal {
-                if let Some(import) = imports.get(ordinal as usize) {
-                    binding_name = Some(import.name.clone());
-                    binding_dylib = Some(import.dylib.clone());
-                    binding_addend = import.addend;
-                    binding_is_weak = import.is_weak;
-                    summary.import_hints.push(ImportAddressHint {
-                        name: import.name.clone(),
-                        dylib: import.dylib.clone(),
-                        address,
-                        offset: Some(file_offset),
-                        addend: import.addend,
-                        is_weak: import.is_weak,
-                    });
-                }
+                let import = imports.get(ordinal as usize).ok_or_else(|| {
+                    MachoError::MalformedDyldPayload(format!(
+                        "chained bind ordinal {ordinal} out of range in {segment_name}: page={page_index} offset={offset_in_segment:#x}"
+                    ))
+                })?;
+                binding_name = Some(import.name.clone());
+                binding_dylib = Some(import.dylib.clone());
+                binding_addend = import.addend;
+                binding_is_weak = import.is_weak;
+                summary.import_hints.push(ImportAddressHint {
+                    name: import.name.clone(),
+                    dylib: import.dylib.clone(),
+                    address,
+                    offset: Some(file_offset),
+                    addend: import.addend,
+                    is_weak: import.is_weak,
+                });
             }
             summary.import_bindings.push(ImportBindingRecord {
                 dylib: binding_dylib.unwrap_or_else(|| "<unknown-dylib>".to_string()),
@@ -588,12 +698,15 @@ fn walk_fixup_chain(
         if pointer.next == 0 {
             break;
         }
-        let Some(delta) = pointer.next.checked_mul(stride) else {
-            break;
-        };
+        let delta = pointer.next.checked_mul(stride).ok_or_else(|| {
+            MachoError::MalformedDyldPayload(format!(
+                "chained pointer delta overflow in {segment_name}: page={page_index} offset={offset_in_segment:#x}"
+            ))
+        })?;
         offset_in_segment = offset_in_segment.saturating_add(delta);
         steps = steps.saturating_add(1);
     }
+    Ok(())
 }
 
 fn materialize_stub_entries(

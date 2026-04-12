@@ -143,6 +143,22 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
                 "class compatibility view missing structured class name: {name}"
             );
         }
+        for property in &class_record.properties {
+            if property.name.is_some() {
+                assert!(
+                    !matches!(property.name_source, ObjcNameSource::Unresolved),
+                    "resolved class property name must not be marked unresolved"
+                );
+            }
+        }
+        for ivar in &class_record.ivars {
+            if ivar.name.is_some() {
+                assert!(
+                    !matches!(ivar.name_source, ObjcNameSource::Unresolved),
+                    "resolved ivar name must not be marked unresolved"
+                );
+            }
+        }
         saw_class_methods |= !class_record.class_methods.is_empty();
         saw_properties |= !class_record.properties.is_empty();
         saw_ivars |= !class_record.ivars.is_empty();
@@ -186,6 +202,18 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
                 !name.is_empty(),
                 "structured protocol names should be non-empty"
             );
+            assert!(
+                !matches!(protocol_record.name_source, ObjcNameSource::Unresolved),
+                "resolved protocol name must not be marked unresolved"
+            );
+        }
+        for property in &protocol_record.properties {
+            if property.name.is_some() {
+                assert!(
+                    !matches!(property.name_source, ObjcNameSource::Unresolved),
+                    "resolved protocol property name must not be marked unresolved"
+                );
+            }
         }
         saw_protocol_methods |= !protocol_record.required_instance_methods.is_empty()
             || !protocol_record.required_class_methods.is_empty()
@@ -270,6 +298,14 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
         saw_category_methods |=
             !category_record.methods.is_empty() || !category_record.class_methods.is_empty();
         saw_category_properties |= !category_record.properties.is_empty();
+        for property in &category_record.properties {
+            if property.name.is_some() {
+                assert!(
+                    !matches!(property.name_source, ObjcNameSource::Unresolved),
+                    "resolved category property name must not be marked unresolved"
+                );
+            }
+        }
         for method in category_record
             .methods
             .iter()
@@ -321,6 +357,14 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
                 assert!(
                     !matches!(method.selector_source, ObjcSelectorSource::Unresolved),
                     "resolved class selector must not be marked unresolved"
+                );
+                assert!(
+                    image
+                        .objc()
+                        .method_names
+                        .iter()
+                        .any(|selector| selector == method.selector.as_ref().expect("selector")),
+                    "method compatibility view missing structured selector"
                 );
                 saw_selector_with_source = true;
             }

@@ -263,6 +263,30 @@ fn derive_compatibility_views(
         .filter(|name| is_plausible_selector_name(name))
         .cloned()
         .collect::<Vec<_>>();
+    method_names.extend(
+        metadata
+            .classes
+            .iter()
+            .flat_map(|record| record.methods.iter().chain(record.class_methods.iter()))
+            .chain(
+                metadata.protocols.iter().flat_map(|record| {
+                    record
+                        .required_instance_methods
+                        .iter()
+                        .chain(record.required_class_methods.iter())
+                        .chain(record.optional_instance_methods.iter())
+                        .chain(record.optional_class_methods.iter())
+                }),
+            )
+            .chain(
+                metadata
+                    .categories
+                    .iter()
+                    .flat_map(|record| record.methods.iter().chain(record.class_methods.iter())),
+            )
+            .filter_map(|method| method.selector.clone())
+            .filter(|name| is_plausible_selector_name(name)),
+    );
     method_names.sort();
     method_names.dedup();
     metadata.method_names = method_names;
@@ -725,6 +749,14 @@ fn resolve_protocol_name_from_pointer(
     if let Some(name) = symbol_maps.protocol_names.get(&protocol_pointer).cloned() {
         return Some(name);
     }
+    resolve_runtime_protocol_name_from_pointer(slices, protocol_pointer, image_base)
+}
+
+fn resolve_runtime_protocol_name_from_pointer(
+    slices: &[SectionSlice<'_>],
+    protocol_pointer: u64,
+    image_base: Option<u64>,
+) -> Option<String> {
     // protocol_t layout starts with `isa`, then `name`.
     let name_pointer_raw = read_u64_at_va(slices, protocol_pointer.checked_add(8)?)?;
     let name_pointer = resolve_pointer_to_mapped_va(slices, name_pointer_raw, image_base)?;
@@ -840,11 +872,24 @@ fn build_protocol_record(
         .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
     let properties = read_u64_at_va(slices, pointer.saturating_add(56))
         .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+    let runtime_name = resolve_runtime_protocol_name_from_pointer(slices, pointer, image_base)
+        .filter(|name| is_plausible_objc_type_name(name));
+    let pointer_table_name = symbol_maps
+        .protocol_names
+        .get(&pointer)
+        .cloned()
+        .filter(|name| is_plausible_objc_type_name(name));
 
     ObjcProtocolRecord {
         pointer,
-        name: resolve_protocol_name_from_pointer(slices, pointer, image_base, symbol_maps)
-            .filter(|name| is_plausible_objc_type_name(name)),
+        name: runtime_name.clone().or(pointer_table_name.clone()),
+        name_source: if runtime_name.is_some() {
+            ObjcNameSource::Runtime
+        } else if pointer_table_name.is_some() {
+            ObjcNameSource::PointerTable
+        } else {
+            ObjcNameSource::Unresolved
+        },
         required_instance_methods: read_method_list_at_pointer(
             slices,
             required_instance,
@@ -1026,9 +1071,15 @@ fn read_property_list_at_pointer(
             .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
             .and_then(|ptr| read_c_string_at_va(slices, ptr));
         if name.is_some() || attributes.is_some() {
+            let name_source = if name.is_some() {
+                ObjcNameSource::Runtime
+            } else {
+                ObjcNameSource::Unresolved
+            };
             properties.push(ObjcPropertyRecord {
                 owner_pointer,
                 name,
+                name_source,
                 attributes,
             });
         }
@@ -1067,9 +1118,15 @@ fn read_ivar_list_at_pointer(
             .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
             .and_then(|ptr| read_c_string_at_va(slices, ptr));
         if name.is_some() || type_encoding.is_some() || offset.is_some() {
+            let name_source = if name.is_some() {
+                ObjcNameSource::Runtime
+            } else {
+                ObjcNameSource::Unresolved
+            };
             ivars.push(ObjcIvarRecord {
                 owner_pointer,
                 name,
+                name_source,
                 type_encoding,
                 offset,
             });

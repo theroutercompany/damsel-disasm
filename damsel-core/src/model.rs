@@ -478,6 +478,7 @@ pub struct ObjcClassRecord {
 pub struct ObjcProtocolRecord {
     pub pointer: u64,
     pub name: Option<String>,
+    pub name_source: ObjcNameSource,
     pub required_instance_methods: Vec<ObjcMethodRecord>,
     pub required_class_methods: Vec<ObjcMethodRecord>,
     pub optional_instance_methods: Vec<ObjcMethodRecord>,
@@ -538,6 +539,7 @@ pub enum ObjcSelectorSource {
 pub struct ObjcPropertyRecord {
     pub owner_pointer: u64,
     pub name: Option<String>,
+    pub name_source: ObjcNameSource,
     pub attributes: Option<String>,
 }
 
@@ -545,6 +547,7 @@ pub struct ObjcPropertyRecord {
 pub struct ObjcIvarRecord {
     pub owner_pointer: u64,
     pub name: Option<String>,
+    pub name_source: ObjcNameSource,
     pub type_encoding: Option<String>,
     pub offset: Option<u64>,
 }
@@ -571,10 +574,51 @@ impl ObjcMetadata {
             .find(|protocol_record| protocol_record.name.as_deref() == Some(name))
     }
 
+    pub fn class_by_pointer(&self, pointer: u64) -> Option<&ObjcClassRecord> {
+        self.classes
+            .iter()
+            .find(|class_record| class_record.class_pointer == pointer)
+    }
+
+    pub fn protocol_by_pointer(&self, pointer: u64) -> Option<&ObjcProtocolRecord> {
+        self.protocols
+            .iter()
+            .find(|protocol_record| protocol_record.pointer == pointer)
+    }
+
     pub fn category_by_name(&self, name: &str) -> Option<&ObjcCategoryRecord> {
         self.categories
             .iter()
             .find(|category_record| category_record.name.as_deref() == Some(name))
+    }
+
+    pub fn category_by_pointer(&self, pointer: u64) -> Option<&ObjcCategoryRecord> {
+        self.categories
+            .iter()
+            .find(|category_record| category_record.pointer == pointer)
+    }
+
+    pub fn methods_with_selector_source(
+        &self,
+        source: ObjcSelectorSource,
+    ) -> impl Iterator<Item = &ObjcMethodRecord> {
+        self.classes
+            .iter()
+            .flat_map(|record| record.methods.iter().chain(record.class_methods.iter()))
+            .chain(self.protocols.iter().flat_map(|record| {
+                record
+                    .required_instance_methods
+                    .iter()
+                    .chain(record.required_class_methods.iter())
+                    .chain(record.optional_instance_methods.iter())
+                    .chain(record.optional_class_methods.iter())
+            }))
+            .chain(
+                self.categories
+                    .iter()
+                    .flat_map(|record| record.methods.iter().chain(record.class_methods.iter())),
+            )
+            .filter(move |record| record.selector_source == source)
     }
 }
 
@@ -599,6 +643,18 @@ impl DyldMetadata {
             .find(|binding| binding.dylib == dylib && binding.name == name)
     }
 
+    pub fn binding_for_ordinal(&self, ordinal: u32) -> Option<&ImportBindingRecord> {
+        self.import_bindings
+            .iter()
+            .find(|binding| binding.ordinal == Some(ordinal))
+    }
+
+    pub fn binding_for_symbol_index(&self, symbol_index: u32) -> Option<&ImportBindingRecord> {
+        self.import_bindings
+            .iter()
+            .find(|binding| binding.symbol_index == Some(symbol_index))
+    }
+
     pub fn bindings_at_address(&self, address: u64) -> impl Iterator<Item = &ImportBindingRecord> {
         self.import_bindings
             .iter()
@@ -609,6 +665,18 @@ impl DyldMetadata {
         self.stubs
             .iter()
             .find(|stub_entry| stub_entry.stub_address == address)
+    }
+
+    pub fn stub_for_pointer_address(&self, address: u64) -> Option<&StubEntry> {
+        self.stubs
+            .iter()
+            .find(|stub_entry| stub_entry.pointer_address == Some(address))
+    }
+
+    pub fn stub_for_helper_address(&self, address: u64) -> Option<&StubEntry> {
+        self.stubs
+            .iter()
+            .find(|stub_entry| stub_entry.helper_address == Some(address))
     }
 
     pub fn helper_for_address(&self, address: u64) -> Option<&StubHelperEntry> {
@@ -627,6 +695,12 @@ impl DyldMetadata {
         self.stub_helpers
             .iter()
             .find(|helper_entry| helper_entry.pointer_address == Some(address))
+    }
+
+    pub fn helper_for_binding_ordinal(&self, ordinal: u32) -> Option<&StubHelperEntry> {
+        self.stub_helpers
+            .iter()
+            .find(|helper_entry| helper_entry.binding_ordinal == Some(ordinal))
     }
 
     pub fn helpers_for_symbol<'a>(
@@ -889,6 +963,11 @@ pub enum Annotation {
         index_register: String,
         element_size: u8,
     },
+    IndirectTargetResolved {
+        via: String,
+        target: u64,
+        reason: String,
+    },
     Note(String),
 }
 
@@ -965,6 +1044,11 @@ impl fmt::Display for Annotation {
                 f,
                 "jump-table base={base:#x} index={index_register} elem_size={element_size}"
             ),
+            Self::IndirectTargetResolved {
+                via,
+                target,
+                reason,
+            } => write!(f, "indirect-target via {via} -> {target:#x} ({reason})"),
             Self::Note(note) => f.write_str(note),
         }
     }
@@ -1138,6 +1222,10 @@ impl DisassemblyRequestV2 {
             .map(|range| range.contains(&address))
             .unwrap_or(true)
     }
+
+    pub fn effective_instruction_cap(&self) -> Option<usize> {
+        self.limit.instruction_cap()
+    }
 }
 
 impl DisassemblyResultV2 {
@@ -1163,6 +1251,10 @@ impl DisassemblyLimit {
     }
 }
 
+pub fn effective_instruction_limit_v2(request: &DisassemblyRequestV2) -> Option<usize> {
+    request.effective_instruction_cap()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisassemblyStopReason {
     InstructionLimitReached,
@@ -1180,6 +1272,8 @@ pub enum RecoveredValueKind {
     Literal,
     ImportPointer,
     StubAddress,
+    ExportAddress,
+    FunctionPointer,
     ObjcSelector,
     ObjcClass,
     ObjcMethodList,
@@ -1824,7 +1918,11 @@ impl BinaryImage {
     }
 
     pub fn effective_instruction_limit(&self, request: &DisassemblyRequest) -> Option<usize> {
-        request.effective_limit().instruction_cap()
+        self.effective_instruction_limit_v2(&request.to_v2())
+    }
+
+    pub fn effective_instruction_limit_v2(&self, request: &DisassemblyRequestV2) -> Option<usize> {
+        effective_instruction_limit_v2(request)
     }
 
     fn build_section_name_index(sections: &[Section]) -> BTreeMap<String, Vec<usize>> {

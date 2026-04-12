@@ -607,7 +607,8 @@ fn augment_dysymtab_bindings_and_stubs(
                 &indirect_symbol_metadata,
                 &imports_by_name,
                 &imports_by_dylib_and_name,
-            ) else {
+            )?
+            else {
                 continue;
             };
             let pointer_address = section.address().saturating_add((index as u64) * 8);
@@ -634,6 +635,9 @@ fn augment_dysymtab_bindings_and_stubs(
                     pointer_address,
                     section_name: full_name.clone(),
                     binding_kind,
+                    ordinal: resolution.ordinal,
+                    dylib: resolution.import.dylib.clone(),
+                    name: resolution.import.name.clone(),
                 });
         }
     }
@@ -655,6 +659,11 @@ fn augment_dysymtab_bindings_and_stubs(
         if stub_size == 0 {
             continue;
         }
+        if stub_size < 4 || stub_size % 4 != 0 {
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "invalid symbol stub size {stub_size} for section {full_name}"
+            )));
+        }
         let entries = raw.indirect_symbols(endian, indirect_symbols)?;
         for (index, raw_symbol) in entries.iter().enumerate() {
             let symbol_index = raw_symbol.get(endian);
@@ -675,13 +684,16 @@ fn augment_dysymtab_bindings_and_stubs(
                 &indirect_symbol_metadata,
                 &imports_by_name,
                 &imports_by_dylib_and_name,
-            ) else {
+            )?
+            else {
                 continue;
             };
             let stub_address = section.address().saturating_add((index as u64) * stub_size);
             let pointer_slot = pointer_slots_by_symbol_index
                 .get(&symbol_index)
-                .and_then(|values| select_pointer_slot_for_stub(values))
+                .map(|values| select_pointer_slot_for_stub(values, &resolution, symbol_index))
+                .transpose()?
+                .flatten()
                 .cloned();
             let pointer_address = pointer_slot
                 .as_ref()
@@ -921,13 +933,74 @@ struct PointerSlotMetadata {
     pointer_address: u64,
     section_name: String,
     binding_kind: PointerBindingKind,
+    ordinal: Option<u32>,
+    dylib: String,
+    name: String,
 }
 
-fn select_pointer_slot_for_stub(slots: &[PointerSlotMetadata]) -> Option<&PointerSlotMetadata> {
-    slots
+fn select_pointer_slot_for_stub<'a>(
+    slots: &'a [PointerSlotMetadata],
+    resolution: &ResolvedIndirectSymbol<'_>,
+    symbol_index: u32,
+) -> Result<Option<&'a PointerSlotMetadata>> {
+    if slots.is_empty() {
+        return Ok(None);
+    }
+
+    if let Some(ordinal) = resolution.ordinal {
+        let ordinal_matches = slots
+            .iter()
+            .filter(|slot| slot.ordinal == Some(ordinal))
+            .collect::<Vec<_>>();
+        if ordinal_matches.len() == 1 {
+            return Ok(ordinal_matches.first().copied());
+        }
+        if ordinal_matches.len() > 1 {
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "ambiguous pointer slots for symbol index {symbol_index}: multiple ordinal matches for ordinal {ordinal}"
+            )));
+        }
+    }
+
+    let dylib_name_matches = slots
         .iter()
-        .find(|slot| slot.binding_kind == PointerBindingKind::Lazy)
-        .or_else(|| slots.first())
+        .filter(|slot| {
+            slot.dylib == resolution.import.dylib
+                && normalize_import_name(&slot.name)
+                    == normalize_import_name(&resolution.import.name)
+        })
+        .collect::<Vec<_>>();
+    if dylib_name_matches.len() == 1 {
+        return Ok(dylib_name_matches.first().copied());
+    }
+    if dylib_name_matches.len() > 1 {
+        return Err(MachoError::MalformedDyldPayload(format!(
+            "ambiguous pointer slots for symbol index {symbol_index}: multiple dylib/name matches for {}:{}",
+            resolution.import.dylib, resolution.import.name
+        )));
+    }
+
+    let lazy_matches = slots
+        .iter()
+        .filter(|slot| slot.binding_kind == PointerBindingKind::Lazy)
+        .collect::<Vec<_>>();
+    if lazy_matches.len() == 1 {
+        return Ok(lazy_matches.first().copied());
+    }
+    if lazy_matches.len() > 1 {
+        return Err(MachoError::MalformedDyldPayload(format!(
+            "ambiguous pointer slots for symbol index {symbol_index}: multiple lazy candidates"
+        )));
+    }
+
+    if slots.len() == 1 {
+        return Ok(slots.first());
+    }
+
+    Err(MachoError::MalformedDyldPayload(format!(
+        "ambiguous pointer slots for symbol index {symbol_index}: {} candidates",
+        slots.len()
+    )))
 }
 
 #[derive(Debug, Clone)]
@@ -957,10 +1030,12 @@ fn decode_stub_helper_entries(
     helper_bytes: &[u8],
 ) -> Result<Vec<StubHelperDecodeEntry>> {
     let Some(entry_start) = find_stub_helper_entry_start(section_address, helper_bytes) else {
-        return Err(MachoError::MalformedDyldPayload(
-            "__stub_helper section did not contain a decodable helper trampoline".to_string(),
-        ));
+        return Err(MachoError::MalformedDyldPayload(format!(
+            "__stub_helper section at {section_address:#x} (size={:#x}) did not contain a decodable helper trampoline",
+            helper_bytes.len()
+        )));
     };
+    validate_stub_helper_trampoline(section_address, helper_bytes, entry_start)?;
 
     let mut entries = Vec::new();
     let mut cursor = entry_start;
@@ -983,15 +1058,15 @@ fn decode_stub_helper_entries(
         let helper_address = section_address.saturating_add(cursor as u64);
         if !is_stub_helper_literal_load(ldr) {
             return Err(MachoError::MalformedDyldPayload(format!(
-                "unexpected __stub_helper literal-load instruction at {helper_address:#x}"
+                "unexpected __stub_helper literal-load instruction {ldr:#010x} at {helper_address:#x}"
             )));
         }
         let branch_target =
             decode_unconditional_branch_target(helper_address.saturating_add(4), branch)
                 .ok_or_else(|| {
                     MachoError::MalformedDyldPayload(format!(
-                        "unexpected __stub_helper branch instruction at {:#x}",
-                        helper_address.saturating_add(4)
+                        "unexpected __stub_helper branch instruction {branch:#010x} at {:#x}",
+                        helper_address.saturating_add(4),
                     ))
                 })?;
         if branch_target != section_address {
@@ -1027,6 +1102,42 @@ fn decode_stub_helper_entries(
     Ok(entries)
 }
 
+fn validate_stub_helper_trampoline(
+    section_address: u64,
+    helper_bytes: &[u8],
+    entry_start: usize,
+) -> Result<()> {
+    if entry_start == 0 {
+        return Ok(());
+    }
+    if entry_start != 24 || helper_bytes.len() < entry_start {
+        return Err(MachoError::MalformedDyldPayload(format!(
+            "unsupported __stub_helper trampoline size before helper entries: {entry_start}"
+        )));
+    }
+
+    let words = helper_bytes[..entry_start]
+        .chunks_exact(4)
+        .map(read_u32_le)
+        .collect::<Vec<_>>();
+    let checks = [
+        is_stub_helper_trampoline_adrp_x17(words[0]),
+        is_stub_helper_trampoline_add_x17(words[1]),
+        words[2] == 0xa9bf47f0,
+        is_stub_helper_trampoline_adrp_x16(words[3]),
+        is_stub_helper_trampoline_ldr_x16(words[4]),
+        words[5] == 0xd61f0200,
+    ];
+    if let Some(index) = checks.iter().position(|value| !value) {
+        let address = section_address.saturating_add((index * 4) as u64);
+        return Err(MachoError::MalformedDyldPayload(format!(
+            "unexpected __stub_helper literal-load instruction or trampoline opcode {:#010x} at {address:#x}",
+            words[index]
+        )));
+    }
+    Ok(())
+}
+
 fn find_stub_helper_entry_start(section_address: u64, helper_bytes: &[u8]) -> Option<usize> {
     let section_end = section_address.checked_add(helper_bytes.len() as u64)?;
     for offset in (0..helper_bytes.len().saturating_sub(11)).step_by(4) {
@@ -1047,6 +1158,22 @@ fn find_stub_helper_entry_start(section_address: u64, helper_bytes: &[u8]) -> Op
 
 fn is_stub_helper_literal_load(word: u32) -> bool {
     word & 0xff00_001f == 0x1800_0010
+}
+
+fn is_stub_helper_trampoline_adrp_x17(word: u32) -> bool {
+    word & 0x9f00_001f == 0x9000_0011
+}
+
+fn is_stub_helper_trampoline_add_x17(word: u32) -> bool {
+    word & 0xffc0_03ff == 0x9100_0231
+}
+
+fn is_stub_helper_trampoline_adrp_x16(word: u32) -> bool {
+    word & 0x9f00_001f == 0x9000_0010
+}
+
+fn is_stub_helper_trampoline_ldr_x16(word: u32) -> bool {
+    word & 0xffc0_03ff == 0xf940_0210
 }
 
 fn decode_unconditional_branch_target(instruction_address: u64, word: u32) -> Option<u64> {
@@ -1132,7 +1259,7 @@ fn resolve_indirect_symbol<'a>(
     metadata: &BTreeMap<usize, IndirectSymbolMetadata>,
     imports_by_name: &BTreeMap<String, Vec<&'a Import>>,
     imports_by_dylib_and_name: &BTreeMap<(String, String), &'a Import>,
-) -> Option<ResolvedIndirectSymbol<'a>> {
+) -> Result<Option<ResolvedIndirectSymbol<'a>>> {
     let metadata_entry = metadata.get(&symbol_index.0);
     let (normalized_name, ordinal, dylib_name) = if let Some(entry) = metadata_entry {
         (
@@ -1141,30 +1268,65 @@ fn resolve_indirect_symbol<'a>(
             entry.dylib.clone(),
         )
     } else {
-        let symbol = macho_file.symbol_by_index(symbol_index).ok()?;
-        let raw_name = symbol.name().ok()?.to_string();
+        let symbol = macho_file.symbol_by_index(symbol_index).map_err(|error| {
+            MachoError::MalformedDyldPayload(format!(
+                "failed to resolve indirect symbol index {}: {error}",
+                symbol_index.0
+            ))
+        })?;
+        let raw_name = symbol.name().map_err(|error| {
+            MachoError::MalformedDyldPayload(format!(
+                "failed to read indirect symbol {} name: {error}",
+                symbol_index.0
+            ))
+        })?;
+        let raw_name = raw_name.to_string();
         (normalize_import_name(&raw_name), None, None)
     };
 
     let import = if let Some(dylib) = dylib_name.as_ref() {
-        imports_by_dylib_and_name
+        if let Some(import) = imports_by_dylib_and_name
             .get(&(normalized_name.clone(), dylib.clone()))
             .copied()
-            .or_else(|| {
-                imports_by_name
-                    .get(&normalized_name)
-                    .and_then(|matches| (matches.len() == 1).then_some(matches[0]))
-            })
-    } else {
-        imports_by_name.get(&normalized_name).and_then(|matches| {
-            if matches.len() == 1 {
-                Some(matches[0])
-            } else {
-                None
+        {
+            Some(import)
+        } else {
+            let name_matches = imports_by_name.get(&normalized_name);
+            match name_matches.map_or(0, Vec::len) {
+                0 => {
+                    return Err(MachoError::MalformedDyldPayload(format!(
+                        "indirect symbol {} ({normalized_name}) did not resolve to import {}",
+                        symbol_index.0, dylib
+                    )));
+                }
+                1 => {
+                    return Err(MachoError::MalformedDyldPayload(format!(
+                        "indirect symbol {} ({normalized_name}) resolved to mismatched dylib for ordinal {:?}",
+                        symbol_index.0, ordinal
+                    )));
+                }
+                count => {
+                    return Err(MachoError::MalformedDyldPayload(format!(
+                        "indirect symbol {} ({normalized_name}) is ambiguous across {count} imports for ordinal {:?}",
+                        symbol_index.0, ordinal
+                    )));
+                }
             }
-        })
-    }?;
-    Some(ResolvedIndirectSymbol { ordinal, import })
+        }
+    } else {
+        match imports_by_name.get(&normalized_name) {
+            None => None,
+            Some(matches) if matches.len() == 1 => Some(matches[0]),
+            Some(matches) => {
+                return Err(MachoError::MalformedDyldPayload(format!(
+                    "indirect symbol {} ({normalized_name}) is ambiguous across {} imports",
+                    symbol_index.0,
+                    matches.len()
+                )));
+            }
+        }
+    };
+    Ok(import.map(|import| ResolvedIndirectSymbol { ordinal, import }))
 }
 
 fn collect_relocations<'a>(file: &object::File<'a, &'a [u8]>) -> Result<Vec<Relocation>> {

@@ -120,15 +120,15 @@ methods:
   title
   uppercaseString
   zone
-class_records:
+class_records (2/2):
   0x100008650 name=Speaker source=PointerTable superclass=- metaclass=0x100008678 ro=0x100008090 methods=7 class_methods=2 properties=6 ivars=2 protocols=1
   0x1000086a0 name=Greeter source=PointerTable superclass=Speaker metaclass=0x1000086c8 ro=0x1000082a0 methods=14 class_methods=4 properties=13 ivars=2 protocols=2
-protocol_records:
-  0x1000086f0 NSObject required_inst=19 required_class=0 optional_inst=1 optional_class=0 properties=4
-  0x100008750 GreetingProviding required_inst=2 required_class=1 optional_inst=1 optional_class=0 properties=1
-  0x1000087b0 Excitement required_inst=1 required_class=1 optional_inst=0 optional_class=0 properties=0
-  0x100008810 DiagnosticProviding required_inst=1 required_class=0 optional_inst=1 optional_class=0 properties=0
-method_records:
+protocol_records (4/4):
+  0x1000086f0 NSObject source=Runtime required_inst=19 required_class=0 optional_inst=1 optional_class=0 properties=4
+  0x100008750 GreetingProviding source=Runtime required_inst=2 required_class=1 optional_inst=1 optional_class=0 properties=1
+  0x1000087b0 Excitement source=Runtime required_inst=1 required_class=1 optional_inst=0 optional_class=0 properties=0
+  0x100008810 DiagnosticProviding source=Runtime required_inst=1 required_class=0 optional_inst=1 optional_class=0 properties=0
+method_records (55/55):
   owner=Speaker kind=class class_method=false selector=diagnosticLabel selector_source=Relative impl=0x100000ee8 types=@16@0:8
   owner=Speaker kind=class class_method=false selector=diagnosticToken selector_source=Relative impl=0x100000f20 types=@16@0:8
   owner=Speaker kind=class class_method=false selector=diagnosticSummary selector_source=Relative impl=0x100000f3c types=@16@0:8
@@ -184,37 +184,37 @@ method_records:
   owner=Excitement kind=protocol class_method=true selector=categoryKind selector_source=Relative impl=0x100001538 types=@16@0:8
   owner=DiagnosticProviding kind=protocol class_method=false selector=diagnosticSummary selector_source=Relative impl=0x100001568 types=@16@0:8
   owner=DiagnosticProviding kind=protocol class_method=false selector=diagnosticToken selector_source=Relative impl=0x1000016a8 types=@16@0:8
-property_records:
-  owner=Speaker name=diagnosticLabel attrs=T@"NSString",R,N
-  owner=Speaker name=hash attrs=TQ,R
-  owner=Speaker name=superclass attrs=T#,R
-  owner=Speaker name=description attrs=T@"NSString",R,C
-  owner=Speaker name=debugDescription attrs=T@"NSString",?,R,C
-  owner=Speaker name=title attrs=T@"NSString",C,N,V_title
-  owner=Greeter name=categoryToken attrs=T@"NSString",R,N
-  owner=Greeter name=hash attrs=TQ,R
-  owner=Greeter name=superclass attrs=T#,R
-  owner=Greeter name=description attrs=T@"NSString",R,C
-  owner=Greeter name=debugDescription attrs=T@"NSString",?,R,C
-  owner=Greeter name=metricsToken attrs=T@"NSString",R,N
-  owner=Greeter name=name attrs=T@"NSString",C,N,V_name
-  owner=Greeter name=emphasis attrs=Tq,N,V_emphasis
-  owner=Greeter name=protocolLabel attrs=T@"NSString",R,N
-  owner=Greeter name=hash attrs=TQ,R
-  owner=Greeter name=superclass attrs=T#,R
-  owner=Greeter name=description attrs=T@"NSString",R,C
-  owner=Greeter name=debugDescription attrs=T@"NSString",?,R,C
-  owner=NSObject name=hash attrs=TQ,R
-  owner=NSObject name=superclass attrs=T#,R
-  owner=NSObject name=description attrs=T@"NSString",R,C
-  owner=NSObject name=debugDescription attrs=T@"NSString",?,R,C
-  owner=GreetingProviding name=protocolLabel attrs=T@"NSString",R,N
-ivar_records:
-  owner=Speaker name=_prefixSeed type=@"NSString" offset=0x8
-  owner=Speaker name=_title type=@"NSString" offset=0x10
-  owner=Greeter name=_name type=@"NSString" offset=0x18
-  owner=Greeter name=_emphasis type=q offset=0x20
-pointer_refs:
+property_records (24/24):
+  owner=Speaker name=diagnosticLabel source=Runtime attrs=T@"NSString",R,N
+  owner=Speaker name=hash source=Runtime attrs=TQ,R
+  owner=Speaker name=superclass source=Runtime attrs=T#,R
+  owner=Speaker name=description source=Runtime attrs=T@"NSString",R,C
+  owner=Speaker name=debugDescription source=Runtime attrs=T@"NSString",?,R,C
+  owner=Speaker name=title source=Runtime attrs=T@"NSString",C,N,V_title
+  owner=Greeter name=categoryToken source=Runtime attrs=T@"NSString",R,N
+  owner=Greeter name=hash source=Runtime attrs=TQ,R
+  owner=Greeter name=superclass source=Runtime attrs=T#,R
+  owner=Greeter name=description source=Runtime attrs=T@"NSString",R,C
+  owner=Greeter name=debugDescription source=Runtime attrs=T@"NSString",?,R,C
+  owner=Greeter name=metricsToken source=Runtime attrs=T@"NSString",R,N
+  owner=Greeter name=name source=Runtime attrs=T@"NSString",C,N,V_name
+  owner=Greeter name=emphasis source=Runtime attrs=Tq,N,V_emphasis
+  owner=Greeter name=protocolLabel source=Runtime attrs=T@"NSString",R,N
+  owner=Greeter name=hash source=Runtime attrs=TQ,R
+  owner=Greeter name=superclass source=Runtime attrs=T#,R
+  owner=Greeter name=description source=Runtime attrs=T@"NSString",R,C
+  owner=Greeter name=debugDescription source=Runtime attrs=T@"NSString",?,R,C
+  owner=NSObject name=hash source=Runtime attrs=TQ,R
+  owner=NSObject name=superclass source=Runtime attrs=T#,R
+  owner=NSObject name=description source=Runtime attrs=T@"NSString",R,C
+  owner=NSObject name=debugDescription source=Runtime attrs=T@"NSString",?,R,C
+  owner=GreetingProviding name=protocolLabel source=Runtime attrs=T@"NSString",R,N
+ivar_records (4/4):
+  owner=Speaker name=_prefixSeed source=Runtime type=@"NSString" offset=0x8
+  owner=Speaker name=_title source=Runtime type=@"NSString" offset=0x10
+  owner=Greeter name=_name source=Runtime type=@"NSString" offset=0x18
+  owner=Greeter name=_emphasis source=Runtime type=q offset=0x20
+pointer_refs (52/52):
   classlist  table=0x1000042b8 raw=0x10000000008650 resolved_addr=0x100008650 resolved_name=Speaker
   classlist  table=0x1000042c0 raw=0x100000000086a0 resolved_addr=0x1000086a0 resolved_name=Greeter
   selref     table=0x1000084a0 raw=0x10000000001958 resolved_addr=0x100001958 resolved_name=init

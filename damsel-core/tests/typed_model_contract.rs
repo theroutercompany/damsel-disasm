@@ -1,7 +1,8 @@
 use damsel_core::{
     Annotation, Architecture, BinaryFormat, BinaryImage, BinaryImageValidationError,
-    DisassemblyRequest, DisassemblyTarget, Endianness, ImportBindingKind, ImportBindingRecord,
-    ImportBindingSource, ObjcNameSource, Reference, Relocation, SliceDescriptor, SliceInfo,
+    DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
+    DisassemblyTarget, Endianness, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
+    ObjcNameSource, ObjcSelectorSource, Reference, Relocation, SliceDescriptor, SliceInfo,
     StubKind,
 };
 use std::ptr;
@@ -181,6 +182,30 @@ fn evidence_variants_are_constructible() {
 
 #[test]
 fn helper_indexes_are_queryable() {
+    let binding = ImportBindingRecord {
+        dylib: "/usr/lib/libSystem.B.dylib".to_string(),
+        name: "_puts".to_string(),
+        address: Some(0x3010),
+        offset: Some(0x10),
+        addend: 0,
+        ordinal: Some(7),
+        symbol_index: Some(2),
+        binding_kind: ImportBindingKind::Lazy,
+        source: ImportBindingSource::IndirectSymbol,
+        is_weak: false,
+    };
+    let stub = damsel_core::StubEntry {
+        stub_address: 0x3000,
+        section: Some("__TEXT:__stubs".to_string()),
+        pointer_section: Some("__DATA_CONST:__la_symbol_ptr".to_string()),
+        pointer_address: Some(0x3010),
+        helper_address: Some(0x3330),
+        binding_ordinal: Some(7),
+        stub_kind: StubKind::Lazy,
+        dylib: Some("/usr/lib/libSystem.B.dylib".to_string()),
+        name: Some("_puts".to_string()),
+        source: ImportBindingSource::Stub,
+    };
     let helper = damsel_core::StubHelperEntry {
         helper_address: 0x3330,
         target_stub: Some(0x3000),
@@ -204,6 +229,8 @@ fn helper_indexes_are_queryable() {
     let base = sample_image();
     let bytes: Arc<[u8]> = base.slice_bytes().to_vec().into();
     let dyld = damsel_core::DyldMetadata {
+        import_bindings: vec![binding.clone()],
+        stubs: vec![stub.clone()],
         stub_helpers: vec![helper.clone(), helper_other.clone()],
         ..base.dyld().clone()
     };
@@ -235,6 +262,11 @@ fn helper_indexes_are_queryable() {
         image.dyld().helper_for_pointer_address(0x3010),
         Some(&helper)
     );
+    assert_eq!(image.dyld().helper_for_binding_ordinal(7), Some(&helper));
+    assert_eq!(image.dyld().binding_for_ordinal(7), Some(&binding));
+    assert_eq!(image.dyld().binding_for_symbol_index(2), Some(&binding));
+    assert_eq!(image.dyld().stub_for_pointer_address(0x3010), Some(&stub));
+    assert_eq!(image.dyld().stub_for_helper_address(0x3330), Some(&stub));
     let symbol_helpers = image
         .dyld()
         .helpers_for_symbol("/usr/lib/libSystem.B.dylib", "_puts")
@@ -259,6 +291,152 @@ fn objc_category_provenance_is_constructible() {
 
     assert_eq!(category.name_source, ObjcNameSource::Runtime);
     assert_eq!(category.class_name_source, ObjcNameSource::PointerTable);
+}
+
+#[test]
+fn objc_records_are_queryable_by_pointer_and_selector_source() {
+    let method = damsel_core::ObjcMethodRecord {
+        owner_pointer: 0x4000,
+        owner_kind: damsel_core::ObjcMethodOwnerKind::Protocol,
+        is_class_method: false,
+        selector: Some("greeting".to_string()),
+        selector_source: ObjcSelectorSource::Relative,
+        implementation: Some(0x2000),
+        type_encoding: Some("@16@0:8".to_string()),
+    };
+    let metadata = damsel_core::ObjcMetadata {
+        protocols: vec![damsel_core::ObjcProtocolRecord {
+            pointer: 0x4000,
+            name: Some("GreetingProviding".to_string()),
+            name_source: ObjcNameSource::Runtime,
+            required_instance_methods: vec![method.clone()],
+            required_class_methods: Vec::new(),
+            optional_instance_methods: Vec::new(),
+            optional_class_methods: Vec::new(),
+            properties: Vec::new(),
+        }],
+        categories: vec![damsel_core::ObjcCategoryRecord {
+            pointer: 0x5000,
+            name: Some("Excited".to_string()),
+            name_source: ObjcNameSource::LegacyPool,
+            class_pointer: Some(0x6000),
+            class_name: Some("Greeter".to_string()),
+            class_name_source: ObjcNameSource::PointerTable,
+            methods: Vec::new(),
+            class_methods: Vec::new(),
+            properties: Vec::new(),
+            adopted_protocols: Vec::new(),
+        }],
+        ..damsel_core::ObjcMetadata::default()
+    };
+
+    assert_eq!(
+        metadata
+            .protocol_by_pointer(0x4000)
+            .and_then(|record| record.name.as_deref()),
+        Some("GreetingProviding")
+    );
+    assert_eq!(
+        metadata
+            .category_by_pointer(0x5000)
+            .and_then(|record| record.name.as_deref()),
+        Some("Excited")
+    );
+    assert_eq!(
+        metadata
+            .methods_with_selector_source(ObjcSelectorSource::Relative)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn v2_instruction_limit_helper_matches_legacy_adapter() {
+    let image = sample_image();
+    let legacy = DisassemblyRequest::legacy(DisassemblyTarget::Address(0x1000), Some(8));
+    let v2 = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Address(0x1000),
+        range: None,
+        limit: DisassemblyLimit::Instructions(8),
+        options: DisassemblyOptions::default(),
+    };
+
+    assert_eq!(
+        image.effective_instruction_limit(&legacy),
+        image.effective_instruction_limit_v2(&v2)
+    );
+}
+
+#[test]
+fn v2_instruction_limit_helper_handles_byte_and_unlimited_limits() {
+    let image = sample_image();
+    let byte_limited = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Address(0x1000),
+        range: None,
+        limit: DisassemblyLimit::Bytes(7),
+        options: DisassemblyOptions::default(),
+    };
+    let unlimited = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Address(0x1000),
+        range: None,
+        limit: DisassemblyLimit::Unlimited,
+        options: DisassemblyOptions::default(),
+    };
+
+    assert_eq!(image.effective_instruction_limit_v2(&byte_limited), Some(2));
+    assert_eq!(image.effective_instruction_limit_v2(&unlimited), None);
+}
+
+#[test]
+fn objc_property_and_ivar_provenance_is_constructible() {
+    let property = damsel_core::ObjcPropertyRecord {
+        owner_pointer: 0x6000,
+        name: Some("greeting".to_string()),
+        name_source: ObjcNameSource::Runtime,
+        attributes: Some("T@\"NSString\",&,N".to_string()),
+    };
+    let ivar = damsel_core::ObjcIvarRecord {
+        owner_pointer: 0x6000,
+        name: Some("_greeting".to_string()),
+        name_source: ObjcNameSource::PointerTable,
+        type_encoding: Some("@\"NSString\"".to_string()),
+        offset: Some(0x18),
+    };
+
+    assert_eq!(property.name_source, ObjcNameSource::Runtime);
+    assert_eq!(ivar.name_source, ObjcNameSource::PointerTable);
+}
+
+#[test]
+fn recovered_value_and_export_kind_variants_are_constructible() {
+    let recovered_export = damsel_core::RecoveredValue {
+        register: "x0".to_string(),
+        value: 0x1000,
+        kind: damsel_core::RecoveredValueKind::ExportAddress,
+        source: damsel_core::RecoveredValueSource::Other,
+    };
+    let recovered_fn = damsel_core::RecoveredValue {
+        register: "x1".to_string(),
+        value: 0x2000,
+        kind: damsel_core::RecoveredValueKind::FunctionPointer,
+        source: damsel_core::RecoveredValueSource::Other,
+    };
+    let export = damsel_core::ExportRecord {
+        name: "_main".to_string(),
+        address: Some(0x1000),
+        flags: "regular".to_string(),
+        kind: damsel_core::ExportKind::Regular,
+    };
+
+    assert!(matches!(
+        recovered_export.kind,
+        damsel_core::RecoveredValueKind::ExportAddress
+    ));
+    assert!(matches!(
+        recovered_fn.kind,
+        damsel_core::RecoveredValueKind::FunctionPointer
+    ));
+    assert!(matches!(export.kind, damsel_core::ExportKind::Regular));
 }
 
 #[test]
