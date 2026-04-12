@@ -1,6 +1,734 @@
-use damsel_core::BinaryImage;
+use damsel_core::{
+    BinaryImage, DecodedInstruction, Import, Reference, Relocation, Section, Symbol,
+};
+use std::fmt::Write as _;
 
-pub(crate) fn print_info(image: &BinaryImage) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutputFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OutputSettings {
+    pub format: OutputFormat,
+    pub pretty: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DyldViewOptions {
+    pub show_dylibs: bool,
+    pub show_rpaths: bool,
+    pub show_exports: bool,
+    pub show_function_starts: bool,
+}
+
+impl DyldViewOptions {
+    pub(crate) const fn all() -> Self {
+        Self {
+            show_dylibs: true,
+            show_rpaths: true,
+            show_exports: true,
+            show_function_starts: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DisassemblyRenderOptions {
+    pub include_annotations: bool,
+    pub include_references: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DisassemblyView<'a> {
+    pub target: &'a str,
+    pub start_address: u64,
+    pub bytes_len: usize,
+    pub instructions: &'a [DecodedInstruction],
+}
+
+pub(crate) fn print_info(image: &BinaryImage, output: &OutputSettings) {
+    match output.format {
+        OutputFormat::Text => print_info_text(image),
+        OutputFormat::Json => print_json(
+            "info",
+            JsonValue::Object(vec![
+                (
+                    "path".to_string(),
+                    JsonValue::String(image.path.display().to_string()),
+                ),
+                (
+                    "format".to_string(),
+                    JsonValue::String(format!("{:?}", image.format)),
+                ),
+                (
+                    "architecture".to_string(),
+                    JsonValue::String(image.architecture.to_string()),
+                ),
+                (
+                    "endianness".to_string(),
+                    JsonValue::String(format!("{:?}", image.endianness)),
+                ),
+                ("entry_point".to_string(), opt_u64(image.entry_point)),
+                (
+                    "platform".to_string(),
+                    image
+                        .platform
+                        .map(|platform| JsonValue::String(platform.to_string()))
+                        .unwrap_or(JsonValue::Null),
+                ),
+                (
+                    "slice".to_string(),
+                    JsonValue::Object(vec![
+                        ("offset".to_string(), u64_num(image.slice.offset)),
+                        ("size".to_string(), u64_num(image.slice.size)),
+                        (
+                            "is_universal".to_string(),
+                            JsonValue::Bool(image.slice.is_universal),
+                        ),
+                        (
+                            "cpu_subtype".to_string(),
+                            u64_num(u64::from(image.slice.cpu_subtype)),
+                        ),
+                    ]),
+                ),
+                (
+                    "counts".to_string(),
+                    JsonValue::Object(vec![
+                        ("segments".to_string(), usize_num(image.segments.len())),
+                        ("sections".to_string(), usize_num(image.sections.len())),
+                        ("symbols".to_string(), usize_num(image.symbols.len())),
+                        ("imports".to_string(), usize_num(image.imports.len())),
+                        (
+                            "relocations".to_string(),
+                            usize_num(image.relocations.len()),
+                        ),
+                    ]),
+                ),
+                (
+                    "objc".to_string(),
+                    JsonValue::Object(vec![
+                        (
+                            "classes".to_string(),
+                            usize_num(image.objc.class_names.len()),
+                        ),
+                        (
+                            "selectors".to_string(),
+                            usize_num(image.objc.selector_names.len()),
+                        ),
+                        (
+                            "methods".to_string(),
+                            usize_num(image.objc.method_names.len()),
+                        ),
+                        (
+                            "image_info_flags".to_string(),
+                            image
+                                .objc
+                                .image_info_flags
+                                .map(u64::from)
+                                .map(u64_num)
+                                .unwrap_or(JsonValue::Null),
+                        ),
+                    ]),
+                ),
+                (
+                    "dyld".to_string(),
+                    JsonValue::Object(vec![
+                        (
+                            "dylibs".to_string(),
+                            usize_num(image.dyld.imported_dylibs.len()),
+                        ),
+                        ("rpaths".to_string(), usize_num(image.dyld.rpaths.len())),
+                        (
+                            "exports".to_string(),
+                            usize_num(image.dyld.exported_symbols.len()),
+                        ),
+                        (
+                            "function_starts".to_string(),
+                            usize_num(image.dyld.function_starts.len()),
+                        ),
+                        (
+                            "has_rebases".to_string(),
+                            JsonValue::Bool(image.dyld.has_rebases),
+                        ),
+                        (
+                            "has_binds".to_string(),
+                            JsonValue::Bool(image.dyld.has_binds),
+                        ),
+                        (
+                            "has_chained_fixups".to_string(),
+                            JsonValue::Bool(image.dyld.has_chained_fixups),
+                        ),
+                    ]),
+                ),
+            ]),
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_sections(sections: &[Section], output: &OutputSettings) {
+    match output.format {
+        OutputFormat::Text => {
+            for section in sections {
+                println!(
+                    "{:>#18x} {:>#8x} {:<8} {:<18} {}",
+                    section.address,
+                    section.size,
+                    if section.executable { "exec" } else { "-" },
+                    section.segment_name,
+                    section.name
+                );
+            }
+        }
+        OutputFormat::Json => {
+            let data = JsonValue::Array(
+                sections
+                    .iter()
+                    .map(|section| {
+                        JsonValue::Object(vec![
+                            (
+                                "segment".to_string(),
+                                JsonValue::String(section.segment_name.clone()),
+                            ),
+                            ("name".to_string(), JsonValue::String(section.name.clone())),
+                            (
+                                "full_name".to_string(),
+                                JsonValue::String(section.full_name()),
+                            ),
+                            ("address".to_string(), u64_num(section.address)),
+                            ("size".to_string(), u64_num(section.size)),
+                            (
+                                "file_offset".to_string(),
+                                section.file_offset.map(u64_num).unwrap_or(JsonValue::Null),
+                            ),
+                            ("file_size".to_string(), u64_num(section.file_size)),
+                            ("kind".to_string(), JsonValue::String(section.kind.clone())),
+                            (
+                                "executable".to_string(),
+                                JsonValue::Bool(section.executable),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            );
+            print_json("sections", data, output);
+        }
+    }
+}
+
+pub(crate) fn print_symbols(symbols: &[Symbol], output: &OutputSettings) {
+    match output.format {
+        OutputFormat::Text => {
+            for symbol in symbols {
+                println!(
+                    "{:>#18x} {:>#8x} {:<8} {:<6} {:<5} {}{}",
+                    symbol.address,
+                    symbol.size,
+                    symbol.kind,
+                    if symbol.defined { "def" } else { "undef" },
+                    if symbol.global { "glob" } else { "loc" },
+                    symbol.name,
+                    symbol
+                        .section
+                        .as_ref()
+                        .map(|section| format!(" [{section}]"))
+                        .unwrap_or_default()
+                );
+            }
+        }
+        OutputFormat::Json => {
+            let data = JsonValue::Array(
+                symbols
+                    .iter()
+                    .map(|symbol| {
+                        JsonValue::Object(vec![
+                            ("name".to_string(), JsonValue::String(symbol.name.clone())),
+                            ("address".to_string(), u64_num(symbol.address)),
+                            ("size".to_string(), u64_num(symbol.size)),
+                            (
+                                "kind".to_string(),
+                                JsonValue::String(symbol.kind.to_string()),
+                            ),
+                            ("defined".to_string(), JsonValue::Bool(symbol.defined)),
+                            ("global".to_string(), JsonValue::Bool(symbol.global)),
+                            ("weak".to_string(), JsonValue::Bool(symbol.weak)),
+                            (
+                                "section".to_string(),
+                                symbol
+                                    .section
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            );
+            print_json("symbols", data, output);
+        }
+    }
+}
+
+pub(crate) fn print_imports(imports: &[Import], output: &OutputSettings) {
+    match output.format {
+        OutputFormat::Text => {
+            for import in imports {
+                println!(
+                    "{:>#18} {:<5} {:<5} {:<30} {}",
+                    import
+                        .address
+                        .map(|address| format!("{address:#x}"))
+                        .unwrap_or_else(|| "-".to_string()),
+                    if import.is_lazy { "lazy" } else { "-" },
+                    if import.is_weak { "weak" } else { "-" },
+                    import.dylib,
+                    import.name
+                );
+            }
+        }
+        OutputFormat::Json => {
+            let data = JsonValue::Array(
+                imports
+                    .iter()
+                    .map(|import| {
+                        JsonValue::Object(vec![
+                            ("name".to_string(), JsonValue::String(import.name.clone())),
+                            ("dylib".to_string(), JsonValue::String(import.dylib.clone())),
+                            (
+                                "address".to_string(),
+                                import.address.map(u64_num).unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "offset".to_string(),
+                                import.offset.map(u64_num).unwrap_or(JsonValue::Null),
+                            ),
+                            ("addend".to_string(), i64_num(import.addend)),
+                            ("is_lazy".to_string(), JsonValue::Bool(import.is_lazy)),
+                            ("is_weak".to_string(), JsonValue::Bool(import.is_weak)),
+                        ])
+                    })
+                    .collect(),
+            );
+            print_json("imports", data, output);
+        }
+    }
+}
+
+pub(crate) fn print_relocations(relocations: &[Relocation], output: &OutputSettings) {
+    match output.format {
+        OutputFormat::Text => {
+            for relocation in relocations {
+                println!(
+                    "{:>#18x} {:<24} {:<3} {:<18} {:<18} {} addend={}",
+                    relocation.address,
+                    relocation.section,
+                    relocation.size,
+                    relocation.kind,
+                    relocation.encoding,
+                    relocation.target,
+                    relocation.addend
+                );
+            }
+        }
+        OutputFormat::Json => {
+            let data = JsonValue::Array(
+                relocations
+                    .iter()
+                    .map(|relocation| {
+                        JsonValue::Object(vec![
+                            (
+                                "section".to_string(),
+                                JsonValue::String(relocation.section.clone()),
+                            ),
+                            ("address".to_string(), u64_num(relocation.address)),
+                            ("size".to_string(), u64_num(u64::from(relocation.size))),
+                            (
+                                "kind".to_string(),
+                                JsonValue::String(relocation.kind.clone()),
+                            ),
+                            (
+                                "encoding".to_string(),
+                                JsonValue::String(relocation.encoding.clone()),
+                            ),
+                            (
+                                "target".to_string(),
+                                JsonValue::String(relocation.target.clone()),
+                            ),
+                            ("addend".to_string(), i64_num(relocation.addend)),
+                        ])
+                    })
+                    .collect(),
+            );
+            print_json("relocs", data, output);
+        }
+    }
+}
+
+pub(crate) fn print_objc(image: &BinaryImage, output: &OutputSettings) {
+    match output.format {
+        OutputFormat::Text => {
+            if let Some(flags) = image.objc.image_info_flags {
+                println!("image_info_flags: {flags:#x}");
+            }
+            println!("classes:");
+            for class_name in &image.objc.class_names {
+                println!("  {class_name}");
+            }
+            println!("selectors:");
+            for selector in &image.objc.selector_names {
+                println!("  {selector}");
+            }
+            println!("methods:");
+            for method in &image.objc.method_names {
+                println!("  {method}");
+            }
+        }
+        OutputFormat::Json => {
+            print_json(
+                "objc",
+                JsonValue::Object(vec![
+                    (
+                        "image_info_flags".to_string(),
+                        image
+                            .objc
+                            .image_info_flags
+                            .map(u64::from)
+                            .map(u64_num)
+                            .unwrap_or(JsonValue::Null),
+                    ),
+                    (
+                        "classes".to_string(),
+                        JsonValue::Array(
+                            image
+                                .objc
+                                .class_names
+                                .iter()
+                                .cloned()
+                                .map(JsonValue::String)
+                                .collect(),
+                        ),
+                    ),
+                    (
+                        "selectors".to_string(),
+                        JsonValue::Array(
+                            image
+                                .objc
+                                .selector_names
+                                .iter()
+                                .cloned()
+                                .map(JsonValue::String)
+                                .collect(),
+                        ),
+                    ),
+                    (
+                        "methods".to_string(),
+                        JsonValue::Array(
+                            image
+                                .objc
+                                .method_names
+                                .iter()
+                                .cloned()
+                                .map(JsonValue::String)
+                                .collect(),
+                        ),
+                    ),
+                ]),
+                output,
+            );
+        }
+    }
+}
+
+pub(crate) fn print_dyld(image: &BinaryImage, view: DyldViewOptions, output: &OutputSettings) {
+    match output.format {
+        OutputFormat::Text => {
+            println!(
+                "dyld: dylibs={} rpaths={} exports={} function_starts={} rebases={} binds={} chained_fixups={}",
+                image.dyld.imported_dylibs.len(),
+                image.dyld.rpaths.len(),
+                image.dyld.exported_symbols.len(),
+                image.dyld.function_starts.len(),
+                image.dyld.has_rebases,
+                image.dyld.has_binds,
+                image.dyld.has_chained_fixups
+            );
+            if view.show_dylibs {
+                println!("dylibs:");
+                for dylib in &image.dyld.imported_dylibs {
+                    println!("  {dylib}");
+                }
+            }
+            if view.show_rpaths {
+                println!("rpaths:");
+                for rpath in &image.dyld.rpaths {
+                    println!("  {rpath}");
+                }
+            }
+            if view.show_exports {
+                println!("exports:");
+                for export in &image.dyld.exported_symbols {
+                    println!(
+                        "  {:>#18} {:<24} {}",
+                        export
+                            .address
+                            .map(|address| format!("{address:#x}"))
+                            .unwrap_or_else(|| "-".to_string()),
+                        export.flags,
+                        export.name
+                    );
+                }
+            }
+            if view.show_function_starts {
+                println!("function_starts:");
+                for start in &image.dyld.function_starts {
+                    println!("  {start:#x}");
+                }
+            }
+        }
+        OutputFormat::Json => {
+            let mut fields = vec![
+                (
+                    "has_rebases".to_string(),
+                    JsonValue::Bool(image.dyld.has_rebases),
+                ),
+                (
+                    "has_binds".to_string(),
+                    JsonValue::Bool(image.dyld.has_binds),
+                ),
+                (
+                    "has_chained_fixups".to_string(),
+                    JsonValue::Bool(image.dyld.has_chained_fixups),
+                ),
+            ];
+            if view.show_dylibs {
+                fields.push((
+                    "dylibs".to_string(),
+                    JsonValue::Array(
+                        image
+                            .dyld
+                            .imported_dylibs
+                            .iter()
+                            .cloned()
+                            .map(JsonValue::String)
+                            .collect(),
+                    ),
+                ));
+            }
+            if view.show_rpaths {
+                fields.push((
+                    "rpaths".to_string(),
+                    JsonValue::Array(
+                        image
+                            .dyld
+                            .rpaths
+                            .iter()
+                            .cloned()
+                            .map(JsonValue::String)
+                            .collect(),
+                    ),
+                ));
+            }
+            if view.show_exports {
+                fields.push((
+                    "exports".to_string(),
+                    JsonValue::Array(
+                        image
+                            .dyld
+                            .exported_symbols
+                            .iter()
+                            .map(|export| {
+                                JsonValue::Object(vec![
+                                    ("name".to_string(), JsonValue::String(export.name.clone())),
+                                    (
+                                        "address".to_string(),
+                                        export.address.map(u64_num).unwrap_or(JsonValue::Null),
+                                    ),
+                                    ("flags".to_string(), JsonValue::String(export.flags.clone())),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                ));
+            }
+            if view.show_function_starts {
+                fields.push((
+                    "function_starts".to_string(),
+                    JsonValue::Array(
+                        image
+                            .dyld
+                            .function_starts
+                            .iter()
+                            .copied()
+                            .map(u64_num)
+                            .collect(),
+                    ),
+                ));
+            }
+            print_json("dyld", JsonValue::Object(fields), output);
+        }
+    }
+}
+
+pub(crate) fn print_slices(image: &BinaryImage, output: &OutputSettings) {
+    match output.format {
+        OutputFormat::Text => {
+            println!(
+                "slice: offset={:#x} size={:#x} universal={} subtype={:#x} arch={}",
+                image.slice.offset,
+                image.slice.size,
+                image.slice.is_universal,
+                image.slice.cpu_subtype,
+                image.architecture
+            );
+        }
+        OutputFormat::Json => {
+            print_json(
+                "slices",
+                JsonValue::Array(vec![JsonValue::Object(vec![
+                    ("offset".to_string(), u64_num(image.slice.offset)),
+                    ("size".to_string(), u64_num(image.slice.size)),
+                    (
+                        "is_universal".to_string(),
+                        JsonValue::Bool(image.slice.is_universal),
+                    ),
+                    (
+                        "cpu_subtype".to_string(),
+                        u64_num(u64::from(image.slice.cpu_subtype)),
+                    ),
+                    (
+                        "architecture".to_string(),
+                        JsonValue::String(image.architecture.to_string()),
+                    ),
+                ])]),
+                output,
+            );
+        }
+    }
+}
+
+pub(crate) fn print_disassembly(
+    view: DisassemblyView<'_>,
+    render_options: DisassemblyRenderOptions,
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            println!(
+                "target: {} start={:#x} bytes={:#x}",
+                view.target, view.start_address, view.bytes_len
+            );
+            for instruction in view.instructions {
+                let rendered = instruction.render();
+                let mut comments = Vec::new();
+                if render_options.include_annotations {
+                    comments.extend(instruction.annotations.iter().map(ToString::to_string));
+                }
+                if render_options.include_references {
+                    comments.extend(
+                        instruction
+                            .references
+                            .iter()
+                            .map(reference_to_text)
+                            .map(|value| format!("ref {value}")),
+                    );
+                }
+                if comments.is_empty() {
+                    println!(
+                        "{:>#18x}  {:08x}  {}",
+                        instruction.address, instruction.opcode, rendered
+                    );
+                } else {
+                    println!(
+                        "{:>#18x}  {:08x}  {} ; {}",
+                        instruction.address,
+                        instruction.opcode,
+                        rendered,
+                        comments.join(" | ")
+                    );
+                }
+            }
+        }
+        OutputFormat::Json => {
+            let instructions = view
+                .instructions
+                .iter()
+                .map(|instruction| {
+                    JsonValue::Object(vec![
+                        ("address".to_string(), u64_num(instruction.address)),
+                        ("size".to_string(), u64_num(u64::from(instruction.size))),
+                        ("opcode".to_string(), u64_num(u64::from(instruction.opcode))),
+                        (
+                            "mnemonic".to_string(),
+                            JsonValue::String(instruction.mnemonic.clone()),
+                        ),
+                        (
+                            "operands".to_string(),
+                            JsonValue::Array(
+                                instruction
+                                    .operands
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .map(JsonValue::String)
+                                    .collect(),
+                            ),
+                        ),
+                        (
+                            "rendered".to_string(),
+                            JsonValue::String(instruction.render()),
+                        ),
+                        (
+                            "references".to_string(),
+                            if render_options.include_references {
+                                JsonValue::Array(
+                                    instruction
+                                        .references
+                                        .iter()
+                                        .map(reference_to_text)
+                                        .map(JsonValue::String)
+                                        .collect(),
+                                )
+                            } else {
+                                JsonValue::Array(Vec::new())
+                            },
+                        ),
+                        (
+                            "annotations".to_string(),
+                            if render_options.include_annotations {
+                                JsonValue::Array(
+                                    instruction
+                                        .annotations
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .map(JsonValue::String)
+                                        .collect(),
+                                )
+                            } else {
+                                JsonValue::Array(Vec::new())
+                            },
+                        ),
+                    ])
+                })
+                .collect();
+            print_json(
+                "disasm",
+                JsonValue::Object(vec![
+                    (
+                        "target".to_string(),
+                        JsonValue::String(view.target.to_string()),
+                    ),
+                    ("start_address".to_string(), u64_num(view.start_address)),
+                    ("bytes_len".to_string(), usize_num(view.bytes_len)),
+                    ("instructions".to_string(), JsonValue::Array(instructions)),
+                ]),
+                output,
+            );
+        }
+    }
+}
+
+fn print_info_text(image: &BinaryImage) {
     println!("path: {}", image.path.display());
     println!("format: {:?}", image.format);
     println!("architecture: {}", image.architecture);
@@ -47,97 +775,149 @@ pub(crate) fn print_info(image: &BinaryImage) {
     }
 }
 
-pub(crate) fn print_sections(image: &BinaryImage) {
-    for section in &image.sections {
-        println!(
-            "{:>#18x} {:>#8x} {:<8} {:<18} {}",
-            section.address,
-            section.size,
-            if section.executable { "exec" } else { "-" },
-            section.segment_name,
-            section.name
-        );
+fn reference_to_text(reference: &Reference) -> String {
+    match reference {
+        Reference::Call { target } => format!("call {target:#x}"),
+        Reference::Branch { target } => format!("branch {target:#x}"),
+        Reference::Page { target } => format!("page {target:#x}"),
+        Reference::Data { target } => format!("data {target:#x}"),
+        Reference::Import {
+            name,
+            dylib,
+            address,
+        } => match address {
+            Some(address) => format!("import {dylib}:{name} ({address:#x})"),
+            None => format!("import {dylib}:{name}"),
+        },
     }
 }
 
-pub(crate) fn print_symbols(image: &BinaryImage) {
-    for symbol in &image.symbols {
-        println!(
-            "{:>#18x} {:>#8x} {:<8} {:<6} {:<5} {}{}",
-            symbol.address,
-            symbol.size,
-            symbol.kind,
-            if symbol.defined { "def" } else { "undef" },
-            if symbol.global { "glob" } else { "loc" },
-            symbol.name,
-            symbol
-                .section
-                .as_ref()
-                .map(|section| format!(" [{section}]"))
-                .unwrap_or_default()
-        );
-    }
+fn print_json(command: &str, data: JsonValue, output: &OutputSettings) {
+    let envelope = JsonValue::Object(vec![
+        ("schema_version".to_string(), u64_num(1)),
+        (
+            "command".to_string(),
+            JsonValue::String(command.to_string()),
+        ),
+        ("data".to_string(), data),
+    ]);
+    println!("{}", envelope.render(output.pretty));
 }
 
-pub(crate) fn print_imports(image: &BinaryImage) {
-    for import in &image.imports {
-        println!(
-            "{:>#18} {:<5} {:<5} {:<30} {}",
-            import
-                .address
-                .map(|address| format!("{address:#x}"))
-                .unwrap_or_else(|| "-".to_string()),
-            if import.is_lazy { "lazy" } else { "-" },
-            if import.is_weak { "weak" } else { "-" },
-            import.dylib,
-            import.name
-        );
-    }
+fn opt_u64(value: Option<u64>) -> JsonValue {
+    value.map(u64_num).unwrap_or(JsonValue::Null)
 }
 
-pub(crate) fn print_objc(image: &BinaryImage) {
-    if let Some(flags) = image.objc.image_info_flags {
-        println!("image_info_flags: {flags:#x}");
-    }
-    println!("classes:");
-    for class_name in &image.objc.class_names {
-        println!("  {class_name}");
-    }
-    println!("selectors:");
-    for selector in &image.objc.selector_names {
-        println!("  {selector}");
-    }
-    println!("methods:");
-    for method in &image.objc.method_names {
-        println!("  {method}");
-    }
+fn usize_num(value: usize) -> JsonValue {
+    JsonValue::Number(value.to_string())
 }
 
-pub(crate) fn print_disassembly(result: &damsel_core::DisassemblyResult) {
-    println!(
-        "target: {} start={:#x} bytes={:#x}",
-        result.target, result.start_address, result.bytes_len
-    );
-    for instruction in &result.instructions {
-        let rendered = instruction.render();
-        let annotations = instruction
-            .annotations
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-        if annotations.is_empty() {
-            println!(
-                "{:>#18x}  {:08x}  {}",
-                instruction.address, instruction.opcode, rendered
-            );
-        } else {
-            println!(
-                "{:>#18x}  {:08x}  {} ; {}",
-                instruction.address,
-                instruction.opcode,
-                rendered,
-                annotations.join(" | ")
-            );
+fn u64_num(value: u64) -> JsonValue {
+    JsonValue::Number(value.to_string())
+}
+
+fn i64_num(value: i64) -> JsonValue {
+    JsonValue::Number(value.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum JsonValue {
+    Null,
+    Bool(bool),
+    Number(String),
+    String(String),
+    Array(Vec<JsonValue>),
+    Object(Vec<(String, JsonValue)>),
+}
+
+impl JsonValue {
+    fn render(&self, pretty: bool) -> String {
+        let mut out = String::new();
+        self.write_to(&mut out, pretty, 0);
+        out
+    }
+
+    fn write_to(&self, out: &mut String, pretty: bool, indent: usize) {
+        match self {
+            Self::Null => out.push_str("null"),
+            Self::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            Self::Number(number) => out.push_str(number),
+            Self::String(value) => write_json_string(out, value),
+            Self::Array(values) => {
+                out.push('[');
+                if pretty && !values.is_empty() {
+                    out.push('\n');
+                }
+                for (index, value) in values.iter().enumerate() {
+                    if pretty {
+                        push_indent(out, indent + 1);
+                    }
+                    value.write_to(out, pretty, indent + 1);
+                    if index + 1 < values.len() {
+                        out.push(',');
+                    }
+                    if pretty {
+                        out.push('\n');
+                    }
+                }
+                if pretty && !values.is_empty() {
+                    push_indent(out, indent);
+                }
+                out.push(']');
+            }
+            Self::Object(fields) => {
+                out.push('{');
+                if pretty && !fields.is_empty() {
+                    out.push('\n');
+                }
+                for (index, (key, value)) in fields.iter().enumerate() {
+                    if pretty {
+                        push_indent(out, indent + 1);
+                    }
+                    write_json_string(out, key);
+                    out.push(':');
+                    if pretty {
+                        out.push(' ');
+                    }
+                    value.write_to(out, pretty, indent + 1);
+                    if index + 1 < fields.len() {
+                        out.push(',');
+                    }
+                    if pretty {
+                        out.push('\n');
+                    }
+                }
+                if pretty && !fields.is_empty() {
+                    push_indent(out, indent);
+                }
+                out.push('}');
+            }
         }
     }
+}
+
+fn push_indent(out: &mut String, indent: usize) {
+    for _ in 0..indent {
+        out.push_str("  ");
+    }
+}
+
+fn write_json_string(out: &mut String, input: &str) {
+    out.push('"');
+    for ch in input.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            ch if ch.is_control() => {
+                let _ = write!(out, "\\u{:04x}", ch as u32);
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
 }
