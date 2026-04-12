@@ -33,18 +33,35 @@ Sources:
 - `src/dup-alpha.c`, `src/dup-beta.c`, and `src/duplicate-symbol-main.c` build the duplicate-symbol fixture.
 
 Script usage:
-- `fixtures/build-fixtures.sh`: rebuild fixtures on macOS with Xcode installed.
-- `fixtures/build-fixtures.sh --check`: verify checked-in fixture hashes against
-  the inline fixture + export-trie corpus manifests in the script (drift check).
-- `fixtures/build-fixtures.sh --manifest`: print the current inline fixture
-  manifest.
+- `fixtures/build-fixtures.sh`: rebuild fixtures (`macOS` + Xcode tooling only).
+- `fixtures/build-fixtures.sh --check`: portable drift-check mode; verifies
+  checked-in fixture and export-trie corpus hashes against inline manifests.
+- `fixtures/build-fixtures.sh --manifest`: manifest-display mode for fixture
+  hashes only.
+- `fixtures/build-fixtures.sh --manifest-corpus`: manifest-display mode for
+  export-trie corpus hashes only.
+- `fixtures/build-fixtures.sh --manifest-all`: print both manifests with
+  section headers.
 - `arm64e-sample` is rebuilt on a best-effort basis; if the local toolchain does
   not support `-arch arm64e`, the script preserves the checked-in binary.
+
+Host/tool portability notes:
+- Rebuild mode is intentionally macOS-only and now errors early on non-Darwin
+  hosts with a clear fallback message (`--check` / manifest modes).
+- Drift-check mode is host-portable and selects a SHA-256 backend from:
+  `sha256sum`, `shasum`, then `openssl` (in that order).
+- Rebuild mode validates required tooling (`xcrun`, SDK access, `clang`,
+  `strip`, `python3`, `nm`) and emits actionable diagnostics when unavailable.
+- Temporary files/directories now use `mktemp` when available; a pid-scoped
+  fallback is retained with warnings for constrained environments.
 
 Notes:
 - The checked-in binaries are parse-only artifacts used by tests and benches;
   they are never executed by the suite.
 - The hash check is intended to detect fixture drift in CI and local workflows.
+- CI drift and bench compatibility checks run on macOS 14, Linux x86_64, and
+  Linux arm64; decode throughput runtime smoke remains Linux arm64-focused,
+  while Linux x86_64 validates the explicit unsupported-host bench runtime path.
 - The malformed helper fixtures are expected to fail with typed dyld metadata
   errors rather than panic or silently degrade.
 - `fixtures/export-trie-corpus` contains checked-in advanced export payload

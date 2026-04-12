@@ -4,6 +4,48 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 SRC="$ROOT/src"
 BIN="$ROOT/bin"
+HOST_OS="$(uname -s 2>/dev/null || echo unknown)"
+HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
+HASH_TOOL=""
+SDKROOT=""
+CLANG=""
+STRIP=""
+
+warn() {
+  echo "warning: $*" >&2
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 2
+}
+
+mktemp_file() {
+  prefix="$1"
+  if command -v mktemp >/dev/null 2>&1; then
+    mktemp "${TMPDIR:-/tmp}/damsel-${prefix}.XXXXXX"
+    return
+  fi
+
+  warn "mktemp not found; using pid-scoped temporary file fallback"
+  fallback="${TMPDIR:-/tmp}/damsel-${prefix}.$$"
+  : > "$fallback"
+  chmod 600 "$fallback" 2>/dev/null || true
+  echo "$fallback"
+}
+
+mktemp_dir() {
+  prefix="$1"
+  if command -v mktemp >/dev/null 2>&1; then
+    mktemp -d "${TMPDIR:-/tmp}/damsel-${prefix}.XXXXXX"
+    return
+  fi
+
+  warn "mktemp not found; using pid-scoped temporary directory fallback"
+  fallback="${TMPDIR:-/tmp}/damsel-${prefix}.$$"
+  mkdir -p "$fallback"
+  echo "$fallback"
+}
 
 print_manifest() {
   cat <<'EOF'
@@ -43,20 +85,33 @@ EOF
 
 sha256_file() {
   file="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
+  if [ -z "$HASH_TOOL" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      HASH_TOOL="sha256sum"
+    elif command -v shasum >/dev/null 2>&1; then
+      HASH_TOOL="shasum"
+    elif command -v openssl >/dev/null 2>&1; then
+      HASH_TOOL="openssl"
+    else
+      die "missing hash tool for drift checks (need one of: sha256sum, shasum, openssl)"
+    fi
+  fi
+
+  if [ "$HASH_TOOL" = "sha256sum" ]; then
     sha256sum "$file" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
+  elif [ "$HASH_TOOL" = "shasum" ]; then
     shasum -a 256 "$file" | awk '{print $1}'
+  elif [ "$HASH_TOOL" = "openssl" ]; then
+    openssl dgst -sha256 "$file" | awk '{print $NF}'
   else
-    echo "missing sha256 tool (sha256sum or shasum)" >&2
-    exit 2
+    die "unknown hash tool selection: $HASH_TOOL"
   fi
 }
 
 check_fixtures() {
   mkdir -p "$BIN"
-  manifest_file="${TMPDIR:-/tmp}/damsel-fixture-manifest.$$"
-  corpus_manifest_file="${TMPDIR:-/tmp}/damsel-export-trie-corpus-manifest.$$"
+  manifest_file="$(mktemp_file fixture-manifest)"
+  corpus_manifest_file="$(mktemp_file export-trie-corpus-manifest)"
   trap 'rm -f "$manifest_file" "$corpus_manifest_file"' EXIT INT TERM
   print_manifest > "$manifest_file"
   print_export_trie_corpus_manifest > "$corpus_manifest_file"
@@ -103,17 +158,53 @@ check_fixtures() {
   exit "$status"
 }
 
-build_fixtures() {
-  if ! command -v xcrun >/dev/null 2>&1; then
-    echo "xcrun is required to build fixtures" >&2
-    exit 2
+detect_macos_build_tools() {
+  if [ "$HOST_OS" != "Darwin" ]; then
+    die "fixture rebuild is macOS-only (host: ${HOST_OS}/${HOST_ARCH}); use '--check' or '--manifest' on this host"
   fi
 
-  SDKROOT="$(xcrun --show-sdk-path)"
-  CLANG="/usr/bin/clang"
-  STRIP="$(xcrun --find strip)"
+  if ! command -v xcrun >/dev/null 2>&1; then
+    die "fixture rebuild requires 'xcrun' (install Xcode Command Line Tools)"
+  fi
+
+  if ! SDKROOT="$(xcrun --show-sdk-path 2>/dev/null)"; then
+    die "unable to resolve macOS SDK path via 'xcrun --show-sdk-path'"
+  fi
+
+  if ! CLANG="$(xcrun --find clang 2>/dev/null)"; then
+    if command -v clang >/dev/null 2>&1; then
+      CLANG="$(command -v clang)"
+      warn "xcrun could not locate clang; falling back to PATH clang: $CLANG"
+    else
+      die "unable to locate clang via xcrun or PATH"
+    fi
+  fi
+
+  if ! STRIP="$(xcrun --find strip 2>/dev/null)"; then
+    if command -v strip >/dev/null 2>&1; then
+      STRIP="$(command -v strip)"
+      warn "xcrun could not locate strip; falling back to PATH strip: $STRIP"
+    else
+      die "unable to locate strip via xcrun or PATH"
+    fi
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    die "fixture rebuild requires python3"
+  fi
+
+  if ! command -v nm >/dev/null 2>&1; then
+    die "fixture rebuild requires nm"
+  fi
+}
+
+build_fixtures() {
+  detect_macos_build_tools
 
   mkdir -p "$BIN"
+  dup_tmp="$(mktemp_dir dup-build)"
+  arm64e_tmp="$(mktemp_file arm64e-sample)"
+  trap 'rm -rf "$dup_tmp"; rm -f "$arm64e_tmp" "$BIN/duplicate-symbol-ordinal.base"' EXIT INT TERM
 
   "$CLANG" \
     -arch arm64 \
@@ -133,7 +224,6 @@ build_fixtures() {
     "$SRC/hello.c" \
     -o "$BIN/universal-hello"
 
-  arm64e_tmp="$BIN/arm64e-sample.tmp"
   if "$CLANG" \
     -arch arm64e \
     -isysroot "$SDKROOT" \
@@ -270,10 +360,6 @@ protocol_list_offset = va_to_file_offset(data, symbol_address)
 struct.pack_into("<Q", data, protocol_list_offset, 0x200)
 out.write_bytes(data)
 PY
-
-  dup_tmp="$BIN/.dup-build"
-  rm -rf "$dup_tmp"
-  mkdir -p "$dup_tmp"
 
   "$CLANG" \
     -arch arm64 \
@@ -437,7 +523,26 @@ out_path.write_bytes(data)
 PY
 
   rm -f "$BIN/duplicate-symbol-ordinal.base"
+  rm -f "$arm64e_tmp"
   rm -rf "$dup_tmp"
+  trap - EXIT INT TERM
+}
+
+print_help() {
+  cat <<'EOF'
+Usage:
+  fixtures/build-fixtures.sh                  Rebuild fixtures (macOS + Xcode only).
+  fixtures/build-fixtures.sh --check          Portable drift check for fixture/corpus hashes.
+  fixtures/build-fixtures.sh --manifest       Print fixture hash manifest.
+  fixtures/build-fixtures.sh --manifest-corpus
+                                              Print export-trie corpus hash manifest.
+  fixtures/build-fixtures.sh --manifest-all   Print both manifests with section headers.
+
+Modes:
+  portable drift check    --check
+  manifest display        --manifest | --manifest-corpus | --manifest-all
+  macOS-only rebuild      (no argument)
+EOF
 }
 
 case "${1:-}" in
@@ -447,13 +552,21 @@ case "${1:-}" in
   --manifest)
     print_manifest
     ;;
-  --help|-h)
+  --manifest-corpus)
+    print_export_trie_corpus_manifest
+    ;;
+  --manifest-all)
     cat <<'EOF'
-Usage:
-  fixtures/build-fixtures.sh            Build fixture binaries (macOS + Xcode).
-  fixtures/build-fixtures.sh --check    Verify checked-in fixture hashes.
-  fixtures/build-fixtures.sh --manifest Print fixture hash manifest.
+# fixtures
 EOF
+    print_manifest
+    cat <<'EOF'
+# export-trie-corpus
+EOF
+    print_export_trie_corpus_manifest
+    ;;
+  --help|-h)
+    print_help
     ;;
   "")
     build_fixtures
