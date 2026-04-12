@@ -1,7 +1,8 @@
 use damsel_core::{
     Annotation, Architecture, BinaryFormat, BinaryImage, BinaryImageValidationError,
     DisassemblyRequest, DisassemblyTarget, Endianness, ImportBindingKind, ImportBindingRecord,
-    ImportBindingSource, Reference, Relocation, SliceDescriptor, SliceInfo, StubKind,
+    ImportBindingSource, ObjcNameSource, Reference, Relocation, SliceDescriptor, SliceInfo,
+    StubKind,
 };
 use std::ptr;
 use std::sync::Arc;
@@ -179,6 +180,88 @@ fn evidence_variants_are_constructible() {
 }
 
 #[test]
+fn helper_indexes_are_queryable() {
+    let helper = damsel_core::StubHelperEntry {
+        helper_address: 0x3330,
+        target_stub: Some(0x3000),
+        stub_section: Some("__TEXT:__stubs".to_string()),
+        pointer_address: Some(0x3010),
+        pointer_section: Some("__DATA_CONST:__la_symbol_ptr".to_string()),
+        binding_ordinal: Some(7),
+        dylib: Some("/usr/lib/libSystem.B.dylib".to_string()),
+        name: Some("_puts".to_string()),
+    };
+    let helper_other = damsel_core::StubHelperEntry {
+        helper_address: 0x3340,
+        target_stub: Some(0x3010),
+        stub_section: Some("__TEXT:__stubs".to_string()),
+        pointer_address: Some(0x3020),
+        pointer_section: Some("__DATA_CONST:__la_symbol_ptr".to_string()),
+        binding_ordinal: Some(9),
+        dylib: Some("/usr/lib/libobjc.A.dylib".to_string()),
+        name: Some("_puts".to_string()),
+    };
+    let base = sample_image();
+    let bytes: Arc<[u8]> = base.slice_bytes().to_vec().into();
+    let dyld = damsel_core::DyldMetadata {
+        stub_helpers: vec![helper.clone(), helper_other.clone()],
+        ..base.dyld().clone()
+    };
+    let image = BinaryImage::builder(
+        base.source().clone(),
+        base.path().to_path_buf(),
+        base.format(),
+        base.architecture(),
+        base.endianness(),
+        base.entry_point(),
+        base.platform().cloned(),
+        base.selected_slice().clone(),
+        base.segments().to_vec(),
+        base.sections().to_vec(),
+        base.symbols().to_vec(),
+        base.imports().to_vec(),
+        base.relocations().to_vec(),
+        base.objc().clone(),
+        dyld,
+        bytes,
+    )
+    .with_available_slices(base.available_slices().to_vec())
+    .build()
+    .expect("build helper image");
+
+    assert_eq!(image.dyld().helper_for_address(0x3330), Some(&helper));
+    assert_eq!(image.dyld().helper_for_stub_address(0x3000), Some(&helper));
+    assert_eq!(
+        image.dyld().helper_for_pointer_address(0x3010),
+        Some(&helper)
+    );
+    let symbol_helpers = image
+        .dyld()
+        .helpers_for_symbol("/usr/lib/libSystem.B.dylib", "_puts")
+        .collect::<Vec<_>>();
+    assert_eq!(symbol_helpers, vec![&helper]);
+}
+
+#[test]
+fn objc_category_provenance_is_constructible() {
+    let category = damsel_core::ObjcCategoryRecord {
+        pointer: 0x5000,
+        name: Some("Excited".to_string()),
+        name_source: ObjcNameSource::Runtime,
+        class_pointer: Some(0x5100),
+        class_name: Some("Greeter".to_string()),
+        class_name_source: ObjcNameSource::PointerTable,
+        methods: Vec::new(),
+        class_methods: Vec::new(),
+        properties: Vec::new(),
+        adopted_protocols: Vec::new(),
+    };
+
+    assert_eq!(category.name_source, ObjcNameSource::Runtime);
+    assert_eq!(category.class_name_source, ObjcNameSource::PointerTable);
+}
+
+#[test]
 fn builder_rejects_missing_selected_slice() {
     let bytes: Arc<[u8]> = vec![0u8; 64].into();
     let builder = BinaryImage::builder(
@@ -215,7 +298,9 @@ fn builder_rejects_missing_selected_slice() {
         selected: false,
     }]);
 
-    let error = builder.build().expect_err("builder should reject missing selected slice");
+    let error = builder
+        .build()
+        .expect_err("builder should reject missing selected slice");
     assert_eq!(error, BinaryImageValidationError::MissingSelectedSlice);
 }
 
@@ -256,6 +341,8 @@ fn builder_rejects_selected_slice_mismatch() {
         selected: true,
     }]);
 
-    let error = builder.build().expect_err("builder should reject mismatched selected slice");
+    let error = builder
+        .build()
+        .expect_err("builder should reject mismatched selected slice");
     assert_eq!(error, BinaryImageValidationError::SelectedSliceMismatch);
 }

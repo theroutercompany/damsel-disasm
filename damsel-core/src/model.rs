@@ -489,8 +489,10 @@ pub struct ObjcProtocolRecord {
 pub struct ObjcCategoryRecord {
     pub pointer: u64,
     pub name: Option<String>,
+    pub name_source: ObjcNameSource,
     pub class_pointer: Option<u64>,
     pub class_name: Option<String>,
+    pub class_name_source: ObjcNameSource,
     pub methods: Vec<ObjcMethodRecord>,
     pub class_methods: Vec<ObjcMethodRecord>,
     pub properties: Vec<ObjcPropertyRecord>,
@@ -608,6 +610,35 @@ impl DyldMetadata {
             .iter()
             .find(|stub_entry| stub_entry.stub_address == address)
     }
+
+    pub fn helper_for_address(&self, address: u64) -> Option<&StubHelperEntry> {
+        self.stub_helpers
+            .iter()
+            .find(|helper_entry| helper_entry.helper_address == address)
+    }
+
+    pub fn helper_for_stub_address(&self, address: u64) -> Option<&StubHelperEntry> {
+        self.stub_helpers
+            .iter()
+            .find(|helper_entry| helper_entry.target_stub == Some(address))
+    }
+
+    pub fn helper_for_pointer_address(&self, address: u64) -> Option<&StubHelperEntry> {
+        self.stub_helpers
+            .iter()
+            .find(|helper_entry| helper_entry.pointer_address == Some(address))
+    }
+
+    pub fn helpers_for_symbol<'a>(
+        &'a self,
+        dylib: &'a str,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a StubHelperEntry> {
+        self.stub_helpers.iter().filter(move |helper_entry| {
+            helper_entry.dylib.as_deref() == Some(dylib)
+                && helper_entry.name.as_deref() == Some(name)
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -663,6 +694,9 @@ pub struct StubEntry {
 pub struct StubHelperEntry {
     pub helper_address: u64,
     pub target_stub: Option<u64>,
+    pub stub_section: Option<String>,
+    pub pointer_address: Option<u64>,
+    pub pointer_section: Option<String>,
     pub binding_ordinal: Option<u32>,
     pub dylib: Option<String>,
     pub name: Option<String>,
@@ -784,6 +818,16 @@ pub enum Reference {
         name: Option<String>,
         source: ImportBindingSource,
     },
+    StubHelper {
+        helper_address: u64,
+        target_stub: Option<u64>,
+        stub_section: Option<String>,
+        pointer_address: Option<u64>,
+        pointer_section: Option<String>,
+        binding_ordinal: Option<u32>,
+        dylib: Option<String>,
+        name: Option<String>,
+    },
     RelocationEvidence {
         address: u64,
         kind: String,
@@ -878,8 +922,12 @@ impl fmt::Display for Annotation {
             } => write!(
                 f,
                 "binding {dylib}:{name} addr={} off={} addend={addend} kind={binding_kind:?} source={source:?}",
-                address.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string()),
-                offset.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string())
+                address
+                    .map(|value| format!("{value:#x}"))
+                    .unwrap_or_else(|| "-".to_string()),
+                offset
+                    .map(|value| format!("{value:#x}"))
+                    .unwrap_or_else(|| "-".to_string())
             ),
             Self::ImportBindingEvidence {
                 dylib,
@@ -892,8 +940,12 @@ impl fmt::Display for Annotation {
             } => write!(
                 f,
                 "binding-evidence {dylib}:{name} addr={} off={} addend={addend} kind={binding_kind:?} source={source:?}",
-                address.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string()),
-                offset.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string())
+                address
+                    .map(|value| format!("{value:#x}"))
+                    .unwrap_or_else(|| "-".to_string()),
+                offset
+                    .map(|value| format!("{value:#x}"))
+                    .unwrap_or_else(|| "-".to_string())
             ),
             Self::RelocationEvidence {
                 address,
@@ -944,6 +996,19 @@ impl Reference {
             dylib: stub.dylib.clone(),
             name: stub.name.clone(),
             source: stub.source,
+        }
+    }
+
+    pub fn from_stub_helper(helper: &StubHelperEntry) -> Self {
+        Self::StubHelper {
+            helper_address: helper.helper_address,
+            target_stub: helper.target_stub,
+            stub_section: helper.stub_section.clone(),
+            pointer_address: helper.pointer_address,
+            pointer_section: helper.pointer_section.clone(),
+            binding_ordinal: helper.binding_ordinal,
+            dylib: helper.dylib.clone(),
+            name: helper.name.clone(),
         }
     }
 }
@@ -1225,10 +1290,18 @@ pub enum BinaryImageValidationError {
 impl fmt::Display for BinaryImageValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingAvailableSlices => f.write_str("binary image must expose at least one slice"),
-            Self::MissingSelectedSlice => f.write_str("binary image must expose one selected slice descriptor"),
-            Self::MultipleSelectedSlices => f.write_str("binary image cannot expose multiple selected slice descriptors"),
-            Self::SelectedSliceMismatch => f.write_str("selected slice descriptor must match slice info and architecture"),
+            Self::MissingAvailableSlices => {
+                f.write_str("binary image must expose at least one slice")
+            }
+            Self::MissingSelectedSlice => {
+                f.write_str("binary image must expose one selected slice descriptor")
+            }
+            Self::MultipleSelectedSlices => {
+                f.write_str("binary image cannot expose multiple selected slice descriptors")
+            }
+            Self::SelectedSliceMismatch => {
+                f.write_str("selected slice descriptor must match slice info and architecture")
+            }
         }
     }
 }
@@ -1383,7 +1456,10 @@ impl BinaryImage {
             dyld,
             data,
         )
-        .with_available_slices(vec![SliceDescriptor::from_selected_slice(&slice, architecture)])
+        .with_available_slices(vec![SliceDescriptor::from_selected_slice(
+            &slice,
+            architecture,
+        )])
         .build()
         .expect("BinaryImage::from_file_bytes received invalid slice inventory")
     }
@@ -1427,7 +1503,10 @@ impl BinaryImage {
             dyld,
             data,
         )
-        .with_available_slices(vec![SliceDescriptor::from_selected_slice(&slice, architecture)])
+        .with_available_slices(vec![SliceDescriptor::from_selected_slice(
+            &slice,
+            architecture,
+        )])
         .build()
         .expect("BinaryImage::from_memory_bytes received invalid slice inventory")
     }
@@ -1571,7 +1650,10 @@ impl BinaryImage {
         {
             return None;
         }
-        let length = data.iter().position(|byte| *byte == 0).unwrap_or(data.len());
+        let length = data
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(data.len());
         if length == 0 {
             return None;
         }
@@ -1596,15 +1678,19 @@ impl BinaryImage {
         self.objc
             .classes
             .iter()
-            .find(|record| record.class_pointer == address || record.metaclass_pointer == Some(address))
+            .find(|record| {
+                record.class_pointer == address || record.metaclass_pointer == Some(address)
+            })
             .and_then(|record| record.name.as_deref())
             .or_else(|| {
                 self.objc
                     .pointer_refs
                     .iter()
                     .find(|entry| {
-                        matches!(entry.kind, ObjcPointerKind::ClassRef | ObjcPointerKind::ClassList)
-                            && entry.resolved_address == Some(address)
+                        matches!(
+                            entry.kind,
+                            ObjcPointerKind::ClassRef | ObjcPointerKind::ClassList
+                        ) && entry.resolved_address == Some(address)
                     })
                     .and_then(|entry| entry.resolved_name.as_deref())
             })
@@ -1800,7 +1886,9 @@ impl BinaryImageBuilder {
             return Err(BinaryImageValidationError::MissingAvailableSlices);
         }
 
-        let mut selected_iter = available_slices.iter().filter(|descriptor| descriptor.selected);
+        let mut selected_iter = available_slices
+            .iter()
+            .filter(|descriptor| descriptor.selected);
         let Some(selected) = selected_iter.next() else {
             return Err(BinaryImageValidationError::MissingSelectedSlice);
         };

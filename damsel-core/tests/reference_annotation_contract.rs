@@ -1,6 +1,6 @@
 use damsel_core::{
-    Annotation, ImportBindingKind, ImportBindingRecord, ImportBindingSource, Reference,
-    Relocation, StubEntry, StubKind,
+    Annotation, ImportBindingKind, ImportBindingRecord, ImportBindingSource, Reference, Relocation,
+    StubEntry, StubKind,
 };
 
 #[test]
@@ -75,6 +75,34 @@ fn reference_from_stub_preserves_fields() {
             ..
         } if section == "__TEXT:__stubs"
             && dylib.as_deref() == Some("/usr/lib/libSystem.B.dylib")
+            && name.as_deref() == Some("_puts")
+    ));
+}
+
+#[test]
+fn reference_from_stub_helper_preserves_fields() {
+    let helper = damsel_core::StubHelperEntry {
+        helper_address: 0x2100,
+        target_stub: Some(0x2000),
+        stub_section: Some("__TEXT:__stubs".to_string()),
+        pointer_address: Some(0x2010),
+        pointer_section: Some("__DATA_CONST:__la_symbol_ptr".to_string()),
+        binding_ordinal: Some(1),
+        dylib: Some("/usr/lib/libSystem.B.dylib".to_string()),
+        name: Some("_puts".to_string()),
+    };
+
+    let reference = Reference::from_stub_helper(&helper);
+    assert!(matches!(
+        reference,
+        Reference::StubHelper {
+            helper_address: 0x2100,
+            target_stub: Some(0x2000),
+            pointer_address: Some(0x2010),
+            ref dylib,
+            ref name,
+            ..
+        } if dylib.as_deref() == Some("/usr/lib/libSystem.B.dylib")
             && name.as_deref() == Some("_puts")
     ));
 }
