@@ -50,6 +50,12 @@ fn normalize_doctor_snapshot(output: &str) -> String {
                 Some("  xcrun: <detected>".to_string())
             } else if trimmed.starts_with("strip: ") {
                 Some("  strip: <detected>".to_string())
+            } else if trimmed.starts_with("clang: ") {
+                Some("  clang: <detected>".to_string())
+            } else if trimmed.starts_with("python3: ") {
+                Some("  python3: <detected>".to_string())
+            } else if trimmed.starts_with("nm: ") {
+                Some("  nm: <detected>".to_string())
             } else if trimmed.starts_with("selected_hash_tool: ") {
                 Some("  selected_hash_tool: <tool>".to_string())
             } else if trimmed.starts_with("sha256sum: ") {

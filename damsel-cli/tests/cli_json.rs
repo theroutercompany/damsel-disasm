@@ -141,16 +141,30 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
     }
     assert_exact_object_keys(
         &json["data"]["tools"],
-        &["xcrun", "strip", "hash_tools", "selected_hash_tool"],
+        &[
+            "xcrun",
+            "strip",
+            "clang",
+            "python3",
+            "nm",
+            "hash_tools",
+            "selected_hash_tool",
+        ],
     );
     assert_exact_object_keys(&json["data"]["tools"]["xcrun"], &["detected"]);
     assert_exact_object_keys(&json["data"]["tools"]["strip"], &["detected"]);
+    assert_exact_object_keys(&json["data"]["tools"]["clang"], &["detected"]);
+    assert_exact_object_keys(&json["data"]["tools"]["python3"], &["detected"]);
+    assert_exact_object_keys(&json["data"]["tools"]["nm"], &["detected"]);
     assert_exact_object_keys(
         &json["data"]["tools"]["hash_tools"],
         &["sha256sum", "shasum", "openssl"],
     );
     assert!(json["data"]["tools"]["xcrun"]["detected"].is_boolean());
     assert!(json["data"]["tools"]["strip"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["clang"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["python3"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["nm"]["detected"].is_boolean());
     assert!(json["data"]["tools"]["hash_tools"]["sha256sum"].is_boolean());
     assert!(json["data"]["tools"]["hash_tools"]["shasum"].is_boolean());
     assert!(json["data"]["tools"]["hash_tools"]["openssl"].is_boolean());

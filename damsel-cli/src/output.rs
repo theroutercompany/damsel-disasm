@@ -163,7 +163,10 @@ struct HashToolStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DoctorTools {
     xcrun: ToolStatus,
+    clang: ToolStatus,
     strip: ToolStatus,
+    python3: ToolStatus,
+    nm: ToolStatus,
     hash_tools: HashToolStatus,
     selected_hash_tool: Option<String>,
 }
@@ -3188,6 +3191,27 @@ impl JsonDto for DoctorJsonDto<'_> {
                         )]),
                     ),
                     (
+                        "clang".to_string(),
+                        JsonValue::Object(vec![(
+                            "detected".to_string(),
+                            JsonValue::Bool(report.tools.clang.detected),
+                        )]),
+                    ),
+                    (
+                        "python3".to_string(),
+                        JsonValue::Object(vec![(
+                            "detected".to_string(),
+                            JsonValue::Bool(report.tools.python3.detected),
+                        )]),
+                    ),
+                    (
+                        "nm".to_string(),
+                        JsonValue::Object(vec![(
+                            "detected".to_string(),
+                            JsonValue::Bool(report.tools.nm.detected),
+                        )]),
+                    ),
+                    (
                         "hash_tools".to_string(),
                         JsonValue::Object(vec![
                             (
@@ -3823,6 +3847,30 @@ fn print_doctor_text(report: &DoctorReport) {
         }
     );
     println!(
+        "  clang: {}",
+        if report.tools.clang.detected {
+            "detected"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  python3: {}",
+        if report.tools.python3.detected {
+            "detected"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  nm: {}",
+        if report.tools.nm.detected {
+            "detected"
+        } else {
+            "missing"
+        }
+    );
+    println!(
         "  selected_hash_tool: {}",
         report.tools.selected_hash_tool.as_deref().unwrap_or("none")
     );
@@ -3910,22 +3958,32 @@ fn collect_doctor_report() -> DoctorReport {
                     "xcrun was not found on PATH.",
                 ));
             }
+            if !tools.clang.detected {
+                reasons.push(compatibility_issue(
+                    "missing_clang",
+                    "clang was not found on PATH.",
+                ));
+            }
             if !tools.strip.detected {
                 reasons.push(compatibility_issue(
                     "missing_strip",
                     "strip was not found on PATH.",
                 ));
             }
+            if !tools.python3.detected {
+                reasons.push(compatibility_issue(
+                    "missing_python3",
+                    "python3 was not found on PATH.",
+                ));
+            }
+            if !tools.nm.detected {
+                reasons.push(compatibility_issue(
+                    "missing_nm",
+                    "nm was not found on PATH.",
+                ));
+            }
             if reasons.is_empty() {
-                if host_platform == HostPlatform::MacOS {
-                    CapabilityStatus::Supported
-                } else {
-                    reasons.push(compatibility_issue(
-                        "host_not_ci_verified",
-                        "Fixture rebuild is not covered by the current CI host matrix on this host pair.",
-                    ));
-                    CapabilityStatus::SupportedWithDegradedFeatures
-                }
+                CapabilityStatus::Supported
             } else {
                 CapabilityStatus::Unsupported
             }
@@ -4015,8 +4073,17 @@ fn detect_doctor_tools() -> DoctorTools {
         xcrun: ToolStatus {
             detected: command_exists("xcrun"),
         },
+        clang: ToolStatus {
+            detected: command_exists("clang"),
+        },
         strip: ToolStatus {
             detected: command_exists("strip"),
+        },
+        python3: ToolStatus {
+            detected: command_exists("python3"),
+        },
+        nm: ToolStatus {
+            detected: command_exists("nm"),
         },
         hash_tools,
         selected_hash_tool,

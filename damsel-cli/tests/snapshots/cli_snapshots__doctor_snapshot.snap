@@ -14,6 +14,9 @@ capabilities:
 tools:
   xcrun: <detected>
   strip: <detected>
+  clang: <detected>
+  python3: <detected>
+  nm: <detected>
   selected_hash_tool: <tool>
   sha256sum: <detected>
   shasum: <detected>
