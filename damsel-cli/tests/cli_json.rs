@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {
@@ -42,6 +43,10 @@ fn run_json_err(args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stderr).trim().to_string()
 }
 
+fn parse_json(text: &str) -> Value {
+    serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid json: {error}\n{text}"))
+}
+
 #[test]
 fn info_json_contract() {
     let path = fixture("arm64-symbolized");
@@ -51,11 +56,12 @@ fn info_json_contract() {
         "info",
         path.to_str().expect("utf8 path"),
     ]);
-    assert!(out.contains("\"schema_version\":1"), "{out}");
-    assert!(out.contains("\"command\":\"info\""), "{out}");
-    assert!(out.contains("\"data\""), "{out}");
-    assert!(out.contains("\"architecture\""), "{out}");
-    assert!(out.contains("\"dyld\""), "{out}");
+    let json = parse_json(&out);
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["command"], "info");
+    assert_eq!(json["data"]["architecture"], "arm64");
+    assert!(json["data"]["available_slices"].is_array());
+    assert!(json["data"]["dyld"]["stub_helpers"].is_number());
 }
 
 #[test]
@@ -67,10 +73,42 @@ fn dyld_json_contract_exposes_bindings_and_stubs() {
         "dyld",
         path.to_str().expect("utf8 path"),
     ]);
-    assert!(out.contains("\"command\":\"dyld\""), "{out}");
-    assert!(out.contains("\"import_bindings\""), "{out}");
-    assert!(out.contains("\"stubs\""), "{out}");
-    assert!(out.contains("\"section\":\"__TEXT:__stubs\""), "{out}");
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "dyld");
+    assert!(json["data"]["included_sections"].is_array());
+    assert!(json["data"]["import_bindings"].is_array());
+    assert!(json["data"]["stubs"].is_array());
+    assert!(json["data"]["stub_helpers"].is_array());
+    let stubs = json["data"]["stubs"].as_array().expect("stub array");
+    assert!(!stubs.is_empty(), "{out}");
+    assert_eq!(stubs[0]["section"], "__TEXT:__stubs");
+}
+
+#[test]
+fn dyld_json_filters_bindings_by_name_and_source() {
+    let path = fixture("import-rich");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "dyld",
+        path.to_str().expect("utf8 path"),
+        "--bindings",
+        "--name",
+        "puts",
+        "--source",
+        "indirect-symbol",
+    ]);
+    let json = parse_json(&out);
+    let bindings = json["data"]["import_bindings"]
+        .as_array()
+        .expect("binding array");
+    assert!(!bindings.is_empty(), "{out}");
+    assert!(bindings.iter().all(|binding| {
+        binding["name"]
+            .as_str()
+            .is_some_and(|name| name.to_ascii_lowercase().contains("puts"))
+            && binding["source"] == "IndirectSymbol"
+    }));
 }
 
 #[test]
@@ -82,12 +120,38 @@ fn objc_json_contract_exposes_structured_runtime_records() {
         "objc",
         path.to_str().expect("utf8 path"),
     ]);
-    assert!(out.contains("\"command\":\"objc\""), "{out}");
-    assert!(out.contains("\"class_names\""), "{out}");
-    assert!(out.contains("\"pointer_refs\""), "{out}");
-    assert!(out.contains("\"classes\""), "{out}");
-    assert!(out.contains("\"protocols\""), "{out}");
-    assert!(out.contains("\"categories\""), "{out}");
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "objc");
+    assert!(json["data"]["class_names"].is_array());
+    assert!(json["data"]["pointer_refs"].is_array());
+    assert!(json["data"]["classes"].is_array());
+    assert!(json["data"]["protocols"].is_array());
+    assert!(json["data"]["categories"].is_array());
+}
+
+#[test]
+fn objc_json_detail_and_owner_filters_are_structured() {
+    let path = fixture("objc-sample");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "objc",
+        path.to_str().expect("utf8 path"),
+        "--detail",
+        "methods",
+        "--owner",
+        "GreetingProviding",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["data"]["requested_detail"], "methods");
+    assert_eq!(json["data"]["owner_filter"], "GreetingProviding");
+    let methods = json["data"]["methods"].as_array().expect("methods array");
+    assert!(!methods.is_empty(), "{out}");
+    assert!(methods.iter().all(|entry| {
+        entry["owner_name"]
+            .as_str()
+            .is_some_and(|name| name.contains("GreetingProviding"))
+    }));
 }
 
 #[test]
@@ -99,10 +163,12 @@ fn slices_json_contract_exposes_full_inventory() {
         "slices",
         path.to_str().expect("utf8 path"),
     ]);
-    assert!(out.contains("\"command\":\"slices\""), "{out}");
-    assert!(out.contains("\"selected\":true"), "{out}");
-    assert!(out.contains("\"architecture\":\"arm64\""), "{out}");
-    assert!(out.contains("\"architecture\":\"x86_64\""), "{out}");
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "slices");
+    let slices = json["data"].as_array().expect("slice array");
+    assert!(slices.iter().any(|entry| entry["selected"] == true));
+    assert!(slices.iter().any(|entry| entry["architecture"] == "arm64"));
+    assert!(slices.iter().any(|entry| entry["architecture"] == "x86_64"));
 }
 
 #[test]
@@ -120,13 +186,19 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
         "--to",
         "0x1000004d8",
         "--show-references",
+        "--show-values",
     ]);
-    assert!(out.contains("\"command\":\"disasm\""), "{out}");
-    assert!(out.contains("\"window_end\":"), "{out}");
-    assert!(out.contains("\"decoded_bytes\""), "{out}");
-    assert!(out.contains("\"stop_reason\""), "{out}");
-    assert!(out.contains("\"instruction_count\""), "{out}");
-    assert!(out.contains("\"references\""), "{out}");
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "disasm");
+    assert!(json["data"]["window_end"].is_number());
+    assert!(json["data"]["decoded_bytes"].is_number());
+    assert!(json["data"]["stop_reason"].is_string());
+    assert!(json["data"]["instruction_count"].is_number());
+    let instructions = json["data"]["instructions"].as_array().expect("instruction array");
+    assert!(!instructions.is_empty(), "{out}");
+    assert!(instructions[0]["references"].is_array());
+    assert!(instructions[0]["annotations"].is_array());
+    assert!(instructions[0]["recovered_values"].is_array());
 }
 
 #[test]
@@ -144,11 +216,12 @@ fn error_json_envelope_for_invalid_args() {
         "--limit",
         "4",
     ]);
-    assert!(err.contains("\"schema_version\":1"), "{err}");
-    assert!(err.contains("\"command\":\"error\""), "{err}");
-    assert!(err.contains("\"code\":\"invalid_args\""), "{err}");
-    assert!(
-        err.contains("\"message\":\"`--count` and `--limit` cannot differ"),
-        "{err}"
+    let json = parse_json(&err);
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["command"], "error");
+    assert_eq!(json["data"]["code"], "invalid_args");
+    assert_eq!(
+        json["data"]["message"],
+        "`--count` and `--limit` cannot differ when both are provided"
     );
 }

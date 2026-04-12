@@ -77,6 +77,22 @@ fn dyld_snapshot() {
 }
 
 #[test]
+fn dyld_filtered_snapshot() {
+    let path = fixture("import-rich");
+    let stdout = run_snapshot(&[
+        "dyld",
+        path.to_str().expect("utf8 path"),
+        "--bindings",
+        "--stubs",
+        "--name",
+        "puts",
+        "--sort",
+        "name",
+    ]);
+    insta::assert_snapshot!("dyld_filtered_snapshot", stdout);
+}
+
+#[test]
 fn slices_snapshot() {
     let path = fixture("universal-hello");
     let stdout = run_snapshot(&["slices", path.to_str().expect("utf8 path")]);
@@ -88,6 +104,20 @@ fn objc_snapshot() {
     let path = fixture("objc-sample");
     let stdout = run_snapshot(&["objc", path.to_str().expect("utf8 path")]);
     insta::assert_snapshot!("objc_snapshot", stdout);
+}
+
+#[test]
+fn objc_methods_snapshot() {
+    let path = fixture("objc-sample");
+    let stdout = run_snapshot(&[
+        "objc",
+        path.to_str().expect("utf8 path"),
+        "--detail",
+        "methods",
+        "--owner",
+        "GreetingProviding",
+    ]);
+    insta::assert_snapshot!("objc_methods_snapshot", stdout);
 }
 
 #[test]

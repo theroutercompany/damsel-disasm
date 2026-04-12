@@ -1,24 +1,33 @@
 ---
 source: damsel-cli/tests/cli_snapshots.rs
-assertion_line: 90
+assertion_line: 106
 expression: stdout
 ---
 image_info_flags: 0x40
-summary: class_names=5 selectors=29 methods=29 pointer_refs=32 classes=2 protocols=2 categories=0
+summary: class_names=6 selectors=44 methods=44 pointer_refs=44 classes=2 protocols=3 categories=0
 classes:
   Excited
+  Excitement
   Greeter
   GreetingProviding
   NSObject
   Speaker
 selectors:
+  _emphasis
   _name
+  _prefixSeed
+  _title
   autorelease
+  categoryKind
+  categoryToken
   class
   conformsToProtocol:
   debugDescription
   description
+  emphasis
   emphasizedGreeting
+  excitedGreeting
+  greeterKind
   greeting
   hash
   init
@@ -27,28 +36,43 @@ selectors:
   isMemberOfClass:
   isProxy
   name
+  optionalGreeting
   performSelector:
   performSelector:withObject:
   performSelector:withObject:withObject:
   prefix
+  protocolClassGreeting
+  protocolLabel
   release
   respondsToSelector:
   retain
   retainCount
   self
+  setEmphasis:
   setName:
+  setTitle:
+  speakerKind
   stringWithFormat:
   superclass
+  title
   uppercaseString
   zone
 methods:
+  _emphasis
   _name
+  _prefixSeed
+  _title
   autorelease
+  categoryKind
+  categoryToken
   class
   conformsToProtocol:
   debugDescription
   description
+  emphasis
   emphasizedGreeting
+  excitedGreeting
+  greeterKind
   greeting
   hash
   init
@@ -57,56 +81,146 @@ methods:
   isMemberOfClass:
   isProxy
   name
+  optionalGreeting
   performSelector:
   performSelector:withObject:
   performSelector:withObject:withObject:
   prefix
+  protocolClassGreeting
+  protocolLabel
   release
   respondsToSelector:
   retain
   retainCount
   self
+  setEmphasis:
   setName:
+  setTitle:
+  speakerKind
   stringWithFormat:
   superclass
+  title
   uppercaseString
   zone
 class_records:
-  0x1000083e8 name=- superclass=- ro=0x100008048 methods=0x100000e28 properties=- protocols=-
-  0x100008410 name=- superclass=0x1000083e8 ro=0x100008278 methods=0x100000de0 properties=0x100008220 protocols=0x100008198
+  0x100008578 name=- superclass=- metaclass=0x1000085a0 ro=0x1000080a8 methods=4 class_methods=1 properties=1 ivars=2 protocols=0
+  0x1000085c8 name=- superclass=0x100008578 metaclass=0x1000085f0 ro=0x1000082b8 methods=11 class_methods=3 properties=12 ivars=2 protocols=2
 protocol_records:
-  0x100008460 NSObject
-  0x1000084c0 GreetingProviding
+  0x100008618 NSObject required_inst=19 required_class=0 optional_inst=1 optional_class=0 properties=4
+  0x100008678 GreetingProviding required_inst=2 required_class=1 optional_inst=1 optional_class=0 properties=1
+  0x1000086d8 Excitement required_inst=1 required_class=1 optional_inst=0 optional_class=0 properties=0
+method_records:
+  owner=- kind=class class_method=false selector=- impl=0x100000ad4 types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000b50 types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000bbc types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000bd8 types=v24@0:8@16
+  owner=- kind=metaclass class_method=true selector=- impl=0x100000ab8 types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000e24 types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000e5c types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000e90 types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000c48 types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000cc0 types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000cdc types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000d08 types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000d90 types=@16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000dac types=v24@0:8@16
+  owner=- kind=class class_method=false selector=- impl=0x100000de4 types=q16@0:8
+  owner=- kind=class class_method=false selector=- impl=0x100000e00 types=v24@0:8q16
+  owner=- kind=metaclass class_method=true selector=- impl=0x100000e40 types=@16@0:8
+  owner=- kind=metaclass class_method=true selector=- impl=0x100000c10 types=@16@0:8
+  owner=- kind=metaclass class_method=true selector=- impl=0x100000c2c types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001248 types=B24@0:8@16
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001254 types=#16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001260 types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x10000126c types=@24@0:8:16
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001278 types=@32@0:8:16@24
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001284 types=@40@0:8:16@24@32
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001290 types=B16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x10000129c types=B24@0:8#16
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012a8 types=B24@0:8#16
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012b4 types=B24@0:8@16
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012c0 types=B24@0:8:16
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012cc types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012d8 types=Vv16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012e4 types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012f0 types=Q16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012fc types=^{_NSZone=}16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001308 types=Q16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001314 types=#16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001320 types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001350 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=- impl=0x100001228 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=- impl=0x100001234 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=true selector=- impl=0x1000011f8 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=- impl=0x100001338 types=@16@0:8
+  owner=Excitement kind=protocol class_method=false selector=- impl=0x100001210 types=@16@0:8
+  owner=Excitement kind=protocol class_method=true selector=- impl=0x1000011e0 types=@16@0:8
+property_records:
+  owner=- name=title attrs=T@"NSString",C,N,V_title
+  owner=- name=categoryToken attrs=T@"NSString",R,N
+  owner=- name=hash attrs=TQ,R
+  owner=- name=superclass attrs=T#,R
+  owner=- name=description attrs=T@"NSString",R,C
+  owner=- name=debugDescription attrs=T@"NSString",?,R,C
+  owner=- name=name attrs=T@"NSString",C,N,V_name
+  owner=- name=emphasis attrs=Tq,N,V_emphasis
+  owner=- name=protocolLabel attrs=T@"NSString",R,N
+  owner=- name=hash attrs=TQ,R
+  owner=- name=superclass attrs=T#,R
+  owner=- name=description attrs=T@"NSString",R,C
+  owner=- name=debugDescription attrs=T@"NSString",?,R,C
+  owner=NSObject name=hash attrs=TQ,R
+  owner=NSObject name=superclass attrs=T#,R
+  owner=NSObject name=description attrs=T@"NSString",R,C
+  owner=NSObject name=debugDescription attrs=T@"NSString",?,R,C
+  owner=GreetingProviding name=protocolLabel attrs=T@"NSString",R,N
+ivar_records:
+  owner=- name=_prefixSeed type=@"NSString" offset=0x8
+  owner=- name=_title type=@"NSString" offset=0x10
+  owner=- name=_name type=@"NSString" offset=0x18
+  owner=- name=_emphasis type=q offset=0x20
 pointer_refs:
-  classlist  table=0x1000040b8 raw=0x100000000083e8 resolved_addr=0x1000083e8 resolved_name=-
-  classlist  table=0x1000040c0 raw=0x10000000008410 resolved_addr=0x100008410 resolved_name=-
-  selref     table=0x1000082c0 raw=0x10000000001078 resolved_addr=0x100001078 resolved_name=init
-  selref     table=0x1000082c8 raw=0x10000000001057 resolved_addr=0x100001057 resolved_name=emphasizedGreeting
-  selref     table=0x1000082d0 raw=0x1000000000106a resolved_addr=0x10000106a resolved_name=greeting
-  selref     table=0x1000082d8 raw=0x100000000010a6 resolved_addr=0x1000010a6 resolved_name=name
-  selref     table=0x1000082e0 raw=0x100000000010ff resolved_addr=0x1000010ff resolved_name=prefix
-  selref     table=0x1000082e8 raw=0x1000000000113b resolved_addr=0x10000113b resolved_name=stringWithFormat:
-  selref     table=0x1000082f0 raw=0x10000000000fc3 resolved_addr=0x100000fc3 resolved_name=uppercaseString
-  selref     table=0x1000082f8 raw=0x10000000001132 resolved_addr=0x100001132 resolved_name=setName:
-  selref     table=0x100008300 raw=0x1000000000107d resolved_addr=0x10000107d resolved_name=isEqual:
-  selref     table=0x100008308 raw=0x10000000001020 resolved_addr=0x100001020 resolved_name=class
-  selref     table=0x100008310 raw=0x1000000000112d resolved_addr=0x10000112d resolved_name=self
-  selref     table=0x100008318 raw=0x100000000010ab resolved_addr=0x1000010ab resolved_name=performSelector:
-  selref     table=0x100008320 raw=0x100000000010bc resolved_addr=0x1000010bc resolved_name=performSelector:withObject:
-  selref     table=0x100008328 raw=0x100000000010d8 resolved_addr=0x1000010d8 resolved_name=performSelector:withObject:withObject:
-  selref     table=0x100008330 raw=0x10000000000fa8 resolved_addr=0x100000fa8 resolved_name=isProxy
-  selref     table=0x100008338 raw=0x10000000001086 resolved_addr=0x100001086 resolved_name=isKindOfClass:
-  selref     table=0x100008340 raw=0x10000000001095 resolved_addr=0x100001095 resolved_name=isMemberOfClass:
-  selref     table=0x100008348 raw=0x10000000001026 resolved_addr=0x100001026 resolved_name=conformsToProtocol:
-  selref     table=0x100008350 raw=0x10000000001106 resolved_addr=0x100001106 resolved_name=respondsToSelector:
-  selref     table=0x100008358 raw=0x1000000000111a resolved_addr=0x10000111a resolved_name=retain
-  selref     table=0x100008360 raw=0x10000000000fd8 resolved_addr=0x100000fd8 resolved_name=release
-  selref     table=0x100008368 raw=0x10000000001014 resolved_addr=0x100001014 resolved_name=autorelease
-  selref     table=0x100008370 raw=0x10000000001121 resolved_addr=0x100001121 resolved_name=retainCount
-  selref     table=0x100008378 raw=0x10000000001158 resolved_addr=0x100001158 resolved_name=zone
-  selref     table=0x100008380 raw=0x10000000001073 resolved_addr=0x100001073 resolved_name=hash
-  selref     table=0x100008388 raw=0x1000000000114d resolved_addr=0x10000114d resolved_name=superclass
-  selref     table=0x100008390 raw=0x1000000000104b resolved_addr=0x10000104b resolved_name=description
-  selref     table=0x100008398 raw=0x1000000000103a resolved_addr=0x10000103a resolved_name=debugDescription
-  classref   table=0x1000083a0 raw=0x8010000000000008 resolved_addr=- resolved_name=-
-  classref   table=0x1000083a8 raw=0x10000000008410 resolved_addr=0x100008410 resolved_name=-
+  classlist  table=0x1000041d8 raw=0x10000000008578 resolved_addr=0x100008578 resolved_name=-
+  classlist  table=0x1000041e0 raw=0x100000000085c8 resolved_addr=0x1000085c8 resolved_name=-
+  selref     table=0x100008408 raw=0x10000000001533 resolved_addr=0x100001533 resolved_name=init
+  selref     table=0x100008410 raw=0x100000000014fd resolved_addr=0x1000014fd resolved_name=emphasis
+  selref     table=0x100008418 raw=0x10000000001506 resolved_addr=0x100001506 resolved_name=emphasizedGreeting
+  selref     table=0x100008420 raw=0x10000000001525 resolved_addr=0x100001525 resolved_name=greeting
+  selref     table=0x100008428 raw=0x10000000001561 resolved_addr=0x100001561 resolved_name=name
+  selref     table=0x100008430 raw=0x100000000015cb resolved_addr=0x1000015cb resolved_name=prefix
+  selref     table=0x100008438 raw=0x1000000000164e resolved_addr=0x10000164e resolved_name=stringWithFormat:
+  selref     table=0x100008440 raw=0x1000000000166b resolved_addr=0x10000166b resolved_name=title
+  selref     table=0x100008448 raw=0x10000000001410 resolved_addr=0x100001410 resolved_name=uppercaseString
+  selref     table=0x100008450 raw=0x100000000014b8 resolved_addr=0x1000014b8 resolved_name=categoryToken
+  selref     table=0x100008458 raw=0x10000000001425 resolved_addr=0x100001425 resolved_name=excitedGreeting
+  selref     table=0x100008460 raw=0x100000000015e8 resolved_addr=0x1000015e8 resolved_name=protocolLabel
+  selref     table=0x100008468 raw=0x10000000001566 resolved_addr=0x100001566 resolved_name=optionalGreeting
+  selref     table=0x100008470 raw=0x1000000000162f resolved_addr=0x10000162f resolved_name=setName:
+  selref     table=0x100008478 raw=0x10000000001622 resolved_addr=0x100001622 resolved_name=setEmphasis:
+  selref     table=0x100008480 raw=0x100000000014ab resolved_addr=0x1000014ab resolved_name=categoryKind
+  selref     table=0x100008488 raw=0x10000000001519 resolved_addr=0x100001519 resolved_name=greeterKind
+  selref     table=0x100008490 raw=0x100000000015d2 resolved_addr=0x1000015d2 resolved_name=protocolClassGreeting
+  selref     table=0x100008498 raw=0x10000000001638 resolved_addr=0x100001638 resolved_name=setTitle:
+  selref     table=0x1000084a0 raw=0x10000000001642 resolved_addr=0x100001642 resolved_name=speakerKind
+  selref     table=0x1000084a8 raw=0x10000000001538 resolved_addr=0x100001538 resolved_name=isEqual:
+  selref     table=0x1000084b0 raw=0x100000000014c6 resolved_addr=0x1000014c6 resolved_name=class
+  selref     table=0x1000084b8 raw=0x1000000000161d resolved_addr=0x10000161d resolved_name=self
+  selref     table=0x1000084c0 raw=0x10000000001577 resolved_addr=0x100001577 resolved_name=performSelector:
+  selref     table=0x1000084c8 raw=0x10000000001588 resolved_addr=0x100001588 resolved_name=performSelector:withObject:
+  selref     table=0x1000084d0 raw=0x100000000015a4 resolved_addr=0x1000015a4 resolved_name=performSelector:withObject:withObject:
+  selref     table=0x1000084d8 raw=0x100000000013ef resolved_addr=0x1000013ef resolved_name=isProxy
+  selref     table=0x1000084e0 raw=0x10000000001541 resolved_addr=0x100001541 resolved_name=isKindOfClass:
+  selref     table=0x1000084e8 raw=0x10000000001550 resolved_addr=0x100001550 resolved_name=isMemberOfClass:
+  selref     table=0x1000084f0 raw=0x100000000014cc resolved_addr=0x1000014cc resolved_name=conformsToProtocol:
+  selref     table=0x1000084f8 raw=0x100000000015f6 resolved_addr=0x1000015f6 resolved_name=respondsToSelector:
+  selref     table=0x100008500 raw=0x1000000000160a resolved_addr=0x10000160a resolved_name=retain
+  selref     table=0x100008508 raw=0x1000000000144d resolved_addr=0x10000144d resolved_name=release
+  selref     table=0x100008510 raw=0x1000000000149f resolved_addr=0x10000149f resolved_name=autorelease
+  selref     table=0x100008518 raw=0x10000000001611 resolved_addr=0x100001611 resolved_name=retainCount
+  selref     table=0x100008520 raw=0x10000000001671 resolved_addr=0x100001671 resolved_name=zone
+  selref     table=0x100008528 raw=0x1000000000152e resolved_addr=0x10000152e resolved_name=hash
+  selref     table=0x100008530 raw=0x10000000001660 resolved_addr=0x100001660 resolved_name=superclass
+  selref     table=0x100008538 raw=0x100000000014f1 resolved_addr=0x1000014f1 resolved_name=description
+  selref     table=0x100008540 raw=0x100000000014e0 resolved_addr=0x1000014e0 resolved_name=debugDescription
+  classref   table=0x100008548 raw=0x8010000000000008 resolved_addr=- resolved_name=-
+  classref   table=0x100008550 raw=0x100000000085c8 resolved_addr=0x1000085c8 resolved_name=-

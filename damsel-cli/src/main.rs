@@ -64,6 +64,71 @@ enum RelocationSortArg {
     Size,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DyldSortArg {
+    Address,
+    Name,
+    Dylib,
+    Source,
+}
+
+impl From<DyldSortArg> for output::DyldSortKey {
+    fn from(value: DyldSortArg) -> Self {
+        match value {
+            DyldSortArg::Address => output::DyldSortKey::Address,
+            DyldSortArg::Name => output::DyldSortKey::Name,
+            DyldSortArg::Dylib => output::DyldSortKey::Dylib,
+            DyldSortArg::Source => output::DyldSortKey::Source,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DyldSourceArg {
+    ChainedFixup,
+    IndirectSymbol,
+    Stub,
+    Other,
+}
+
+impl From<DyldSourceArg> for damsel_core::ImportBindingSource {
+    fn from(value: DyldSourceArg) -> Self {
+        match value {
+            DyldSourceArg::ChainedFixup => damsel_core::ImportBindingSource::ChainedFixup,
+            DyldSourceArg::IndirectSymbol => damsel_core::ImportBindingSource::IndirectSymbol,
+            DyldSourceArg::Stub => damsel_core::ImportBindingSource::Stub,
+            DyldSourceArg::Other => damsel_core::ImportBindingSource::Other,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ObjcDetailArg {
+    Summary,
+    Classes,
+    Protocols,
+    Categories,
+    Methods,
+    Properties,
+    Ivars,
+    All,
+}
+
+impl From<ObjcDetailArg> for output::ObjcDetail {
+    fn from(value: ObjcDetailArg) -> Self {
+        match value {
+            ObjcDetailArg::Summary => output::ObjcDetail::Summary,
+            ObjcDetailArg::Classes => output::ObjcDetail::Classes,
+            ObjcDetailArg::Protocols => output::ObjcDetail::Protocols,
+            ObjcDetailArg::Categories => output::ObjcDetail::Categories,
+            ObjcDetailArg::Methods => output::ObjcDetail::Methods,
+            ObjcDetailArg::Properties => output::ObjcDetail::Properties,
+            ObjcDetailArg::Ivars => output::ObjcDetail::Ivars,
+            ObjcDetailArg::All => output::ObjcDetail::All,
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     Info {
@@ -129,12 +194,26 @@ enum Command {
         bindings: bool,
         #[arg(long)]
         stubs: bool,
+        #[arg(long)]
+        helpers: bool,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        dylib: Option<String>,
+        #[arg(long, value_enum)]
+        source: Option<DyldSourceArg>,
+        #[arg(long, value_enum)]
+        sort: Option<DyldSortArg>,
     },
     Slices {
         path: PathBuf,
     },
     Objc {
         path: PathBuf,
+        #[arg(long, value_enum, default_value_t = ObjcDetailArg::All)]
+        detail: ObjcDetailArg,
+        #[arg(long)]
+        owner: Option<String>,
     },
     #[command(group(
         ArgGroup::new("target")
@@ -163,6 +242,8 @@ enum Command {
         no_annotations: bool,
         #[arg(long)]
         show_references: bool,
+        #[arg(long)]
+        show_values: bool,
     },
 }
 
@@ -339,10 +420,16 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             function_starts,
             bindings,
             stubs,
+            helpers,
+            name,
+            dylib,
+            source,
+            sort,
         } => {
             let image = load_image(path)?;
-            let show_any = dylibs || rpaths || exports || function_starts || bindings || stubs;
-            let view_options = if show_any {
+            let show_any =
+                dylibs || rpaths || exports || function_starts || bindings || stubs || helpers;
+            let mut view_options = if show_any {
                 output::DyldViewOptions {
                     show_dylibs: dylibs,
                     show_rpaths: rpaths,
@@ -350,19 +437,35 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
                     show_function_starts: function_starts,
                     show_bindings: bindings,
                     show_stubs: stubs,
+                    show_helpers: helpers,
+                    name_filter: None,
+                    dylib_filter: None,
+                    source_filter: None,
+                    sort: None,
                 }
             } else {
                 output::DyldViewOptions::all()
             };
-            output::print_dyld(&image, view_options, &output_settings);
+            view_options.name_filter = name;
+            view_options.dylib_filter = dylib;
+            view_options.source_filter = source.map(Into::into);
+            view_options.sort = sort.map(Into::into);
+            output::print_dyld(&image, &view_options, &output_settings);
         }
         Command::Slices { path } => {
             let image = load_image(path)?;
             output::print_slices(&image, &output_settings);
         }
-        Command::Objc { path } => {
+        Command::Objc { path, detail, owner } => {
             let image = load_image(path)?;
-            output::print_objc(&image, &output_settings);
+            output::print_objc(
+                &image,
+                &output::ObjcViewOptions {
+                    detail: detail.into(),
+                    owner_filter: owner,
+                },
+                &output_settings,
+            );
         }
         Command::Disasm {
             path,
@@ -376,6 +479,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             to,
             no_annotations,
             show_references,
+            show_values,
         } => {
             let image = load_image(path)?;
             let disasm_plan = plan_disassembly(
@@ -409,6 +513,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
                     limit: request_limit,
                     options: DisassemblyOptions {
                         include_annotations: !no_annotations,
+                        include_value_flow: show_values,
                     },
                 },
             )
@@ -447,6 +552,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
                 output::DisassemblyRenderOptions {
                     include_annotations: !no_annotations,
                     include_references: show_references,
+                    include_values: show_values,
                 },
                 &output_settings,
             );
@@ -457,7 +563,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
 }
 
 fn load_image(path: PathBuf) -> Result<BinaryImage, CliRunError> {
-    load(path).map_err(|error| CliRunError::command("load_error", error.to_string()))
+    load(path).map_err(map_macho_error)
 }
 
 #[derive(Debug)]
@@ -605,17 +711,24 @@ fn normalize_instruction_limit(
 }
 
 fn map_disasm_error(error: damsel_macho::MachoError) -> CliRunError {
-    let message = error.to_string();
-    if message.contains("symbol not found") {
-        CliRunError::command("symbol_not_found", message)
-    } else if message.contains("section not found") {
-        CliRunError::command("section_not_found", message)
-    } else if message.contains("not mapped") {
-        CliRunError::command("address_not_mapped", message)
-    } else if message.contains("decode error") {
-        CliRunError::command("decode_error", message)
-    } else {
-        CliRunError::command("disasm_error", message)
+    map_macho_error(error)
+}
+
+fn map_macho_error(error: damsel_macho::MachoError) -> CliRunError {
+    match error {
+        damsel_macho::MachoError::SymbolNotFound(symbol) => {
+            CliRunError::command("symbol_not_found", format!("symbol not found: {symbol}"))
+        }
+        damsel_macho::MachoError::SectionNotFound(section) => {
+            CliRunError::command("section_not_found", format!("section not found: {section}"))
+        }
+        damsel_macho::MachoError::AddressNotMapped(address) => {
+            CliRunError::command("address_not_mapped", format!("address {address:#x} is not mapped"))
+        }
+        damsel_macho::MachoError::Decode(inner) => {
+            CliRunError::command("decode_error", format!("decode error: {inner}"))
+        }
+        other => CliRunError::command("load_error", other.to_string()),
     }
 }
 

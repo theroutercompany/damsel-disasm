@@ -301,6 +301,7 @@ dependencies = [
  "damsel-macho",
  "insta",
  "predicates",
+ "serde_json",
 ]
 
 [[package]]

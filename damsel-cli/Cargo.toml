@@ -12,3 +12,4 @@ damsel-macho = { path = "../damsel-macho" }
 assert_cmd.workspace = true
 insta.workspace = true
 predicates.workspace = true
+serde_json.workspace = true

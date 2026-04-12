@@ -1,8 +1,9 @@
 ---
 source: damsel-cli/tests/cli_snapshots.rs
+assertion_line: 134
 expression: stdout
 ---
-target: _main start=0x1000004b8 end=0x1000004d8 bytes=0x20 decoded=0x20 instructions=8 stop=LimitReached
+target: _main start=0x1000004b8 end=0x1000004d8 bytes=0x20 decoded=0x20 instructions=8 stop=InstructionLimitReached
        0x1000004b8  d10083ff  sub sp, sp, #0x20 ; range start | symbol _main
        0x1000004bc  a9017bfd  stp fp, lr, [sp, #0x10]
        0x1000004c0  910043fd  add fp, sp, #0x10
