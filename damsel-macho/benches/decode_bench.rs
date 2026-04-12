@@ -21,8 +21,15 @@ struct Scenario {
     kind: ScenarioKind,
 }
 
+fn runtime_bench_supported() -> bool {
+    std::env::consts::ARCH == "aarch64"
+}
+
 fn decode_benchmarks(criterion: &mut Criterion) {
-    if std::env::consts::ARCH != "aarch64" {
+    if !runtime_bench_supported() {
+        criterion.bench_function("compatibility::unsupported_host_runtime_skip", |bench| {
+            bench.iter(|| black_box(()))
+        });
         return;
     }
 

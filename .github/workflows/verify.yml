@@ -47,9 +47,116 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace
 
+  doctor-compatibility:
+    name: doctor compatibility (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            expected_host_os: macos
+            expected_host_arch: arm64
+            expected_overall_status: supported-with-degraded-features
+            expected_macho_analysis: supported
+            expected_fixture_rebuild: supported
+            expected_fixture_drift_check: supported
+            expected_benchmark: supported-with-degraded-features
+          - os: ubuntu-24.04
+            expected_host_os: linux
+            expected_host_arch: x86_64
+            expected_overall_status: unsupported
+            expected_macho_analysis: supported
+            expected_fixture_rebuild: unsupported
+            expected_fixture_drift_check: supported
+            expected_benchmark: supported-with-degraded-features
+          - os: ubuntu-24.04-arm
+            expected_host_os: linux
+            expected_host_arch: arm64
+            expected_overall_status: unsupported
+            expected_macho_analysis: supported
+            expected_fixture_rebuild: unsupported
+            expected_fixture_drift_check: supported
+            expected_benchmark: supported
+    runs-on: ${{ matrix.os }}
+    needs: fixture-drift
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Validate doctor JSON contract and statuses
+        env:
+          EXPECTED_HOST_OS: ${{ matrix.expected_host_os }}
+          EXPECTED_HOST_ARCH: ${{ matrix.expected_host_arch }}
+          EXPECTED_OVERALL_STATUS: ${{ matrix.expected_overall_status }}
+          EXPECTED_MACHO_ANALYSIS: ${{ matrix.expected_macho_analysis }}
+          EXPECTED_FIXTURE_REBUILD: ${{ matrix.expected_fixture_rebuild }}
+          EXPECTED_FIXTURE_DRIFT_CHECK: ${{ matrix.expected_fixture_drift_check }}
+          EXPECTED_BENCHMARK: ${{ matrix.expected_benchmark }}
+        run: |
+          cargo run -q -p damsel-cli -- --format json doctor > doctor.json
+          python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+payload = json.loads(Path("doctor.json").read_text())
+assert payload["schema_version"] == 1
+assert payload["command"] == "doctor"
+data = payload["data"]
+
+required_top = {"host", "overall_status", "capabilities", "tools", "issues"}
+assert set(data.keys()) == required_top
+assert set(data["host"].keys()) == {"os", "architecture", "target_triple"}
+assert set(data["capabilities"].keys()) == {
+    "macho_analysis",
+    "fixture_rebuild",
+    "fixture_drift_check",
+    "benchmark",
+}
+assert set(data["tools"].keys()) == {
+    "xcrun",
+    "strip",
+    "hash_tools",
+    "selected_hash_tool",
+}
+assert set(data["tools"]["hash_tools"].keys()) == {"sha256sum", "shasum", "openssl"}
+
+valid = {"supported", "supported-with-degraded-features", "unsupported"}
+assert data["host"]["os"] == os.environ["EXPECTED_HOST_OS"]
+assert data["host"]["architecture"] == os.environ["EXPECTED_HOST_ARCH"]
+assert data["overall_status"] == os.environ["EXPECTED_OVERALL_STATUS"]
+assert data["overall_status"] in valid
+for key, capability in data["capabilities"].items():
+    assert set(capability.keys()) == {"status", "reasons"}
+    assert capability["status"] in valid
+expected_by_key = {
+    "macho_analysis": os.environ["EXPECTED_MACHO_ANALYSIS"],
+    "fixture_rebuild": os.environ["EXPECTED_FIXTURE_REBUILD"],
+    "fixture_drift_check": os.environ["EXPECTED_FIXTURE_DRIFT_CHECK"],
+    "benchmark": os.environ["EXPECTED_BENCHMARK"],
+}
+assert data["capabilities"]["macho_analysis"]["status"] == expected_by_key["macho_analysis"]
+assert data["capabilities"]["fixture_rebuild"]["status"] == expected_by_key["fixture_rebuild"]
+assert data["capabilities"]["fixture_drift_check"]["status"] == expected_by_key["fixture_drift_check"]
+assert data["capabilities"]["benchmark"]["status"] == expected_by_key["benchmark"]
+for key, expected in expected_by_key.items():
+    reasons = data["capabilities"][key]["reasons"]
+    assert isinstance(reasons, list)
+    if expected != "supported":
+        assert reasons, f"{key} should include reasons when status={expected}"
+PY
+
   bench-compile:
-    name: bench compile (linux arm64)
-    runs-on: ubuntu-24.04-arm
+    name: bench compile (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-14
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
     needs: fixture-drift
     steps:
       - name: Checkout
@@ -60,8 +167,14 @@ jobs:
         run: cargo bench -p damsel-macho --bench decode_bench --no-run
 
   targeted-macho-fixtures:
-    name: targeted macho fixtures (linux arm64)
-    runs-on: ubuntu-24.04-arm
+    name: targeted macho fixtures (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
     needs: fixture-drift
     steps:
       - name: Checkout
@@ -81,6 +194,22 @@ jobs:
           test -f fixtures/export-trie-corpus/unknown-flag-bits-regular.toml
       - name: Run targeted malformed/duplicate fixture tests
         run: cargo test -p damsel-macho --test load_matrix --test import_binding_matrix --test disasm_matrix --test export_matrix --test objc_matrix --test slice_inventory_matrix
+
+  decode-bench-unsupported-host-smoke:
+    name: decode bench unsupported-host smoke (linux x86_64)
+    runs-on: ubuntu-24.04
+    needs: fixture-drift
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Decode bench unsupported-host runtime path
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo bench -p damsel-macho --bench decode_bench -- compatibility::unsupported_host_runtime_skip --warm-up-time 0.01 --measurement-time 0.02 --sample-size 10 | tee bench.log
+          grep -q "compatibility::unsupported_host_runtime_skip" bench.log
 
   decode-throughput-smoke:
     name: decode throughput smoke (linux arm64)
