@@ -4,7 +4,7 @@ mod errors;
 mod loader;
 mod objc;
 
-pub use disasm::disassemble;
+pub use disasm::{disassemble, disassemble_v2};
 pub use errors::{MachoError, Result};
 pub use loader::load;
 
@@ -30,8 +30,8 @@ mod tests {
     #[test]
     fn stripped_binary_exposes_sections_imports_and_disassembly() {
         let image = load(fixture_path("arm64-stripped")).expect("load stripped fixture");
-        assert!(!image.sections.is_empty());
-        assert!(!image.imports.is_empty());
+        assert!(!image.sections().is_empty());
+        assert!(!image.imports().is_empty());
 
         let request = DisassemblyRequest {
             target: DisassemblyTarget::Section("__text".to_string()),

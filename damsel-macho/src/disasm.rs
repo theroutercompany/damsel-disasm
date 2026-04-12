@@ -1,18 +1,30 @@
 use crate::errors::{MachoError, Result};
 use damsel_core::{
-    Annotation, BinaryImage, DecodedInstruction, DisassemblyRequest, DisassemblyResult,
+    Annotation, BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyRequest,
+    DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
     DisassemblyTarget, Import, Operand, Reference, Relocation, Section, Symbol,
 };
 use std::collections::BTreeMap;
 
+pub fn disassemble_v2(
+    image: &BinaryImage,
+    request: &DisassemblyRequestV2,
+) -> Result<DisassemblyResultV2> {
+    Ok(disassemble_impl(image, request)?.into_v2())
+}
+
 pub fn disassemble(image: &BinaryImage, request: &DisassemblyRequest) -> Result<DisassemblyResult> {
-    let window = resolve_disassembly_target(image, request)?;
-    let mut instructions = damsel_core::decode_aarch64(
-        window.bytes,
-        window.start_address,
-        image.effective_instruction_limit(request),
-    )?;
-    let include_annotations = request.include_annotations;
+    Ok(disassemble_impl(image, &request.to_v2())?.into_legacy())
+}
+
+fn disassemble_impl(
+    image: &BinaryImage,
+    request: &DisassemblyRequestV2,
+) -> Result<DisassemblyComputation> {
+    let window = resolve_disassembly_target_v2(image, request)?;
+    let mut instructions =
+        damsel_core::decode_aarch64(window.bytes, window.start_address, request.limit.instruction_cap())?;
+    let include_annotations = request.options.include_annotations;
     if !include_annotations {
         for instruction in &mut instructions {
             instruction.annotations.clear();
@@ -40,7 +52,7 @@ pub fn disassemble(image: &BinaryImage, request: &DisassemblyRequest) -> Result<
     let instruction_count = instructions.len();
     let stop_reason = determine_stop_reason(request, &window, decoded_bytes, instruction_count);
 
-    Ok(DisassemblyResult {
+    Ok(DisassemblyComputation {
         target: window.target,
         start_address: window.start_address,
         bytes_len: window.bytes.len(),
@@ -52,6 +64,44 @@ pub fn disassemble(image: &BinaryImage, request: &DisassemblyRequest) -> Result<
     })
 }
 
+struct DisassemblyComputation {
+    target: String,
+    start_address: u64,
+    bytes_len: usize,
+    decoded_bytes: usize,
+    end_address: u64,
+    instruction_count: usize,
+    stop_reason: DisassemblyStopReason,
+    instructions: Vec<DecodedInstruction>,
+}
+
+impl DisassemblyComputation {
+    fn into_legacy(self) -> DisassemblyResult {
+        DisassemblyResult {
+            target: self.target,
+            start_address: self.start_address,
+            bytes_len: self.bytes_len,
+            decoded_bytes: self.decoded_bytes,
+            end_address: self.end_address,
+            instruction_count: self.instruction_count,
+            stop_reason: self.stop_reason,
+            instructions: self.instructions,
+        }
+    }
+
+    fn into_v2(self) -> DisassemblyResultV2 {
+        DisassemblyResultV2 {
+            target: self.target,
+            start_address: self.start_address,
+            decoded_bytes: self.decoded_bytes,
+            end_address: self.end_address,
+            instruction_count: self.instruction_count,
+            stop_reason: self.stop_reason,
+            instructions: self.instructions,
+        }
+    }
+}
+
 struct TargetWindow<'a> {
     target: String,
     start_address: u64,
@@ -59,11 +109,11 @@ struct TargetWindow<'a> {
     request_limited: bool,
 }
 
-fn resolve_disassembly_target<'a>(
+fn resolve_disassembly_target_v2<'a>(
     image: &'a BinaryImage,
-    request: &DisassemblyRequest,
+    request: &DisassemblyRequestV2,
 ) -> Result<TargetWindow<'a>> {
-    match &request.target {
+    let window = match &request.target {
         DisassemblyTarget::Section(section_name) => {
             let section = image
                 .section_by_name(section_name)
@@ -71,13 +121,13 @@ fn resolve_disassembly_target<'a>(
             let data = image
                 .bytes_for_section(section)
                 .ok_or_else(|| MachoError::SectionHasNoFileData(section.full_name()))?;
-            let (bytes, request_limited) = clamp_to_request_limit(request, data);
-            Ok(TargetWindow {
+            let (bytes, request_limited) = clamp_to_request_limit_v2(request.limit, data);
+            TargetWindow {
                 target: section.full_name(),
                 start_address: section.address,
                 bytes,
                 request_limited,
-            })
+            }
         }
         DisassemblyTarget::Address(address) => {
             let section = image
@@ -89,24 +139,20 @@ fn resolve_disassembly_target<'a>(
             let delta = address.saturating_sub(section.address);
             let available = section.size.saturating_sub(delta) as usize;
             let size = match request.limit {
-                Some(damsel_core::DisassemblyLimit::Instructions(count)) => count.saturating_mul(4),
-                Some(damsel_core::DisassemblyLimit::Bytes(bytes)) => bytes,
-                Some(damsel_core::DisassemblyLimit::Unlimited) => available,
-                None => request
-                    .max_instructions
-                    .map(|count| count.saturating_mul(4))
-                    .unwrap_or(available),
+                DisassemblyLimit::Instructions(count) => count.saturating_mul(4),
+                DisassemblyLimit::Bytes(bytes) => bytes,
+                DisassemblyLimit::Unlimited => available,
             }
             .min(available);
             let data = image
                 .bytes_for_file_range(file_offset + delta, size as u64)
                 .ok_or(MachoError::AddressNotMapped(*address))?;
-            Ok(TargetWindow {
+            TargetWindow {
                 target: format!("{address:#x}"),
                 start_address: *address,
                 bytes: data,
                 request_limited: size < available,
-            })
+            }
         }
         DisassemblyTarget::Symbol(symbol_name) => {
             let symbol = image
@@ -127,34 +173,30 @@ fn resolve_disassembly_target<'a>(
                     .saturating_sub(symbol.address)
             };
             let size = match request.limit {
-                Some(damsel_core::DisassemblyLimit::Instructions(count)) => {
-                    (count.saturating_mul(4)) as u64
-                }
-                Some(damsel_core::DisassemblyLimit::Bytes(bytes)) => bytes as u64,
-                Some(damsel_core::DisassemblyLimit::Unlimited) => inferred_size,
-                None => request
-                    .max_instructions
-                    .map(|count| (count.saturating_mul(4)) as u64)
-                    .unwrap_or(inferred_size),
+                DisassemblyLimit::Instructions(count) => (count.saturating_mul(4)) as u64,
+                DisassemblyLimit::Bytes(bytes) => bytes as u64,
+                DisassemblyLimit::Unlimited => inferred_size,
             }
             .min(inferred_size)
             .min(section.size.saturating_sub(delta));
             let data = image
                 .bytes_for_file_range(file_offset + delta, size)
                 .ok_or(MachoError::AddressNotMapped(symbol.address))?;
-            Ok(TargetWindow {
+            TargetWindow {
                 target: symbol.name.clone(),
                 start_address: symbol.address,
                 bytes: data,
                 request_limited: size < inferred_size.min(section.size.saturating_sub(delta)),
-            })
+            }
         }
-    }
+    };
+
+    clamp_target_window_to_range(window, request.range.as_ref())
 }
 
 fn next_symbol_boundary(image: &BinaryImage, symbol: &Symbol, section: &Section) -> Option<u64> {
     image
-        .symbols
+        .symbols()
         .iter()
         .filter(|candidate| {
             candidate.defined
@@ -168,14 +210,11 @@ fn next_symbol_boundary(image: &BinaryImage, symbol: &Symbol, section: &Section)
         .min()
 }
 
-fn clamp_to_request_limit<'a>(request: &DisassemblyRequest, bytes: &'a [u8]) -> (&'a [u8], bool) {
-    let limit_bytes = match request.limit {
-        Some(damsel_core::DisassemblyLimit::Instructions(count)) => Some(count.saturating_mul(4)),
-        Some(damsel_core::DisassemblyLimit::Bytes(bytes)) => Some(bytes),
-        Some(damsel_core::DisassemblyLimit::Unlimited) => None,
-        None => request
-            .max_instructions
-            .map(|count| count.saturating_mul(4)),
+fn clamp_to_request_limit_v2(limit: DisassemblyLimit, bytes: &[u8]) -> (&[u8], bool) {
+    let limit_bytes = match limit {
+        DisassemblyLimit::Instructions(count) => Some(count.saturating_mul(4)),
+        DisassemblyLimit::Bytes(bytes) => Some(bytes),
+        DisassemblyLimit::Unlimited => None,
     };
     match limit_bytes {
         Some(limit) if limit < bytes.len() => (&bytes[..limit], true),
@@ -183,14 +222,55 @@ fn clamp_to_request_limit<'a>(request: &DisassemblyRequest, bytes: &'a [u8]) -> 
     }
 }
 
+fn clamp_target_window_to_range<'a>(
+    window: TargetWindow<'a>,
+    range: Option<&std::ops::Range<u64>>,
+) -> Result<TargetWindow<'a>> {
+    let Some(range) = range else {
+        return Ok(window);
+    };
+    if range.start >= range.end {
+        return Ok(TargetWindow {
+            target: window.target,
+            start_address: range.start,
+            bytes: &window.bytes[..0],
+            request_limited: true,
+        });
+    }
+
+    let window_end = window.start_address.saturating_add(window.bytes.len() as u64);
+    let clamped_start = range.start.max(window.start_address);
+    let clamped_end = range.end.min(window_end);
+    if clamped_start >= clamped_end {
+        return Ok(TargetWindow {
+            target: window.target,
+            start_address: range.start,
+            bytes: &window.bytes[..0],
+            request_limited: true,
+        });
+    }
+
+    let start_offset = usize::try_from(clamped_start.saturating_sub(window.start_address))
+        .map_err(|_| MachoError::AddressNotMapped(clamped_start))?;
+    let end_offset = usize::try_from(clamped_end.saturating_sub(window.start_address))
+        .map_err(|_| MachoError::AddressNotMapped(clamped_end))?;
+
+    Ok(TargetWindow {
+        target: window.target,
+        start_address: clamped_start,
+        bytes: &window.bytes[start_offset..end_offset],
+        request_limited: true,
+    })
+}
+
 fn determine_stop_reason(
-    request: &DisassemblyRequest,
+    request: &DisassemblyRequestV2,
     window: &TargetWindow<'_>,
     decoded_bytes: usize,
     instruction_count: usize,
-) -> damsel_core::DisassemblyStopReason {
+) -> DisassemblyStopReason {
     if window.bytes.is_empty() {
-        return damsel_core::DisassemblyStopReason::InputExhausted;
+        return DisassemblyStopReason::InputExhausted;
     }
 
     if image_limit_reached(
@@ -199,32 +279,32 @@ fn determine_stop_reason(
         decoded_bytes,
         window.bytes.len(),
     ) {
-        return damsel_core::DisassemblyStopReason::LimitReached;
+        return DisassemblyStopReason::LimitReached;
     }
 
     if instruction_count == 0 || decoded_bytes == 0 || decoded_bytes < window.bytes.len() {
-        return damsel_core::DisassemblyStopReason::DecodeHalt;
+        return DisassemblyStopReason::DecodeHalt;
     }
 
     if window.request_limited {
-        return damsel_core::DisassemblyStopReason::LimitReached;
+        return DisassemblyStopReason::LimitReached;
     }
 
-    damsel_core::DisassemblyStopReason::TargetRangeEnd
+    DisassemblyStopReason::TargetRangeEnd
 }
 
 fn image_limit_reached(
-    request: &DisassemblyRequest,
+    request: &DisassemblyRequestV2,
     instruction_count: usize,
     decoded_bytes: usize,
     window_len: usize,
 ) -> bool {
-    match request.effective_limit() {
-        damsel_core::DisassemblyLimit::Instructions(count) => instruction_count >= count,
-        damsel_core::DisassemblyLimit::Bytes(bytes) => {
+    match request.limit {
+        DisassemblyLimit::Instructions(count) => instruction_count >= count,
+        DisassemblyLimit::Bytes(bytes) => {
             decoded_bytes >= bytes.min(window_len) && bytes <= window_len
         }
-        damsel_core::DisassemblyLimit::Unlimited => false,
+        DisassemblyLimit::Unlimited => false,
     }
 }
 
@@ -234,7 +314,7 @@ fn annotate_instructions(
     include_annotations: bool,
 ) {
     let symbol_map = image
-        .symbols
+        .symbols()
         .iter()
         .filter(|symbol| symbol.defined && symbol.address != 0)
         .fold(BTreeMap::<u64, Vec<&Symbol>>::new(), |mut acc, symbol| {
@@ -243,7 +323,7 @@ fn annotate_instructions(
         });
     let import_address_map =
         image
-            .imports
+            .imports()
             .iter()
             .fold(BTreeMap::<u64, Vec<&Import>>::new(), |mut acc, import| {
                 if let Some(address) = import.address {
@@ -251,7 +331,7 @@ fn annotate_instructions(
                 }
                 acc
             });
-    let import_name_map = image.imports.iter().fold(
+    let import_name_map = image.imports().iter().fold(
         BTreeMap::<String, Vec<&Import>>::new(),
         |mut acc, import| {
             acc.entry(normalize_import_name(&import.name))
@@ -269,11 +349,12 @@ fn annotate_instructions(
         let mut import_already_tagged = false;
         let mut synthesized_import_refs = Vec::<Reference>::new();
 
-        if let Some(stub) = image.dyld.stub_for_address(instruction.address) {
+        if let Some(stub) = image.dyld().stub_for_address(instruction.address) {
             push_reference_if_missing(
                 &mut instruction.references,
                 Reference::Stub {
                     stub_address: stub.stub_address,
+                    section: stub.section.clone(),
                     pointer_address: stub.pointer_address,
                     dylib: stub.dylib.clone(),
                     name: stub.name.clone(),
@@ -409,6 +490,7 @@ fn annotate_instructions(
                 }
                 Reference::Stub {
                     stub_address: _,
+                    section: _,
                     pointer_address: _,
                     dylib,
                     name,
@@ -453,7 +535,7 @@ fn annotate_instructions(
             }
         }
 
-        for relocation in overlapping_relocations(&image.relocations, instruction) {
+        for relocation in overlapping_relocations(image.relocations(), instruction) {
             if include_annotations {
                 push_derived(
                     &mut derived,
@@ -977,7 +1059,7 @@ fn push_dyld_target_hooks(
 ) -> bool {
     let mut import_added = false;
 
-    for binding in image.dyld.bindings_at_address(target) {
+    for binding in image.dyld().bindings_at_address(target) {
         push_reference_if_missing(
             instruction_references,
             Reference::ImportBinding {
@@ -1014,11 +1096,12 @@ fn push_dyld_target_hooks(
         import_added = true;
     }
 
-    if let Some(stub) = image.dyld.stub_for_address(target) {
+    if let Some(stub) = image.dyld().stub_for_address(target) {
         push_reference_if_missing(
             instruction_references,
             Reference::Stub {
                 stub_address: stub.stub_address,
+                section: stub.section.clone(),
                 pointer_address: stub.pointer_address,
                 dylib: stub.dylib.clone(),
                 name: stub.name.clone(),

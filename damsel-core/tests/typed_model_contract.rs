@@ -138,6 +138,7 @@ fn evidence_variants_are_constructible() {
     };
     let stub = damsel_core::StubEntry {
         stub_address: 0x3000,
+        section: Some("__TEXT:__stubs".to_string()),
         pointer_address: Some(0x3010),
         dylib: Some(binding.dylib.clone()),
         name: Some(binding.name.clone()),

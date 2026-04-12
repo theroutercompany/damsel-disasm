@@ -46,6 +46,7 @@ fn reference_from_binding_preserves_fields() {
 fn reference_from_stub_preserves_fields() {
     let stub = StubEntry {
         stub_address: 0x2000,
+        section: Some("__TEXT:__stubs".to_string()),
         pointer_address: Some(0x2010),
         dylib: Some("/usr/lib/libSystem.B.dylib".to_string()),
         name: Some("_puts".to_string()),
@@ -57,11 +58,13 @@ fn reference_from_stub_preserves_fields() {
         reference,
         Reference::Stub {
             stub_address: 0x2000,
+            section: Some(ref section),
             pointer_address: Some(0x2010),
             ref dylib,
             ref name,
             source: ImportBindingSource::Stub,
-        } if dylib.as_deref() == Some("/usr/lib/libSystem.B.dylib")
+        } if section == "__TEXT:__stubs"
+            && dylib.as_deref() == Some("/usr/lib/libSystem.B.dylib")
             && name.as_deref() == Some("_puts")
     ));
 }

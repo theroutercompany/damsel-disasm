@@ -45,6 +45,7 @@ impl BinarySource {
 pub enum Architecture {
     Arm64,
     Arm64e,
+    X86_64,
 }
 
 impl fmt::Display for Architecture {
@@ -52,6 +53,7 @@ impl fmt::Display for Architecture {
         match self {
             Self::Arm64 => f.write_str("arm64"),
             Self::Arm64e => f.write_str("arm64e"),
+            Self::X86_64 => f.write_str("x86_64"),
         }
     }
 }
@@ -539,6 +541,7 @@ pub struct ImportBindingRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StubEntry {
     pub stub_address: u64,
+    pub section: Option<String>,
     pub pointer_address: Option<u64>,
     pub dylib: Option<String>,
     pub name: Option<String>,
@@ -650,6 +653,7 @@ pub enum Reference {
     },
     Stub {
         stub_address: u64,
+        section: Option<String>,
         pointer_address: Option<u64>,
         dylib: Option<String>,
         name: Option<String>,
@@ -788,6 +792,7 @@ impl Reference {
     pub fn from_stub(stub: &StubEntry) -> Self {
         Self::Stub {
             stub_address: stub.stub_address,
+            section: stub.section.clone(),
             pointer_address: stub.pointer_address,
             dylib: stub.dylib.clone(),
             name: stub.name.clone(),
@@ -1030,12 +1035,12 @@ pub struct BinaryImage {
     pub entry_point: Option<u64>,
     pub platform: Option<Platform>,
     pub slice: SliceInfo,
-    pub available_slices: Vec<SliceDescriptor>,
-    pub segments: Vec<Segment>,
-    pub sections: Vec<Section>,
-    pub symbols: Vec<Symbol>,
-    pub imports: Vec<Import>,
-    pub relocations: Vec<Relocation>,
+    available_slices: Vec<SliceDescriptor>,
+    segments: Vec<Segment>,
+    sections: Vec<Section>,
+    symbols: Vec<Symbol>,
+    imports: Vec<Import>,
+    relocations: Vec<Relocation>,
     pub objc: ObjcMetadata,
     pub dyld: DyldMetadata,
     data: Arc<[u8]>,
@@ -1201,6 +1206,34 @@ impl BinaryImage {
         self.source.file_path()
     }
 
+    pub fn source(&self) -> &BinarySource {
+        &self.source
+    }
+
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+
+    pub fn format(&self) -> BinaryFormat {
+        self.format
+    }
+
+    pub fn architecture(&self) -> Architecture {
+        self.architecture
+    }
+
+    pub fn endianness(&self) -> Endianness {
+        self.endianness
+    }
+
+    pub fn entry_point(&self) -> Option<u64> {
+        self.entry_point
+    }
+
+    pub fn platform(&self) -> Option<&Platform> {
+        self.platform.as_ref()
+    }
+
     pub fn source_label(&self) -> Option<&str> {
         self.source.memory_label()
     }
@@ -1257,6 +1290,14 @@ impl BinaryImage {
 
     pub fn relocations(&self) -> &[Relocation] {
         &self.relocations
+    }
+
+    pub fn objc(&self) -> &ObjcMetadata {
+        &self.objc
+    }
+
+    pub fn dyld(&self) -> &DyldMetadata {
+        &self.dyld
     }
 
     pub fn section_by_short_name(&self, name: &str) -> Option<&Section> {

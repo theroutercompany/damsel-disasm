@@ -1,7 +1,8 @@
 use damsel_core::{
-    DisassemblyLimit, DisassemblyRequest, DisassemblyStopReason, DisassemblyTarget, Reference,
+    DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
+    DisassemblyStopReason, DisassemblyTarget, Reference,
 };
-use damsel_macho::{disassemble, load, MachoError};
+use damsel_macho::{disassemble, disassemble_v2, load, MachoError};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -123,6 +124,27 @@ fn disasm_reports_decode_halt_for_too_short_byte_window() {
 }
 
 #[test]
+fn disasm_v2_range_clamps_target_window() {
+    let image = load(fixture("arm64-symbolized")).expect("load fixture");
+    let main_symbol = image.symbol_by_name("_main").expect("main symbol exists");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Address(main_symbol.address),
+        range: Some(main_symbol.address..main_symbol.address.saturating_add(8)),
+        limit: DisassemblyLimit::Unlimited,
+        options: DisassemblyOptions {
+            include_annotations: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble v2 with range");
+    assert_eq!(result.start_address, main_symbol.address);
+    assert!(result.decoded_bytes <= 8, "range should clamp decoded bytes");
+    assert!(matches!(
+        result.stop_reason,
+        DisassemblyStopReason::LimitReached | DisassemblyStopReason::TargetRangeEnd
+    ));
+}
+
+#[test]
 fn disasm_emits_import_references_when_targets_match_import_sites() {
     let image = load(fixture("arm64-symbolized")).expect("load fixture");
     let target = if let Some(stub) = image.dyld.stubs.first() {
@@ -133,7 +155,7 @@ fn disasm_emits_import_references_when_targets_match_import_sites() {
 
     if image.dyld.stubs.is_empty()
         && image.dyld.import_bindings.is_empty()
-        && image.imports.iter().all(|import| import.address.is_none())
+        && image.imports().iter().all(|import| import.address.is_none())
     {
         return;
     }
