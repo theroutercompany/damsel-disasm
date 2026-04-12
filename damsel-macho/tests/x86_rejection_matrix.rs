@@ -16,7 +16,7 @@ fn rejects_thin_x86_64_macho_fixture() {
 
     let error = load(&path).expect_err("thin x86_64 macho must be rejected");
     assert!(
-        matches!(error, MachoError::UnsupportedArchitecture(_)),
-        "expected UnsupportedArchitecture, got: {error:?}"
+        matches!(error, MachoError::UnsupportedThinArchitecture { .. }),
+        "expected UnsupportedThinArchitecture, got: {error:?}"
     );
 }

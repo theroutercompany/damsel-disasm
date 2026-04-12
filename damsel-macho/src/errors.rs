@@ -10,10 +10,18 @@ pub enum MachoError {
     Goblin(#[from] goblin::error::Error),
     #[error("decode error: {0}")]
     Decode(#[from] damsel_core::DecodeError),
+    #[error("unsupported input kind: {0}")]
+    UnsupportedInputKind(String),
     #[error("unsupported file kind: {0}")]
     UnsupportedFileKind(String),
     #[error("unsupported architecture: {0}")]
     UnsupportedArchitecture(String),
+    #[error(
+        "unsupported thin architecture (cputype={cputype:#x}, subtype={cpusubtype:#x}); only arm64/arm64e are supported"
+    )]
+    UnsupportedThinArchitecture { cputype: u32, cpusubtype: u32 },
+    #[error("universal binary does not contain an arm64/arm64e slice")]
+    MissingArm64SliceInUniversal,
     #[error(
         "slice range is out of bounds (offset={offset:#x}, size={size:#x}, file_len={file_len:#x})"
     )]

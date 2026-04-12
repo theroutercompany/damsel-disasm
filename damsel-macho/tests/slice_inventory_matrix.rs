@@ -1,4 +1,4 @@
-use damsel_core::Architecture;
+use damsel_core::{Architecture, Platform};
 use damsel_macho::load;
 use std::path::{Path, PathBuf};
 
@@ -119,4 +119,36 @@ fn arm64e_fixture_selected_descriptor_reports_arm64e_when_present() {
         Architecture::Arm64e,
         "arm64e fixture should report arm64e image architecture"
     );
+}
+
+#[test]
+fn platform_metadata_is_fixture_derived_and_host_agnostic() {
+    let thin = load(fixture("arm64-symbolized")).expect("load thin arm64 fixture");
+    let universal = load(fixture("universal-hello")).expect("load universal fixture");
+
+    assert_eq!(thin.platform(), Some(&Platform::MacOS));
+    assert_eq!(universal.platform(), Some(&Platform::MacOS));
+    assert_eq!(
+        thin.platform(),
+        universal.platform(),
+        "platform metadata should come from Mach-O load commands, not host environment"
+    );
+}
+
+#[test]
+fn universal_slice_selection_is_deterministic_across_reloads() {
+    let first = load(fixture("universal-hello")).expect("first universal load");
+    let second = load(fixture("universal-hello")).expect("second universal load");
+
+    let first_selected = first
+        .selected_slice_descriptor()
+        .expect("first selected descriptor");
+    let second_selected = second
+        .selected_slice_descriptor()
+        .expect("second selected descriptor");
+
+    assert_eq!(first_selected.architecture, second_selected.architecture);
+    assert_eq!(first_selected.cpu_subtype, second_selected.cpu_subtype);
+    assert_eq!(first_selected.offset, second_selected.offset);
+    assert_eq!(first_selected.size, second_selected.size);
 }

@@ -21,6 +21,9 @@ fn optional_fixture(names: &[&str]) -> Option<PathBuf> {
 }
 
 const MH_MAGIC_64: u32 = 0xfeedfacf;
+const FAT_MAGIC: u32 = 0xcafebabe;
+const CPU_TYPE_ARM64: u32 = 0x0100_000c;
+const CPU_TYPE_X86_64: u32 = 0x0100_0007;
 const LC_SEGMENT_64: u32 = 0x19;
 const LC_DYLD_INFO: u32 = 0x22;
 const LC_DYLD_INFO_ONLY: u32 = 0x8000_0022;
@@ -38,6 +41,29 @@ fn write_u32_le(bytes: &mut [u8], offset: usize, value: u32) -> bool {
     };
     target.copy_from_slice(&value.to_le_bytes());
     true
+}
+
+fn write_u32_be(bytes: &mut [u8], offset: usize, value: u32) -> bool {
+    let Some(target) = bytes.get_mut(offset..offset + 4) else {
+        return false;
+    };
+    target.copy_from_slice(&value.to_be_bytes());
+    true
+}
+
+fn make_fat32_fixture(arches: &[(u32, u32, u32, u32, u32)]) -> Vec<u8> {
+    let mut bytes = vec![0u8; 8 + arches.len() * 20];
+    assert!(write_u32_be(&mut bytes, 0, FAT_MAGIC));
+    assert!(write_u32_be(&mut bytes, 4, arches.len() as u32));
+    for (index, (cputype, cpusubtype, offset, size, align)) in arches.iter().enumerate() {
+        let base = 8 + index * 20;
+        assert!(write_u32_be(&mut bytes, base, *cputype));
+        assert!(write_u32_be(&mut bytes, base + 4, *cpusubtype));
+        assert!(write_u32_be(&mut bytes, base + 8, *offset));
+        assert!(write_u32_be(&mut bytes, base + 12, *size));
+        assert!(write_u32_be(&mut bytes, base + 16, *align));
+    }
+    bytes
 }
 
 fn find_chained_fixups_command(bytes: &[u8]) -> Option<(usize, usize)> {
@@ -182,14 +208,49 @@ fn loads_objc_fixture_metadata() {
 }
 
 #[test]
+fn reports_platform_consistently_for_symbolized_fixture() {
+    let image = load(fixture("arm64-symbolized")).expect("load arm64 fixture");
+    assert_eq!(image.platform(), Some(&damsel_core::Platform::MacOS));
+    assert_eq!(image.available_slices().len(), 1);
+    assert_eq!(
+        image.available_slices()[0].architecture,
+        Architecture::Arm64
+    );
+}
+
+#[test]
 fn rejects_non_macho_fixture_without_panicking() {
     let path = write_temp_fixture(b"this is not a macho file");
     let error = load(&path).expect_err("non-mach-o should fail");
     let _ = fs::remove_file(path);
-    assert!(matches!(
-        error,
-        MachoError::UnsupportedFileKind(_) | MachoError::Object(_) | MachoError::Goblin(_)
-    ));
+    assert!(matches!(error, MachoError::UnsupportedInputKind(_)));
+}
+
+#[test]
+fn rejects_universal_without_arm64_slice_with_typed_error() {
+    let bytes = make_fat32_fixture(&[(CPU_TYPE_X86_64, 3, 0x1000, 0x200, 0)]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("universal without arm64/arm64e must be rejected");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MissingArm64SliceInUniversal));
+}
+
+#[test]
+fn rejects_out_of_range_fat_arm64_slice_with_typed_error() {
+    let bytes = make_fat32_fixture(&[(CPU_TYPE_ARM64, 0, 0x1000, 0x200, 0)]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("out-of-range fat slice must be rejected");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::SliceOutOfBounds { .. }));
+}
+
+#[test]
+fn rejects_zero_size_fat_arm64_slice_with_typed_error() {
+    let bytes = make_fat32_fixture(&[(CPU_TYPE_ARM64, 0, 0x1000, 0, 0)]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("zero-size fat slice must be rejected");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
 }
 
 #[test]
@@ -197,7 +258,10 @@ fn rejects_truncated_fixture_without_panicking() {
     let error = load(fixture("malformed-truncated")).expect_err("expected parse failure");
     assert!(matches!(
         error,
-        MachoError::Object(_) | MachoError::Goblin(_) | MachoError::UnsupportedFileKind(_)
+        MachoError::Object(_)
+            | MachoError::Goblin(_)
+            | MachoError::UnsupportedFileKind(_)
+            | MachoError::UnsupportedInputKind(_)
     ));
 }
 

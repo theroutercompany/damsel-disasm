@@ -84,7 +84,15 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
 }
 
 fn select_slice(bytes: &[u8]) -> Result<(SliceInfo, Vec<SliceDescriptor>)> {
-    let kind = object::FileKind::parse(bytes)?;
+    let kind = match object::FileKind::parse(bytes) {
+        Ok(kind) => kind,
+        Err(_error) if !has_macho_magic(bytes) => {
+            return Err(MachoError::UnsupportedInputKind(
+                "unrecognized Mach-O magic".to_string(),
+            ));
+        }
+        Err(error) => return Err(MachoError::Object(error)),
+    };
     match kind {
         object::FileKind::MachO64 => {
             let mach = match Mach::parse(bytes)? {
@@ -123,8 +131,26 @@ fn select_slice(bytes: &[u8]) -> Result<(SliceInfo, Vec<SliceDescriptor>)> {
                 collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
             Ok((slice, available_slices))
         }
-        other => Err(MachoError::UnsupportedFileKind(format!("{other:?}"))),
+        other => Err(MachoError::UnsupportedInputKind(format!("{other:?}"))),
     }
+}
+
+fn has_macho_magic(bytes: &[u8]) -> bool {
+    const KNOWN_MAGICS: [[u8; 4]; 8] = [
+        [0xfe, 0xed, 0xfa, 0xce],
+        [0xce, 0xfa, 0xed, 0xfe],
+        [0xfe, 0xed, 0xfa, 0xcf],
+        [0xcf, 0xfa, 0xed, 0xfe],
+        [0xca, 0xfe, 0xba, 0xbe],
+        [0xbe, 0xba, 0xfe, 0xca],
+        [0xca, 0xfe, 0xba, 0xbf],
+        [0xbf, 0xba, 0xfe, 0xca],
+    ];
+
+    bytes
+        .get(..4)
+        .and_then(|magic| <&[u8; 4]>::try_from(magic).ok())
+        .is_some_and(|magic| KNOWN_MAGICS.iter().any(|known| known == magic))
 }
 
 fn choose_fat_arch<Fat: FatArch>(arches: &[Fat], file_len: u64) -> Result<SliceInfo> {
@@ -132,7 +158,7 @@ fn choose_fat_arch<Fat: FatArch>(arches: &[Fat], file_len: u64) -> Result<SliceI
         .iter()
         .filter(|arch| arch.architecture() == object::Architecture::Aarch64)
         .max_by_key(|arch| arm64_subtype_rank(arch.cpusubtype() & !CPU_SUBTYPE_MASK))
-        .ok_or_else(|| MachoError::UnsupportedArchitecture("missing arm64 slice".to_string()))?;
+        .ok_or(MachoError::MissingArm64SliceInUniversal)?;
     let (offset, size) = selected.file_range();
     if size == 0 {
         return Err(MachoError::MalformedFatBinary(
@@ -204,9 +230,10 @@ fn map_selected_architecture(cputype: u32, cpusubtype: u32) -> Result<Architectu
     match (cputype, subtype) {
         (object::macho::CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64E) => Ok(Architecture::Arm64e),
         (object::macho::CPU_TYPE_ARM64, _) => Ok(Architecture::Arm64),
-        _ => Err(MachoError::UnsupportedArchitecture(format!(
-            "cputype={cputype:#x} subtype={subtype:#x}"
-        ))),
+        _ => Err(MachoError::UnsupportedThinArchitecture {
+            cputype,
+            cpusubtype: subtype,
+        }),
     }
 }
 

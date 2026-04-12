@@ -90,7 +90,10 @@ mod tests {
         let error = load(fixture_path("malformed-truncated")).expect_err("expected parse failure");
         assert!(matches!(
             error,
-            MachoError::Object(_) | MachoError::Goblin(_) | MachoError::UnsupportedFileKind(_)
+            MachoError::Object(_)
+                | MachoError::Goblin(_)
+                | MachoError::UnsupportedFileKind(_)
+                | MachoError::UnsupportedInputKind(_)
         ));
     }
 }
