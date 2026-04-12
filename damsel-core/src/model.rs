@@ -58,6 +58,133 @@ impl fmt::Display for Architecture {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum HostPlatform {
+    MacOS,
+    Linux,
+    Windows,
+    Unknown(String),
+}
+
+impl HostPlatform {
+    pub fn current() -> Self {
+        Self::parse(std::env::consts::OS)
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match normalize_identifier(value).as_str() {
+            "macos" | "darwin" | "osx" => Self::MacOS,
+            "linux" => Self::Linux,
+            "windows" | "win32" | "win64" => Self::Windows,
+            _ => Self::Unknown(value.to_string()),
+        }
+    }
+
+    pub fn raw_identifier(&self) -> Option<&str> {
+        match self {
+            Self::Unknown(raw) => Some(raw.as_str()),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for HostPlatform {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MacOS => f.write_str("macos"),
+            Self::Linux => f.write_str("linux"),
+            Self::Windows => f.write_str("windows"),
+            Self::Unknown(value) => f.write_str(value),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum HostArchitecture {
+    Arm64,
+    X86_64,
+    Unknown(String),
+}
+
+impl HostArchitecture {
+    pub fn current() -> Self {
+        Self::parse(std::env::consts::ARCH)
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match normalize_identifier(value).as_str() {
+            "arm64" | "aarch64" => Self::Arm64,
+            "x8664" | "amd64" => Self::X86_64,
+            _ => Self::Unknown(value.to_string()),
+        }
+    }
+
+    pub fn raw_identifier(&self) -> Option<&str> {
+        match self {
+            Self::Unknown(raw) => Some(raw.as_str()),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for HostArchitecture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Arm64 => f.write_str("arm64"),
+            Self::X86_64 => f.write_str("x86_64"),
+            Self::Unknown(value) => f.write_str(value),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CapabilityStatus {
+    Supported,
+    SupportedWithDegradedFeatures,
+    Unsupported,
+}
+
+impl fmt::Display for CapabilityStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Supported => f.write_str("supported"),
+            Self::SupportedWithDegradedFeatures => f.write_str("supported-with-degraded-features"),
+            Self::Unsupported => f.write_str("unsupported"),
+        }
+    }
+}
+
+impl CapabilityStatus {
+    pub fn is_supported(self) -> bool {
+        !matches!(self, Self::Unsupported)
+    }
+
+    pub fn is_degraded(self) -> bool {
+        matches!(self, Self::SupportedWithDegradedFeatures)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CompatibilityIssue {
+    pub code: String,
+    pub message: String,
+}
+
+impl CompatibilityIssue {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for CompatibilityIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Endianness {
     Little,
