@@ -93,6 +93,27 @@ fn dyld_filtered_snapshot() {
 }
 
 #[test]
+fn dyld_kind_ordinal_snapshot() {
+    let path = fixture("import-lazy");
+    let stdout = run_snapshot(&[
+        "dyld",
+        path.to_str().expect("utf8 path"),
+        "--bindings",
+        "--stubs",
+        "--helpers",
+        "--binding-kind",
+        "lazy",
+        "--stub-kind",
+        "lazy",
+        "--ordinal",
+        "1",
+        "--sort",
+        "address",
+    ]);
+    insta::assert_snapshot!("dyld_kind_ordinal_snapshot", stdout);
+}
+
+#[test]
 fn slices_snapshot() {
     let path = fixture("universal-hello");
     let stdout = run_snapshot(&["slices", path.to_str().expect("utf8 path")]);
@@ -118,6 +139,22 @@ fn objc_methods_snapshot() {
         "GreetingProviding",
     ]);
     insta::assert_snapshot!("objc_methods_snapshot", stdout);
+}
+
+#[test]
+fn objc_provenance_filtered_snapshot() {
+    let path = fixture("objc-sample");
+    let stdout = run_snapshot(&[
+        "objc",
+        path.to_str().expect("utf8 path"),
+        "--detail",
+        "methods",
+        "--name-source",
+        "pointer-table",
+        "--selector-source",
+        "unresolved",
+    ]);
+    insta::assert_snapshot!("objc_provenance_filtered_snapshot", stdout);
 }
 
 #[test]
@@ -162,4 +199,20 @@ fn disasm_section_snapshot() {
         "8",
     ]);
     insta::assert_snapshot!("disasm_section_snapshot", stdout);
+}
+
+#[test]
+fn disasm_show_values_snapshot() {
+    let path = fixture("semantic-switch");
+    let stdout = run_snapshot(&[
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--section",
+        "__text",
+        "--limit",
+        "16",
+        "--show-references",
+        "--show-values",
+    ]);
+    insta::assert_snapshot!("disasm_show_values_snapshot", stdout);
 }

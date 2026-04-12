@@ -137,3 +137,35 @@ fn disasm_rejects_invalid_range() {
             "`--to` must be greater than the decode start",
         ));
 }
+
+#[test]
+fn dyld_rejects_invalid_binding_kind_value() {
+    let path = fixture("import-lazy");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "dyld",
+            path.to_str().expect("utf8 path"),
+            "--binding-kind",
+            "bogus",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
+}
+
+#[test]
+fn objc_rejects_invalid_name_source_value() {
+    let path = fixture("objc-sample");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "objc",
+            path.to_str().expect("utf8 path"),
+            "--name-source",
+            "bogus",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
+}

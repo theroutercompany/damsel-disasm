@@ -114,6 +114,51 @@ fn dyld_json_filters_bindings_by_name_and_source() {
 }
 
 #[test]
+fn dyld_json_filters_by_kind_and_ordinal() {
+    let path = fixture("import-lazy");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "dyld",
+        path.to_str().expect("utf8 path"),
+        "--bindings",
+        "--stubs",
+        "--helpers",
+        "--binding-kind",
+        "lazy",
+        "--stub-kind",
+        "lazy",
+        "--ordinal",
+        "1",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["data"]["binding_kind_filter"], "Lazy");
+    assert_eq!(json["data"]["stub_kind_filter"], "Lazy");
+    assert_eq!(json["data"]["ordinal_filter"], 1);
+    let bindings = json["data"]["import_bindings"]
+        .as_array()
+        .expect("binding array");
+    assert!(!bindings.is_empty(), "{out}");
+    assert!(
+        bindings
+            .iter()
+            .all(|binding| binding["binding_kind"] == "Lazy" && binding["ordinal"] == 1)
+    );
+    let stubs = json["data"]["stubs"].as_array().expect("stub array");
+    assert!(!stubs.is_empty(), "{out}");
+    assert!(
+        stubs
+            .iter()
+            .all(|stub| stub["stub_kind"] == "Lazy" && stub["binding_ordinal"] == 1)
+    );
+    let helpers = json["data"]["stub_helpers"]
+        .as_array()
+        .expect("helper array");
+    assert!(!helpers.is_empty(), "{out}");
+    assert!(helpers.iter().all(|helper| helper["binding_ordinal"] == 1));
+}
+
+#[test]
 fn dyld_json_exposes_stub_helpers_for_lazy_fixture() {
     let path = fixture("import-lazy");
     let out = run_json_ok(&[
@@ -128,6 +173,9 @@ fn dyld_json_exposes_stub_helpers_for_lazy_fixture() {
         .expect("helper array");
     assert!(!helpers.is_empty(), "{out}");
     assert!(helpers[0]["target_stub"].is_number());
+    assert!(helpers[0]["stub_section"].is_string() || helpers[0]["stub_section"].is_null());
+    assert!(helpers[0]["pointer_section"].is_string() || helpers[0]["pointer_section"].is_null());
+    assert!(helpers[0]["pointer_address"].is_number() || helpers[0]["pointer_address"].is_null());
 }
 
 #[test]
@@ -178,6 +226,75 @@ fn objc_json_detail_and_owner_filters_are_structured() {
 }
 
 #[test]
+fn objc_json_provenance_filters_are_applied() {
+    let path = fixture("objc-sample");
+    let baseline = parse_json(&run_json_ok(&[
+        "--format",
+        "json",
+        "objc",
+        path.to_str().expect("utf8 path"),
+        "--detail",
+        "all",
+    ]));
+    let class_source = baseline["data"]["classes"]
+        .as_array()
+        .and_then(|entries| entries.first())
+        .and_then(|entry| entry["name_source"].as_str())
+        .unwrap_or("Unresolved");
+    let selector_source = baseline["data"]["methods"]
+        .as_array()
+        .and_then(|entries| entries.first())
+        .and_then(|entry| entry["selector_source"].as_str())
+        .unwrap_or("Unresolved");
+    let class_source_arg = match class_source {
+        "Runtime" => "runtime",
+        "PointerTable" => "pointer-table",
+        "LegacyPool" => "legacy-pool",
+        "Unresolved" => "unresolved",
+        value => panic!("unexpected name_source: {value}"),
+    };
+    let selector_source_arg = match selector_source {
+        "Direct" => "direct",
+        "Relative" => "relative",
+        "LegacyPool" => "legacy-pool",
+        "Unresolved" => "unresolved",
+        value => panic!("unexpected selector_source: {value}"),
+    };
+
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "objc",
+        path.to_str().expect("utf8 path"),
+        "--detail",
+        "all",
+        "--name-source",
+        class_source_arg,
+        "--selector-source",
+        selector_source_arg,
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["data"]["name_source_filter"], class_source);
+    assert_eq!(json["data"]["selector_source_filter"], selector_source);
+    let classes = json["data"]["classes"].as_array().expect("classes array");
+    if !classes.is_empty() {
+        assert!(
+            classes
+                .iter()
+                .all(|entry| entry["name_source"] == class_source)
+        );
+    }
+    let methods = json["data"]["methods"].as_array().expect("methods array");
+    if !methods.is_empty() {
+        assert!(
+            methods
+                .iter()
+                .all(|entry| entry["selector_source"] == selector_source)
+        );
+    }
+}
+
+#[test]
 fn slices_json_contract_exposes_full_inventory() {
     let path = fixture("universal-hello");
     let out = run_json_ok(&[
@@ -209,13 +326,13 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
     ]);
     let json = parse_json(&out);
     assert_eq!(json["command"], "disasm");
-    assert!(
-        json["data"]["window_end"].is_null() || json["data"]["window_end"].is_number()
-    );
+    assert!(json["data"]["window_end"].is_null() || json["data"]["window_end"].is_number());
     assert!(json["data"]["decoded_bytes"].is_number());
     assert!(json["data"]["stop_reason"].is_string());
     assert!(json["data"]["instruction_count"].is_number());
-    let instructions = json["data"]["instructions"].as_array().expect("instruction array");
+    let instructions = json["data"]["instructions"]
+        .as_array()
+        .expect("instruction array");
     assert!(!instructions.is_empty(), "{out}");
     assert!(instructions[0]["references"].is_array());
     assert!(instructions[0]["annotations"].is_array());
@@ -224,11 +341,21 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
         instruction["annotations"]
             .as_array()
             .is_some_and(|annotations| {
-                annotations.iter().any(|annotation| {
-                    annotation["type"] == "jump_table_candidate"
-                })
+                annotations
+                    .iter()
+                    .any(|annotation| annotation["type"] == "jump_table_candidate")
             })
     }));
+    let helper_refs = instructions
+        .iter()
+        .flat_map(|instruction| instruction["references"].as_array().into_iter().flatten())
+        .filter(|reference| reference["type"] == "stub_helper")
+        .collect::<Vec<_>>();
+    if let Some(reference) = helper_refs.first() {
+        assert!(reference["helper_address"].is_number());
+        assert!(reference["target_stub"].is_number() || reference["target_stub"].is_null());
+        assert!(reference["pointer_address"].is_number() || reference["pointer_address"].is_null());
+    }
 }
 
 #[test]

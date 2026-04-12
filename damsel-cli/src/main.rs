@@ -3,7 +3,8 @@ mod output;
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
     BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2,
-    DisassemblyTarget, Import, Relocation, Section, Symbol,
+    DisassemblyTarget, Import, ImportBindingKind, ObjcNameSource, ObjcSelectorSource, Relocation,
+    Section, StubKind, Symbol,
 };
 use damsel_macho::{disassemble_v2, load};
 use std::error::Error;
@@ -103,6 +104,38 @@ impl From<DyldSourceArg> for damsel_core::ImportBindingSource {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+enum DyldBindingKindArg {
+    Lazy,
+    NonLazy,
+    ChainedFixup,
+}
+
+impl From<DyldBindingKindArg> for ImportBindingKind {
+    fn from(value: DyldBindingKindArg) -> Self {
+        match value {
+            DyldBindingKindArg::Lazy => ImportBindingKind::Lazy,
+            DyldBindingKindArg::NonLazy => ImportBindingKind::NonLazy,
+            DyldBindingKindArg::ChainedFixup => ImportBindingKind::ChainedFixup,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DyldStubKindArg {
+    Lazy,
+    NonLazy,
+}
+
+impl From<DyldStubKindArg> for StubKind {
+    fn from(value: DyldStubKindArg) -> Self {
+        match value {
+            DyldStubKindArg::Lazy => StubKind::Lazy,
+            DyldStubKindArg::NonLazy => StubKind::NonLazy,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum ObjcDetailArg {
     Summary,
     Classes,
@@ -125,6 +158,44 @@ impl From<ObjcDetailArg> for output::ObjcDetail {
             ObjcDetailArg::Properties => output::ObjcDetail::Properties,
             ObjcDetailArg::Ivars => output::ObjcDetail::Ivars,
             ObjcDetailArg::All => output::ObjcDetail::All,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ObjcNameSourceArg {
+    Runtime,
+    PointerTable,
+    LegacyPool,
+    Unresolved,
+}
+
+impl From<ObjcNameSourceArg> for ObjcNameSource {
+    fn from(value: ObjcNameSourceArg) -> Self {
+        match value {
+            ObjcNameSourceArg::Runtime => ObjcNameSource::Runtime,
+            ObjcNameSourceArg::PointerTable => ObjcNameSource::PointerTable,
+            ObjcNameSourceArg::LegacyPool => ObjcNameSource::LegacyPool,
+            ObjcNameSourceArg::Unresolved => ObjcNameSource::Unresolved,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ObjcSelectorSourceArg {
+    Direct,
+    Relative,
+    LegacyPool,
+    Unresolved,
+}
+
+impl From<ObjcSelectorSourceArg> for ObjcSelectorSource {
+    fn from(value: ObjcSelectorSourceArg) -> Self {
+        match value {
+            ObjcSelectorSourceArg::Direct => ObjcSelectorSource::Direct,
+            ObjcSelectorSourceArg::Relative => ObjcSelectorSource::Relative,
+            ObjcSelectorSourceArg::LegacyPool => ObjcSelectorSource::LegacyPool,
+            ObjcSelectorSourceArg::Unresolved => ObjcSelectorSource::Unresolved,
         }
     }
 }
@@ -203,6 +274,12 @@ enum Command {
         #[arg(long, value_enum)]
         source: Option<DyldSourceArg>,
         #[arg(long, value_enum)]
+        binding_kind: Option<DyldBindingKindArg>,
+        #[arg(long, value_enum)]
+        stub_kind: Option<DyldStubKindArg>,
+        #[arg(long)]
+        ordinal: Option<u32>,
+        #[arg(long, value_enum)]
         sort: Option<DyldSortArg>,
     },
     Slices {
@@ -214,6 +291,10 @@ enum Command {
         detail: ObjcDetailArg,
         #[arg(long)]
         owner: Option<String>,
+        #[arg(long, value_enum)]
+        name_source: Option<ObjcNameSourceArg>,
+        #[arg(long, value_enum)]
+        selector_source: Option<ObjcSelectorSourceArg>,
     },
     #[command(group(
         ArgGroup::new("target")
@@ -424,6 +505,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             name,
             dylib,
             source,
+            binding_kind,
+            stub_kind,
+            ordinal,
             sort,
         } => {
             let image = load_image(path)?;
@@ -441,6 +525,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
                     name_filter: None,
                     dylib_filter: None,
                     source_filter: None,
+                    binding_kind_filter: None,
+                    stub_kind_filter: None,
+                    ordinal_filter: None,
                     sort: None,
                 }
             } else {
@@ -449,6 +536,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             view_options.name_filter = name;
             view_options.dylib_filter = dylib;
             view_options.source_filter = source.map(Into::into);
+            view_options.binding_kind_filter = binding_kind.map(Into::into);
+            view_options.stub_kind_filter = stub_kind.map(Into::into);
+            view_options.ordinal_filter = ordinal;
             view_options.sort = sort.map(Into::into);
             output::print_dyld(&image, &view_options, &output_settings);
         }
@@ -456,13 +546,21 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             let image = load_image(path)?;
             output::print_slices(&image, &output_settings);
         }
-        Command::Objc { path, detail, owner } => {
+        Command::Objc {
+            path,
+            detail,
+            owner,
+            name_source,
+            selector_source,
+        } => {
             let image = load_image(path)?;
             output::print_objc(
                 &image,
                 &output::ObjcViewOptions {
                     detail: detail.into(),
                     owner_filter: owner,
+                    name_source_filter: name_source.map(Into::into),
+                    selector_source_filter: selector_source.map(Into::into),
                 },
                 &output_settings,
             );
@@ -722,9 +820,10 @@ fn map_macho_error(error: damsel_macho::MachoError) -> CliRunError {
         damsel_macho::MachoError::SectionNotFound(section) => {
             CliRunError::command("section_not_found", format!("section not found: {section}"))
         }
-        damsel_macho::MachoError::AddressNotMapped(address) => {
-            CliRunError::command("address_not_mapped", format!("address {address:#x} is not mapped"))
-        }
+        damsel_macho::MachoError::AddressNotMapped(address) => CliRunError::command(
+            "address_not_mapped",
+            format!("address {address:#x} is not mapped"),
+        ),
         damsel_macho::MachoError::Decode(inner) => {
             CliRunError::command("decode_error", format!("decode error: {inner}"))
         }

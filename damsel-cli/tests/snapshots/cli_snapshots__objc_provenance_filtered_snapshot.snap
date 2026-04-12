@@ -1,0 +1,6 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: stdout
+---
+image_info_flags: 0x40
+summary: class_names=9 selectors=52 methods=52 pointer_refs=52 classes=2 protocols=4 categories=0

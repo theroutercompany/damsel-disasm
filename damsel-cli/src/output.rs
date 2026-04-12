@@ -1,9 +1,9 @@
 use damsel_core::{
-    Annotation, BinaryImage, DecodedInstruction, ExportKind, Import, ImportBindingRecord,
-    ImportBindingSource, ObjcCategoryRecord, ObjcClassRecord, ObjcIvarRecord, ObjcMethodRecord,
-    ObjcMethodOwnerKind, ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord,
-    RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry,
-    Symbol,
+    Annotation, BinaryImage, DecodedInstruction, ExportKind, Import, ImportBindingKind,
+    ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcClassRecord, ObjcIvarRecord,
+    ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource, ObjcPointerKind, ObjcPointerRef,
+    ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource, RecoveredValue, Reference,
+    Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry, StubKind, Symbol,
 };
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
@@ -32,6 +32,9 @@ pub(crate) struct DyldViewOptions {
     pub name_filter: Option<String>,
     pub dylib_filter: Option<String>,
     pub source_filter: Option<ImportBindingSource>,
+    pub binding_kind_filter: Option<ImportBindingKind>,
+    pub stub_kind_filter: Option<StubKind>,
+    pub ordinal_filter: Option<u32>,
     pub sort: Option<DyldSortKey>,
 }
 
@@ -48,6 +51,9 @@ impl DyldViewOptions {
             name_filter: None,
             dylib_filter: None,
             source_filter: None,
+            binding_kind_filter: None,
+            stub_kind_filter: None,
+            ordinal_filter: None,
             sort: None,
         }
     }
@@ -65,6 +71,8 @@ pub(crate) enum DyldSortKey {
 pub(crate) struct ObjcViewOptions {
     pub detail: ObjcDetail,
     pub owner_filter: Option<String>,
+    pub name_source_filter: Option<ObjcNameSource>,
+    pub selector_source_filter: Option<ObjcSelectorSource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,7 +265,9 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                         record
                             .superclass_name
                             .clone()
-                            .or_else(|| record.superclass_pointer.map(|value| format!("{value:#x}")))
+                            .or_else(|| record
+                                .superclass_pointer
+                                .map(|value| format!("{value:#x}")))
                             .unwrap_or_else(|| "-".to_string()),
                         record
                             .metaclass_pointer
@@ -294,10 +304,12 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 println!("category_records:");
                 for record in &filtered.categories {
                     println!(
-                        "  {:#x} name={} class={} class_ptr={} methods={} class_methods={} properties={} protocols={}",
+                        "  {:#x} name={} name_source={:?} class={} class_source={:?} class_ptr={} methods={} class_methods={} properties={} protocols={}",
                         record.pointer,
                         record.name.as_deref().unwrap_or("-"),
+                        record.name_source,
                         record.class_name.as_deref().unwrap_or("-"),
+                        record.class_name_source,
                         record
                             .class_pointer
                             .map(|value| format!("{value:#x}"))
@@ -319,7 +331,8 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                         entry.record.is_class_method,
                         entry.record.selector.as_deref().unwrap_or("-"),
                         entry.record.selector_source,
-                        entry.record
+                        entry
+                            .record
                             .implementation
                             .map(|value| format!("{value:#x}"))
                             .unwrap_or_else(|| "-".to_string()),
@@ -346,7 +359,8 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                         entry.owner_name.as_deref().unwrap_or("-"),
                         entry.record.name.as_deref().unwrap_or("-"),
                         entry.record.type_encoding.as_deref().unwrap_or("-"),
-                        entry.record
+                        entry
+                            .record
                             .offset
                             .map(|value| format!("{value:#x}"))
                             .unwrap_or_else(|| "-".to_string()),
@@ -489,10 +503,16 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 println!("stub_helpers:");
                 for helper in &filtered.stub_helpers {
                     println!(
-                        "  {:#18x} stub={} ordinal={} {}:{}",
+                        "  {:#18x} stub={} stub_section={} ptr_section={} ptr={} ordinal={} {}:{}",
                         helper.helper_address,
                         helper
                             .target_stub
+                            .map(|value| format!("{value:#x}"))
+                            .unwrap_or_else(|| "-".to_string()),
+                        helper.stub_section.as_deref().unwrap_or("-"),
+                        helper.pointer_section.as_deref().unwrap_or("-"),
+                        helper
+                            .pointer_address
                             .map(|value| format!("{value:#x}"))
                             .unwrap_or_else(|| "-".to_string()),
                         helper
@@ -728,7 +748,15 @@ fn filter_dyld_view<'a>(
                     .dylib_filter
                     .as_deref()
                     .is_none_or(|needle| contains_case_insensitive(&binding.dylib, needle))
-                && view.source_filter.is_none_or(|source| binding.source == source)
+                && view
+                    .source_filter
+                    .is_none_or(|source| binding.source == source)
+                && view
+                    .binding_kind_filter
+                    .is_none_or(|kind| binding.binding_kind == kind)
+                && view
+                    .ordinal_filter
+                    .is_none_or(|ordinal| binding.ordinal == Some(ordinal))
         })
         .collect::<Vec<_>>();
     sort_bindings(&mut import_bindings, view.sort);
@@ -745,7 +773,16 @@ fn filter_dyld_view<'a>(
                 stub.dylib
                     .as_deref()
                     .is_some_and(|value| contains_case_insensitive(value, needle))
-            }) && view.source_filter.is_none_or(|source| stub.source == source)
+            }) && view
+                .source_filter
+                .is_none_or(|source| stub.source == source)
+                && view
+                    .stub_kind_filter
+                    .as_ref()
+                    .is_none_or(|kind| &stub.stub_kind == kind)
+                && view
+                    .ordinal_filter
+                    .is_none_or(|ordinal| stub.binding_ordinal == Some(ordinal))
         })
         .collect::<Vec<_>>();
     sort_stubs(&mut stubs, view.sort);
@@ -754,6 +791,11 @@ fn filter_dyld_view<'a>(
         .iter()
         .filter_map(|stub| stub.helper_address)
         .collect::<std::collections::BTreeSet<_>>();
+    let restrict_helpers_to_stubs = view.name_filter.is_some()
+        || view.dylib_filter.is_some()
+        || view.source_filter.is_some()
+        || view.stub_kind_filter.is_some()
+        || view.ordinal_filter.is_some();
     let mut stub_helpers = dyld
         .stub_helpers
         .iter()
@@ -768,11 +810,11 @@ fn filter_dyld_view<'a>(
                     .dylib
                     .as_deref()
                     .is_some_and(|value| contains_case_insensitive(value, needle))
-            }) && (view.name_filter.is_none()
-                && view.dylib_filter.is_none()
-                && view.source_filter.is_none()
-                || allowed_helper_addresses.is_empty()
-                || allowed_helper_addresses.contains(&helper.helper_address))
+            }) && view
+                .ordinal_filter
+                .is_none_or(|ordinal| helper.binding_ordinal == Some(ordinal))
+                && (!restrict_helpers_to_stubs
+                    || allowed_helper_addresses.contains(&helper.helper_address))
         })
         .collect::<Vec<_>>();
     sort_stub_helpers(&mut stub_helpers, view.sort);
@@ -792,7 +834,13 @@ fn filter_objc_view<'a>(
     let classes = objc
         .classes
         .iter()
-        .filter(|record| objc_class_matches(record, view.owner_filter.as_deref()))
+        .filter(|record| {
+            objc_class_matches(
+                record,
+                view.owner_filter.as_deref(),
+                view.name_source_filter,
+            )
+        })
         .collect::<Vec<_>>();
     let protocols = objc
         .protocols
@@ -802,7 +850,13 @@ fn filter_objc_view<'a>(
     let categories = objc
         .categories
         .iter()
-        .filter(|record| objc_category_matches(record, view.owner_filter.as_deref()))
+        .filter(|record| {
+            objc_category_matches(
+                record,
+                view.owner_filter.as_deref(),
+                view.name_source_filter,
+            )
+        })
         .collect::<Vec<_>>();
 
     let mut methods = Vec::new();
@@ -895,17 +949,26 @@ fn filter_objc_view<'a>(
         );
     }
 
+    if let Some(selector_source) = view.selector_source_filter {
+        methods.retain(|entry| entry.record.selector_source == selector_source);
+    }
+
     let pointer_refs = if view.owner_filter.is_some() {
         let matched_names = classes
             .iter()
             .filter_map(|record| record.name.as_deref())
-            .chain(categories.iter().filter_map(|record| record.class_name.as_deref()))
+            .chain(
+                categories
+                    .iter()
+                    .filter_map(|record| record.class_name.as_deref()),
+            )
             .chain(protocols.iter().filter_map(|record| record.name.as_deref()))
             .collect::<std::collections::BTreeSet<_>>();
         objc.pointer_refs
             .iter()
             .filter(|entry| {
-                entry.resolved_name
+                entry
+                    .resolved_name
                     .as_deref()
                     .is_some_and(|name| matched_names.iter().any(|candidate| candidate == &name))
             })
@@ -926,7 +989,9 @@ fn filter_objc_view<'a>(
 }
 
 fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
-    haystack.to_ascii_lowercase().contains(&needle.to_ascii_lowercase())
+    haystack
+        .to_ascii_lowercase()
+        .contains(&needle.to_ascii_lowercase())
 }
 
 fn binding_source_rank(source: ImportBindingSource) -> u8 {
@@ -940,9 +1005,9 @@ fn binding_source_rank(source: ImportBindingSource) -> u8 {
 
 fn sort_exports(exports: &mut Vec<&damsel_core::ExportRecord>, sort: Option<DyldSortKey>) {
     match sort.unwrap_or(DyldSortKey::Address) {
-        DyldSortKey::Address => exports.sort_by_key(|export| {
-            (export.address.unwrap_or_default(), export.name.clone())
-        }),
+        DyldSortKey::Address => {
+            exports.sort_by_key(|export| (export.address.unwrap_or_default(), export.name.clone()))
+        }
         DyldSortKey::Name => exports.sort_by_key(|export| export.name.clone()),
         DyldSortKey::Dylib | DyldSortKey::Source => {
             exports.sort_by_key(|export| (export.flags.clone(), export.name.clone()))
@@ -961,10 +1026,18 @@ fn sort_bindings(bindings: &mut Vec<&ImportBindingRecord>, sort: Option<DyldSort
             )
         }),
         DyldSortKey::Name => bindings.sort_by_key(|binding| {
-            (binding.name.clone(), binding.dylib.clone(), binding.address.unwrap_or_default())
+            (
+                binding.name.clone(),
+                binding.dylib.clone(),
+                binding.address.unwrap_or_default(),
+            )
         }),
         DyldSortKey::Dylib => bindings.sort_by_key(|binding| {
-            (binding.dylib.clone(), binding.name.clone(), binding.address.unwrap_or_default())
+            (
+                binding.dylib.clone(),
+                binding.name.clone(),
+                binding.address.unwrap_or_default(),
+            )
         }),
         DyldSortKey::Source => bindings.sort_by_key(|binding| {
             (
@@ -1033,7 +1106,11 @@ fn sort_stub_helpers(helpers: &mut Vec<&StubHelperEntry>, sort: Option<DyldSortK
     }
 }
 
-fn objc_class_matches(record: &ObjcClassRecord, owner_filter: Option<&str>) -> bool {
+fn objc_class_matches(
+    record: &ObjcClassRecord,
+    owner_filter: Option<&str>,
+    name_source_filter: Option<ObjcNameSource>,
+) -> bool {
     owner_filter.is_none_or(|needle| {
         record
             .name
@@ -1043,7 +1120,7 @@ fn objc_class_matches(record: &ObjcClassRecord, owner_filter: Option<&str>) -> b
                 .superclass_name
                 .as_deref()
                 .is_some_and(|value| contains_case_insensitive(value, needle))
-    })
+    }) && name_source_filter.is_none_or(|source| record.name_source == source)
 }
 
 fn objc_protocol_matches(record: &ObjcProtocolRecord, owner_filter: Option<&str>) -> bool {
@@ -1055,7 +1132,11 @@ fn objc_protocol_matches(record: &ObjcProtocolRecord, owner_filter: Option<&str>
     })
 }
 
-fn objc_category_matches(record: &ObjcCategoryRecord, owner_filter: Option<&str>) -> bool {
+fn objc_category_matches(
+    record: &ObjcCategoryRecord,
+    owner_filter: Option<&str>,
+    name_source_filter: Option<ObjcNameSource>,
+) -> bool {
     owner_filter.is_none_or(|needle| {
         record
             .name
@@ -1065,7 +1146,8 @@ fn objc_category_matches(record: &ObjcCategoryRecord, owner_filter: Option<&str>
                 .class_name
                 .as_deref()
                 .is_some_and(|value| contains_case_insensitive(value, needle))
-    })
+    }) && name_source_filter
+        .is_none_or(|source| record.name_source == source || record.class_name_source == source)
 }
 
 fn objc_method_owner_kind_text(kind: ObjcMethodOwnerKind) -> &'static str {
@@ -1199,19 +1281,16 @@ impl JsonDto for InfoJsonDto<'_> {
             (
                 "objc".to_string(),
                 JsonValue::Object(vec![
-                    (
-                        "class_names".to_string(),
-                        usize_num(objc.class_names.len()),
-                    ),
+                    ("class_names".to_string(), usize_num(objc.class_names.len())),
                     (
                         "selectors".to_string(),
                         usize_num(objc.selector_names.len()),
                     ),
+                    ("methods".to_string(), usize_num(objc.method_names.len())),
                     (
-                        "methods".to_string(),
-                        usize_num(objc.method_names.len()),
+                        "pointer_refs".to_string(),
+                        usize_num(objc.pointer_refs.len()),
                     ),
-                    ("pointer_refs".to_string(), usize_num(objc.pointer_refs.len())),
                     ("classes".to_string(), usize_num(objc.classes.len())),
                     ("protocols".to_string(), usize_num(objc.protocols.len())),
                     ("categories".to_string(), usize_num(objc.categories.len())),
@@ -1227,10 +1306,7 @@ impl JsonDto for InfoJsonDto<'_> {
             (
                 "dyld".to_string(),
                 JsonValue::Object(vec![
-                    (
-                        "dylibs".to_string(),
-                        usize_num(dyld.imported_dylibs.len()),
-                    ),
+                    ("dylibs".to_string(), usize_num(dyld.imported_dylibs.len())),
                     ("rpaths".to_string(), usize_num(dyld.rpaths.len())),
                     (
                         "exports".to_string(),
@@ -1245,15 +1321,12 @@ impl JsonDto for InfoJsonDto<'_> {
                         usize_num(dyld.import_bindings.len()),
                     ),
                     ("stubs".to_string(), usize_num(dyld.stubs.len())),
-                    ("stub_helpers".to_string(), usize_num(dyld.stub_helpers.len())),
                     (
-                        "has_rebases".to_string(),
-                        JsonValue::Bool(dyld.has_rebases),
+                        "stub_helpers".to_string(),
+                        usize_num(dyld.stub_helpers.len()),
                     ),
-                    (
-                        "has_binds".to_string(),
-                        JsonValue::Bool(dyld.has_binds),
-                    ),
+                    ("has_rebases".to_string(), JsonValue::Bool(dyld.has_rebases)),
+                    ("has_binds".to_string(), JsonValue::Bool(dyld.has_binds)),
                     (
                         "has_chained_fixups".to_string(),
                         JsonValue::Bool(dyld.has_chained_fixups),
@@ -1433,6 +1506,20 @@ impl JsonDto for ObjcJsonDto<'_> {
                     .unwrap_or(JsonValue::Null),
             ),
             (
+                "name_source_filter".to_string(),
+                self.view
+                    .name_source_filter
+                    .map(|value| JsonValue::String(format!("{value:?}")))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "selector_source_filter".to_string(),
+                self.view
+                    .selector_source_filter
+                    .map(|value| JsonValue::String(format!("{value:?}")))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
                 "image_info_flags".to_string(),
                 objc.image_info_flags
                     .map(u64::from)
@@ -1442,8 +1529,7 @@ impl JsonDto for ObjcJsonDto<'_> {
             (
                 "class_names".to_string(),
                 JsonValue::Array(
-                    objc
-                        .class_names
+                    objc.class_names
                         .iter()
                         .cloned()
                         .map(JsonValue::String)
@@ -1453,8 +1539,7 @@ impl JsonDto for ObjcJsonDto<'_> {
             (
                 "selector_names".to_string(),
                 JsonValue::Array(
-                    objc
-                        .selector_names
+                    objc.selector_names
                         .iter()
                         .cloned()
                         .map(JsonValue::String)
@@ -1464,8 +1549,7 @@ impl JsonDto for ObjcJsonDto<'_> {
             (
                 "method_names".to_string(),
                 JsonValue::Array(
-                    objc
-                        .method_names
+                    objc.method_names
                         .iter()
                         .cloned()
                         .map(JsonValue::String)
@@ -1483,17 +1567,23 @@ impl JsonDto for ObjcJsonDto<'_> {
                                 JsonValue::Object(vec![
                                     (
                                         "kind".to_string(),
-                                        JsonValue::String(objc_pointer_kind_text(entry.kind).to_string()),
+                                        JsonValue::String(
+                                            objc_pointer_kind_text(entry.kind).to_string(),
+                                        ),
                                     ),
                                     ("table_address".to_string(), u64_num(entry.table_address)),
                                     ("raw_pointer".to_string(), u64_num(entry.raw_pointer)),
                                     (
                                         "resolved_address".to_string(),
-                                        entry.resolved_address.map(u64_num).unwrap_or(JsonValue::Null),
+                                        entry
+                                            .resolved_address
+                                            .map(u64_num)
+                                            .unwrap_or(JsonValue::Null),
                                     ),
                                     (
                                         "resolved_name".to_string(),
-                                        entry.resolved_name
+                                        entry
+                                            .resolved_name
                                             .as_ref()
                                             .map(|value| JsonValue::String(value.clone()))
                                             .unwrap_or(JsonValue::Null),
@@ -1551,13 +1641,7 @@ impl JsonDto for ObjcJsonDto<'_> {
             (
                 "methods".to_string(),
                 if objc_detail_includes_methods(self.view.detail) {
-                    JsonValue::Array(
-                        filtered
-                            .methods
-                            .iter()
-                            .map(objc_method_view_json)
-                            .collect(),
-                    )
+                    JsonValue::Array(filtered.methods.iter().map(objc_method_view_json).collect())
                 } else {
                     JsonValue::Array(Vec::new())
                 },
@@ -1609,6 +1693,51 @@ impl JsonDto for DyldJsonDto<'_> {
                 JsonValue::Array(included_dyld_sections(&self.view)),
             ),
             (
+                "name_filter".to_string(),
+                self.view
+                    .name_filter
+                    .as_ref()
+                    .map(|value| JsonValue::String(value.clone()))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "dylib_filter".to_string(),
+                self.view
+                    .dylib_filter
+                    .as_ref()
+                    .map(|value| JsonValue::String(value.clone()))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "source_filter".to_string(),
+                self.view
+                    .source_filter
+                    .map(|value| JsonValue::String(format!("{value:?}")))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "binding_kind_filter".to_string(),
+                self.view
+                    .binding_kind_filter
+                    .map(|value| JsonValue::String(format!("{value:?}")))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "stub_kind_filter".to_string(),
+                self.view
+                    .stub_kind_filter
+                    .as_ref()
+                    .map(|value| JsonValue::String(format!("{value:?}")))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "ordinal_filter".to_string(),
+                self.view
+                    .ordinal_filter
+                    .map(|value| u64_num(u64::from(value)))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
                 "dylibs".to_string(),
                 if self.view.show_dylibs {
                     JsonValue::Array(
@@ -1625,13 +1754,7 @@ impl JsonDto for DyldJsonDto<'_> {
             (
                 "rpaths".to_string(),
                 if self.view.show_rpaths {
-                    JsonValue::Array(
-                        dyld.rpaths
-                            .iter()
-                            .cloned()
-                            .map(JsonValue::String)
-                            .collect(),
-                    )
+                    JsonValue::Array(dyld.rpaths.iter().cloned().map(JsonValue::String).collect())
                 } else {
                     JsonValue::Array(Vec::new())
                 },
@@ -1639,7 +1762,13 @@ impl JsonDto for DyldJsonDto<'_> {
             (
                 "exports".to_string(),
                 if self.view.show_exports {
-                    JsonValue::Array(filtered.exports.iter().map(|export| export_json(export)).collect())
+                    JsonValue::Array(
+                        filtered
+                            .exports
+                            .iter()
+                            .map(|export| export_json(export))
+                            .collect(),
+                    )
                 } else {
                     JsonValue::Array(Vec::new())
                 },
@@ -1655,7 +1784,13 @@ impl JsonDto for DyldJsonDto<'_> {
             (
                 "import_bindings".to_string(),
                 if self.view.show_bindings {
-                    JsonValue::Array(filtered.import_bindings.iter().map(|binding| import_binding_json(binding)).collect())
+                    JsonValue::Array(
+                        filtered
+                            .import_bindings
+                            .iter()
+                            .map(|binding| import_binding_json(binding))
+                            .collect(),
+                    )
                 } else {
                     JsonValue::Array(Vec::new())
                 },
@@ -1663,7 +1798,13 @@ impl JsonDto for DyldJsonDto<'_> {
             (
                 "stubs".to_string(),
                 if self.view.show_stubs {
-                    JsonValue::Array(filtered.stubs.iter().map(|stub| stub_entry_json(stub)).collect())
+                    JsonValue::Array(
+                        filtered
+                            .stubs
+                            .iter()
+                            .map(|stub| stub_entry_json(stub))
+                            .collect(),
+                    )
                 } else {
                     JsonValue::Array(Vec::new())
                 },
@@ -1755,7 +1896,10 @@ fn export_json(export: &damsel_core::ExportRecord) -> JsonValue {
             "address".to_string(),
             export.address.map(u64_num).unwrap_or(JsonValue::Null),
         ),
-        ("flags".to_string(), JsonValue::String(export.flags.to_string())),
+        (
+            "flags".to_string(),
+            JsonValue::String(export.flags.to_string()),
+        ),
         ("kind".to_string(), export_kind_json(&export.kind)),
     ])
 }
@@ -1767,7 +1911,10 @@ fn export_kind_json(kind: &ExportKind) -> JsonValue {
             JsonValue::String("regular".to_string()),
         )]),
         ExportKind::Reexport { dylib, symbol } => JsonValue::Object(vec![
-            ("type".to_string(), JsonValue::String("reexport".to_string())),
+            (
+                "type".to_string(),
+                JsonValue::String("reexport".to_string()),
+            ),
             ("dylib".to_string(), JsonValue::String(dylib.clone())),
             (
                 "symbol".to_string(),
@@ -1778,7 +1925,10 @@ fn export_kind_json(kind: &ExportKind) -> JsonValue {
             ),
         ]),
         ExportKind::Resolver { resolver_address } => JsonValue::Object(vec![
-            ("type".to_string(), JsonValue::String("resolver".to_string())),
+            (
+                "type".to_string(),
+                JsonValue::String("resolver".to_string()),
+            ),
             (
                 "resolver_address".to_string(),
                 resolver_address.map(u64_num).unwrap_or(JsonValue::Null),
@@ -1822,7 +1972,10 @@ fn export_kind_json(kind: &ExportKind) -> JsonValue {
 
 fn import_binding_json(binding: &ImportBindingRecord) -> JsonValue {
     JsonValue::Object(vec![
-        ("dylib".to_string(), JsonValue::String(binding.dylib.clone())),
+        (
+            "dylib".to_string(),
+            JsonValue::String(binding.dylib.clone()),
+        ),
         ("name".to_string(), JsonValue::String(binding.name.clone())),
         (
             "address".to_string(),
@@ -1839,7 +1992,10 @@ fn import_binding_json(binding: &ImportBindingRecord) -> JsonValue {
         ),
         (
             "ordinal".to_string(),
-            binding.ordinal.map(|value| u64_num(u64::from(value))).unwrap_or(JsonValue::Null),
+            binding
+                .ordinal
+                .map(|value| u64_num(u64::from(value)))
+                .unwrap_or(JsonValue::Null),
         ),
         (
             "symbol_index".to_string(),
@@ -1914,10 +2070,7 @@ fn stub_entry_json(stub: &StubEntry) -> JsonValue {
 
 fn stub_helper_json(helper: &StubHelperEntry) -> JsonValue {
     JsonValue::Object(vec![
-        (
-            "helper_address".to_string(),
-            u64_num(helper.helper_address),
-        ),
+        ("helper_address".to_string(), u64_num(helper.helper_address)),
         (
             "target_stub".to_string(),
             helper.target_stub.map(u64_num).unwrap_or(JsonValue::Null),
@@ -1927,6 +2080,29 @@ fn stub_helper_json(helper: &StubHelperEntry) -> JsonValue {
             helper
                 .binding_ordinal
                 .map(|value| u64_num(u64::from(value)))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "stub_section".to_string(),
+            helper
+                .stub_section
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "pointer_address".to_string(),
+            helper
+                .pointer_address
+                .map(u64_num)
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "pointer_section".to_string(),
+            helper
+                .pointer_section
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
                 .unwrap_or(JsonValue::Null),
         ),
         (
@@ -2136,10 +2312,7 @@ fn objc_category_record_json(record: &ObjcCategoryRecord) -> JsonValue {
         ),
         (
             "class_pointer".to_string(),
-            record
-                .class_pointer
-                .map(u64_num)
-                .unwrap_or(JsonValue::Null),
+            record.class_pointer.map(u64_num).unwrap_or(JsonValue::Null),
         ),
         (
             "class_name".to_string(),
@@ -2148,6 +2321,14 @@ fn objc_category_record_json(record: &ObjcCategoryRecord) -> JsonValue {
                 .as_ref()
                 .map(|value| JsonValue::String(value.clone()))
                 .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "name_source".to_string(),
+            JsonValue::String(format!("{:?}", record.name_source)),
+        ),
+        (
+            "class_name_source".to_string(),
+            JsonValue::String(format!("{:?}", record.class_name_source)),
         ),
         (
             "adopted_protocols".to_string(),
@@ -2192,13 +2373,15 @@ fn objc_method_record_json(record: &ObjcMethodRecord) -> JsonValue {
         ("owner_pointer".to_string(), u64_num(record.owner_pointer)),
         (
             "owner_kind".to_string(),
-            JsonValue::String(match record.owner_kind {
-                ObjcMethodOwnerKind::Class => "class",
-                ObjcMethodOwnerKind::Metaclass => "metaclass",
-                ObjcMethodOwnerKind::Protocol => "protocol",
-                ObjcMethodOwnerKind::Category => "category",
-            }
-            .to_string()),
+            JsonValue::String(
+                match record.owner_kind {
+                    ObjcMethodOwnerKind::Class => "class",
+                    ObjcMethodOwnerKind::Metaclass => "metaclass",
+                    ObjcMethodOwnerKind::Protocol => "protocol",
+                    ObjcMethodOwnerKind::Category => "category",
+                }
+                .to_string(),
+            ),
         ),
         (
             "is_class_method".to_string(),
@@ -2374,11 +2557,7 @@ impl JsonDto for DisasmJsonDto<'_> {
                         "references".to_string(),
                         if self.render_options.include_references {
                             JsonValue::Array(
-                                instruction
-                                    .references
-                                    .iter()
-                                    .map(reference_json)
-                                    .collect(),
+                                instruction.references.iter().map(reference_json).collect(),
                             )
                         } else {
                             JsonValue::Array(Vec::new())
@@ -2534,6 +2713,28 @@ fn reference_to_text(reference: &Reference) -> String {
             name.clone().unwrap_or_else(|| "-".to_string()),
             source
         ),
+        Reference::StubHelper {
+            helper_address,
+            target_stub,
+            pointer_address,
+            binding_ordinal,
+            dylib,
+            name,
+            ..
+        } => format!(
+            "stub-helper {helper_address:#x} stub={} ptr={} ordinal={} {}:{}",
+            target_stub
+                .map(|value| format!("{value:#x}"))
+                .unwrap_or_else(|| "-".to_string()),
+            pointer_address
+                .map(|value| format!("{value:#x}"))
+                .unwrap_or_else(|| "-".to_string()),
+            binding_ordinal
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            dylib.clone().unwrap_or_else(|| "-".to_string()),
+            name.clone().unwrap_or_else(|| "-".to_string()),
+        ),
         Reference::RelocationEvidence {
             address,
             kind,
@@ -2557,11 +2758,17 @@ fn reference_json(reference: &Reference) -> JsonValue {
             ("target".to_string(), u64_num(*target)),
         ]),
         Reference::IndirectCall { via } => JsonValue::Object(vec![
-            ("type".to_string(), JsonValue::String("indirect_call".to_string())),
+            (
+                "type".to_string(),
+                JsonValue::String("indirect_call".to_string()),
+            ),
             ("via".to_string(), JsonValue::String(via.clone())),
         ]),
         Reference::IndirectBranch { via } => JsonValue::Object(vec![
-            ("type".to_string(), JsonValue::String("indirect_branch".to_string())),
+            (
+                "type".to_string(),
+                JsonValue::String("indirect_branch".to_string()),
+            ),
             ("via".to_string(), JsonValue::String(via.clone())),
         ]),
         Reference::Page { target } => JsonValue::Object(vec![
@@ -2572,7 +2779,11 @@ fn reference_json(reference: &Reference) -> JsonValue {
             ("type".to_string(), JsonValue::String("data".to_string())),
             ("target".to_string(), u64_num(*target)),
         ]),
-        Reference::Import { name, dylib, address } => JsonValue::Object(vec![
+        Reference::Import {
+            name,
+            dylib,
+            address,
+        } => JsonValue::Object(vec![
             ("type".to_string(), JsonValue::String("import".to_string())),
             ("name".to_string(), JsonValue::String(name.clone())),
             ("dylib".to_string(), JsonValue::String(dylib.clone())),
@@ -2680,6 +2891,48 @@ fn reference_json(reference: &Reference) -> JsonValue {
                 JsonValue::String(format!("{source:?}")),
             ),
         ]),
+        Reference::StubHelper {
+            helper_address,
+            target_stub,
+            pointer_address,
+            binding_ordinal,
+            dylib,
+            name,
+            ..
+        } => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("stub_helper".to_string()),
+            ),
+            ("helper_address".to_string(), u64_num(*helper_address)),
+            (
+                "target_stub".to_string(),
+                target_stub.map(u64_num).unwrap_or(JsonValue::Null),
+            ),
+            (
+                "pointer_address".to_string(),
+                pointer_address.map(u64_num).unwrap_or(JsonValue::Null),
+            ),
+            (
+                "binding_ordinal".to_string(),
+                binding_ordinal
+                    .map(|value| u64_num(u64::from(value)))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "dylib".to_string(),
+                dylib
+                    .as_ref()
+                    .map(|value| JsonValue::String(value.clone()))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "name".to_string(),
+                name.as_ref()
+                    .map(|value| JsonValue::String(value.clone()))
+                    .unwrap_or(JsonValue::Null),
+            ),
+        ]),
         Reference::RelocationEvidence {
             address,
             kind,
@@ -2734,7 +2987,10 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             target,
             addend,
         } => JsonValue::Object(vec![
-            ("type".to_string(), JsonValue::String("relocation".to_string())),
+            (
+                "type".to_string(),
+                JsonValue::String("relocation".to_string()),
+            ),
             ("address".to_string(), u64_num(*address)),
             ("kind".to_string(), JsonValue::String(kind.clone())),
             ("encoding".to_string(), JsonValue::String(encoding.clone())),
@@ -2821,7 +3077,10 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
                 "index_register".to_string(),
                 JsonValue::String(index_register.clone()),
             ),
-            ("element_size".to_string(), u64_num(u64::from(*element_size))),
+            (
+                "element_size".to_string(),
+                u64_num(u64::from(*element_size)),
+            ),
         ]),
         Annotation::RelocationEvidence {
             address,
@@ -2856,7 +3115,10 @@ fn recovered_value_to_text(value: &RecoveredValue) -> String {
 
 fn recovered_value_json(value: &RecoveredValue) -> JsonValue {
     JsonValue::Object(vec![
-        ("register".to_string(), JsonValue::String(value.register.clone())),
+        (
+            "register".to_string(),
+            JsonValue::String(value.register.clone()),
+        ),
         ("value".to_string(), u64_num(value.value)),
         (
             "kind".to_string(),

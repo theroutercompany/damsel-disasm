@@ -1,15 +1,17 @@
 ---
 source: damsel-cli/tests/cli_snapshots.rs
-assertion_line: 106
 expression: stdout
 ---
 image_info_flags: 0x40
-summary: class_names=6 selectors=44 methods=44 pointer_refs=44 classes=2 protocols=3 categories=0
+summary: class_names=9 selectors=52 methods=52 pointer_refs=52 classes=2 protocols=4 categories=0
 classes:
+  DiagnosticProviding
+  Diagnostics
   Excited
   Excitement
   Greeter
   GreetingProviding
+  Metrics
   NSObject
   Speaker
 selectors:
@@ -24,6 +26,10 @@ selectors:
   conformsToProtocol:
   debugDescription
   description
+  diagnosticCategory
+  diagnosticLabel
+  diagnosticSummary
+  diagnosticToken
   emphasis
   emphasizedGreeting
   excitedGreeting
@@ -35,6 +41,10 @@ selectors:
   isKindOfClass:
   isMemberOfClass:
   isProxy
+  metricsCategory
+  metricsSummary
+  metricsSummaryWithPrefix:
+  metricsToken
   name
   optionalGreeting
   performSelector:
@@ -69,6 +79,10 @@ methods:
   conformsToProtocol:
   debugDescription
   description
+  diagnosticCategory
+  diagnosticLabel
+  diagnosticSummary
+  diagnosticToken
   emphasis
   emphasizedGreeting
   excitedGreeting
@@ -80,6 +94,10 @@ methods:
   isKindOfClass:
   isMemberOfClass:
   isProxy
+  metricsCategory
+  metricsSummary
+  metricsSummaryWithPrefix:
+  metricsToken
   name
   optionalGreeting
   performSelector:
@@ -103,65 +121,82 @@ methods:
   uppercaseString
   zone
 class_records:
-  0x100008578 name=Speaker source=PointerTable superclass=- metaclass=0x1000085a0 ro=0x1000080a8 methods=4 class_methods=1 properties=1 ivars=2 protocols=0
-  0x1000085c8 name=Greeter source=PointerTable superclass=Speaker metaclass=0x1000085f0 ro=0x1000082b8 methods=11 class_methods=3 properties=12 ivars=2 protocols=2
+  0x100008650 name=Speaker source=PointerTable superclass=- metaclass=0x100008678 ro=0x100008090 methods=7 class_methods=2 properties=6 ivars=2 protocols=1
+  0x1000086a0 name=Greeter source=PointerTable superclass=Speaker metaclass=0x1000086c8 ro=0x1000082a0 methods=14 class_methods=4 properties=13 ivars=2 protocols=2
 protocol_records:
-  0x100008618 NSObject required_inst=19 required_class=0 optional_inst=1 optional_class=0 properties=4
-  0x100008678 GreetingProviding required_inst=2 required_class=1 optional_inst=1 optional_class=0 properties=1
-  0x1000086d8 Excitement required_inst=1 required_class=1 optional_inst=0 optional_class=0 properties=0
+  0x1000086f0 NSObject required_inst=19 required_class=0 optional_inst=1 optional_class=0 properties=4
+  0x100008750 GreetingProviding required_inst=2 required_class=1 optional_inst=1 optional_class=0 properties=1
+  0x1000087b0 Excitement required_inst=1 required_class=1 optional_inst=0 optional_class=0 properties=0
+  0x100008810 DiagnosticProviding required_inst=1 required_class=0 optional_inst=1 optional_class=0 properties=0
 method_records:
-  owner=Speaker kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000ad4 types=@16@0:8
-  owner=Speaker kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000b50 types=@16@0:8
-  owner=Speaker kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000bbc types=@16@0:8
-  owner=Speaker kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000bd8 types=v24@0:8@16
-  owner=Speaker kind=metaclass class_method=true selector=- selector_source=Unresolved impl=0x100000ab8 types=@16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000e24 types=@16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000e5c types=@16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000e90 types=@16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000c48 types=@16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000cc0 types=@16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000cdc types=@16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000d08 types=@16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000d90 types=@16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000dac types=v24@0:8@16
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000de4 types=q16@0:8
-  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000e00 types=v24@0:8q16
-  owner=Greeter kind=metaclass class_method=true selector=- selector_source=Unresolved impl=0x100000e40 types=@16@0:8
-  owner=Greeter kind=metaclass class_method=true selector=- selector_source=Unresolved impl=0x100000c10 types=@16@0:8
-  owner=Greeter kind=metaclass class_method=true selector=- selector_source=Unresolved impl=0x100000c2c types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001248 types=B24@0:8@16
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001254 types=#16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001260 types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x10000126c types=@24@0:8:16
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001278 types=@32@0:8:16@24
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001284 types=@40@0:8:16@24@32
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001290 types=B16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x10000129c types=B24@0:8#16
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012a8 types=B24@0:8#16
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012b4 types=B24@0:8@16
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012c0 types=B24@0:8:16
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012cc types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012d8 types=Vv16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012e4 types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012f0 types=Q16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012fc types=^{_NSZone=}16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001308 types=Q16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001314 types=#16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001320 types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001350 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001228 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001234 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=true selector=- selector_source=Unresolved impl=0x1000011f8 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001338 types=@16@0:8
-  owner=Excitement kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001210 types=@16@0:8
-  owner=Excitement kind=protocol class_method=true selector=- selector_source=Unresolved impl=0x1000011e0 types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=diagnosticLabel selector_source=Relative impl=0x100000ee8 types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=diagnosticToken selector_source=Relative impl=0x100000f20 types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=diagnosticSummary selector_source=Relative impl=0x100000f3c types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=init selector_source=Relative impl=0x100000ad4 types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=prefix selector_source=Relative impl=0x100000b50 types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=title selector_source=Relative impl=0x100000bbc types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=setTitle: selector_source=Relative impl=0x100000bd8 types=v24@0:8@16
+  owner=Speaker kind=metaclass class_method=true selector=diagnosticCategory selector_source=Relative impl=0x100000f04 types=@16@0:8
+  owner=Speaker kind=metaclass class_method=true selector=speakerKind selector_source=Relative impl=0x100000ab8 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=metricsToken selector_source=Relative impl=0x100000fc4 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=metricsSummary selector_source=Relative impl=0x100000ffc types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=metricsSummaryWithPrefix: selector_source=Relative impl=0x100001084 types=@24@0:8@16
+  owner=Greeter kind=class class_method=false selector=categoryToken selector_source=Relative impl=0x100000e24 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=emphasizedGreeting selector_source=Relative impl=0x100000e5c types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=excitedGreeting selector_source=Relative impl=0x100000e90 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=init selector_source=Relative impl=0x100000c48 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=protocolLabel selector_source=Relative impl=0x100000cc0 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=optionalGreeting selector_source=Relative impl=0x100000cdc types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=greeting selector_source=Relative impl=0x100000d08 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=name selector_source=Relative impl=0x100000d90 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=setName: selector_source=Relative impl=0x100000dac types=v24@0:8@16
+  owner=Greeter kind=class class_method=false selector=emphasis selector_source=Relative impl=0x100000de4 types=q16@0:8
+  owner=Greeter kind=class class_method=false selector=setEmphasis: selector_source=Relative impl=0x100000e00 types=v24@0:8q16
+  owner=Greeter kind=metaclass class_method=true selector=metricsCategory selector_source=Relative impl=0x100000fe0 types=@16@0:8
+  owner=Greeter kind=metaclass class_method=true selector=categoryKind selector_source=Relative impl=0x100000e40 types=@16@0:8
+  owner=Greeter kind=metaclass class_method=true selector=greeterKind selector_source=Relative impl=0x100000c10 types=@16@0:8
+  owner=Greeter kind=metaclass class_method=true selector=protocolClassGreeting selector_source=Relative impl=0x100000c2c types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=isEqual: selector_source=Relative impl=0x1000015b8 types=B24@0:8@16
+  owner=NSObject kind=protocol class_method=false selector=class selector_source=Relative impl=0x1000015c4 types=#16@0:8
+  owner=NSObject kind=protocol class_method=false selector=self selector_source=Relative impl=0x1000015d0 types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=performSelector: selector_source=Relative impl=0x1000015dc types=@24@0:8:16
+  owner=NSObject kind=protocol class_method=false selector=performSelector:withObject: selector_source=Relative impl=0x1000015e8 types=@32@0:8:16@24
+  owner=NSObject kind=protocol class_method=false selector=performSelector:withObject:withObject: selector_source=Relative impl=0x1000015f4 types=@40@0:8:16@24@32
+  owner=NSObject kind=protocol class_method=false selector=isProxy selector_source=Relative impl=0x100001600 types=B16@0:8
+  owner=NSObject kind=protocol class_method=false selector=isKindOfClass: selector_source=Relative impl=0x10000160c types=B24@0:8#16
+  owner=NSObject kind=protocol class_method=false selector=isMemberOfClass: selector_source=Relative impl=0x100001618 types=B24@0:8#16
+  owner=NSObject kind=protocol class_method=false selector=conformsToProtocol: selector_source=Relative impl=0x100001624 types=B24@0:8@16
+  owner=NSObject kind=protocol class_method=false selector=respondsToSelector: selector_source=Relative impl=0x100001630 types=B24@0:8:16
+  owner=NSObject kind=protocol class_method=false selector=retain selector_source=Relative impl=0x10000163c types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=release selector_source=Relative impl=0x100001648 types=Vv16@0:8
+  owner=NSObject kind=protocol class_method=false selector=autorelease selector_source=Relative impl=0x100001654 types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=retainCount selector_source=Relative impl=0x100001660 types=Q16@0:8
+  owner=NSObject kind=protocol class_method=false selector=zone selector_source=Relative impl=0x10000166c types=^{_NSZone=}16@0:8
+  owner=NSObject kind=protocol class_method=false selector=hash selector_source=Relative impl=0x100001678 types=Q16@0:8
+  owner=NSObject kind=protocol class_method=false selector=superclass selector_source=Relative impl=0x100001684 types=#16@0:8
+  owner=NSObject kind=protocol class_method=false selector=description selector_source=Relative impl=0x100001690 types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=debugDescription selector_source=Relative impl=0x1000016d8 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=greeting selector_source=Relative impl=0x100001598 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=protocolLabel selector_source=Relative impl=0x1000015a4 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=true selector=protocolClassGreeting selector_source=Relative impl=0x100001550 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=optionalGreeting selector_source=Relative impl=0x1000016c0 types=@16@0:8
+  owner=Excitement kind=protocol class_method=false selector=excitedGreeting selector_source=Relative impl=0x100001580 types=@16@0:8
+  owner=Excitement kind=protocol class_method=true selector=categoryKind selector_source=Relative impl=0x100001538 types=@16@0:8
+  owner=DiagnosticProviding kind=protocol class_method=false selector=diagnosticSummary selector_source=Relative impl=0x100001568 types=@16@0:8
+  owner=DiagnosticProviding kind=protocol class_method=false selector=diagnosticToken selector_source=Relative impl=0x1000016a8 types=@16@0:8
 property_records:
+  owner=Speaker name=diagnosticLabel attrs=T@"NSString",R,N
+  owner=Speaker name=hash attrs=TQ,R
+  owner=Speaker name=superclass attrs=T#,R
+  owner=Speaker name=description attrs=T@"NSString",R,C
+  owner=Speaker name=debugDescription attrs=T@"NSString",?,R,C
   owner=Speaker name=title attrs=T@"NSString",C,N,V_title
   owner=Greeter name=categoryToken attrs=T@"NSString",R,N
   owner=Greeter name=hash attrs=TQ,R
   owner=Greeter name=superclass attrs=T#,R
   owner=Greeter name=description attrs=T@"NSString",R,C
   owner=Greeter name=debugDescription attrs=T@"NSString",?,R,C
+  owner=Greeter name=metricsToken attrs=T@"NSString",R,N
   owner=Greeter name=name attrs=T@"NSString",C,N,V_name
   owner=Greeter name=emphasis attrs=Tq,N,V_emphasis
   owner=Greeter name=protocolLabel attrs=T@"NSString",R,N
@@ -180,47 +215,55 @@ ivar_records:
   owner=Greeter name=_name type=@"NSString" offset=0x18
   owner=Greeter name=_emphasis type=q offset=0x20
 pointer_refs:
-  classlist  table=0x1000041d8 raw=0x10000000008578 resolved_addr=0x100008578 resolved_name=Speaker
-  classlist  table=0x1000041e0 raw=0x100000000085c8 resolved_addr=0x1000085c8 resolved_name=Greeter
-  selref     table=0x100008408 raw=0x10000000001533 resolved_addr=0x100001533 resolved_name=init
-  selref     table=0x100008410 raw=0x100000000014fd resolved_addr=0x1000014fd resolved_name=emphasis
-  selref     table=0x100008418 raw=0x10000000001506 resolved_addr=0x100001506 resolved_name=emphasizedGreeting
-  selref     table=0x100008420 raw=0x10000000001525 resolved_addr=0x100001525 resolved_name=greeting
-  selref     table=0x100008428 raw=0x10000000001561 resolved_addr=0x100001561 resolved_name=name
-  selref     table=0x100008430 raw=0x100000000015cb resolved_addr=0x1000015cb resolved_name=prefix
-  selref     table=0x100008438 raw=0x1000000000164e resolved_addr=0x10000164e resolved_name=stringWithFormat:
-  selref     table=0x100008440 raw=0x1000000000166b resolved_addr=0x10000166b resolved_name=title
-  selref     table=0x100008448 raw=0x10000000001410 resolved_addr=0x100001410 resolved_name=uppercaseString
-  selref     table=0x100008450 raw=0x100000000014b8 resolved_addr=0x1000014b8 resolved_name=categoryToken
-  selref     table=0x100008458 raw=0x10000000001425 resolved_addr=0x100001425 resolved_name=excitedGreeting
-  selref     table=0x100008460 raw=0x100000000015e8 resolved_addr=0x1000015e8 resolved_name=protocolLabel
-  selref     table=0x100008468 raw=0x10000000001566 resolved_addr=0x100001566 resolved_name=optionalGreeting
-  selref     table=0x100008470 raw=0x1000000000162f resolved_addr=0x10000162f resolved_name=setName:
-  selref     table=0x100008478 raw=0x10000000001622 resolved_addr=0x100001622 resolved_name=setEmphasis:
-  selref     table=0x100008480 raw=0x100000000014ab resolved_addr=0x1000014ab resolved_name=categoryKind
-  selref     table=0x100008488 raw=0x10000000001519 resolved_addr=0x100001519 resolved_name=greeterKind
-  selref     table=0x100008490 raw=0x100000000015d2 resolved_addr=0x1000015d2 resolved_name=protocolClassGreeting
-  selref     table=0x100008498 raw=0x10000000001638 resolved_addr=0x100001638 resolved_name=setTitle:
-  selref     table=0x1000084a0 raw=0x10000000001642 resolved_addr=0x100001642 resolved_name=speakerKind
-  selref     table=0x1000084a8 raw=0x10000000001538 resolved_addr=0x100001538 resolved_name=isEqual:
-  selref     table=0x1000084b0 raw=0x100000000014c6 resolved_addr=0x1000014c6 resolved_name=class
-  selref     table=0x1000084b8 raw=0x1000000000161d resolved_addr=0x10000161d resolved_name=self
-  selref     table=0x1000084c0 raw=0x10000000001577 resolved_addr=0x100001577 resolved_name=performSelector:
-  selref     table=0x1000084c8 raw=0x10000000001588 resolved_addr=0x100001588 resolved_name=performSelector:withObject:
-  selref     table=0x1000084d0 raw=0x100000000015a4 resolved_addr=0x1000015a4 resolved_name=performSelector:withObject:withObject:
-  selref     table=0x1000084d8 raw=0x100000000013ef resolved_addr=0x1000013ef resolved_name=isProxy
-  selref     table=0x1000084e0 raw=0x10000000001541 resolved_addr=0x100001541 resolved_name=isKindOfClass:
-  selref     table=0x1000084e8 raw=0x10000000001550 resolved_addr=0x100001550 resolved_name=isMemberOfClass:
-  selref     table=0x1000084f0 raw=0x100000000014cc resolved_addr=0x1000014cc resolved_name=conformsToProtocol:
-  selref     table=0x1000084f8 raw=0x100000000015f6 resolved_addr=0x1000015f6 resolved_name=respondsToSelector:
-  selref     table=0x100008500 raw=0x1000000000160a resolved_addr=0x10000160a resolved_name=retain
-  selref     table=0x100008508 raw=0x1000000000144d resolved_addr=0x10000144d resolved_name=release
-  selref     table=0x100008510 raw=0x1000000000149f resolved_addr=0x10000149f resolved_name=autorelease
-  selref     table=0x100008518 raw=0x10000000001611 resolved_addr=0x100001611 resolved_name=retainCount
-  selref     table=0x100008520 raw=0x10000000001671 resolved_addr=0x100001671 resolved_name=zone
-  selref     table=0x100008528 raw=0x1000000000152e resolved_addr=0x10000152e resolved_name=hash
-  selref     table=0x100008530 raw=0x10000000001660 resolved_addr=0x100001660 resolved_name=superclass
-  selref     table=0x100008538 raw=0x100000000014f1 resolved_addr=0x1000014f1 resolved_name=description
-  selref     table=0x100008540 raw=0x100000000014e0 resolved_addr=0x1000014e0 resolved_name=debugDescription
-  classref   table=0x100008548 raw=0x8010000000000008 resolved_addr=- resolved_name=-
-  classref   table=0x100008550 raw=0x100000000085c8 resolved_addr=0x1000085c8 resolved_name=Greeter
+  classlist  table=0x1000042b8 raw=0x10000000008650 resolved_addr=0x100008650 resolved_name=Speaker
+  classlist  table=0x1000042c0 raw=0x100000000086a0 resolved_addr=0x1000086a0 resolved_name=Greeter
+  selref     table=0x1000084a0 raw=0x10000000001958 resolved_addr=0x100001958 resolved_name=init
+  selref     table=0x1000084a8 raw=0x10000000001818 resolved_addr=0x100001818 resolved_name=diagnosticLabel
+  selref     table=0x1000084b0 raw=0x10000000001910 resolved_addr=0x100001910 resolved_name=diagnosticSummary
+  selref     table=0x1000084b8 raw=0x100000000017bf resolved_addr=0x1000017bf resolved_name=diagnosticToken
+  selref     table=0x1000084c0 raw=0x10000000001922 resolved_addr=0x100001922 resolved_name=emphasis
+  selref     table=0x1000084c8 raw=0x1000000000192b resolved_addr=0x10000192b resolved_name=emphasizedGreeting
+  selref     table=0x1000084d0 raw=0x1000000000194a resolved_addr=0x10000194a resolved_name=greeting
+  selref     table=0x1000084d8 raw=0x10000000001986 resolved_addr=0x100001986 resolved_name=metricsSummary
+  selref     table=0x1000084e0 raw=0x100000000019af resolved_addr=0x1000019af resolved_name=metricsToken
+  selref     table=0x1000084e8 raw=0x100000000019bc resolved_addr=0x1000019bc resolved_name=name
+  selref     table=0x1000084f0 raw=0x10000000001a26 resolved_addr=0x100001a26 resolved_name=prefix
+  selref     table=0x1000084f8 raw=0x10000000001aa9 resolved_addr=0x100001aa9 resolved_name=stringWithFormat:
+  selref     table=0x100008500 raw=0x10000000001ac6 resolved_addr=0x100001ac6 resolved_name=title
+  selref     table=0x100008508 raw=0x10000000001876 resolved_addr=0x100001876 resolved_name=uppercaseString
+  selref     table=0x100008510 raw=0x10000000001a93 resolved_addr=0x100001a93 resolved_name=setTitle:
+  selref     table=0x100008518 raw=0x100000000018fd resolved_addr=0x1000018fd resolved_name=diagnosticCategory
+  selref     table=0x100008520 raw=0x10000000001a9d resolved_addr=0x100001a9d resolved_name=speakerKind
+  selref     table=0x100008528 raw=0x10000000001995 resolved_addr=0x100001995 resolved_name=metricsSummaryWithPrefix:
+  selref     table=0x100008530 raw=0x100000000018b8 resolved_addr=0x1000018b8 resolved_name=categoryToken
+  selref     table=0x100008538 raw=0x10000000001840 resolved_addr=0x100001840 resolved_name=excitedGreeting
+  selref     table=0x100008540 raw=0x10000000001a43 resolved_addr=0x100001a43 resolved_name=protocolLabel
+  selref     table=0x100008548 raw=0x100000000019c1 resolved_addr=0x1000019c1 resolved_name=optionalGreeting
+  selref     table=0x100008550 raw=0x10000000001a8a resolved_addr=0x100001a8a resolved_name=setName:
+  selref     table=0x100008558 raw=0x10000000001a7d resolved_addr=0x100001a7d resolved_name=setEmphasis:
+  selref     table=0x100008560 raw=0x10000000001861 resolved_addr=0x100001861 resolved_name=metricsCategory
+  selref     table=0x100008568 raw=0x100000000018ab resolved_addr=0x1000018ab resolved_name=categoryKind
+  selref     table=0x100008570 raw=0x1000000000193e resolved_addr=0x10000193e resolved_name=greeterKind
+  selref     table=0x100008578 raw=0x10000000001a2d resolved_addr=0x100001a2d resolved_name=protocolClassGreeting
+  selref     table=0x100008580 raw=0x1000000000195d resolved_addr=0x10000195d resolved_name=isEqual:
+  selref     table=0x100008588 raw=0x100000000018c6 resolved_addr=0x1000018c6 resolved_name=class
+  selref     table=0x100008590 raw=0x10000000001a78 resolved_addr=0x100001a78 resolved_name=self
+  selref     table=0x100008598 raw=0x100000000019d2 resolved_addr=0x1000019d2 resolved_name=performSelector:
+  selref     table=0x1000085a0 raw=0x100000000019e3 resolved_addr=0x1000019e3 resolved_name=performSelector:withObject:
+  selref     table=0x1000085a8 raw=0x100000000019ff resolved_addr=0x1000019ff resolved_name=performSelector:withObject:withObject:
+  selref     table=0x1000085b0 raw=0x100000000017e8 resolved_addr=0x1000017e8 resolved_name=isProxy
+  selref     table=0x1000085b8 raw=0x10000000001966 resolved_addr=0x100001966 resolved_name=isKindOfClass:
+  selref     table=0x1000085c0 raw=0x10000000001975 resolved_addr=0x100001975 resolved_name=isMemberOfClass:
+  selref     table=0x1000085c8 raw=0x100000000018cc resolved_addr=0x1000018cc resolved_name=conformsToProtocol:
+  selref     table=0x1000085d0 raw=0x10000000001a51 resolved_addr=0x100001a51 resolved_name=respondsToSelector:
+  selref     table=0x1000085d8 raw=0x10000000001a65 resolved_addr=0x100001a65 resolved_name=retain
+  selref     table=0x1000085e0 raw=0x10000000001801 resolved_addr=0x100001801 resolved_name=release
+  selref     table=0x1000085e8 raw=0x1000000000189f resolved_addr=0x10000189f resolved_name=autorelease
+  selref     table=0x1000085f0 raw=0x10000000001a6c resolved_addr=0x100001a6c resolved_name=retainCount
+  selref     table=0x1000085f8 raw=0x10000000001acc resolved_addr=0x100001acc resolved_name=zone
+  selref     table=0x100008600 raw=0x10000000001953 resolved_addr=0x100001953 resolved_name=hash
+  selref     table=0x100008608 raw=0x10000000001abb resolved_addr=0x100001abb resolved_name=superclass
+  selref     table=0x100008610 raw=0x100000000018f1 resolved_addr=0x1000018f1 resolved_name=description
+  selref     table=0x100008618 raw=0x100000000018e0 resolved_addr=0x1000018e0 resolved_name=debugDescription
+  classref   table=0x100008620 raw=0x8010000000000008 resolved_addr=- resolved_name=-
+  classref   table=0x100008628 raw=0x100000000086a0 resolved_addr=0x1000086a0 resolved_name=Greeter

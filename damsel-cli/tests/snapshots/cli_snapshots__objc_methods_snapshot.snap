@@ -1,12 +1,11 @@
 ---
 source: damsel-cli/tests/cli_snapshots.rs
-assertion_line: 120
 expression: stdout
 ---
 image_info_flags: 0x40
-summary: class_names=6 selectors=44 methods=44 pointer_refs=44 classes=2 protocols=3 categories=0
+summary: class_names=9 selectors=52 methods=52 pointer_refs=52 classes=2 protocols=4 categories=0
 method_records:
-  owner=GreetingProviding kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001228 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001234 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=true selector=- selector_source=Unresolved impl=0x1000011f8 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001338 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=greeting selector_source=Relative impl=0x100001598 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=protocolLabel selector_source=Relative impl=0x1000015a4 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=true selector=protocolClassGreeting selector_source=Relative impl=0x100001550 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=optionalGreeting selector_source=Relative impl=0x1000016c0 types=@16@0:8
