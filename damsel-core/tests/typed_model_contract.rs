@@ -1,7 +1,7 @@
 use damsel_core::{
     Annotation, Architecture, BinaryFormat, BinaryImage, BinaryImageValidationError,
-    DisassemblyRequest, DisassemblyTarget, Endianness, ImportBindingRecord,
-    ImportBindingSource, Reference, Relocation, SliceDescriptor, SliceInfo,
+    DisassemblyRequest, DisassemblyTarget, Endianness, ImportBindingKind, ImportBindingRecord,
+    ImportBindingSource, Reference, Relocation, SliceDescriptor, SliceInfo, StubKind,
 };
 use std::ptr;
 use std::sync::Arc;
@@ -135,6 +135,7 @@ fn evidence_variants_are_constructible() {
         addend: 0,
         ordinal: Some(1),
         symbol_index: Some(2),
+        binding_kind: ImportBindingKind::ChainedFixup,
         source: ImportBindingSource::ChainedFixup,
         is_weak: false,
     };
@@ -145,6 +146,7 @@ fn evidence_variants_are_constructible() {
         pointer_address: Some(0x3010),
         helper_address: None,
         binding_ordinal: Some(1),
+        stub_kind: StubKind::NonLazy,
         dylib: Some(binding.dylib.clone()),
         name: Some(binding.name.clone()),
         source: ImportBindingSource::Stub,

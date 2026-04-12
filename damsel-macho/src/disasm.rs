@@ -2,8 +2,8 @@ use crate::errors::{MachoError, Result};
 use damsel_core::{
     Annotation, BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyRequest,
     DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
-    DisassemblyTarget, Import, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
-    Reference, Relocation, Section, Symbol,
+    DisassemblyTarget, Import, ImportBindingKind, Operand, RecoveredValue, RecoveredValueKind,
+    RecoveredValueSource, Reference, Relocation, Section, Symbol,
 };
 use std::collections::BTreeMap;
 
@@ -370,6 +370,7 @@ fn annotate_instructions(
                     pointer_address: stub.pointer_address,
                     helper_address: stub.helper_address,
                     binding_ordinal: stub.binding_ordinal,
+                    stub_kind: stub.stub_kind.clone(),
                     dylib: stub.dylib.clone(),
                     name: stub.name.clone(),
                     source: stub.source,
@@ -393,6 +394,10 @@ fn annotate_instructions(
                             address: stub.pointer_address,
                             offset: None,
                             addend: 0,
+                            binding_kind: match stub.stub_kind {
+                                damsel_core::StubKind::Lazy => ImportBindingKind::Lazy,
+                                damsel_core::StubKind::NonLazy => ImportBindingKind::NonLazy,
+                            },
                             source: stub.source,
                         },
                     );
@@ -476,6 +481,7 @@ fn annotate_instructions(
                     address,
                     offset,
                     addend,
+                    binding_kind,
                     source,
                     is_weak: _,
                 } => {
@@ -496,6 +502,7 @@ fn annotate_instructions(
                                 address,
                                 offset,
                                 addend,
+                                binding_kind,
                                 source,
                             },
                         );
@@ -509,6 +516,7 @@ fn annotate_instructions(
                     pointer_address: _,
                     helper_address: _,
                     binding_ordinal: _,
+                    stub_kind,
                     dylib,
                     name,
                     source,
@@ -523,6 +531,10 @@ fn annotate_instructions(
                                     address: None,
                                     offset: None,
                                     addend: 0,
+                                    binding_kind: match stub_kind {
+                                        damsel_core::StubKind::Lazy => ImportBindingKind::Lazy,
+                                        damsel_core::StubKind::NonLazy => ImportBindingKind::NonLazy,
+                                    },
                                     source,
                                 },
                             );
@@ -611,6 +623,7 @@ fn synthesize_analysis_references(
     include_value_flow: bool,
 ) {
     let mut known_values = BTreeMap::<String, RecoveredValue>::new();
+    let mut jump_table_sources = BTreeMap::<String, (u64, String, u8)>::new();
 
     for instruction in instructions {
         let lower = instruction.mnemonic.to_ascii_lowercase();
@@ -698,14 +711,31 @@ fn synthesize_analysis_references(
             destination_updated = true;
         }
 
-        let memory_inputs = memory_base_displacement(instruction);
-        if let Some((base_register, displacement)) = memory_inputs {
+        let memory_inputs = memory_base_index_displacement(instruction);
+        if let Some((base_register, index_register, displacement)) = memory_inputs {
             if let Some(base) = known_values.get(base_register.as_str()).cloned() {
                 if let Some(target) = add_signed(base.value, displacement) {
                     push_reference_if_missing(
                         &mut instruction.references,
                         Reference::Data { target },
                     );
+                    if let Some(index_register) = index_register.clone() {
+                        let element_size = jump_table_element_size(instruction);
+                        jump_table_sources.insert(
+                            destination.clone().unwrap_or_else(|| base_register.clone()),
+                            (target, index_register.clone(), element_size),
+                        );
+                        if include_annotations {
+                            push_annotation(
+                                &mut instruction.annotations,
+                                Annotation::JumpTableCandidate {
+                                    base: target,
+                                    index_register,
+                                    element_size,
+                                },
+                            );
+                        }
+                    }
                     if let Some(dest) = destination.as_ref() {
                         if lower.starts_with("ldr") || lower.starts_with("ldur") {
                             let recovered = RecoveredValue {
@@ -736,6 +766,7 @@ fn synthesize_analysis_references(
 
         let indirect_register = indirect_control_register(instruction);
         if let Some(register) = indirect_register {
+            let indirect_kind = indirect_control_kind(&lower);
             let indirect_reference = if is_call_mnemonic(&lower) {
                 Reference::IndirectCall {
                     via: register.clone(),
@@ -758,11 +789,7 @@ fn synthesize_analysis_references(
                     push_annotation(
                         &mut instruction.annotations,
                         Annotation::IndirectControlFlow {
-                            kind: if is_call_mnemonic(&lower) {
-                                "call".to_string()
-                            } else {
-                                "branch".to_string()
-                            },
+                            kind: indirect_kind.clone(),
                             via: register.clone(),
                         },
                     );
@@ -771,12 +798,22 @@ fn synthesize_analysis_references(
                 push_annotation(
                     &mut instruction.annotations,
                     Annotation::IndirectControlFlow {
-                        kind: if is_call_mnemonic(&lower) {
-                            "call".to_string()
-                        } else {
-                            "branch".to_string()
-                        },
-                        via: register,
+                        kind: indirect_kind.clone(),
+                        via: register.clone(),
+                    },
+                );
+            }
+            if include_annotations
+                && matches!(lower.as_str(), "br" | "braa" | "braaz" | "brab" | "brabz")
+                && let Some((base, index_register, element_size)) =
+                    jump_table_sources.get(&register).cloned()
+            {
+                push_annotation(
+                    &mut instruction.annotations,
+                    Annotation::JumpTableCandidate {
+                        base,
+                        index_register,
+                        element_size,
                     },
                 );
             }
@@ -790,6 +827,7 @@ fn synthesize_analysis_references(
 
         if is_hard_control_flow_boundary(&lower) && !matches!(lower.as_str(), "bl" | "blr") {
             known_values.clear();
+            jump_table_sources.clear();
         }
     }
 }
@@ -847,7 +885,9 @@ fn add_immediate_inputs(instruction: &DecodedInstruction) -> Option<(Option<Stri
     None
 }
 
-fn memory_base_displacement(instruction: &DecodedInstruction) -> Option<(String, i64)> {
+fn memory_base_index_displacement(
+    instruction: &DecodedInstruction,
+) -> Option<(String, Option<String>, i64)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
     if !(lower.starts_with("ldr")
         || lower.starts_with("ldp")
@@ -861,10 +901,13 @@ fn memory_base_displacement(instruction: &DecodedInstruction) -> Option<(String,
 
     for operand in &instruction.operands {
         if let Operand::Memory {
-            base, displacement, ..
+            base,
+            index,
+            displacement,
+            ..
         } = operand
         {
-            return Some((base.clone(), *displacement));
+            return Some((base.clone(), index.clone(), *displacement));
         }
     }
     None
@@ -903,6 +946,18 @@ fn indirect_control_register(instruction: &DecodedInstruction) -> Option<String>
             Operand::Memory { base, .. } => Some(base.clone()),
             _ => None,
         })
+}
+
+fn indirect_control_kind(mnemonic: &str) -> String {
+    if matches!(mnemonic, "blraa" | "blraaz" | "blrab" | "blrabz") {
+        "authenticated-call".to_string()
+    } else if matches!(mnemonic, "braa" | "braaz" | "brab" | "brabz") {
+        "authenticated-branch".to_string()
+    } else if is_call_mnemonic(mnemonic) {
+        "call".to_string()
+    } else {
+        "branch".to_string()
+    }
 }
 
 fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
@@ -1031,6 +1086,9 @@ fn classify_recovered_value(
     value: u64,
     fallback: RecoveredValueKind,
 ) -> RecoveredValueKind {
+    if image.dyld().bindings_at_address(value).next().is_some() {
+        return RecoveredValueKind::ImportPointer;
+    }
     if image.dyld().stub_for_address(value).is_some() {
         return RecoveredValueKind::StubAddress;
     }
@@ -1050,6 +1108,20 @@ fn classify_recovered_value(
         return RecoveredValueKind::Address;
     }
     fallback
+}
+
+fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
+    let lower = instruction.mnemonic.to_ascii_lowercase();
+    if lower.starts_with("ldrsw") {
+        4
+    } else if destination_register(instruction)
+        .as_deref()
+        .is_some_and(|register| register.starts_with('w'))
+    {
+        4
+    } else {
+        8
+    }
 }
 
 fn push_reference_if_missing(target: &mut Vec<Reference>, reference: Reference) {
@@ -1075,7 +1147,7 @@ fn push_reference_target_annotations(
     symbol_map: &BTreeMap<u64, Vec<&Symbol>>,
     import_map: &BTreeMap<u64, Vec<&Import>>,
     import_name_map: &BTreeMap<String, Vec<&Import>>,
-    image: &BinaryImage,
+    _image: &BinaryImage,
     synthesized_import_refs: &mut Vec<Reference>,
     target: u64,
 ) -> bool {
@@ -1143,41 +1215,6 @@ fn push_reference_target_annotations(
             import_added = true;
         }
     }
-
-    // Stub hook: attempt symbol-name import resolution in stub sections even when the
-    // target is not a concrete import address.
-    if let Some(section) = image.containing_section(target) {
-        if section.name.contains("stub") {
-            if let Some(symbols) = symbol_map.get(&target) {
-                for symbol in symbols {
-                    let normalized = normalize_import_name(&symbol.name);
-                    if let Some(imports) = import_name_map.get(&normalized) {
-                        for import in imports {
-                            push_reference_if_missing(
-                                synthesized_import_refs,
-                                Reference::Import {
-                                    name: import.name.clone(),
-                                    dylib: import.dylib.clone(),
-                                    address: import.address,
-                                },
-                            );
-                            if let Some(out) = out.as_mut() {
-                                push_derived(
-                                    out,
-                                    DerivedAnnotation::Import {
-                                        dylib: import.dylib.clone(),
-                                        name: import.name.clone(),
-                                    },
-                                );
-                            }
-                            import_added = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     import_added
 }
 
@@ -1198,6 +1235,7 @@ fn push_dyld_target_hooks(
                 address: binding.address,
                 offset: binding.offset,
                 addend: binding.addend,
+                binding_kind: binding.binding_kind,
                 source: binding.source,
                 is_weak: binding.is_weak,
             },
@@ -1219,6 +1257,7 @@ fn push_dyld_target_hooks(
                     address: binding.address,
                     offset: binding.offset,
                     addend: binding.addend,
+                    binding_kind: binding.binding_kind,
                     source: binding.source,
                 },
             );
@@ -1236,6 +1275,7 @@ fn push_dyld_target_hooks(
                 pointer_address: stub.pointer_address,
                 helper_address: stub.helper_address,
                 binding_ordinal: stub.binding_ordinal,
+                stub_kind: stub.stub_kind.clone(),
                 dylib: stub.dylib.clone(),
                 name: stub.name.clone(),
                 source: stub.source,
@@ -1259,6 +1299,10 @@ fn push_dyld_target_hooks(
                         address: stub.pointer_address,
                         offset: None,
                         addend: 0,
+                        binding_kind: match stub.stub_kind {
+                            damsel_core::StubKind::Lazy => ImportBindingKind::Lazy,
+                            damsel_core::StubKind::NonLazy => ImportBindingKind::NonLazy,
+                        },
                         source: stub.source,
                     },
                 );
@@ -1321,6 +1365,7 @@ enum DerivedAnnotation {
         address: Option<u64>,
         offset: Option<u64>,
         addend: i64,
+        binding_kind: ImportBindingKind,
         source: damsel_core::ImportBindingSource,
     },
 }
@@ -1353,6 +1398,7 @@ impl DerivedAnnotation {
                 address,
                 offset,
                 addend,
+                binding_kind,
                 source,
             } => Annotation::ImportBindingEvidence {
                 dylib,
@@ -1360,6 +1406,7 @@ impl DerivedAnnotation {
                 address,
                 offset,
                 addend,
+                binding_kind,
                 source,
             },
         }

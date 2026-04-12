@@ -14,6 +14,9 @@ e07559fadea991c21dda7e94bc064fb641974c76daa847cd8501dc9be36e3811 objc-sample
 94436763cc1a25e64a6f2358936ea9046b608a370bd20d01b992635c9a7a2ae4 arm64e-sample
 b200d6d6587af820c258aad12eed1b482d335a8f92f44972e08b0c4f1277d072 x86_64-only-hello
 bec5bb22e25742ac9368876de4a94575d14e91232fbdd3a1ba655d29cb9b550b import-rich
+b34622e74db24f3829cb2bda8040e80c02eff8fe479339bd654be438a7a701bc import-lazy
+e77cd421c44b5344511fc72fe2476b6b3c149adc1c71a781da3c46c5bc9879a6 semantic-switch
+5d46560896550803303f6f92027d1c8e622c18761e20cc1b39d7a64b57e2b5dc malformed-dysymtab-indirect
 fd33e4f22bf94f6f75b9bb33e2b99d5c3888a1a7fdc907dd13638f2aba816b66 malformed-truncated
 EOF
 }
@@ -125,11 +128,57 @@ build_fixtures() {
     -arch arm64 \
     -isysroot "$SDKROOT" \
     -mmacosx-version-min=13.0 \
+    -Wl,-no_fixup_chains \
+    "$SRC/import-rich.c" \
+    -o "$BIN/import-lazy"
+
+  "$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    -O2 \
+    "$SRC/semantic-switch.c" \
+    -o "$BIN/semantic-switch"
+
+  "$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
     -framework Foundation \
     "$SRC/objc-sample.m" \
     -o "$BIN/objc-sample"
 
   head -c 256 "$BIN/arm64-symbolized" > "$BIN/malformed-truncated"
+
+  ROOT_BIN="$BIN" python3 - <<'PY'
+from pathlib import Path
+import struct
+import os
+
+root = Path(os.environ["ROOT_BIN"])
+src = root / "import-lazy"
+dst = root / "malformed-dysymtab-indirect"
+data = bytearray(src.read_bytes())
+
+MH_MAGIC_64 = 0xfeedfacf
+magic, = struct.unpack_from("<I", data, 0)
+if magic != MH_MAGIC_64:
+    raise SystemExit("unexpected Mach-O magic")
+
+ncmds, sizeofcmds = struct.unpack_from("<II", data, 16)
+offset = 32
+for _ in range(ncmds):
+    cmd, cmdsize = struct.unpack_from("<II", data, offset)
+    if cmd == 0xb:
+        indirectsymoff = struct.unpack_from("<I", data, offset + 56)[0]
+        struct.pack_into("<I", data, indirectsymoff, 0xfffffffe)
+        break
+    offset += cmdsize
+else:
+    raise SystemExit("LC_DYSYMTAB not found")
+
+dst.write_bytes(data)
+PY
 }
 
 case "${1:-}" in

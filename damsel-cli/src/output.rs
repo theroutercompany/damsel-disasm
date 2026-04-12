@@ -250,9 +250,10 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 println!("class_records:");
                 for record in &filtered.classes {
                     println!(
-                        "  {:#x} name={} superclass={} metaclass={} ro={} methods={} class_methods={} properties={} ivars={} protocols={}",
+                        "  {:#x} name={} source={:?} superclass={} metaclass={} ro={} methods={} class_methods={} properties={} ivars={} protocols={}",
                         record.class_pointer,
                         record.name.as_deref().unwrap_or("-"),
+                        record.name_source,
                         record
                             .superclass_name
                             .clone()
@@ -312,11 +313,12 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 println!("method_records:");
                 for entry in &filtered.methods {
                     println!(
-                        "  owner={} kind={} class_method={} selector={} impl={} types={}",
+                        "  owner={} kind={} class_method={} selector={} selector_source={:?} impl={} types={}",
                         entry.owner_name.as_deref().unwrap_or("-"),
                         objc_method_owner_kind_text(entry.record.owner_kind),
                         entry.record.is_class_method,
                         entry.record.selector.as_deref().unwrap_or("-"),
+                        entry.record.selector_source,
                         entry.record
                             .implementation
                             .map(|value| format!("{value:#x}"))
@@ -433,7 +435,7 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 println!("import_bindings:");
                 for binding in &filtered.import_bindings {
                     println!(
-                        "  {:>#18} {:>#18} {:<30} {:<24} addend={} source={:?} ordinal={} symidx={} weak={}",
+                        "  {:>#18} {:>#18} {:<30} {:<24} addend={} kind={:?} source={:?} ordinal={} symidx={} weak={}",
                         binding
                             .address
                             .map(|value| format!("{value:#x}"))
@@ -445,6 +447,7 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                         binding.dylib,
                         binding.name,
                         binding.addend,
+                        binding.binding_kind,
                         binding.source,
                         binding
                             .ordinal
@@ -462,7 +465,7 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                 println!("stubs:");
                 for stub in &filtered.stubs {
                     println!(
-                        "  {:#18x} section={} ptr_section={} ptr={} helper={} ordinal={} {}:{} source={:?}",
+                        "  {:#18x} section={} ptr_section={} ptr={} helper={} ordinal={} kind={:?} {}:{} source={:?}",
                         stub.stub_address,
                         stub.section.as_deref().unwrap_or("-"),
                         stub.pointer_section.as_deref().unwrap_or("-"),
@@ -475,6 +478,7 @@ pub(crate) fn print_dyld(image: &BinaryImage, view: &DyldViewOptions, output: &O
                         stub.binding_ordinal
                             .map(|value| value.to_string())
                             .unwrap_or_else(|| "-".to_string()),
+                        stub.stub_kind,
                         stub.dylib.as_deref().unwrap_or("-"),
                         stub.name.as_deref().unwrap_or("-"),
                         stub.source
@@ -1844,6 +1848,10 @@ fn import_binding_json(binding: &ImportBindingRecord) -> JsonValue {
                 .map(|value| u64_num(u64::from(value)))
                 .unwrap_or(JsonValue::Null),
         ),
+        (
+            "binding_kind".to_string(),
+            JsonValue::String(format!("{:?}", binding.binding_kind)),
+        ),
         ("is_weak".to_string(), JsonValue::Bool(binding.is_weak)),
     ])
 }
@@ -1878,6 +1886,10 @@ fn stub_entry_json(stub: &StubEntry) -> JsonValue {
             stub.binding_ordinal
                 .map(|value| u64_num(u64::from(value)))
                 .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "stub_kind".to_string(),
+            JsonValue::String(format!("{:?}", stub.stub_kind)),
         ),
         (
             "dylib".to_string(),
@@ -1946,6 +1958,10 @@ fn objc_class_record_json(record: &ObjcClassRecord) -> JsonValue {
                 .as_ref()
                 .map(|value| JsonValue::String(value.clone()))
                 .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "name_source".to_string(),
+            JsonValue::String(format!("{:?}", record.name_source)),
         ),
         (
             "superclass_pointer".to_string(),
@@ -2195,6 +2211,10 @@ fn objc_method_record_json(record: &ObjcMethodRecord) -> JsonValue {
                 .as_ref()
                 .map(|value| JsonValue::String(value.clone()))
                 .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "selector_source".to_string(),
+            JsonValue::String(format!("{:?}", record.selector_source)),
         ),
         (
             "implementation".to_string(),
@@ -2478,10 +2498,11 @@ fn reference_to_text(reference: &Reference) -> String {
             address,
             offset,
             addend,
+            binding_kind,
             source,
             is_weak,
         } => format!(
-            "import-binding {}:{} addr={} off={} addend={} source={:?} weak={}",
+            "import-binding {}:{} addr={} off={} addend={} kind={:?} source={:?} weak={}",
             dylib,
             name,
             address
@@ -2491,6 +2512,7 @@ fn reference_to_text(reference: &Reference) -> String {
                 .map(|value| format!("{value:#x}"))
                 .unwrap_or_else(|| "-".to_string()),
             addend,
+            binding_kind,
             source,
             is_weak
         ),
@@ -2500,10 +2522,11 @@ fn reference_to_text(reference: &Reference) -> String {
             pointer_address,
             dylib,
             name,
+            stub_kind,
             source,
             ..
         } => format!(
-            "stub {stub_address:#x} ptr={} {}:{} source={:?}",
+            "stub {stub_address:#x} ptr={} kind={stub_kind:?} {}:{} source={:?}",
             pointer_address
                 .map(|value| format!("{value:#x}"))
                 .unwrap_or_else(|| "-".to_string()),
@@ -2564,6 +2587,7 @@ fn reference_json(reference: &Reference) -> JsonValue {
             address,
             offset,
             addend,
+            binding_kind,
             source,
             is_weak,
         } => JsonValue::Object(vec![
@@ -2583,6 +2607,10 @@ fn reference_json(reference: &Reference) -> JsonValue {
             ),
             ("addend".to_string(), i64_num(*addend)),
             (
+                "binding_kind".to_string(),
+                JsonValue::String(format!("{binding_kind:?}")),
+            ),
+            (
                 "source".to_string(),
                 JsonValue::String(format!("{source:?}")),
             ),
@@ -2595,6 +2623,7 @@ fn reference_json(reference: &Reference) -> JsonValue {
             pointer_address,
             helper_address,
             binding_ordinal,
+            stub_kind,
             dylib,
             name,
             source,
@@ -2628,6 +2657,10 @@ fn reference_json(reference: &Reference) -> JsonValue {
                 binding_ordinal
                     .map(|value| u64_num(u64::from(value)))
                     .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "stub_kind".to_string(),
+                JsonValue::String(format!("{stub_kind:?}")),
             ),
             (
                 "dylib".to_string(),
@@ -2714,6 +2747,7 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             address,
             offset,
             addend,
+            binding_kind,
             source,
         } => JsonValue::Object(vec![
             (
@@ -2732,6 +2766,10 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             ),
             ("addend".to_string(), i64_num(*addend)),
             (
+                "binding_kind".to_string(),
+                JsonValue::String(format!("{binding_kind:?}")),
+            ),
+            (
                 "source".to_string(),
                 JsonValue::String(format!("{source:?}")),
             ),
@@ -2742,6 +2780,7 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             address,
             offset,
             addend,
+            binding_kind,
             source,
         } => JsonValue::Object(vec![
             (
@@ -2760,9 +2799,29 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             ),
             ("addend".to_string(), i64_num(*addend)),
             (
+                "binding_kind".to_string(),
+                JsonValue::String(format!("{binding_kind:?}")),
+            ),
+            (
                 "source".to_string(),
                 JsonValue::String(format!("{source:?}")),
             ),
+        ]),
+        Annotation::JumpTableCandidate {
+            base,
+            index_register,
+            element_size,
+        } => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("jump_table_candidate".to_string()),
+            ),
+            ("base".to_string(), u64_num(*base)),
+            (
+                "index_register".to_string(),
+                JsonValue::String(index_register.clone()),
+            ),
+            ("element_size".to_string(), u64_num(u64::from(*element_size))),
         ]),
         Annotation::RelocationEvidence {
             address,

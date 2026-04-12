@@ -1,7 +1,7 @@
 use crate::errors::{MachoError, Result};
 use damsel_core::{
-    DyldMetadata, ExportKind, ExportedSymbol, ImportBindingRecord, ImportBindingSource, Segment,
-    StubEntry, StubHelperEntry,
+    DyldMetadata, ExportKind, ExportedSymbol, ImportBindingKind, ImportBindingRecord,
+    ImportBindingSource, Segment, StubEntry, StubHelperEntry, StubKind,
 };
 use goblin::mach::{load_command, segment};
 use goblin::mach::exports::ExportInfo;
@@ -134,6 +134,11 @@ pub(crate) fn collect_dyld_metadata(
         (
             binding.address.unwrap_or_default(),
             binding.offset.unwrap_or_default(),
+            match binding.binding_kind {
+                ImportBindingKind::ChainedFixup => 0u8,
+                ImportBindingKind::NonLazy => 1u8,
+                ImportBindingKind::Lazy => 2u8,
+            },
             binding.dylib.clone(),
             binding.name.clone(),
             match binding.source {
@@ -572,6 +577,7 @@ fn walk_fixup_chain(
                 addend: binding_addend,
                 ordinal: pointer.bind_ordinal,
                 symbol_index: None,
+                binding_kind: ImportBindingKind::ChainedFixup,
                 source: ImportBindingSource::ChainedFixup,
                 is_weak: binding_is_weak,
             });
@@ -615,6 +621,12 @@ fn materialize_stub_entries(
                 pointer_address: Some(pointer_address),
                 helper_address: None,
                 binding_ordinal: binding.ordinal,
+                stub_kind: match binding.binding_kind {
+                    ImportBindingKind::Lazy => StubKind::Lazy,
+                    ImportBindingKind::NonLazy | ImportBindingKind::ChainedFixup => {
+                        StubKind::NonLazy
+                    }
+                },
                 dylib: Some(binding.dylib.clone()),
                 name: Some(export_name.unwrap_or_else(|| binding.name.clone())),
                 source: binding.source,

@@ -48,6 +48,18 @@ fn decode_benchmarks(criterion: &mut Criterion) {
             max_instructions: 256,
         },
         Scenario {
+            name: "import_lazy::__text",
+            fixture: "import-lazy",
+            target: DisassemblyTarget::Section("__text".to_string()),
+            max_instructions: 256,
+        },
+        Scenario {
+            name: "semantic_switch::__text",
+            fixture: "semantic-switch",
+            target: DisassemblyTarget::Section("__text".to_string()),
+            max_instructions: 256,
+        },
+        Scenario {
             name: "arm64e_sample::__text",
             fixture: "arm64e-sample",
             target: DisassemblyTarget::Section("__text".to_string()),

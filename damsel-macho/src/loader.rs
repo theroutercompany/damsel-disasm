@@ -3,8 +3,9 @@ use crate::errors::{MachoError, Result};
 use crate::objc::collect_objc_metadata;
 use damsel_core::{
     Architecture, BinaryFormat, BinaryImage, BinarySource, DyldMetadata, Endianness, Import,
-    ImportBindingRecord, ImportBindingSource, Platform, Relocation, Section, Segment,
-    SliceDescriptor, SliceInfo, StubEntry, Symbol, SymbolKind,
+    ImportBindingKind, ImportBindingRecord, ImportBindingSource, Platform, Relocation, Section,
+    Segment, SliceDescriptor, SliceInfo, StubEntry, StubHelperEntry, StubKind, Symbol,
+    SymbolKind,
 };
 use goblin::mach::Mach;
 use object::macho::{
@@ -54,7 +55,7 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
     let symbols = collect_symbols(&object_file);
     let mut imports = collect_imports(&object_file, &goblin_mach)?;
     let relocations = collect_relocations(&object_file)?;
-    let objc = collect_objc_metadata(slice_bytes, &sections);
+    let objc = collect_objc_metadata(slice_bytes, &sections, &symbols);
     let mut dyld = collect_dyld_metadata(&goblin_mach, slice_bytes, &segments)?;
     augment_dysymtab_bindings_and_stubs(slice_bytes, &goblin_mach, &imports, &mut dyld.metadata)?;
     merge_import_hints(&mut imports, &dyld);
@@ -543,7 +544,7 @@ fn augment_dysymtab_bindings_and_stubs(
             });
     let indirect_symbol_metadata = build_indirect_symbol_metadata(macho);
 
-    let mut pointer_slots_by_name = BTreeMap::<String, Vec<(u64, Option<u64>, String)>>::new();
+    let mut pointer_slots_by_name = BTreeMap::<String, Vec<PointerSlotMetadata>>::new();
     for section in macho_file.sections() {
         let raw = section.macho_section();
         let section_type = raw.section_type(endian);
@@ -556,12 +557,25 @@ fn augment_dysymtab_bindings_and_stubs(
         let section_name = section.name().unwrap_or_default().to_string();
         let segment_name = section.segment_name().ok().flatten().unwrap_or_default().to_string();
         let full_name = format!("{segment_name}:{section_name}");
+        let binding_kind = match section_type {
+            S_NON_LAZY_SYMBOL_POINTERS => PointerBindingKind::NonLazy,
+            S_LAZY_SYMBOL_POINTERS | S_LAZY_DYLIB_SYMBOL_POINTERS => PointerBindingKind::Lazy,
+            _ => continue,
+        };
         let entries = raw.indirect_symbols(endian, indirect_symbols)?;
         let (file_offset, _) = section.file_range().unwrap_or((0, 0));
         for (index, raw_symbol) in entries.iter().enumerate() {
             let symbol_index = raw_symbol.get(endian);
             if is_special_indirect_symbol(symbol_index) {
                 continue;
+            }
+            if macho_file
+                .symbol_by_index(SymbolIndex(symbol_index as usize))
+                .is_err()
+            {
+                return Err(MachoError::MalformedDyldPayload(format!(
+                    "indirect symbol index out of range: {symbol_index}"
+                )));
             }
             let Some(resolution) = resolve_indirect_symbol(
                 &macho_file,
@@ -583,13 +597,21 @@ fn augment_dysymtab_bindings_and_stubs(
                 addend: resolution.import.addend,
                 ordinal: resolution.ordinal,
                 symbol_index: Some(symbol_index),
+                binding_kind: match binding_kind {
+                    PointerBindingKind::Lazy => ImportBindingKind::Lazy,
+                    PointerBindingKind::NonLazy => ImportBindingKind::NonLazy,
+                },
                 source: ImportBindingSource::IndirectSymbol,
                 is_weak: resolution.import.is_weak,
             });
             pointer_slots_by_name
                 .entry(resolution.normalized_name)
                 .or_default()
-                .push((pointer_address, pointer_offset, full_name.clone()));
+                .push(PointerSlotMetadata {
+                    pointer_address,
+                    section_name: full_name.clone(),
+                    binding_kind,
+                });
         }
     }
 
@@ -611,6 +633,14 @@ fn augment_dysymtab_bindings_and_stubs(
             if is_special_indirect_symbol(symbol_index) {
                 continue;
             }
+            if macho_file
+                .symbol_by_index(SymbolIndex(symbol_index as usize))
+                .is_err()
+            {
+                return Err(MachoError::MalformedDyldPayload(format!(
+                    "indirect symbol index out of range: {symbol_index}"
+                )));
+            }
             let Some(resolution) = resolve_indirect_symbol(
                 &macho_file,
                 SymbolIndex(symbol_index as usize),
@@ -622,22 +652,29 @@ fn augment_dysymtab_bindings_and_stubs(
                 continue;
             };
             let stub_address = section.address().saturating_add((index as u64) * stub_size);
-            let (pointer_address, _, _) = pointer_slots_by_name
+            let pointer_slot = pointer_slots_by_name
                 .get(&resolution.normalized_name)
                 .and_then(|values| values.get(index).or_else(|| values.first()))
-                .cloned()
-                .unwrap_or((0, None, String::new()));
-            let pointer_address = (pointer_address != 0).then_some(pointer_address);
+                .cloned();
+            let pointer_address = pointer_slot
+                .as_ref()
+                .map(|slot| slot.pointer_address)
+                .filter(|value| *value != 0);
             dyld.stubs.push(StubEntry {
                 stub_address,
                 section: Some(full_name.clone()),
-                pointer_section: pointer_slots_by_name
-                    .get(&resolution.normalized_name)
-                    .and_then(|values| values.get(index).or_else(|| values.first()))
-                    .map(|(_, _, section_name)| section_name.clone()),
+                pointer_section: pointer_slot.as_ref().map(|slot| slot.section_name.clone()),
                 pointer_address,
                 helper_address: None,
                 binding_ordinal: resolution.ordinal,
+                stub_kind: match pointer_slot
+                    .as_ref()
+                    .map(|slot| slot.binding_kind)
+                    .unwrap_or(PointerBindingKind::NonLazy)
+                {
+                    PointerBindingKind::Lazy => StubKind::Lazy,
+                    PointerBindingKind::NonLazy => StubKind::NonLazy,
+                },
                 dylib: Some(resolution.import.dylib.clone()),
                 name: Some(resolution.import.name.clone()),
                 source: ImportBindingSource::Stub,
@@ -645,10 +682,17 @@ fn augment_dysymtab_bindings_and_stubs(
         }
     }
 
+    populate_stub_helpers(&macho_file, &pointer_slots_by_name, dyld)?;
+
     dyld.import_bindings.sort_by_key(|binding| {
         (
             binding.address.unwrap_or_default(),
             binding.offset.unwrap_or_default(),
+            match binding.binding_kind {
+                ImportBindingKind::ChainedFixup => 0u8,
+                ImportBindingKind::NonLazy => 1u8,
+                ImportBindingKind::Lazy => 2u8,
+            },
             binding.dylib.clone(),
             binding.name.clone(),
             binding_source_rank(binding.source),
@@ -692,6 +736,66 @@ fn binding_source_rank(source: ImportBindingSource) -> u8 {
     }
 }
 
+fn populate_stub_helpers(
+    macho_file: &MachOFile64<'_, object::Endianness>,
+    pointer_slots_by_name: &BTreeMap<String, Vec<PointerSlotMetadata>>,
+    dyld: &mut DyldMetadata,
+) -> Result<()> {
+    let Some(helper_section) = macho_file
+        .sections()
+        .find(|section| section.name().unwrap_or_default() == "__stub_helper")
+    else {
+        return Ok(());
+    };
+
+    let helper_size = helper_section.size();
+    let mut lazy_stubs = dyld
+        .stubs
+        .iter_mut()
+        .filter(|stub| stub.stub_kind == StubKind::Lazy)
+        .collect::<Vec<_>>();
+    if lazy_stubs.is_empty() {
+        return Ok(());
+    }
+
+    lazy_stubs.sort_by_key(|stub| stub.stub_address);
+    let helper_entry_size = 12u64;
+    let lazy_count = lazy_stubs.len() as u64;
+    if helper_size < lazy_count.saturating_mul(helper_entry_size) {
+        return Err(MachoError::MalformedDyldPayload(
+            "__stub_helper section is smaller than the expected lazy helper table".to_string(),
+        ));
+    }
+    let preamble_size = helper_size.saturating_sub(lazy_count.saturating_mul(helper_entry_size));
+    let helper_base = helper_section.address().saturating_add(preamble_size);
+
+    for (index, stub) in lazy_stubs.into_iter().enumerate() {
+        let helper_address =
+            helper_base.saturating_add((index as u64).saturating_mul(helper_entry_size));
+        stub.helper_address = Some(helper_address);
+        dyld.stub_helpers.push(StubHelperEntry {
+            helper_address,
+            target_stub: Some(stub.stub_address),
+            binding_ordinal: stub.binding_ordinal,
+            dylib: stub.dylib.clone(),
+            name: stub.name.clone(),
+        });
+    }
+
+    dyld.stub_helpers.sort_by_key(|entry| {
+        (
+            entry.helper_address,
+            entry.target_stub.unwrap_or_default(),
+            entry.binding_ordinal.unwrap_or_default(),
+            entry.dylib.clone().unwrap_or_default(),
+            entry.name.clone().unwrap_or_default(),
+        )
+    });
+    dyld.stub_helpers.dedup();
+    let _ = pointer_slots_by_name;
+    Ok(())
+}
+
 fn normalize_import_name(name: &str) -> String {
     name.trim_start_matches('_').to_ascii_lowercase()
 }
@@ -708,6 +812,19 @@ struct ResolvedIndirectSymbol<'a> {
     normalized_name: String,
     ordinal: Option<u32>,
     import: &'a Import,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PointerBindingKind {
+    Lazy,
+    NonLazy,
+}
+
+#[derive(Debug, Clone)]
+struct PointerSlotMetadata {
+    pointer_address: u64,
+    section_name: String,
+    binding_kind: PointerBindingKind,
 }
 
 fn build_indirect_symbol_metadata(

@@ -458,6 +458,7 @@ pub struct ObjcPointerRef {
 pub struct ObjcClassRecord {
     pub class_pointer: u64,
     pub name: Option<String>,
+    pub name_source: ObjcNameSource,
     pub superclass_pointer: Option<u64>,
     pub superclass_name: Option<String>,
     pub metaclass_pointer: Option<u64>,
@@ -510,8 +511,25 @@ pub struct ObjcMethodRecord {
     pub owner_kind: ObjcMethodOwnerKind,
     pub is_class_method: bool,
     pub selector: Option<String>,
+    pub selector_source: ObjcSelectorSource,
     pub implementation: Option<u64>,
     pub type_encoding: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjcNameSource {
+    Runtime,
+    PointerTable,
+    LegacyPool,
+    Unresolved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjcSelectorSource {
+    Direct,
+    Relative,
+    LegacyPool,
+    Unresolved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -600,6 +618,13 @@ pub enum ImportBindingSource {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportBindingKind {
+    Lazy,
+    NonLazy,
+    ChainedFixup,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportBindingRecord {
     pub dylib: String,
@@ -609,8 +634,15 @@ pub struct ImportBindingRecord {
     pub addend: i64,
     pub ordinal: Option<u32>,
     pub symbol_index: Option<u32>,
+    pub binding_kind: ImportBindingKind,
     pub source: ImportBindingSource,
     pub is_weak: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StubKind {
+    Lazy,
+    NonLazy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -621,6 +653,7 @@ pub struct StubEntry {
     pub pointer_address: Option<u64>,
     pub helper_address: Option<u64>,
     pub binding_ordinal: Option<u32>,
+    pub stub_kind: StubKind,
     pub dylib: Option<String>,
     pub name: Option<String>,
     pub source: ImportBindingSource,
@@ -735,6 +768,7 @@ pub enum Reference {
         address: Option<u64>,
         offset: Option<u64>,
         addend: i64,
+        binding_kind: ImportBindingKind,
         source: ImportBindingSource,
         is_weak: bool,
     },
@@ -745,6 +779,7 @@ pub enum Reference {
         pointer_address: Option<u64>,
         helper_address: Option<u64>,
         binding_ordinal: Option<u32>,
+        stub_kind: StubKind,
         dylib: Option<String>,
         name: Option<String>,
         source: ImportBindingSource,
@@ -786,6 +821,7 @@ pub enum Annotation {
         address: Option<u64>,
         offset: Option<u64>,
         addend: i64,
+        binding_kind: ImportBindingKind,
         source: ImportBindingSource,
     },
     ImportBindingEvidence {
@@ -794,6 +830,7 @@ pub enum Annotation {
         address: Option<u64>,
         offset: Option<u64>,
         addend: i64,
+        binding_kind: ImportBindingKind,
         source: ImportBindingSource,
     },
     RelocationEvidence {
@@ -802,6 +839,11 @@ pub enum Annotation {
         encoding: String,
         target: String,
         addend: i64,
+    },
+    JumpTableCandidate {
+        base: u64,
+        index_register: String,
+        element_size: u8,
     },
     Note(String),
 }
@@ -831,10 +873,11 @@ impl fmt::Display for Annotation {
                 address,
                 offset,
                 addend,
+                binding_kind,
                 source,
             } => write!(
                 f,
-                "binding {dylib}:{name} addr={} off={} addend={addend} source={source:?}",
+                "binding {dylib}:{name} addr={} off={} addend={addend} kind={binding_kind:?} source={source:?}",
                 address.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string()),
                 offset.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string())
             ),
@@ -844,10 +887,11 @@ impl fmt::Display for Annotation {
                 address,
                 offset,
                 addend,
+                binding_kind,
                 source,
             } => write!(
                 f,
-                "binding-evidence {dylib}:{name} addr={} off={} addend={addend} source={source:?}",
+                "binding-evidence {dylib}:{name} addr={} off={} addend={addend} kind={binding_kind:?} source={source:?}",
                 address.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string()),
                 offset.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string())
             ),
@@ -860,6 +904,14 @@ impl fmt::Display for Annotation {
             } => write!(
                 f,
                 "reloc-evidence kind={kind} encoding={encoding} target={target} addend={addend} addr={address:#x}"
+            ),
+            Self::JumpTableCandidate {
+                base,
+                index_register,
+                element_size,
+            } => write!(
+                f,
+                "jump-table base={base:#x} index={index_register} elem_size={element_size}"
             ),
             Self::Note(note) => f.write_str(note),
         }
@@ -874,6 +926,7 @@ impl Reference {
             address: binding.address,
             offset: binding.offset,
             addend: binding.addend,
+            binding_kind: binding.binding_kind,
             source: binding.source,
             is_weak: binding.is_weak,
         }
@@ -887,6 +940,7 @@ impl Reference {
             pointer_address: stub.pointer_address,
             helper_address: stub.helper_address,
             binding_ordinal: stub.binding_ordinal,
+            stub_kind: stub.stub_kind.clone(),
             dylib: stub.dylib.clone(),
             name: stub.name.clone(),
             source: stub.source,
@@ -902,6 +956,7 @@ impl Annotation {
             address: binding.address,
             offset: binding.offset,
             addend: binding.addend,
+            binding_kind: binding.binding_kind,
             source: binding.source,
         }
     }
@@ -1058,6 +1113,7 @@ pub enum RecoveredValueKind {
     Address,
     CString,
     Literal,
+    ImportPointer,
     StubAddress,
     ObjcSelector,
     ObjcClass,

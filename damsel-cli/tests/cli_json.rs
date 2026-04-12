@@ -82,11 +82,12 @@ fn dyld_json_contract_exposes_bindings_and_stubs() {
     let stubs = json["data"]["stubs"].as_array().expect("stub array");
     assert!(!stubs.is_empty(), "{out}");
     assert_eq!(stubs[0]["section"], "__TEXT:__stubs");
+    assert!(stubs[0]["stub_kind"].is_string());
 }
 
 #[test]
 fn dyld_json_filters_bindings_by_name_and_source() {
-    let path = fixture("import-rich");
+    let path = fixture("import-lazy");
     let out = run_json_ok(&[
         "--format",
         "json",
@@ -108,7 +109,25 @@ fn dyld_json_filters_bindings_by_name_and_source() {
             .as_str()
             .is_some_and(|name| name.to_ascii_lowercase().contains("puts"))
             && binding["source"] == "IndirectSymbol"
+            && binding["binding_kind"] == "Lazy"
     }));
+}
+
+#[test]
+fn dyld_json_exposes_stub_helpers_for_lazy_fixture() {
+    let path = fixture("import-lazy");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "dyld",
+        path.to_str().expect("utf8 path"),
+    ]);
+    let json = parse_json(&out);
+    let helpers = json["data"]["stub_helpers"]
+        .as_array()
+        .expect("helper array");
+    assert!(!helpers.is_empty(), "{out}");
+    assert!(helpers[0]["target_stub"].is_number());
 }
 
 #[test]
@@ -127,6 +146,10 @@ fn objc_json_contract_exposes_structured_runtime_records() {
     assert!(json["data"]["classes"].is_array());
     assert!(json["data"]["protocols"].is_array());
     assert!(json["data"]["categories"].is_array());
+    let classes = json["data"]["classes"].as_array().expect("class array");
+    if let Some(class) = classes.first() {
+        assert!(class["name_source"].is_string());
+    }
 }
 
 #[test]
@@ -173,24 +196,22 @@ fn slices_json_contract_exposes_full_inventory() {
 
 #[test]
 fn disasm_json_contract_has_window_and_analysis_fields() {
-    let path = fixture("arm64-symbolized");
+    let path = fixture("semantic-switch");
     let out = run_json_ok(&[
         "--format",
         "json",
         "disasm",
         path.to_str().expect("utf8 path"),
-        "--symbol",
-        "_main",
-        "--from",
-        "0x1000004c8",
-        "--to",
-        "0x1000004d8",
+        "--section",
+        "__text",
         "--show-references",
         "--show-values",
     ]);
     let json = parse_json(&out);
     assert_eq!(json["command"], "disasm");
-    assert!(json["data"]["window_end"].is_number());
+    assert!(
+        json["data"]["window_end"].is_null() || json["data"]["window_end"].is_number()
+    );
     assert!(json["data"]["decoded_bytes"].is_number());
     assert!(json["data"]["stop_reason"].is_string());
     assert!(json["data"]["instruction_count"].is_number());
@@ -199,6 +220,15 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
     assert!(instructions[0]["references"].is_array());
     assert!(instructions[0]["annotations"].is_array());
     assert!(instructions[0]["recovered_values"].is_array());
+    assert!(instructions.iter().any(|instruction| {
+        instruction["annotations"]
+            .as_array()
+            .is_some_and(|annotations| {
+                annotations.iter().any(|annotation| {
+                    annotation["type"] == "jump_table_candidate"
+                })
+            })
+    }));
 }
 
 #[test]

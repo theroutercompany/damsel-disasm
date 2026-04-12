@@ -1,5 +1,6 @@
 use damsel_core::{
-    Annotation, ImportBindingRecord, ImportBindingSource, Reference, Relocation, StubEntry,
+    Annotation, ImportBindingKind, ImportBindingRecord, ImportBindingSource, Reference,
+    Relocation, StubEntry, StubKind,
 };
 
 #[test]
@@ -25,6 +26,7 @@ fn reference_from_binding_preserves_fields() {
         addend: -4,
         ordinal: Some(1),
         symbol_index: Some(3),
+        binding_kind: ImportBindingKind::ChainedFixup,
         source: ImportBindingSource::ChainedFixup,
         is_weak: true,
     };
@@ -38,6 +40,7 @@ fn reference_from_binding_preserves_fields() {
             address: Some(0x1010),
             offset: Some(0x24),
             addend: -4,
+            binding_kind: ImportBindingKind::ChainedFixup,
             source: ImportBindingSource::ChainedFixup,
             is_weak: true,
         } if dylib == "/usr/lib/libSystem.B.dylib" && name == "_puts"
@@ -53,6 +56,7 @@ fn reference_from_stub_preserves_fields() {
         pointer_address: Some(0x2010),
         helper_address: None,
         binding_ordinal: Some(1),
+        stub_kind: StubKind::NonLazy,
         dylib: Some("/usr/lib/libSystem.B.dylib".to_string()),
         name: Some("_puts".to_string()),
         source: ImportBindingSource::Stub,
@@ -85,6 +89,7 @@ fn constructs_annotation_evidence_from_helpers() {
         addend: 7,
         ordinal: Some(1),
         symbol_index: Some(3),
+        binding_kind: ImportBindingKind::NonLazy,
         source: ImportBindingSource::IndirectSymbol,
         is_weak: false,
     };
@@ -109,6 +114,7 @@ fn constructs_annotation_evidence_from_helpers() {
             address: Some(0x1010),
             offset: Some(0x24),
             addend: 7,
+            binding_kind: ImportBindingKind::NonLazy,
             source: ImportBindingSource::IndirectSymbol,
         } if dylib == "/usr/lib/libSystem.B.dylib" && name == "_puts"
     ));
@@ -141,11 +147,12 @@ fn display_for_import_binding_annotation_includes_expected_fields() {
         address: Some(0x1010),
         offset: Some(0x24),
         addend: -2,
+        binding_kind: ImportBindingKind::ChainedFixup,
         source: ImportBindingSource::ChainedFixup,
     };
     assert_eq!(
         annotation.to_string(),
-        "binding /usr/lib/libSystem.B.dylib:_puts addr=0x1010 off=0x24 addend=-2 source=ChainedFixup"
+        "binding /usr/lib/libSystem.B.dylib:_puts addr=0x1010 off=0x24 addend=-2 kind=ChainedFixup source=ChainedFixup"
     );
 }
 
@@ -157,11 +164,12 @@ fn display_for_import_binding_evidence_annotation_uses_evidence_prefix() {
         address: None,
         offset: None,
         addend: 0,
+        binding_kind: ImportBindingKind::NonLazy,
         source: ImportBindingSource::Other,
     };
     assert_eq!(
         annotation.to_string(),
-        "binding-evidence /usr/lib/libSystem.B.dylib:_puts addr=- off=- addend=0 source=Other"
+        "binding-evidence /usr/lib/libSystem.B.dylib:_puts addr=- off=- addend=0 kind=NonLazy source=Other"
     );
 }
 

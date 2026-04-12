@@ -8,12 +8,13 @@ pub use model::{
     DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
     DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason, DisassemblyTarget, DyldMetadata,
     Endianness, ExportFlags, ExportKind, ExportRecord, ExportedSymbol, Import,
-    ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcClassRecord, ObjcIvarRecord,
-    ObjcMetadata, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcPointerKind, ObjcPointerRef,
-    ObjcPropertyRecord, ObjcProtocolRecord, Operand, Platform, RecoveredValue,
-    RecoveredValueKind, RecoveredValueSource, Reference, Relocation, RelocationEncodingId,
-    RelocationKindId, RelocationTargetKind, Section, SectionKind, Segment, SliceDescriptor,
-    SliceInfo, StubEntry, StubHelperEntry, Symbol, SymbolKind,
+    ImportBindingKind, ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord,
+    ObjcClassRecord, ObjcIvarRecord, ObjcMetadata, ObjcMethodOwnerKind, ObjcMethodRecord,
+    ObjcNameSource, ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord,
+    ObjcSelectorSource, Operand, Platform, RecoveredValue, RecoveredValueKind,
+    RecoveredValueSource, Reference, Relocation, RelocationEncodingId, RelocationKindId,
+    RelocationTargetKind, Section, SectionKind, Segment, SliceDescriptor, SliceInfo, StubEntry,
+    StubHelperEntry, StubKind, Symbol, SymbolKind,
 };
 
 pub fn decode_aarch64(

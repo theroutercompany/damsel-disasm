@@ -53,3 +53,14 @@ fn rejects_truncated_fixture_without_panicking() {
         MachoError::Object(_) | MachoError::Goblin(_) | MachoError::UnsupportedFileKind(_)
     ));
 }
+
+#[test]
+fn rejects_malformed_dysymtab_fixture_without_panicking() {
+    let path = fixture("malformed-dysymtab-indirect");
+    if !path.exists() {
+        eprintln!("malformed-dysymtab-indirect fixture not present; skipping");
+        return;
+    }
+    let error = load(path).expect_err("expected malformed dyld fixture to fail");
+    assert!(matches!(error, MachoError::MalformedDyldPayload(_)));
+}

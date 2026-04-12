@@ -1,4 +1,4 @@
-use damsel_core::ImportBindingSource;
+use damsel_core::{ImportBindingKind, ImportBindingSource, StubKind};
 use damsel_macho::load;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -16,14 +16,14 @@ fn optional_fixture(names: &[&str]) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
-fn assert_import_bindings_and_stubs(path: &Path) {
+fn assert_import_bindings_and_stubs(path: &Path, expect_chained_fixups: bool) {
     let image =
         load(path).unwrap_or_else(|error| panic!("failed to load fixture {path:?}: {error}"));
     let dyld = image.dyld();
 
-    assert!(
-        dyld.has_chained_fixups,
-        "expected chained fixups for fixture {path:?}"
+    assert_eq!(
+        dyld.has_chained_fixups, expect_chained_fixups,
+        "unexpected chained-fixups state for fixture {path:?}"
     );
     assert!(dyld.has_binds, "expected bind fixups for fixture {path:?}");
     assert!(
@@ -41,6 +41,15 @@ fn assert_import_bindings_and_stubs(path: &Path) {
                 )
             }),
         "expected at least one concrete binding source"
+    );
+    assert!(
+        dyld.import_bindings.iter().any(|binding| matches!(
+            binding.binding_kind,
+            ImportBindingKind::ChainedFixup
+                | ImportBindingKind::Lazy
+                | ImportBindingKind::NonLazy
+        )),
+        "expected typed binding kinds for fixture {path:?}"
     );
     assert!(
         dyld.import_bindings
@@ -81,6 +90,7 @@ fn assert_import_bindings_and_stubs(path: &Path) {
             .any(|stub| {
                 stub.section.is_some()
                     && stub.pointer_address.is_some()
+                    && matches!(stub.stub_kind, StubKind::Lazy | StubKind::NonLazy)
                     && (stub.name.is_some() || stub.dylib.is_some())
             }),
         "expected at least one resolved stub pointer/name mapping"
@@ -89,12 +99,12 @@ fn assert_import_bindings_and_stubs(path: &Path) {
 
 #[test]
 fn import_bindings_and_stubs_symbolized_fixture() {
-    assert_import_bindings_and_stubs(&fixture("arm64-symbolized"));
+    assert_import_bindings_and_stubs(&fixture("arm64-symbolized"), true);
 }
 
 #[test]
 fn import_bindings_and_stubs_objc_fixture() {
-    assert_import_bindings_and_stubs(&fixture("objc-sample"));
+    assert_import_bindings_and_stubs(&fixture("objc-sample"), true);
 }
 
 #[test]
@@ -103,5 +113,14 @@ fn import_bindings_and_stubs_import_rich_fixture_if_present() {
         eprintln!("import-rich fixture not present; skipping");
         return;
     };
-    assert_import_bindings_and_stubs(&path);
+    assert_import_bindings_and_stubs(&path, true);
+}
+
+#[test]
+fn import_bindings_and_stubs_lazy_fixture_if_present() {
+    let Some(path) = optional_fixture(&["import-lazy"]) else {
+        eprintln!("import-lazy fixture not present; skipping");
+        return;
+    };
+    assert_import_bindings_and_stubs(&path, false);
 }

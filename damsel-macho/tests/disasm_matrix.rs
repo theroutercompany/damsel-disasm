@@ -1,6 +1,6 @@
 use damsel_core::{
-    DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
-    DisassemblyStopReason, DisassemblyTarget, Reference,
+    Annotation, DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
+    DisassemblyStopReason, DisassemblyTarget, RecoveredValueKind, Reference,
 };
 use damsel_macho::{disassemble, disassemble_v2, load, MachoError};
 use std::path::{Path, PathBuf};
@@ -184,4 +184,55 @@ fn disasm_emits_import_references_when_targets_match_import_sites() {
         has_import_reference,
         "expected at least one import-related reference in selected target disassembly"
     );
+}
+
+#[test]
+fn disasm_emits_import_pointer_recovered_values_for_lazy_fixture_when_present() {
+    let path = fixture("import-lazy");
+    if !path.exists() {
+        eprintln!("import-lazy fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load lazy helper fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(64),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble lazy helper fixture");
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction
+            .recovered_values
+            .iter()
+            .any(|value| value.kind == RecoveredValueKind::ImportPointer)
+    }));
+}
+
+#[test]
+fn disasm_emits_jump_table_candidate_for_semantic_fixture_when_present() {
+    let path = fixture("semantic-switch");
+    if !path.exists() {
+        eprintln!("semantic-switch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load semantic fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(256),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble semantic fixture");
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.annotations.iter().any(|annotation| {
+            matches!(annotation, Annotation::JumpTableCandidate { .. })
+        })
+    }));
 }
