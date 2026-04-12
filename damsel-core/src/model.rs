@@ -372,11 +372,34 @@ impl Relocation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExportedSymbol {
+pub enum ExportKind {
+    Regular,
+    Reexport {
+        dylib: String,
+        symbol: Option<String>,
+    },
+    Resolver {
+        resolver_address: Option<u64>,
+    },
+    StubAndResolver {
+        stub_address: Option<u64>,
+        resolver_address: Option<u64>,
+    },
+    WeakDefinition,
+    Absolute,
+    ThreadLocal,
+    Unknown(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportRecord {
     pub name: String,
     pub address: Option<u64>,
     pub flags: String,
+    pub kind: ExportKind,
 }
+
+pub type ExportedSymbol = ExportRecord;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExportFlags(String);
@@ -397,7 +420,7 @@ impl fmt::Display for ExportFlags {
     }
 }
 
-impl ExportedSymbol {
+impl ExportRecord {
     pub fn flags_typed(&self) -> ExportFlags {
         ExportFlags::parse(self.flags.clone())
     }
@@ -437,16 +460,28 @@ pub struct ObjcClassRecord {
     pub name: Option<String>,
     pub superclass_pointer: Option<u64>,
     pub superclass_name: Option<String>,
+    pub metaclass_pointer: Option<u64>,
     pub ro_pointer: Option<u64>,
     pub method_list_pointer: Option<u64>,
     pub property_list_pointer: Option<u64>,
     pub protocol_list_pointer: Option<u64>,
+    pub ivar_list_pointer: Option<u64>,
+    pub methods: Vec<ObjcMethodRecord>,
+    pub class_methods: Vec<ObjcMethodRecord>,
+    pub properties: Vec<ObjcPropertyRecord>,
+    pub ivars: Vec<ObjcIvarRecord>,
+    pub adopted_protocols: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjcProtocolRecord {
     pub pointer: u64,
     pub name: Option<String>,
+    pub required_instance_methods: Vec<ObjcMethodRecord>,
+    pub required_class_methods: Vec<ObjcMethodRecord>,
+    pub optional_instance_methods: Vec<ObjcMethodRecord>,
+    pub optional_class_methods: Vec<ObjcMethodRecord>,
+    pub properties: Vec<ObjcPropertyRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -455,6 +490,43 @@ pub struct ObjcCategoryRecord {
     pub name: Option<String>,
     pub class_pointer: Option<u64>,
     pub class_name: Option<String>,
+    pub methods: Vec<ObjcMethodRecord>,
+    pub class_methods: Vec<ObjcMethodRecord>,
+    pub properties: Vec<ObjcPropertyRecord>,
+    pub adopted_protocols: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjcMethodOwnerKind {
+    Class,
+    Metaclass,
+    Protocol,
+    Category,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjcMethodRecord {
+    pub owner_pointer: u64,
+    pub owner_kind: ObjcMethodOwnerKind,
+    pub is_class_method: bool,
+    pub selector: Option<String>,
+    pub implementation: Option<u64>,
+    pub type_encoding: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjcPropertyRecord {
+    pub owner_pointer: u64,
+    pub name: Option<String>,
+    pub attributes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjcIvarRecord {
+    pub owner_pointer: u64,
+    pub name: Option<String>,
+    pub type_encoding: Option<String>,
+    pub offset: Option<u64>,
 }
 
 impl ObjcMetadata {
@@ -497,6 +569,7 @@ pub struct DyldMetadata {
     pub has_chained_fixups: bool,
     pub import_bindings: Vec<ImportBindingRecord>,
     pub stubs: Vec<StubEntry>,
+    pub stub_helpers: Vec<StubHelperEntry>,
 }
 
 impl DyldMetadata {
@@ -534,6 +607,8 @@ pub struct ImportBindingRecord {
     pub address: Option<u64>,
     pub offset: Option<u64>,
     pub addend: i64,
+    pub ordinal: Option<u32>,
+    pub symbol_index: Option<u32>,
     pub source: ImportBindingSource,
     pub is_weak: bool,
 }
@@ -542,10 +617,22 @@ pub struct ImportBindingRecord {
 pub struct StubEntry {
     pub stub_address: u64,
     pub section: Option<String>,
+    pub pointer_section: Option<String>,
     pub pointer_address: Option<u64>,
+    pub helper_address: Option<u64>,
+    pub binding_ordinal: Option<u32>,
     pub dylib: Option<String>,
     pub name: Option<String>,
     pub source: ImportBindingSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StubHelperEntry {
+    pub helper_address: u64,
+    pub target_stub: Option<u64>,
+    pub binding_ordinal: Option<u32>,
+    pub dylib: Option<String>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -654,7 +741,10 @@ pub enum Reference {
     Stub {
         stub_address: u64,
         section: Option<String>,
+        pointer_section: Option<String>,
         pointer_address: Option<u64>,
+        helper_address: Option<u64>,
+        binding_ordinal: Option<u32>,
         dylib: Option<String>,
         name: Option<String>,
         source: ImportBindingSource,
@@ -793,7 +883,10 @@ impl Reference {
         Self::Stub {
             stub_address: stub.stub_address,
             section: stub.section.clone(),
+            pointer_section: stub.pointer_section.clone(),
             pointer_address: stub.pointer_address,
+            helper_address: stub.helper_address,
+            binding_ordinal: stub.binding_ordinal,
             dylib: stub.dylib.clone(),
             name: stub.name.clone(),
             source: stub.source,
@@ -831,6 +924,7 @@ pub struct DecodedInstruction {
     pub opcode: u32,
     pub mnemonic: String,
     pub operands: Vec<Operand>,
+    pub recovered_values: Vec<RecoveredValue>,
     pub references: Vec<Reference>,
     pub annotations: Vec<Annotation>,
 }
@@ -871,6 +965,7 @@ pub struct DisassemblyRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DisassemblyOptions {
     pub include_annotations: bool,
+    pub include_value_flow: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -950,16 +1045,52 @@ impl DisassemblyLimit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisassemblyStopReason {
-    LimitReached,
+    InstructionLimitReached,
+    ByteLimitReached,
+    WindowClipped,
     InputExhausted,
     DecodeHalt,
     TargetRangeEnd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveredValueKind {
+    Address,
+    CString,
+    Literal,
+    StubAddress,
+    ObjcSelector,
+    ObjcClass,
+    ObjcMethodList,
+    JumpTableBase,
+    UnknownData,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveredValueSource {
+    Adr,
+    AdrpAdd,
+    AdrpLoad,
+    LiteralLoad,
+    MoveWide,
+    StubMetadata,
+    ObjcMetadata,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveredValue {
+    pub register: String,
+    pub value: u64,
+    pub kind: RecoveredValueKind,
+    pub source: RecoveredValueSource,
 }
 
 impl Default for DisassemblyOptions {
     fn default() -> Self {
         Self {
             include_annotations: true,
+            include_value_flow: false,
         }
     }
 }
@@ -977,6 +1108,7 @@ impl DisassemblyRequest {
     pub fn options(&self) -> DisassemblyOptions {
         DisassemblyOptions {
             include_annotations: self.include_annotations,
+            include_value_flow: false,
         }
     }
 
@@ -1026,23 +1158,65 @@ impl From<&DisassemblyResult> for DisassemblyResultV2 {
     }
 }
 
-pub struct BinaryImage {
-    pub source: BinarySource,
-    pub path: PathBuf,
-    pub format: BinaryFormat,
-    pub architecture: Architecture,
-    pub endianness: Endianness,
-    pub entry_point: Option<u64>,
-    pub platform: Option<Platform>,
-    pub slice: SliceInfo,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BinaryImageValidationError {
+    MissingAvailableSlices,
+    MissingSelectedSlice,
+    MultipleSelectedSlices,
+    SelectedSliceMismatch,
+}
+
+impl fmt::Display for BinaryImageValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingAvailableSlices => f.write_str("binary image must expose at least one slice"),
+            Self::MissingSelectedSlice => f.write_str("binary image must expose one selected slice descriptor"),
+            Self::MultipleSelectedSlices => f.write_str("binary image cannot expose multiple selected slice descriptors"),
+            Self::SelectedSliceMismatch => f.write_str("selected slice descriptor must match slice info and architecture"),
+        }
+    }
+}
+
+impl std::error::Error for BinaryImageValidationError {}
+
+#[derive(Debug, Clone)]
+pub struct BinaryImageBuilder {
+    source: BinarySource,
+    path: PathBuf,
+    format: BinaryFormat,
+    architecture: Architecture,
+    endianness: Endianness,
+    entry_point: Option<u64>,
+    platform: Option<Platform>,
+    slice: SliceInfo,
     available_slices: Vec<SliceDescriptor>,
     segments: Vec<Segment>,
     sections: Vec<Section>,
     symbols: Vec<Symbol>,
     imports: Vec<Import>,
     relocations: Vec<Relocation>,
-    pub objc: ObjcMetadata,
-    pub dyld: DyldMetadata,
+    objc: ObjcMetadata,
+    dyld: DyldMetadata,
+    data: Arc<[u8]>,
+}
+
+pub struct BinaryImage {
+    source: BinarySource,
+    path: PathBuf,
+    format: BinaryFormat,
+    architecture: Architecture,
+    endianness: Endianness,
+    entry_point: Option<u64>,
+    platform: Option<Platform>,
+    slice: SliceInfo,
+    available_slices: Vec<SliceDescriptor>,
+    segments: Vec<Segment>,
+    sections: Vec<Section>,
+    symbols: Vec<Symbol>,
+    imports: Vec<Import>,
+    relocations: Vec<Relocation>,
+    objc: ObjcMetadata,
+    dyld: DyldMetadata,
     data: Arc<[u8]>,
     section_name_index_cache: OnceLock<BTreeMap<String, Vec<usize>>>,
     symbol_name_index_cache: OnceLock<BTreeMap<String, Vec<usize>>>,
@@ -1094,7 +1268,7 @@ impl BinaryImage {
         dyld: DyldMetadata,
         data: Arc<[u8]>,
     ) -> Self {
-        Self {
+        BinaryImageBuilder {
             source,
             path,
             format,
@@ -1112,11 +1286,9 @@ impl BinaryImage {
             objc,
             dyld,
             data,
-            section_name_index_cache: OnceLock::new(),
-            symbol_name_index_cache: OnceLock::new(),
-            import_name_index_cache: OnceLock::new(),
-            relocation_address_index_cache: OnceLock::new(),
         }
+        .build()
+        .expect("BinaryImage::new received invalid slice inventory")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1137,8 +1309,7 @@ impl BinaryImage {
         dyld: DyldMetadata,
         data: Arc<[u8]>,
     ) -> Self {
-        let available_slices = vec![SliceDescriptor::from_selected_slice(&slice, architecture)];
-        Self::new(
+        Self::builder(
             BinarySource::File(path.clone()),
             path,
             format,
@@ -1146,8 +1317,7 @@ impl BinaryImage {
             endianness,
             entry_point,
             platform,
-            slice,
-            available_slices,
+            slice.clone(),
             segments,
             sections,
             symbols,
@@ -1157,6 +1327,9 @@ impl BinaryImage {
             dyld,
             data,
         )
+        .with_available_slices(vec![SliceDescriptor::from_selected_slice(&slice, architecture)])
+        .build()
+        .expect("BinaryImage::from_file_bytes received invalid slice inventory")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1180,8 +1353,7 @@ impl BinaryImage {
         let source = BinarySource::Memory {
             label: label.clone(),
         };
-        let available_slices = vec![SliceDescriptor::from_selected_slice(&slice, architecture)];
-        Self::new(
+        Self::builder(
             source,
             BinarySource::Memory { label }.default_path(),
             format,
@@ -1189,8 +1361,7 @@ impl BinaryImage {
             endianness,
             entry_point,
             platform,
-            slice,
-            available_slices,
+            slice.clone(),
             segments,
             sections,
             symbols,
@@ -1200,6 +1371,49 @@ impl BinaryImage {
             dyld,
             data,
         )
+        .with_available_slices(vec![SliceDescriptor::from_selected_slice(&slice, architecture)])
+        .build()
+        .expect("BinaryImage::from_memory_bytes received invalid slice inventory")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn builder(
+        source: BinarySource,
+        path: PathBuf,
+        format: BinaryFormat,
+        architecture: Architecture,
+        endianness: Endianness,
+        entry_point: Option<u64>,
+        platform: Option<Platform>,
+        slice: SliceInfo,
+        segments: Vec<Segment>,
+        sections: Vec<Section>,
+        symbols: Vec<Symbol>,
+        imports: Vec<Import>,
+        relocations: Vec<Relocation>,
+        objc: ObjcMetadata,
+        dyld: DyldMetadata,
+        data: Arc<[u8]>,
+    ) -> BinaryImageBuilder {
+        BinaryImageBuilder {
+            source,
+            path,
+            format,
+            architecture,
+            endianness,
+            entry_point,
+            platform,
+            slice,
+            available_slices: Vec::new(),
+            segments,
+            sections,
+            symbols,
+            imports,
+            relocations,
+            objc,
+            dyld,
+            data,
+        }
     }
 
     pub fn source_path(&self) -> Option<&Path> {
@@ -1257,14 +1471,7 @@ impl BinaryImage {
     }
 
     pub fn with_available_slices(mut self, available_slices: Vec<SliceDescriptor>) -> Self {
-        self.available_slices = if available_slices.is_empty() {
-            vec![SliceDescriptor::from_selected_slice(
-                &self.slice,
-                self.architecture,
-            )]
-        } else {
-            available_slices
-        };
+        self.available_slices = available_slices;
         self
     }
 
@@ -1298,6 +1505,66 @@ impl BinaryImage {
 
     pub fn dyld(&self) -> &DyldMetadata {
         &self.dyld
+    }
+
+    pub fn read_c_string_at_address(&self, address: u64, max_len: usize) -> Option<String> {
+        let (section, data) = self.bytes_for_virtual_range(address, max_len)?;
+        if !section.kind.to_ascii_lowercase().contains("string")
+            && !section.name.contains("cstring")
+            && !section.name.contains("objc")
+        {
+            return None;
+        }
+        let length = data.iter().position(|byte| *byte == 0).unwrap_or(data.len());
+        if length == 0 {
+            return None;
+        }
+        let value = String::from_utf8_lossy(&data[..length]).into_owned();
+        let printable = value
+            .chars()
+            .all(|ch| ch.is_ascii_graphic() || ch == ' ' || ch == ':');
+        printable.then_some(value)
+    }
+
+    pub fn objc_selector_name_at_address(&self, address: u64) -> Option<&str> {
+        self.objc
+            .pointer_refs
+            .iter()
+            .find(|entry| {
+                entry.kind == ObjcPointerKind::SelRef && entry.resolved_address == Some(address)
+            })
+            .and_then(|entry| entry.resolved_name.as_deref())
+    }
+
+    pub fn objc_class_name_at_address(&self, address: u64) -> Option<&str> {
+        self.objc
+            .classes
+            .iter()
+            .find(|record| record.class_pointer == address || record.metaclass_pointer == Some(address))
+            .and_then(|record| record.name.as_deref())
+            .or_else(|| {
+                self.objc
+                    .pointer_refs
+                    .iter()
+                    .find(|entry| {
+                        matches!(entry.kind, ObjcPointerKind::ClassRef | ObjcPointerKind::ClassList)
+                            && entry.resolved_address == Some(address)
+                    })
+                    .and_then(|entry| entry.resolved_name.as_deref())
+            })
+    }
+
+    pub fn objc_method_list_owner_at_address(&self, address: u64) -> Option<&str> {
+        self.objc
+            .classes
+            .iter()
+            .find(|record| {
+                record.method_list_pointer == Some(address)
+                    || record.protocol_list_pointer == Some(address)
+                    || record.property_list_pointer == Some(address)
+                    || record.ivar_list_pointer == Some(address)
+            })
+            .and_then(|record| record.name.as_deref())
     }
 
     pub fn section_by_short_name(&self, name: &str) -> Option<&Section> {
@@ -1455,6 +1722,67 @@ impl BinaryImage {
             index.entry(relocation.address).or_default().push(position);
         }
         index
+    }
+}
+
+impl BinaryImageBuilder {
+    pub fn with_available_slices(mut self, available_slices: Vec<SliceDescriptor>) -> Self {
+        self.available_slices = available_slices;
+        self
+    }
+
+    pub fn build(self) -> Result<BinaryImage, BinaryImageValidationError> {
+        let available_slices = if self.available_slices.is_empty() {
+            vec![SliceDescriptor::from_selected_slice(
+                &self.slice,
+                self.architecture,
+            )]
+        } else {
+            self.available_slices
+        };
+        if available_slices.is_empty() {
+            return Err(BinaryImageValidationError::MissingAvailableSlices);
+        }
+
+        let mut selected_iter = available_slices.iter().filter(|descriptor| descriptor.selected);
+        let Some(selected) = selected_iter.next() else {
+            return Err(BinaryImageValidationError::MissingSelectedSlice);
+        };
+        if selected_iter.next().is_some() {
+            return Err(BinaryImageValidationError::MultipleSelectedSlices);
+        }
+        if selected.offset != self.slice.offset
+            || selected.size != self.slice.size
+            || selected.cpu_subtype != self.slice.cpu_subtype
+            || selected.is_universal != self.slice.is_universal
+            || selected.architecture != self.architecture
+        {
+            return Err(BinaryImageValidationError::SelectedSliceMismatch);
+        }
+
+        Ok(BinaryImage {
+            source: self.source,
+            path: self.path,
+            format: self.format,
+            architecture: self.architecture,
+            endianness: self.endianness,
+            entry_point: self.entry_point,
+            platform: self.platform,
+            slice: self.slice,
+            available_slices,
+            segments: self.segments,
+            sections: self.sections,
+            symbols: self.symbols,
+            imports: self.imports,
+            relocations: self.relocations,
+            objc: self.objc,
+            dyld: self.dyld,
+            data: self.data,
+            section_name_index_cache: OnceLock::new(),
+            symbol_name_index_cache: OnceLock::new(),
+            import_name_index_cache: OnceLock::new(),
+            relocation_address_index_cache: OnceLock::new(),
+        })
     }
 }
 

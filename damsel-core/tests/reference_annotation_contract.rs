@@ -23,6 +23,8 @@ fn reference_from_binding_preserves_fields() {
         address: Some(0x1010),
         offset: Some(0x24),
         addend: -4,
+        ordinal: Some(1),
+        symbol_index: Some(3),
         source: ImportBindingSource::ChainedFixup,
         is_weak: true,
     };
@@ -47,7 +49,10 @@ fn reference_from_stub_preserves_fields() {
     let stub = StubEntry {
         stub_address: 0x2000,
         section: Some("__TEXT:__stubs".to_string()),
+        pointer_section: Some("__DATA_CONST:__got".to_string()),
         pointer_address: Some(0x2010),
+        helper_address: None,
+        binding_ordinal: Some(1),
         dylib: Some("/usr/lib/libSystem.B.dylib".to_string()),
         name: Some("_puts".to_string()),
         source: ImportBindingSource::Stub,
@@ -63,6 +68,7 @@ fn reference_from_stub_preserves_fields() {
             ref dylib,
             ref name,
             source: ImportBindingSource::Stub,
+            ..
         } if section == "__TEXT:__stubs"
             && dylib.as_deref() == Some("/usr/lib/libSystem.B.dylib")
             && name.as_deref() == Some("_puts")
@@ -77,6 +83,8 @@ fn constructs_annotation_evidence_from_helpers() {
         address: Some(0x1010),
         offset: Some(0x24),
         addend: 7,
+        ordinal: Some(1),
+        symbol_index: Some(3),
         source: ImportBindingSource::IndirectSymbol,
         is_weak: false,
     };

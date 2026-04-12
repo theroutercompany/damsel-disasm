@@ -1,8 +1,10 @@
 use crate::errors::{MachoError, Result};
 use damsel_core::{
-    DyldMetadata, ExportedSymbol, ImportBindingRecord, ImportBindingSource, Segment, StubEntry,
+    DyldMetadata, ExportKind, ExportedSymbol, ImportBindingRecord, ImportBindingSource, Segment,
+    StubEntry, StubHelperEntry,
 };
 use goblin::mach::{load_command, segment};
+use goblin::mach::exports::ExportInfo;
 
 const DYLD_CHAINED_PTR_START_NONE: u16 = 0xFFFF;
 const DYLD_CHAINED_PTR_START_MULTI: u16 = 0x8000;
@@ -76,6 +78,7 @@ pub(crate) fn collect_dyld_metadata(
             name: export.name,
             address: image_base.checked_add(export.offset),
             flags: format!("{:?};offset={:#x}", export.info, export.offset),
+            kind: map_export_kind(&export.info, image_base),
         })
         .collect::<Vec<_>>();
 
@@ -155,9 +158,38 @@ pub(crate) fn collect_dyld_metadata(
             has_chained_fixups,
             import_bindings,
             stubs,
+            stub_helpers: Vec::<StubHelperEntry>::new(),
         },
         import_hints,
     })
+}
+
+fn map_export_kind(info: &ExportInfo<'_>, image_base: u64) -> ExportKind {
+    match info {
+        ExportInfo::Regular { flags, .. } => {
+            if flags & goblin::mach::exports::EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION != 0 {
+                ExportKind::WeakDefinition
+            } else {
+                ExportKind::Regular
+            }
+        }
+        ExportInfo::Reexport {
+            lib,
+            lib_symbol_name,
+            ..
+        } => ExportKind::Reexport {
+            dylib: (*lib).to_string(),
+            symbol: lib_symbol_name.map(ToString::to_string),
+        },
+        ExportInfo::Stub {
+            stub_offset,
+            resolver_offset,
+            ..
+        } => ExportKind::StubAndResolver {
+            stub_address: image_base.checked_add((*stub_offset).into()),
+            resolver_address: image_base.checked_add((*resolver_offset).into()),
+        },
+    }
 }
 
 pub(crate) fn detect_platform(
@@ -538,6 +570,8 @@ fn walk_fixup_chain(
                 address: Some(address),
                 offset: Some(file_offset),
                 addend: binding_addend,
+                ordinal: pointer.bind_ordinal,
+                symbol_index: None,
                 source: ImportBindingSource::ChainedFixup,
                 is_weak: binding_is_weak,
             });
@@ -577,7 +611,10 @@ fn materialize_stub_entries(
             Some(StubEntry {
                 stub_address: pointer_address,
                 section: None,
+                pointer_section: None,
                 pointer_address: Some(pointer_address),
+                helper_address: None,
+                binding_ordinal: binding.ordinal,
                 dylib: Some(binding.dylib.clone()),
                 name: Some(export_name.unwrap_or_else(|| binding.name.clone())),
                 source: binding.source,

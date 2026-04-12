@@ -11,7 +11,7 @@ fn fixture(name: &str) -> PathBuf {
 #[test]
 fn objc_pointer_refs_are_populated_and_sorted() {
     let image = load(fixture("objc-sample")).expect("load objc fixture");
-    let refs = &image.objc.pointer_refs;
+    let refs = &image.objc().pointer_refs;
     assert!(!refs.is_empty(), "expected pointer refs to be populated");
     assert!(
         refs.iter()
@@ -55,7 +55,7 @@ fn compatibility_views_include_resolved_pointer_names() {
     let image = load(fixture("objc-sample")).expect("load objc fixture");
 
     for entry in image
-        .objc
+        .objc()
         .pointer_refs
         .iter()
         .filter(|entry| matches!(entry.kind, ObjcPointerKind::SelRef))
@@ -63,7 +63,7 @@ fn compatibility_views_include_resolved_pointer_names() {
         if let Some(name) = &entry.resolved_name {
             assert!(
                 image
-                    .objc
+                    .objc()
                     .selector_names
                     .iter()
                     .any(|selector| selector == name),
@@ -72,7 +72,7 @@ fn compatibility_views_include_resolved_pointer_names() {
         }
     }
 
-    for entry in image.objc.pointer_refs.iter().filter(|entry| {
+    for entry in image.objc().pointer_refs.iter().filter(|entry| {
         matches!(
             entry.kind,
             ObjcPointerKind::ClassRef | ObjcPointerKind::ClassList
@@ -81,7 +81,7 @@ fn compatibility_views_include_resolved_pointer_names() {
         if let Some(name) = &entry.resolved_name {
             assert!(
                 image
-                    .objc
+                    .objc()
                     .class_names
                     .iter()
                     .any(|class_name| class_name == name),
@@ -94,29 +94,33 @@ fn compatibility_views_include_resolved_pointer_names() {
 #[test]
 fn compatibility_views_remain_sorted_and_deduplicated() {
     let image = load(fixture("objc-sample")).expect("load objc fixture");
-    assert_sorted_deduped(&image.objc.class_names);
-    assert_sorted_deduped(&image.objc.selector_names);
-    assert_sorted_deduped(&image.objc.method_names);
+    assert_sorted_deduped(&image.objc().class_names);
+    assert_sorted_deduped(&image.objc().selector_names);
+    assert_sorted_deduped(&image.objc().method_names);
 }
 
 #[test]
 fn structured_objc_runtime_records_are_populated_and_ordered() {
     let image = load(fixture("objc-sample")).expect("load objc fixture");
 
-    if image.objc.pointer_refs.iter().any(|entry| {
+    if image.objc().pointer_refs.iter().any(|entry| {
         matches!(
             entry.kind,
             ObjcPointerKind::ClassList | ObjcPointerKind::ClassRef
         )
     }) {
         assert!(
-            !image.objc.classes.is_empty(),
+            !image.objc().classes.is_empty(),
             "class pointer tables should produce class records"
         );
     }
 
     let mut previous_class_pointer = 0u64;
-    for (index, class_record) in image.objc.classes.iter().enumerate() {
+    let mut saw_class_methods = false;
+    let mut saw_properties = false;
+    let mut saw_ivars = false;
+    let mut saw_protocol_adoption = false;
+    for (index, class_record) in image.objc().classes.iter().enumerate() {
         assert!(
             class_record.class_pointer != 0,
             "class pointer must be non-zero"
@@ -132,17 +136,30 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
         if let Some(name) = &class_record.name {
             assert!(
                 image
-                    .objc
+                    .objc()
                     .class_names
                     .iter()
                     .any(|class_name| class_name == name),
                 "class compatibility view missing structured class name: {name}"
             );
         }
+        saw_class_methods |= !class_record.class_methods.is_empty();
+        saw_properties |= !class_record.properties.is_empty();
+        saw_ivars |= !class_record.ivars.is_empty();
+        saw_protocol_adoption |= !class_record.adopted_protocols.is_empty();
     }
+    assert!(saw_class_methods, "expected class methods in structured class records");
+    assert!(saw_properties, "expected property records in structured class records");
+    assert!(saw_ivars, "expected ivar records in structured class records");
+    assert!(
+        saw_protocol_adoption,
+        "expected adopted protocols in structured class records"
+    );
 
     let mut previous_protocol_pointer = 0u64;
-    for (index, protocol_record) in image.objc.protocols.iter().enumerate() {
+    let mut saw_protocol_methods = false;
+    let mut saw_protocol_properties = false;
+    for (index, protocol_record) in image.objc().protocols.iter().enumerate() {
         assert!(
             protocol_record.pointer != 0,
             "protocol pointer must be non-zero when present"
@@ -160,10 +177,25 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
                 "structured protocol names should be non-empty"
             );
         }
+        saw_protocol_methods |= !protocol_record.required_instance_methods.is_empty()
+            || !protocol_record.required_class_methods.is_empty()
+            || !protocol_record.optional_instance_methods.is_empty()
+            || !protocol_record.optional_class_methods.is_empty();
+        saw_protocol_properties |= !protocol_record.properties.is_empty();
     }
+    assert!(
+        saw_protocol_methods,
+        "expected structured protocol methods to be decoded"
+    );
+    assert!(
+        saw_protocol_properties,
+        "expected structured protocol properties to be decoded"
+    );
 
     let mut previous_category_pointer = 0u64;
-    for (index, category_record) in image.objc.categories.iter().enumerate() {
+    let mut saw_category_methods = false;
+    let mut saw_category_properties = false;
+    for (index, category_record) in image.objc().categories.iter().enumerate() {
         assert!(
             category_record.pointer != 0,
             "category pointer must be non-zero when present"
@@ -184,13 +216,26 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
         if let Some(class_name) = &category_record.class_name {
             assert!(
                 image
-                    .objc
+                    .objc()
                     .class_names
                     .iter()
                     .any(|existing| existing == class_name),
                 "compatibility view missing category owner class name: {class_name}"
             );
         }
+        saw_category_methods |=
+            !category_record.methods.is_empty() || !category_record.class_methods.is_empty();
+        saw_category_properties |= !category_record.properties.is_empty();
+    }
+    if !image.objc().categories.is_empty() {
+        assert!(
+            saw_category_methods,
+            "expected structured category methods to be decoded"
+        );
+        assert!(
+            saw_category_properties,
+            "expected structured category properties to be decoded"
+        );
     }
 }
 

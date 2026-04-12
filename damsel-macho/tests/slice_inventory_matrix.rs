@@ -82,7 +82,7 @@ fn universal_fixture_selected_descriptor_is_marked_universal() {
     );
     assert_eq!(
         selected.architecture,
-        image.architecture,
+        image.architecture(),
         "selected descriptor architecture should match image architecture"
     );
 }
@@ -112,7 +112,7 @@ fn arm64e_fixture_selected_descriptor_reports_arm64e_when_present() {
         "arm64e fixture should report arm64e descriptor architecture"
     );
     assert_eq!(
-        image.architecture,
+        image.architecture(),
         Architecture::Arm64e,
         "arm64e fixture should report arm64e image architecture"
     );

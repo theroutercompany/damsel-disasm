@@ -23,15 +23,15 @@ fn write_temp_fixture(bytes: &[u8]) -> PathBuf {
 #[test]
 fn loads_universal_fixture_with_arm64_slice() {
     let image = load(fixture("universal-hello")).expect("load universal fixture");
-    assert_eq!(image.architecture, Architecture::Arm64);
-    assert!(image.slice.is_universal);
+    assert_eq!(image.architecture(), Architecture::Arm64);
+    assert!(image.selected_slice().is_universal);
 }
 
 #[test]
 fn loads_objc_fixture_metadata() {
     let image = load(fixture("objc-sample")).expect("load objc fixture");
-    assert!(!image.objc.class_names.is_empty());
-    assert!(!image.objc.selector_names.is_empty());
+    assert!(!image.objc().class_names.is_empty());
+    assert!(!image.objc().selector_names.is_empty());
 }
 
 #[test]

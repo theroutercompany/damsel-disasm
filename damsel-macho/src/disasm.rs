@@ -2,7 +2,8 @@ use crate::errors::{MachoError, Result};
 use damsel_core::{
     Annotation, BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyRequest,
     DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
-    DisassemblyTarget, Import, Operand, Reference, Relocation, Section, Symbol,
+    DisassemblyTarget, Import, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
+    Reference, Relocation, Section, Symbol,
 };
 use std::collections::BTreeMap;
 
@@ -25,12 +26,18 @@ fn disassemble_impl(
     let mut instructions =
         damsel_core::decode_aarch64(window.bytes, window.start_address, request.limit.instruction_cap())?;
     let include_annotations = request.options.include_annotations;
+    let include_value_flow = request.options.include_value_flow;
     if !include_annotations {
         for instruction in &mut instructions {
             instruction.annotations.clear();
         }
     }
-    synthesize_analysis_references(&mut instructions, include_annotations);
+    if !include_value_flow {
+        for instruction in &mut instructions {
+            instruction.recovered_values.clear();
+        }
+    }
+    synthesize_analysis_references(image, &mut instructions, include_annotations, include_value_flow);
     annotate_instructions(image, &mut instructions, include_annotations);
     let decoded_bytes = instructions
         .last()
@@ -279,7 +286,11 @@ fn determine_stop_reason(
         decoded_bytes,
         window.bytes.len(),
     ) {
-        return DisassemblyStopReason::LimitReached;
+        return match request.limit {
+            DisassemblyLimit::Instructions(_) => DisassemblyStopReason::InstructionLimitReached,
+            DisassemblyLimit::Bytes(_) => DisassemblyStopReason::ByteLimitReached,
+            DisassemblyLimit::Unlimited => DisassemblyStopReason::TargetRangeEnd,
+        };
     }
 
     if instruction_count == 0 || decoded_bytes == 0 || decoded_bytes < window.bytes.len() {
@@ -287,7 +298,7 @@ fn determine_stop_reason(
     }
 
     if window.request_limited {
-        return DisassemblyStopReason::LimitReached;
+        return DisassemblyStopReason::WindowClipped;
     }
 
     DisassemblyStopReason::TargetRangeEnd
@@ -355,7 +366,10 @@ fn annotate_instructions(
                 Reference::Stub {
                     stub_address: stub.stub_address,
                     section: stub.section.clone(),
+                    pointer_section: stub.pointer_section.clone(),
                     pointer_address: stub.pointer_address,
+                    helper_address: stub.helper_address,
+                    binding_ordinal: stub.binding_ordinal,
                     dylib: stub.dylib.clone(),
                     name: stub.name.clone(),
                     source: stub.source,
@@ -491,7 +505,10 @@ fn annotate_instructions(
                 Reference::Stub {
                     stub_address: _,
                     section: _,
+                    pointer_section: _,
                     pointer_address: _,
+                    helper_address: _,
+                    binding_ordinal: _,
                     dylib,
                     name,
                     source,
@@ -588,10 +605,12 @@ fn annotate_instructions(
 }
 
 fn synthesize_analysis_references(
+    image: &BinaryImage,
     instructions: &mut [DecodedInstruction],
     include_annotations: bool,
+    include_value_flow: bool,
 ) {
-    let mut known_values = BTreeMap::<String, u64>::new();
+    let mut known_values = BTreeMap::<String, RecoveredValue>::new();
 
     for instruction in instructions {
         let lower = instruction.mnemonic.to_ascii_lowercase();
@@ -602,7 +621,16 @@ fn synthesize_analysis_references(
             if let (Some(target), Some(register)) =
                 (page_reference_target(instruction), destination.as_ref())
             {
-                known_values.insert(register.clone(), target);
+                let recovered = RecoveredValue {
+                    register: register.clone(),
+                    value: target,
+                    kind: classify_recovered_value(image, target, RecoveredValueKind::Address),
+                    source: RecoveredValueSource::Adr,
+                };
+                known_values.insert(register.clone(), recovered.clone());
+                if include_value_flow {
+                    push_recovered_value(&mut instruction.recovered_values, recovered);
+                }
                 destination_updated = true;
                 if include_annotations {
                     push_annotation(
@@ -614,16 +642,34 @@ fn synthesize_analysis_references(
         }
 
         if let Some((register, value)) = synthesize_mov_wide_value(instruction, &known_values) {
-            known_values.insert(register, value);
+            let recovered = RecoveredValue {
+                register: register.clone(),
+                value,
+                kind: classify_recovered_value(image, value, RecoveredValueKind::Literal),
+                source: RecoveredValueSource::MoveWide,
+            };
+            known_values.insert(register, recovered.clone());
+            if include_value_flow {
+                push_recovered_value(&mut instruction.recovered_values, recovered);
+            }
             destination_updated = true;
         }
 
         let add_inputs = add_immediate_inputs(instruction);
         if let Some((dest, base_register, displacement)) = add_inputs {
-            if let Some(base) = known_values.get(base_register.as_str()).copied() {
-                if let Some(target) = add_signed(base, displacement) {
+            if let Some(base) = known_values.get(base_register.as_str()).cloned() {
+                if let Some(target) = add_signed(base.value, displacement) {
                     if let Some(dest) = dest {
-                        known_values.insert(dest, target);
+                        let recovered = RecoveredValue {
+                            register: dest.clone(),
+                            value: target,
+                            kind: classify_recovered_value(image, target, RecoveredValueKind::Address),
+                            source: RecoveredValueSource::AdrpAdd,
+                        };
+                        known_values.insert(dest.clone(), recovered.clone());
+                        if include_value_flow {
+                            push_recovered_value(&mut instruction.recovered_values, recovered);
+                        }
                         destination_updated = true;
                     }
                     push_reference_if_missing(
@@ -643,14 +689,38 @@ fn synthesize_analysis_references(
             }
         }
 
+        if let Some((target, recovered)) = synthesize_literal_load(image, instruction, &lower) {
+            push_reference_if_missing(&mut instruction.references, Reference::Data { target });
+            if include_value_flow {
+                push_recovered_value(&mut instruction.recovered_values, recovered.clone());
+            }
+            known_values.insert(recovered.register.clone(), recovered);
+            destination_updated = true;
+        }
+
         let memory_inputs = memory_base_displacement(instruction);
         if let Some((base_register, displacement)) = memory_inputs {
-            if let Some(base) = known_values.get(base_register.as_str()).copied() {
-                if let Some(target) = add_signed(base, displacement) {
+            if let Some(base) = known_values.get(base_register.as_str()).cloned() {
+                if let Some(target) = add_signed(base.value, displacement) {
                     push_reference_if_missing(
                         &mut instruction.references,
                         Reference::Data { target },
                     );
+                    if let Some(dest) = destination.as_ref() {
+                        if lower.starts_with("ldr") || lower.starts_with("ldur") {
+                            let recovered = RecoveredValue {
+                                register: dest.clone(),
+                                value: target,
+                                kind: classify_recovered_value(image, target, RecoveredValueKind::Address),
+                                source: RecoveredValueSource::AdrpLoad,
+                            };
+                            known_values.insert(dest.clone(), recovered.clone());
+                            if include_value_flow {
+                                push_recovered_value(&mut instruction.recovered_values, recovered);
+                            }
+                            destination_updated = true;
+                        }
+                    }
                     if include_annotations {
                         push_annotation(
                             &mut instruction.annotations,
@@ -677,7 +747,7 @@ fn synthesize_analysis_references(
             };
             push_reference_if_missing(&mut instruction.references, indirect_reference);
 
-            if let Some(target) = known_values.get(register.as_str()).copied() {
+            if let Some(target) = known_values.get(register.as_str()).map(|value| value.value) {
                 let resolved_reference = if is_call_mnemonic(&lower) {
                     Reference::Call { target }
                 } else {
@@ -732,6 +802,12 @@ fn page_reference_target(instruction: &DecodedInstruction) -> Option<u64> {
             Reference::Page { target } => Some(*target),
             _ => None,
         })
+}
+
+fn push_recovered_value(target: &mut Vec<RecoveredValue>, value: RecoveredValue) {
+    if !target.iter().any(|existing| existing.register == value.register && existing.value == value.value && existing.source == value.source) {
+        target.push(value);
+    }
 }
 
 fn destination_register(instruction: &DecodedInstruction) -> Option<String> {
@@ -831,6 +907,8 @@ fn indirect_control_register(instruction: &DecodedInstruction) -> Option<String>
 
 fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
     mnemonic == "ret"
+        || mnemonic == "retaa"
+        || mnemonic == "retab"
         || mnemonic == "eret"
         || mnemonic.starts_with("b.")
         || mnemonic == "b"
@@ -849,6 +927,8 @@ fn instruction_writes_destination(mnemonic: &str) -> bool {
         || mnemonic == "b"
         || mnemonic == "bl"
         || mnemonic == "blr"
+        || mnemonic == "retaa"
+        || mnemonic == "retab"
         || mnemonic == "ret")
 }
 
@@ -861,7 +941,7 @@ fn is_call_mnemonic(mnemonic: &str) -> bool {
 
 fn synthesize_mov_wide_value(
     instruction: &DecodedInstruction,
-    known_values: &BTreeMap<String, u64>,
+    known_values: &BTreeMap<String, RecoveredValue>,
 ) -> Option<(String, u64)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
     if !(lower.starts_with("movz") || lower.starts_with("movn") || lower.starts_with("movk")) {
@@ -890,7 +970,7 @@ fn synthesize_mov_wide_value(
     } else if lower.starts_with("movn") {
         !shifted_imm
     } else {
-        let previous = known_values.get(&destination).copied()?;
+        let previous = known_values.get(&destination)?.value;
         (previous & !lane_mask) | shifted_imm
     };
 
@@ -920,6 +1000,56 @@ fn parse_shift_from_text(text: &str) -> Option<u32> {
         return None;
     }
     digits.parse::<u32>().ok()
+}
+
+fn synthesize_literal_load(
+    image: &BinaryImage,
+    instruction: &DecodedInstruction,
+    lower: &str,
+) -> Option<(u64, RecoveredValue)> {
+    if !(lower.starts_with("ldr") || lower.starts_with("ldrsw")) {
+        return None;
+    }
+    let register = destination_register(instruction)?;
+    let target = instruction.references.iter().find_map(|reference| match reference {
+        Reference::Data { target } => Some(*target),
+        _ => None,
+    })?;
+    Some((
+        target,
+        RecoveredValue {
+            register,
+            value: target,
+            kind: classify_recovered_value(image, target, RecoveredValueKind::Literal),
+            source: RecoveredValueSource::LiteralLoad,
+        },
+    ))
+}
+
+fn classify_recovered_value(
+    image: &BinaryImage,
+    value: u64,
+    fallback: RecoveredValueKind,
+) -> RecoveredValueKind {
+    if image.dyld().stub_for_address(value).is_some() {
+        return RecoveredValueKind::StubAddress;
+    }
+    if image.objc_selector_name_at_address(value).is_some() {
+        return RecoveredValueKind::ObjcSelector;
+    }
+    if image.objc_class_name_at_address(value).is_some() {
+        return RecoveredValueKind::ObjcClass;
+    }
+    if image.objc_method_list_owner_at_address(value).is_some() {
+        return RecoveredValueKind::ObjcMethodList;
+    }
+    if image.read_c_string_at_address(value, 128).is_some() {
+        return RecoveredValueKind::CString;
+    }
+    if image.containing_section(value).is_some() {
+        return RecoveredValueKind::Address;
+    }
+    fallback
 }
 
 fn push_reference_if_missing(target: &mut Vec<Reference>, reference: Reference) {
@@ -1102,7 +1232,10 @@ fn push_dyld_target_hooks(
             Reference::Stub {
                 stub_address: stub.stub_address,
                 section: stub.section.clone(),
+                pointer_section: stub.pointer_section.clone(),
                 pointer_address: stub.pointer_address,
+                helper_address: stub.helper_address,
+                binding_ordinal: stub.binding_ordinal,
                 dylib: stub.dylib.clone(),
                 name: stub.name.clone(),
                 source: stub.source,

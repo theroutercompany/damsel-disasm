@@ -83,6 +83,7 @@ impl InstructionDecoder for Bad64Decoder {
                 opcode: opcode_from_bytes(insn.bytes()),
                 mnemonic,
                 operands,
+                recovered_values: Vec::new(),
                 references,
                 annotations,
             });
@@ -238,7 +239,7 @@ fn is_indirect_control(mnemonic: &str) -> bool {
 }
 
 fn is_return_like(mnemonic: &str) -> bool {
-    mnemonic == "ret" || mnemonic == "eret" || mnemonic == "drps"
+    matches!(mnemonic, "ret" | "eret" | "drps" | "retaa" | "retab")
 }
 
 fn map_operand(cs: &Capstone, mnemonic: &str, writeback: bool, operand: &Arm64Operand) -> Operand {

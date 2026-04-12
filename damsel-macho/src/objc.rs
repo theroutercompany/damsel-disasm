@@ -1,6 +1,7 @@
 use damsel_core::{
-    ObjcCategoryRecord, ObjcClassRecord, ObjcMetadata, ObjcPointerKind, ObjcPointerRef,
-    ObjcProtocolRecord, Section,
+    ObjcCategoryRecord, ObjcClassRecord, ObjcIvarRecord, ObjcMetadata, ObjcMethodOwnerKind,
+    ObjcMethodRecord, ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord,
+    Section,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -317,6 +318,7 @@ fn collect_class_records(
         .into_iter()
         .map(|class_pointer| build_class_record(slices, class_pointer, image_base))
         .collect::<Vec<_>>();
+    enrich_class_records(&mut records, slices, image_base);
     records.sort_by_key(|record| record.class_pointer);
     records
 }
@@ -326,6 +328,8 @@ fn build_class_record(
     class_pointer: u64,
     image_base: Option<u64>,
 ) -> ObjcClassRecord {
+    let metaclass_pointer = read_u64_at_va(slices, class_pointer)
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
     let superclass_pointer = read_u64_at_va(slices, class_pointer.saturating_add(8))
         .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
     let superclass_name = superclass_pointer
@@ -341,6 +345,9 @@ fn build_class_record(
     let protocol_list_pointer = ro_pointer
         .and_then(|pointer| read_u64_at_va(slices, pointer.saturating_add(40)))
         .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+    let ivar_list_pointer = ro_pointer
+        .and_then(|pointer| read_u64_at_va(slices, pointer.saturating_add(48)))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
     let property_list_pointer = ro_pointer
         .and_then(|pointer| read_u64_at_va(slices, pointer.saturating_add(64)))
         .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
@@ -351,10 +358,17 @@ fn build_class_record(
             .filter(|name| is_plausible_objc_type_name(name)),
         superclass_pointer,
         superclass_name,
+        metaclass_pointer,
         ro_pointer,
         method_list_pointer,
         property_list_pointer,
         protocol_list_pointer,
+        ivar_list_pointer,
+        methods: Vec::new(),
+        class_methods: Vec::new(),
+        properties: Vec::new(),
+        ivars: Vec::new(),
+        adopted_protocols: Vec::new(),
     }
 }
 
@@ -382,11 +396,7 @@ fn collect_protocol_records(
 
     let mut records = pointers
         .into_iter()
-        .map(|pointer| ObjcProtocolRecord {
-            pointer,
-            name: resolve_protocol_name_from_pointer(slices, pointer, image_base)
-                .filter(|name| is_plausible_objc_type_name(name)),
-        })
+        .map(|pointer| build_protocol_record(slices, pointer, image_base))
         .collect::<Vec<_>>();
     records.sort_by_key(|record| record.pointer);
     records
@@ -437,6 +447,37 @@ fn collect_category_records(
                     .filter(|name| is_plausible_objc_type_name(name)),
                 class_pointer,
                 class_name,
+                methods: read_method_list_at_pointer(
+                    slices,
+                    read_u64_at_va(slices, pointer.saturating_add(16))
+                        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base)),
+                    pointer,
+                    ObjcMethodOwnerKind::Category,
+                    false,
+                    image_base,
+                ),
+                class_methods: read_method_list_at_pointer(
+                    slices,
+                    read_u64_at_va(slices, pointer.saturating_add(24))
+                        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base)),
+                    pointer,
+                    ObjcMethodOwnerKind::Category,
+                    true,
+                    image_base,
+                ),
+                properties: read_property_list_at_pointer(
+                    slices,
+                    read_u64_at_va(slices, pointer.saturating_add(40))
+                        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base)),
+                    pointer,
+                    image_base,
+                ),
+                adopted_protocols: read_protocol_name_list(
+                    slices,
+                    read_u64_at_va(slices, pointer.saturating_add(32))
+                        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base)),
+                    image_base,
+                ),
             });
         }
     }
@@ -512,6 +553,303 @@ fn resolve_pointer_to_mapped_va(
         .find(|candidate| has_file_backed_va(slices, *candidate))
 }
 
+fn enrich_class_records(
+    records: &mut [ObjcClassRecord],
+    slices: &[SectionSlice<'_>],
+    image_base: Option<u64>,
+) {
+    for record in records {
+        record.methods = read_method_list_at_pointer(
+            slices,
+            record.method_list_pointer,
+            record.class_pointer,
+            ObjcMethodOwnerKind::Class,
+            false,
+            image_base,
+        );
+        record.properties = read_property_list_at_pointer(
+            slices,
+            record.property_list_pointer,
+            record.class_pointer,
+            image_base,
+        );
+        record.ivars = read_ivar_list_at_pointer(
+            slices,
+            record.ivar_list_pointer,
+            record.class_pointer,
+            image_base,
+        );
+        record.adopted_protocols = read_protocol_name_list(
+            slices,
+            record.protocol_list_pointer,
+            image_base,
+        );
+        if let Some(metaclass_pointer) = record.metaclass_pointer {
+            let metaclass_methods = extract_class_list_pointers(slices, metaclass_pointer, image_base)
+                .and_then(|lists| {
+                    Some(read_method_list_at_pointer(
+                        slices,
+                        lists.method_list_pointer,
+                        metaclass_pointer,
+                        ObjcMethodOwnerKind::Metaclass,
+                        true,
+                        image_base,
+                    ))
+                })
+                .unwrap_or_default();
+            record.class_methods = metaclass_methods;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClassRuntimeLists {
+    method_list_pointer: Option<u64>,
+}
+
+fn extract_class_list_pointers(
+    slices: &[SectionSlice<'_>],
+    class_pointer: u64,
+    image_base: Option<u64>,
+) -> Option<ClassRuntimeLists> {
+    let class_data_bits = read_u64_at_va(slices, class_pointer.saturating_add(32))?;
+    let ro_pointer = resolve_pointer_to_mapped_va(slices, class_data_bits & !0x7, image_base)?;
+    Some(ClassRuntimeLists {
+        method_list_pointer: read_u64_at_va(slices, ro_pointer.saturating_add(32))
+            .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base)),
+    })
+}
+
+fn build_protocol_record(
+    slices: &[SectionSlice<'_>],
+    pointer: u64,
+    image_base: Option<u64>,
+) -> ObjcProtocolRecord {
+    let required_instance = read_u64_at_va(slices, pointer.saturating_add(24))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+    let required_class = read_u64_at_va(slices, pointer.saturating_add(32))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+    let optional_instance = read_u64_at_va(slices, pointer.saturating_add(40))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+    let optional_class = read_u64_at_va(slices, pointer.saturating_add(48))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+    let properties = read_u64_at_va(slices, pointer.saturating_add(56))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+
+    ObjcProtocolRecord {
+        pointer,
+        name: resolve_protocol_name_from_pointer(slices, pointer, image_base)
+            .filter(|name| is_plausible_objc_type_name(name)),
+        required_instance_methods: read_method_list_at_pointer(
+            slices,
+            required_instance,
+            pointer,
+            ObjcMethodOwnerKind::Protocol,
+            false,
+            image_base,
+        ),
+        required_class_methods: read_method_list_at_pointer(
+            slices,
+            required_class,
+            pointer,
+            ObjcMethodOwnerKind::Protocol,
+            true,
+            image_base,
+        ),
+        optional_instance_methods: read_method_list_at_pointer(
+            slices,
+            optional_instance,
+            pointer,
+            ObjcMethodOwnerKind::Protocol,
+            false,
+            image_base,
+        ),
+        optional_class_methods: read_method_list_at_pointer(
+            slices,
+            optional_class,
+            pointer,
+            ObjcMethodOwnerKind::Protocol,
+            true,
+            image_base,
+        ),
+        properties: read_property_list_at_pointer(slices, properties, pointer, image_base),
+    }
+}
+
+fn read_method_list_at_pointer(
+    slices: &[SectionSlice<'_>],
+    list_pointer: Option<u64>,
+    owner_pointer: u64,
+    owner_kind: ObjcMethodOwnerKind,
+    is_class_method: bool,
+    image_base: Option<u64>,
+) -> Vec<ObjcMethodRecord> {
+    let Some(list_pointer) = list_pointer else {
+        return Vec::new();
+    };
+    let Some(entsize_flags) = read_u32_at_va(slices, list_pointer) else {
+        return Vec::new();
+    };
+    let Some(count) = read_u32_at_va(slices, list_pointer.saturating_add(4)) else {
+        return Vec::new();
+    };
+    let mut methods = Vec::new();
+    let is_small = (entsize_flags & 0x8000_0000) != 0;
+    let entry_size = usize::try_from((entsize_flags & 0x0000_FFFF).max(if is_small { 12 } else { 24 }))
+        .unwrap_or(if is_small { 12 } else { 24 });
+    let count = count.min(256);
+    for index in 0..count {
+        let entry = list_pointer.saturating_add(8).saturating_add((index as u64) * (entry_size as u64));
+        let mut record = if is_small {
+            let name_rel = read_i32_at_va(slices, entry);
+            let types_rel = read_i32_at_va(slices, entry.saturating_add(4));
+            let imp_rel = read_i32_at_va(slices, entry.saturating_add(8));
+            ObjcMethodRecord {
+                owner_pointer,
+                owner_kind,
+                is_class_method,
+                selector: name_rel
+                    .and_then(|rel| add_relative_address(entry, rel))
+                    .and_then(|ptr| resolve_pointer_to_mapped_va(slices, ptr, image_base).or(Some(ptr)))
+                    .and_then(|ptr| read_c_string_at_va(slices, ptr)),
+                implementation: imp_rel.and_then(|rel| add_relative_address(entry.saturating_add(8), rel)),
+                type_encoding: types_rel
+                    .and_then(|rel| add_relative_address(entry.saturating_add(4), rel))
+                    .and_then(|ptr| resolve_pointer_to_mapped_va(slices, ptr, image_base).or(Some(ptr)))
+                    .and_then(|ptr| read_c_string_at_va(slices, ptr)),
+            }
+        } else {
+            ObjcMethodRecord {
+                owner_pointer,
+                owner_kind,
+                is_class_method,
+                selector: read_u64_at_va(slices, entry)
+                    .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
+                    .and_then(|ptr| read_c_string_at_va(slices, ptr)),
+                implementation: read_u64_at_va(slices, entry.saturating_add(16)),
+                type_encoding: read_u64_at_va(slices, entry.saturating_add(8))
+                    .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
+                    .and_then(|ptr| read_c_string_at_va(slices, ptr)),
+            }
+        };
+        record.selector = record
+            .selector
+            .filter(|selector| is_plausible_selector_name(selector));
+        if record.selector.is_some() || record.implementation.is_some() || record.type_encoding.is_some() {
+            methods.push(record);
+        }
+    }
+    methods
+}
+
+fn read_property_list_at_pointer(
+    slices: &[SectionSlice<'_>],
+    list_pointer: Option<u64>,
+    owner_pointer: u64,
+    image_base: Option<u64>,
+) -> Vec<ObjcPropertyRecord> {
+    let Some(list_pointer) = list_pointer else {
+        return Vec::new();
+    };
+    let Some(entsize) = read_u32_at_va(slices, list_pointer) else {
+        return Vec::new();
+    };
+    let Some(count) = read_u32_at_va(slices, list_pointer.saturating_add(4)) else {
+        return Vec::new();
+    };
+    let entry_size = usize::try_from(entsize.max(16)).unwrap_or(16);
+    let mut properties = Vec::new();
+    for index in 0..count.min(128) {
+        let entry = list_pointer.saturating_add(8).saturating_add((index as u64) * (entry_size as u64));
+        let name = read_u64_at_va(slices, entry)
+            .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
+            .and_then(|ptr| read_c_string_at_va(slices, ptr));
+        let attributes = read_u64_at_va(slices, entry.saturating_add(8))
+            .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
+            .and_then(|ptr| read_c_string_at_va(slices, ptr));
+        if name.is_some() || attributes.is_some() {
+            properties.push(ObjcPropertyRecord {
+                owner_pointer,
+                name,
+                attributes,
+            });
+        }
+    }
+    properties
+}
+
+fn read_ivar_list_at_pointer(
+    slices: &[SectionSlice<'_>],
+    list_pointer: Option<u64>,
+    owner_pointer: u64,
+    image_base: Option<u64>,
+) -> Vec<ObjcIvarRecord> {
+    let Some(list_pointer) = list_pointer else {
+        return Vec::new();
+    };
+    let Some(entsize) = read_u32_at_va(slices, list_pointer) else {
+        return Vec::new();
+    };
+    let Some(count) = read_u32_at_va(slices, list_pointer.saturating_add(4)) else {
+        return Vec::new();
+    };
+    let entry_size = usize::try_from(entsize.max(32)).unwrap_or(32);
+    let mut ivars = Vec::new();
+    for index in 0..count.min(128) {
+        let entry = list_pointer.saturating_add(8).saturating_add((index as u64) * (entry_size as u64));
+        let offset = read_u64_at_va(slices, entry)
+            .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
+            .and_then(|ptr| read_u32_at_va(slices, ptr).map(u64::from));
+        let name = read_u64_at_va(slices, entry.saturating_add(8))
+            .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
+            .and_then(|ptr| read_c_string_at_va(slices, ptr));
+        let type_encoding = read_u64_at_va(slices, entry.saturating_add(16))
+            .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
+            .and_then(|ptr| read_c_string_at_va(slices, ptr));
+        if name.is_some() || type_encoding.is_some() || offset.is_some() {
+            ivars.push(ObjcIvarRecord {
+                owner_pointer,
+                name,
+                type_encoding,
+                offset,
+            });
+        }
+    }
+    ivars
+}
+
+fn read_protocol_name_list(
+    slices: &[SectionSlice<'_>],
+    list_pointer: Option<u64>,
+    image_base: Option<u64>,
+) -> Vec<String> {
+    let Some(list_pointer) = list_pointer else {
+        return Vec::new();
+    };
+    let Some(count) = read_u64_at_va(slices, list_pointer) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for index in 0..count.min(128) {
+        let entry_ptr = list_pointer.saturating_add(8).saturating_add(index * 8);
+        let Some(raw_pointer) = read_u64_at_va(slices, entry_ptr) else {
+            continue;
+        };
+        let Some(pointer) = resolve_pointer_to_mapped_va(slices, raw_pointer, image_base) else {
+            continue;
+        };
+        let Some(name) = resolve_protocol_name_from_pointer(slices, pointer, image_base) else {
+            continue;
+        };
+        if is_plausible_objc_type_name(&name) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
 fn pointer_candidates(raw_pointer: u64, image_base: Option<u64>) -> Vec<u64> {
     const LOW_48_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
     let masked_48 = raw_pointer & LOW_48_MASK;
@@ -553,6 +891,24 @@ fn read_u64_at_va(slices: &[SectionSlice<'_>], va: u64) -> Option<u64> {
     Some(u64::from_le_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ]))
+}
+
+fn read_u32_at_va(slices: &[SectionSlice<'_>], va: u64) -> Option<u32> {
+    let (slice, offset) = find_slice_for_va(slices, va)?;
+    let bytes = slice.contents.get(offset..offset.checked_add(4)?)?;
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn read_i32_at_va(slices: &[SectionSlice<'_>], va: u64) -> Option<i32> {
+    read_u32_at_va(slices, va).map(|value| i32::from_le_bytes(value.to_le_bytes()))
+}
+
+fn add_relative_address(base: u64, displacement: i32) -> Option<u64> {
+    if displacement >= 0 {
+        base.checked_add(displacement as u64)
+    } else {
+        base.checked_sub(displacement.unsigned_abs() as u64)
+    }
 }
 
 fn read_c_string_at_va(slices: &[SectionSlice<'_>], va: u64) -> Option<String> {

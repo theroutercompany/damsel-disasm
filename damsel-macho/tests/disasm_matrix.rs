@@ -107,7 +107,10 @@ fn disasm_reports_limit_reached_stop_reason() {
         include_annotations: true,
     };
     let result = disassemble(&image, &request).expect("disassemble with hard instruction cap");
-    assert_eq!(result.stop_reason, DisassemblyStopReason::LimitReached);
+    assert_eq!(
+        result.stop_reason,
+        DisassemblyStopReason::InstructionLimitReached
+    );
 }
 
 #[test]
@@ -133,6 +136,7 @@ fn disasm_v2_range_clamps_target_window() {
         limit: DisassemblyLimit::Unlimited,
         options: DisassemblyOptions {
             include_annotations: true,
+            include_value_flow: false,
         },
     };
     let result = disassemble_v2(&image, &request).expect("disassemble v2 with range");
@@ -140,21 +144,21 @@ fn disasm_v2_range_clamps_target_window() {
     assert!(result.decoded_bytes <= 8, "range should clamp decoded bytes");
     assert!(matches!(
         result.stop_reason,
-        DisassemblyStopReason::LimitReached | DisassemblyStopReason::TargetRangeEnd
+        DisassemblyStopReason::WindowClipped | DisassemblyStopReason::TargetRangeEnd
     ));
 }
 
 #[test]
 fn disasm_emits_import_references_when_targets_match_import_sites() {
     let image = load(fixture("arm64-symbolized")).expect("load fixture");
-    let target = if let Some(stub) = image.dyld.stubs.first() {
+    let target = if let Some(stub) = image.dyld().stubs.first() {
         DisassemblyTarget::Address(stub.stub_address)
     } else {
         DisassemblyTarget::Section("__text".to_string())
     };
 
-    if image.dyld.stubs.is_empty()
-        && image.dyld.import_bindings.is_empty()
+    if image.dyld().stubs.is_empty()
+        && image.dyld().import_bindings.is_empty()
         && image.imports().iter().all(|import| import.address.is_none())
     {
         return;

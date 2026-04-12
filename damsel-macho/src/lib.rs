@@ -23,8 +23,8 @@ mod tests {
     #[test]
     fn loads_universal_binary_arm64_slice() {
         let image = load(fixture_path("universal-hello")).expect("load universal binary");
-        assert_eq!(image.architecture, Architecture::Arm64);
-        assert!(image.slice.is_universal);
+        assert_eq!(image.architecture(), Architecture::Arm64);
+        assert!(image.selected_slice().is_universal);
     }
 
     #[test]
@@ -71,14 +71,14 @@ mod tests {
         let image = load(fixture_path("objc-sample")).expect("load objc fixture");
         assert!(
             image
-                .objc
+                .objc()
                 .class_names
                 .iter()
                 .any(|class_name| class_name.contains("Greeter"))
         );
         assert!(
             image
-                .objc
+                .objc()
                 .selector_names
                 .iter()
                 .any(|selector| selector.contains("greeting"))

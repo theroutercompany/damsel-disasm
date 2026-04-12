@@ -56,7 +56,7 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
     let relocations = collect_relocations(&object_file)?;
     let objc = collect_objc_metadata(slice_bytes, &sections);
     let mut dyld = collect_dyld_metadata(&goblin_mach, slice_bytes, &segments)?;
-    augment_dysymtab_bindings_and_stubs(slice_bytes, &imports, &mut dyld.metadata)?;
+    augment_dysymtab_bindings_and_stubs(slice_bytes, &goblin_mach, &imports, &mut dyld.metadata)?;
     merge_import_hints(&mut imports, &dyld);
     let platform = detect_platform(&goblin_mach.load_commands)
         .as_deref()
@@ -509,6 +509,7 @@ fn merge_import_hints(imports: &mut Vec<Import>, dyld: &DyldAnalysis) {
 
 fn augment_dysymtab_bindings_and_stubs(
     bytes: &[u8],
+    macho: &goblin::mach::MachO<'_>,
     imports: &[Import],
     dyld: &mut DyldMetadata,
 ) -> Result<()> {
@@ -532,6 +533,15 @@ fn augment_dysymtab_bindings_and_stubs(
             acc.entry(normalize_import_name(&import.name)).or_insert(import);
             acc
         });
+    let imports_by_dylib_and_name =
+        imports
+            .iter()
+            .fold(BTreeMap::<(String, String), &Import>::new(), |mut acc, import| {
+                acc.entry((normalize_import_name(&import.name), import.dylib.clone()))
+                    .or_insert(import);
+                acc
+            });
+    let indirect_symbol_metadata = build_indirect_symbol_metadata(macho);
 
     let mut pointer_slots_by_name = BTreeMap::<String, Vec<(u64, Option<u64>, String)>>::new();
     for section in macho_file.sections() {
@@ -553,24 +563,31 @@ fn augment_dysymtab_bindings_and_stubs(
             if is_special_indirect_symbol(symbol_index) {
                 continue;
             }
-            let Some((name, import)) =
-                resolve_indirect_symbol(&macho_file, SymbolIndex(symbol_index as usize), &imports_by_name)
+            let Some(resolution) = resolve_indirect_symbol(
+                &macho_file,
+                SymbolIndex(symbol_index as usize),
+                &indirect_symbol_metadata,
+                &imports_by_name,
+                &imports_by_dylib_and_name,
+            )
             else {
                 continue;
             };
             let pointer_address = section.address().saturating_add((index as u64) * 8);
             let pointer_offset = Some(file_offset.saturating_add((index as u64) * 8));
             dyld.import_bindings.push(ImportBindingRecord {
-                dylib: import.dylib.clone(),
-                name: import.name.clone(),
+                dylib: resolution.import.dylib.clone(),
+                name: resolution.import.name.clone(),
                 address: Some(pointer_address),
                 offset: pointer_offset,
-                addend: import.addend,
+                addend: resolution.import.addend,
+                ordinal: resolution.ordinal,
+                symbol_index: Some(symbol_index),
                 source: ImportBindingSource::IndirectSymbol,
-                is_weak: import.is_weak,
+                is_weak: resolution.import.is_weak,
             });
             pointer_slots_by_name
-                .entry(name)
+                .entry(resolution.normalized_name)
                 .or_default()
                 .push((pointer_address, pointer_offset, full_name.clone()));
         }
@@ -594,14 +611,19 @@ fn augment_dysymtab_bindings_and_stubs(
             if is_special_indirect_symbol(symbol_index) {
                 continue;
             }
-            let Some((name, import)) =
-                resolve_indirect_symbol(&macho_file, SymbolIndex(symbol_index as usize), &imports_by_name)
+            let Some(resolution) = resolve_indirect_symbol(
+                &macho_file,
+                SymbolIndex(symbol_index as usize),
+                &indirect_symbol_metadata,
+                &imports_by_name,
+                &imports_by_dylib_and_name,
+            )
             else {
                 continue;
             };
             let stub_address = section.address().saturating_add((index as u64) * stub_size);
             let (pointer_address, _, _) = pointer_slots_by_name
-                .get(&name)
+                .get(&resolution.normalized_name)
                 .and_then(|values| values.get(index).or_else(|| values.first()))
                 .cloned()
                 .unwrap_or((0, None, String::new()));
@@ -609,9 +631,15 @@ fn augment_dysymtab_bindings_and_stubs(
             dyld.stubs.push(StubEntry {
                 stub_address,
                 section: Some(full_name.clone()),
+                pointer_section: pointer_slots_by_name
+                    .get(&resolution.normalized_name)
+                    .and_then(|values| values.get(index).or_else(|| values.first()))
+                    .map(|(_, _, section_name)| section_name.clone()),
                 pointer_address,
-                dylib: Some(import.dylib.clone()),
-                name: Some(import.name.clone()),
+                helper_address: None,
+                binding_ordinal: resolution.ordinal,
+                dylib: Some(resolution.import.dylib.clone()),
+                name: Some(resolution.import.name.clone()),
                 source: ImportBindingSource::Stub,
             });
         }
@@ -668,16 +696,90 @@ fn normalize_import_name(name: &str) -> String {
     name.trim_start_matches('_').to_ascii_lowercase()
 }
 
+#[derive(Debug, Clone)]
+struct IndirectSymbolMetadata {
+    normalized_name: String,
+    ordinal: Option<u32>,
+    dylib: Option<String>,
+}
+
+#[derive(Debug)]
+struct ResolvedIndirectSymbol<'a> {
+    normalized_name: String,
+    ordinal: Option<u32>,
+    import: &'a Import,
+}
+
+fn build_indirect_symbol_metadata(
+    macho: &goblin::mach::MachO<'_>,
+) -> BTreeMap<usize, IndirectSymbolMetadata> {
+    let mut result = BTreeMap::new();
+    let Some(symbols) = macho.symbols.as_ref() else {
+        return result;
+    };
+    let Some(dysymtab) = macho.load_commands.iter().find_map(|command| match &command.command {
+        goblin::mach::load_command::CommandVariant::Dysymtab(command) => Some(command),
+        _ => None,
+    }) else {
+        return result;
+    };
+
+    let start = dysymtab.iundefsym as usize;
+    let count = dysymtab.nundefsym as usize;
+    for symbol_index in start..start.saturating_add(count) {
+        let Ok((name, nlist)) = symbols.get(symbol_index) else {
+            continue;
+        };
+        let ordinal = ((nlist.n_desc >> 8) & 0xff) as u32;
+        let dylib = resolve_dylib_name_from_ordinal(macho.libs.as_slice(), ordinal);
+        result.insert(
+            symbol_index,
+            IndirectSymbolMetadata {
+                normalized_name: normalize_import_name(name),
+                ordinal: Some(ordinal),
+                dylib,
+            },
+        );
+    }
+    result
+}
+
+fn resolve_dylib_name_from_ordinal(libs: &[&str], ordinal: u32) -> Option<String> {
+    libs.get(ordinal as usize)
+        .copied()
+        .filter(|name| !name.is_empty() && *name != "self")
+        .map(ToString::to_string)
+}
+
 fn resolve_indirect_symbol<'a>(
     macho_file: &'a MachOFile64<'a, object::Endianness>,
     symbol_index: SymbolIndex,
+    metadata: &BTreeMap<usize, IndirectSymbolMetadata>,
     imports_by_name: &BTreeMap<String, &'a Import>,
-) -> Option<(String, &'a Import)> {
-    let symbol = macho_file.symbol_by_index(symbol_index).ok()?;
-    let raw_name = symbol.name().ok()?.to_string();
-    let normalized = normalize_import_name(&raw_name);
-    let import = imports_by_name.get(&normalized).copied()?;
-    Some((normalized, import))
+    imports_by_dylib_and_name: &BTreeMap<(String, String), &'a Import>,
+) -> Option<ResolvedIndirectSymbol<'a>> {
+    let metadata_entry = metadata.get(&symbol_index.0);
+    let (normalized_name, ordinal, dylib_name) = if let Some(entry) = metadata_entry {
+        (
+            entry.normalized_name.clone(),
+            entry.ordinal,
+            entry.dylib.clone(),
+        )
+    } else {
+        let symbol = macho_file.symbol_by_index(symbol_index).ok()?;
+        let raw_name = symbol.name().ok()?.to_string();
+        (normalize_import_name(&raw_name), None, None)
+    };
+
+    let import = dylib_name
+        .as_ref()
+        .and_then(|dylib| imports_by_dylib_and_name.get(&(normalized_name.clone(), dylib.clone())).copied())
+        .or_else(|| imports_by_name.get(&normalized_name).copied())?;
+    Some(ResolvedIndirectSymbol {
+        normalized_name,
+        ordinal,
+        import,
+    })
 }
 
 fn collect_relocations<'a>(file: &object::File<'a, &'a [u8]>) -> Result<Vec<Relocation>> {

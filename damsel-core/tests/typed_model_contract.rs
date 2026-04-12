@@ -1,7 +1,7 @@
 use damsel_core::{
-    Annotation, Architecture, BinaryFormat, BinaryImage, DisassemblyRequest, DisassemblyTarget,
-    Endianness, ImportBindingRecord, ImportBindingSource, Reference, Relocation, SliceDescriptor,
-    SliceInfo,
+    Annotation, Architecture, BinaryFormat, BinaryImage, BinaryImageValidationError,
+    DisassemblyRequest, DisassemblyTarget, Endianness, ImportBindingRecord,
+    ImportBindingSource, Reference, Relocation, SliceDescriptor, SliceInfo,
 };
 use std::ptr;
 use std::sync::Arc;
@@ -133,13 +133,18 @@ fn evidence_variants_are_constructible() {
         address: Some(0x2000),
         offset: Some(0x10),
         addend: 0,
+        ordinal: Some(1),
+        symbol_index: Some(2),
         source: ImportBindingSource::ChainedFixup,
         is_weak: false,
     };
     let stub = damsel_core::StubEntry {
         stub_address: 0x3000,
         section: Some("__TEXT:__stubs".to_string()),
+        pointer_section: Some("__DATA_CONST:__got".to_string()),
         pointer_address: Some(0x3010),
+        helper_address: None,
+        binding_ordinal: Some(1),
         dylib: Some(binding.dylib.clone()),
         name: Some(binding.name.clone()),
         source: ImportBindingSource::Stub,
@@ -169,4 +174,86 @@ fn evidence_variants_are_constructible() {
         annotation_reloc,
         Annotation::RelocationEvidence { .. }
     ));
+}
+
+#[test]
+fn builder_rejects_missing_selected_slice() {
+    let bytes: Arc<[u8]> = vec![0u8; 64].into();
+    let builder = BinaryImage::builder(
+        damsel_core::BinarySource::Memory {
+            label: Some("builder-test".to_string()),
+        },
+        std::path::PathBuf::from("builder-test"),
+        BinaryFormat::MachO,
+        Architecture::Arm64,
+        Endianness::Little,
+        None,
+        None,
+        SliceInfo {
+            offset: 0,
+            size: 64,
+            is_universal: false,
+            cpu_subtype: 0,
+        },
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        damsel_core::ObjcMetadata::default(),
+        damsel_core::DyldMetadata::default(),
+        bytes,
+    )
+    .with_available_slices(vec![SliceDescriptor {
+        offset: 0,
+        size: 64,
+        is_universal: false,
+        cpu_subtype: 0,
+        architecture: Architecture::Arm64,
+        selected: false,
+    }]);
+
+    let error = builder.build().expect_err("builder should reject missing selected slice");
+    assert_eq!(error, BinaryImageValidationError::MissingSelectedSlice);
+}
+
+#[test]
+fn builder_rejects_selected_slice_mismatch() {
+    let bytes: Arc<[u8]> = vec![0u8; 64].into();
+    let builder = BinaryImage::builder(
+        damsel_core::BinarySource::Memory {
+            label: Some("builder-test".to_string()),
+        },
+        std::path::PathBuf::from("builder-test"),
+        BinaryFormat::MachO,
+        Architecture::Arm64,
+        Endianness::Little,
+        None,
+        None,
+        SliceInfo {
+            offset: 0,
+            size: 64,
+            is_universal: false,
+            cpu_subtype: 0,
+        },
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        damsel_core::ObjcMetadata::default(),
+        damsel_core::DyldMetadata::default(),
+        bytes,
+    )
+    .with_available_slices(vec![SliceDescriptor {
+        offset: 0,
+        size: 64,
+        is_universal: false,
+        cpu_subtype: 0,
+        architecture: Architecture::Arm64e,
+        selected: true,
+    }]);
+
+    let error = builder.build().expect_err("builder should reject mismatched selected slice");
+    assert_eq!(error, BinaryImageValidationError::SelectedSliceMismatch);
 }

@@ -19,7 +19,7 @@ fn optional_fixture(names: &[&str]) -> Option<PathBuf> {
 fn assert_import_bindings_and_stubs(path: &Path) {
     let image =
         load(path).unwrap_or_else(|error| panic!("failed to load fixture {path:?}: {error}"));
-    let dyld = &image.dyld;
+    let dyld = image.dyld();
 
     assert!(
         dyld.has_chained_fixups,
