@@ -3,7 +3,7 @@ use crate::errors::{MachoError, Result};
 use crate::objc::collect_objc_metadata;
 use damsel_core::{
     Architecture, BinaryFormat, BinaryImage, BinarySource, Endianness, Import, Platform,
-    Relocation, Section, Segment, SliceInfo, Symbol, SymbolKind,
+    Relocation, Section, Segment, SliceDescriptor, SliceInfo, Symbol, SymbolKind,
 };
 use goblin::mach::Mach;
 use object::macho::{
@@ -48,12 +48,14 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
     let mut imports = collect_imports(&object_file, &goblin_mach)?;
     let relocations = collect_relocations(&object_file)?;
     let objc = collect_objc_metadata(slice_bytes, &sections);
-    let dyld = collect_dyld_metadata(&goblin_mach, slice_bytes, &segments)?;
+    let mut dyld = collect_dyld_metadata(&goblin_mach, slice_bytes, &segments)?;
+    rebase_stub_addresses(&mut dyld, &sections);
     merge_import_hints(&mut imports, &dyld);
     let platform = detect_platform(&goblin_mach.load_commands)
         .as_deref()
         .map(map_platform);
 
+    let available_slices = vec![SliceDescriptor::from_selected_slice(&slice, architecture.clone())];
     Ok(BinaryImage::new(
         BinarySource::File(path.clone()),
         path,
@@ -63,6 +65,7 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
         Some(goblin_mach.entry),
         platform,
         slice,
+        available_slices,
         segments,
         sections,
         symbols,
@@ -199,7 +202,7 @@ fn map_platform(platform: &str) -> Platform {
         "driverkit" => Platform::DriverKit,
         "visionos" => Platform::VisionOS,
         "visionos-simulator" => Platform::VisionOSSimulator,
-        _ => Platform::Unknown,
+        _ => Platform::Unknown(platform.to_string()),
     }
 }
 
@@ -436,6 +439,36 @@ fn merge_import_hints(imports: &mut Vec<Import>, dyld: &DyldAnalysis) {
     imports.dedup_by(|left, right| {
         left.address == right.address && left.dylib == right.dylib && left.name == right.name
     });
+}
+
+fn rebase_stub_addresses(dyld: &mut DyldAnalysis, sections: &[Section]) {
+    let Some(stubs_section) = sections
+        .iter()
+        .find(|section| section.segment_name == "__TEXT" && section.name == "__stubs")
+    else {
+        return;
+    };
+
+    let stub_count = dyld.metadata.stubs.len();
+    if stub_count == 0 {
+        return;
+    }
+
+    let inferred_stub_size = if stubs_section.size >= stub_count as u64
+        && stubs_section.size % stub_count as u64 == 0
+    {
+        stubs_section.size / stub_count as u64
+    } else {
+        12
+    };
+
+    for (index, stub) in dyld.metadata.stubs.iter_mut().enumerate() {
+        let stub_address = stubs_section
+            .address
+            .saturating_add((index as u64).saturating_mul(inferred_stub_size));
+        stub.stub_address = stub_address;
+        stub.source = damsel_core::ImportBindingSource::Stub;
+    }
 }
 
 fn collect_relocations<'a>(file: &object::File<'a, &'a [u8]>) -> Result<Vec<Relocation>> {

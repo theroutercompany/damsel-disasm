@@ -1,5 +1,7 @@
 use crate::errors::{MachoError, Result};
-use damsel_core::{DyldMetadata, ExportedSymbol, Segment};
+use damsel_core::{
+    DyldMetadata, ExportedSymbol, ImportBindingRecord, ImportBindingSource, Segment, StubEntry,
+};
 use goblin::mach::{load_command, segment};
 
 const DYLD_CHAINED_PTR_START_NONE: u16 = 0xFFFF;
@@ -47,6 +49,7 @@ struct ChainedFixupSummary {
     has_binds: bool,
     has_rebases: bool,
     import_hints: Vec<ImportAddressHint>,
+    import_bindings: Vec<ImportBindingRecord>,
 }
 
 pub(crate) fn collect_dyld_metadata(
@@ -80,6 +83,7 @@ pub(crate) fn collect_dyld_metadata(
     let mut has_binds = false;
     let mut has_chained_fixups = false;
     let mut import_hints = Vec::new();
+    let mut import_bindings = Vec::new();
     let mut chained_fixups = None;
 
     for command in &macho.load_commands {
@@ -105,6 +109,7 @@ pub(crate) fn collect_dyld_metadata(
             has_binds |= summary.has_binds;
             has_rebases |= summary.has_rebases;
             import_hints = summary.import_hints;
+            import_bindings = summary.import_bindings;
         }
     }
 
@@ -122,6 +127,22 @@ pub(crate) fn collect_dyld_metadata(
             && left.dylib == right.dylib
             && left.name == right.name
     });
+    import_bindings.sort_by_key(|binding| {
+        (
+            binding.address.unwrap_or_default(),
+            binding.offset.unwrap_or_default(),
+            binding.dylib.clone(),
+            binding.name.clone(),
+            match binding.source {
+                ImportBindingSource::ChainedFixup => 0u8,
+                ImportBindingSource::IndirectSymbol => 1u8,
+                ImportBindingSource::Stub => 2u8,
+                ImportBindingSource::Other => 3u8,
+            },
+        )
+    });
+    import_bindings.dedup();
+    let stubs = materialize_stub_entries(&import_bindings, &exported_symbols);
 
     Ok(DyldAnalysis {
         metadata: DyldMetadata {
@@ -132,6 +153,8 @@ pub(crate) fn collect_dyld_metadata(
             has_rebases,
             has_binds,
             has_chained_fixups,
+            import_bindings,
+            stubs,
         },
         import_hints,
     })
@@ -342,6 +365,7 @@ fn parse_chained_fixups(
             for start in starts_for_page {
                 walk_fixup_chain(
                     segment,
+                    segment.name().ok(),
                     pointer_format,
                     page_size,
                     page_index as u64,
@@ -441,6 +465,7 @@ fn parse_chained_imports(
 
 fn walk_fixup_chain(
     segment: &segment::Segment<'_>,
+    _segment_name: Option<&str>,
     pointer_format: u16,
     page_size: u64,
     page_index: u64,
@@ -484,8 +509,16 @@ fn walk_fixup_chain(
 
         if pointer.is_bind {
             summary.has_binds = true;
+            let mut binding_name = None::<String>;
+            let mut binding_dylib = None::<String>;
+            let mut binding_addend = 0i64;
+            let mut binding_is_weak = false;
             if let Some(ordinal) = pointer.bind_ordinal {
                 if let Some(import) = imports.get(ordinal as usize) {
+                    binding_name = Some(import.name.clone());
+                    binding_dylib = Some(import.dylib.clone());
+                    binding_addend = import.addend;
+                    binding_is_weak = import.is_weak;
                     summary.import_hints.push(ImportAddressHint {
                         name: import.name.clone(),
                         dylib: import.dylib.clone(),
@@ -496,6 +529,18 @@ fn walk_fixup_chain(
                     });
                 }
             }
+            summary.import_bindings.push(ImportBindingRecord {
+                dylib: binding_dylib.unwrap_or_else(|| "<unknown-dylib>".to_string()),
+                name: binding_name.unwrap_or_else(|| match pointer.bind_ordinal {
+                    Some(ordinal) => format!("<ordinal:{ordinal}>"),
+                    None => "<unknown-import>".to_string(),
+                }),
+                address: Some(address),
+                offset: Some(file_offset),
+                addend: binding_addend,
+                source: ImportBindingSource::ChainedFixup,
+                is_weak: binding_is_weak,
+            });
         } else {
             summary.has_rebases = true;
         }
@@ -509,6 +554,52 @@ fn walk_fixup_chain(
         offset_in_segment = offset_in_segment.saturating_add(delta);
         steps = steps.saturating_add(1);
     }
+}
+
+fn materialize_stub_entries(
+    bindings: &[ImportBindingRecord],
+    exported_symbols: &[ExportedSymbol],
+) -> Vec<StubEntry> {
+    let mut exports_by_address = std::collections::BTreeMap::<u64, String>::new();
+    for export in exported_symbols {
+        if let Some(address) = export.address {
+            exports_by_address
+                .entry(address)
+                .or_insert(export.name.clone());
+        }
+    }
+
+    let mut stubs = bindings
+        .iter()
+        .filter_map(|binding| {
+            let pointer_address = binding.address?;
+            let export_name = exports_by_address.get(&pointer_address).cloned();
+            Some(StubEntry {
+                stub_address: pointer_address,
+                pointer_address: Some(pointer_address),
+                dylib: Some(binding.dylib.clone()),
+                name: Some(export_name.unwrap_or_else(|| binding.name.clone())),
+                source: binding.source,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    stubs.sort_by_key(|stub| {
+        (
+            stub.stub_address,
+            stub.pointer_address.unwrap_or_default(),
+            match stub.source {
+                ImportBindingSource::ChainedFixup => 0u8,
+                ImportBindingSource::IndirectSymbol => 1u8,
+                ImportBindingSource::Stub => 2u8,
+                ImportBindingSource::Other => 3u8,
+            },
+            stub.dylib.as_ref().map_or_else(String::new, Clone::clone),
+            stub.name.as_ref().map_or_else(String::new, Clone::clone),
+        )
+    });
+    stubs.dedup();
+    stubs
 }
 
 struct DecodedChainedPointer {
