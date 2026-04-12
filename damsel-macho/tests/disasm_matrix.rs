@@ -2,7 +2,7 @@ use damsel_core::{
     Annotation, DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
     DisassemblyStopReason, DisassemblyTarget, RecoveredValueKind, Reference,
 };
-use damsel_macho::{disassemble, disassemble_v2, load, MachoError};
+use damsel_macho::{MachoError, disassemble, disassemble_v2, load};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -91,10 +91,12 @@ fn disasm_honors_include_annotations_flag() {
     };
     let result = disassemble(&image, &request).expect("disassemble main without annotations");
     assert!(!result.instructions.is_empty());
-    assert!(result
-        .instructions
-        .iter()
-        .all(|instruction| instruction.annotations.is_empty()));
+    assert!(
+        result
+            .instructions
+            .iter()
+            .all(|instruction| instruction.annotations.is_empty())
+    );
 }
 
 #[test]
@@ -132,7 +134,7 @@ fn disasm_v2_range_clamps_target_window() {
     let main_symbol = image.symbol_by_name("_main").expect("main symbol exists");
     let request = DisassemblyRequestV2 {
         target: DisassemblyTarget::Address(main_symbol.address),
-        range: Some(main_symbol.address..main_symbol.address.saturating_add(8)),
+        range: Some(main_symbol.address..main_symbol.address.saturating_add(4)),
         limit: DisassemblyLimit::Unlimited,
         options: DisassemblyOptions {
             include_annotations: true,
@@ -141,11 +143,65 @@ fn disasm_v2_range_clamps_target_window() {
     };
     let result = disassemble_v2(&image, &request).expect("disassemble v2 with range");
     assert_eq!(result.start_address, main_symbol.address);
-    assert!(result.decoded_bytes <= 8, "range should clamp decoded bytes");
-    assert!(matches!(
-        result.stop_reason,
-        DisassemblyStopReason::WindowClipped | DisassemblyStopReason::TargetRangeEnd
-    ));
+    assert!(
+        result.decoded_bytes <= 4,
+        "range should clamp decoded bytes"
+    );
+    assert_eq!(result.stop_reason, DisassemblyStopReason::WindowClipped);
+}
+
+#[test]
+fn disasm_v2_reports_byte_limit_reached() {
+    let image = load(fixture("arm64-symbolized")).expect("load fixture");
+    let main_symbol = image.symbol_by_name("_main").expect("main symbol exists");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Address(main_symbol.address),
+        range: None,
+        limit: DisassemblyLimit::Bytes(4),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble with byte limit");
+    assert_eq!(result.stop_reason, DisassemblyStopReason::ByteLimitReached);
+}
+
+#[test]
+fn disasm_v2_reports_input_exhausted_for_disjoint_range() {
+    let image = load(fixture("arm64-symbolized")).expect("load fixture");
+    let text = image
+        .section_by_name("__text")
+        .expect("text section exists");
+    let disjoint_start = text.address.saturating_add(text.size).saturating_add(0x40);
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: Some(disjoint_start..disjoint_start.saturating_add(0x20)),
+        limit: DisassemblyLimit::Unlimited,
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble disjoint range");
+    assert_eq!(result.start_address, disjoint_start);
+    assert_eq!(result.stop_reason, DisassemblyStopReason::InputExhausted);
+}
+
+#[test]
+fn disasm_v2_reports_target_range_end_for_full_window() {
+    let image = load(fixture("arm64-symbolized")).expect("load fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Unlimited,
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble full text");
+    assert_eq!(result.stop_reason, DisassemblyStopReason::TargetRangeEnd);
 }
 
 #[test]
@@ -159,7 +215,10 @@ fn disasm_emits_import_references_when_targets_match_import_sites() {
 
     if image.dyld().stubs.is_empty()
         && image.dyld().import_bindings.is_empty()
-        && image.imports().iter().all(|import| import.address.is_none())
+        && image
+            .imports()
+            .iter()
+            .all(|import| import.address.is_none())
     {
         return;
     }
@@ -213,6 +272,68 @@ fn disasm_emits_import_pointer_recovered_values_for_lazy_fixture_when_present() 
 }
 
 #[test]
+fn disasm_emits_helper_references_for_lazy_fixture_when_present() {
+    let path = fixture("import-lazy");
+    if !path.exists() {
+        eprintln!("import-lazy fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load lazy helper fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(128),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble lazy helper fixture");
+    let has_helper_reference = result.instructions.iter().any(|instruction| {
+        instruction
+            .references
+            .iter()
+            .any(|reference| matches!(reference, Reference::StubHelper { .. }))
+    });
+    assert!(
+        has_helper_reference,
+        "expected at least one helper reference in lazy helper fixture disassembly"
+    );
+}
+
+#[test]
+fn disasm_include_value_flow_false_skips_semantic_artifacts() {
+    let path = fixture("semantic-switch");
+    if !path.exists() {
+        eprintln!("semantic-switch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load semantic fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(256),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: false,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble semantic fixture");
+    assert!(
+        result
+            .instructions
+            .iter()
+            .all(|instruction| instruction.recovered_values.is_empty())
+    );
+    assert!(result.instructions.iter().all(|instruction| {
+        instruction
+            .annotations
+            .iter()
+            .all(|annotation| !matches!(annotation, Annotation::JumpTableCandidate { .. }))
+    }));
+}
+
+#[test]
 fn disasm_emits_jump_table_candidate_for_semantic_fixture_when_present() {
     let path = fixture("semantic-switch");
     if !path.exists() {
@@ -231,8 +352,57 @@ fn disasm_emits_jump_table_candidate_for_semantic_fixture_when_present() {
     };
     let result = disassemble_v2(&image, &request).expect("disassemble semantic fixture");
     assert!(result.instructions.iter().any(|instruction| {
-        instruction.annotations.iter().any(|annotation| {
-            matches!(annotation, Annotation::JumpTableCandidate { .. })
-        })
+        instruction
+            .annotations
+            .iter()
+            .any(|annotation| matches!(annotation, Annotation::JumpTableCandidate { .. }))
     }));
+}
+
+#[test]
+fn disasm_avoids_generic_indirect_annotation_when_authenticated_variant_exists() {
+    let path = fixture("arm64e-sample");
+    if !path.exists() {
+        eprintln!("arm64e-sample fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load arm64e fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(256),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble arm64e fixture");
+
+    for instruction in &result.instructions {
+        let authenticated = instruction
+            .annotations
+            .iter()
+            .filter_map(|annotation| match annotation {
+                Annotation::IndirectControlFlow { kind, via }
+                    if kind.starts_with("authenticated-") =>
+                {
+                    Some(via)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for via in authenticated {
+            let has_generic = instruction.annotations.iter().any(|annotation| {
+                matches!(
+                    annotation,
+                    Annotation::IndirectControlFlow { kind, via: existing_via }
+                        if existing_via == via && (kind == "call" || kind == "branch")
+                )
+            });
+            assert!(
+                !has_generic,
+                "found generic indirect annotation for authenticated flow via {via}"
+            );
+        }
+    }
 }

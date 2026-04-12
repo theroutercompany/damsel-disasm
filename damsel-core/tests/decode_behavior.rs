@@ -1,4 +1,4 @@
-use damsel_core::{decode_aarch64, Annotation, Reference};
+use damsel_core::{Annotation, Reference, decode_aarch64};
 
 fn decode(bytes: &[u8], start: u64, max: Option<usize>) -> Vec<damsel_core::DecodedInstruction> {
     decode_aarch64(bytes, start, max).expect("decode succeeds")
@@ -18,9 +18,11 @@ fn decode_applies_instruction_limit() {
 fn decode_marks_range_start_annotation() {
     let bytes = [0xc0, 0x03, 0x5f, 0xd6];
     let instructions = decode(&bytes, 0x1000, Some(1));
-    assert!(instructions[0]
-        .annotations
-        .contains(&Annotation::Note("range start".to_string())));
+    assert!(
+        instructions[0]
+            .annotations
+            .contains(&Annotation::Note("range start".to_string()))
+    );
 }
 
 #[test]
@@ -73,10 +75,12 @@ fn decode_does_not_misclassify_add_immediate_as_branch() {
     let bytes = [0x00, 0x04, 0x00, 0x91]; // add x0, x0, #1
     let instructions = decode(&bytes, 0x1000, None);
     assert_eq!(instructions.len(), 1);
-    assert!(!instructions[0]
-        .references
-        .iter()
-        .any(|reference| matches!(reference, Reference::Branch { .. })));
+    assert!(
+        !instructions[0]
+            .references
+            .iter()
+            .any(|reference| matches!(reference, Reference::Branch { .. }))
+    );
 }
 
 #[test]

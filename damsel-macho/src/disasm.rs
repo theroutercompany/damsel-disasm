@@ -2,8 +2,9 @@ use crate::errors::{MachoError, Result};
 use damsel_core::{
     Annotation, BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyRequest,
     DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
-    DisassemblyTarget, Import, ImportBindingKind, Operand, RecoveredValue, RecoveredValueKind,
-    RecoveredValueSource, Reference, Relocation, Section, Symbol,
+    DisassemblyTarget, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
+    Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource, Reference, Relocation,
+    Section, StubHelperEntry, Symbol,
 };
 use std::collections::BTreeMap;
 
@@ -23,8 +24,11 @@ fn disassemble_impl(
     request: &DisassemblyRequestV2,
 ) -> Result<DisassemblyComputation> {
     let window = resolve_disassembly_target_v2(image, request)?;
-    let mut instructions =
-        damsel_core::decode_aarch64(window.bytes, window.start_address, request.limit.instruction_cap())?;
+    let mut instructions = damsel_core::decode_aarch64(
+        window.bytes,
+        window.start_address,
+        request.limit.instruction_cap(),
+    )?;
     let include_annotations = request.options.include_annotations;
     let include_value_flow = request.options.include_value_flow;
     if !include_annotations {
@@ -37,7 +41,9 @@ fn disassemble_impl(
             instruction.recovered_values.clear();
         }
     }
-    synthesize_analysis_references(image, &mut instructions, include_annotations, include_value_flow);
+    if include_value_flow {
+        synthesize_analysis_references(image, &mut instructions, include_annotations);
+    }
     annotate_instructions(image, &mut instructions, include_annotations);
     let decoded_bytes = instructions
         .last()
@@ -245,7 +251,9 @@ fn clamp_target_window_to_range<'a>(
         });
     }
 
-    let window_end = window.start_address.saturating_add(window.bytes.len() as u64);
+    let window_end = window
+        .start_address
+        .saturating_add(window.bytes.len() as u64);
     let clamped_start = range.start.max(window.start_address);
     let clamped_end = range.end.min(window_end);
     if clamped_start >= clamped_end {
@@ -360,6 +368,15 @@ fn annotate_instructions(
         let mut import_already_tagged = false;
         let mut synthesized_import_refs = Vec::<Reference>::new();
 
+        if let Some(helper) = image.dyld().helper_for_address(instruction.address) {
+            import_already_tagged |= push_helper_context(
+                include_annotations.then_some(&mut derived),
+                image,
+                &mut instruction.references,
+                helper,
+            );
+        }
+
         if let Some(stub) = image.dyld().stub_for_address(instruction.address) {
             push_reference_if_missing(
                 &mut instruction.references,
@@ -429,7 +446,9 @@ fn annotate_instructions(
                     );
                 }
                 Reference::IndirectCall { via } => {
-                    if include_annotations {
+                    if include_annotations
+                        && !has_indirect_control_flow_annotation(&instruction.annotations, &via)
+                    {
                         push_derived(
                             &mut derived,
                             DerivedAnnotation::IndirectControlFlow {
@@ -440,7 +459,9 @@ fn annotate_instructions(
                     }
                 }
                 Reference::IndirectBranch { via } => {
-                    if include_annotations {
+                    if include_annotations
+                        && !has_indirect_control_flow_annotation(&instruction.annotations, &via)
+                    {
                         push_derived(
                             &mut derived,
                             DerivedAnnotation::IndirectControlFlow {
@@ -533,13 +554,32 @@ fn annotate_instructions(
                                     addend: 0,
                                     binding_kind: match stub_kind {
                                         damsel_core::StubKind::Lazy => ImportBindingKind::Lazy,
-                                        damsel_core::StubKind::NonLazy => ImportBindingKind::NonLazy,
+                                        damsel_core::StubKind::NonLazy => {
+                                            ImportBindingKind::NonLazy
+                                        }
                                     },
                                     source,
                                 },
                             );
                         }
                     }
+                }
+                Reference::StubHelper {
+                    helper_address: _,
+                    target_stub: _,
+                    stub_section: _,
+                    pointer_address: _,
+                    pointer_section: _,
+                    binding_ordinal: _,
+                    dylib,
+                    name,
+                } => {
+                    if include_annotations {
+                        if let (Some(dylib), Some(name)) = (dylib, name) {
+                            push_derived(&mut derived, DerivedAnnotation::Import { dylib, name });
+                        }
+                    }
+                    import_already_tagged = true;
                 }
                 Reference::RelocationEvidence {
                     address,
@@ -620,7 +660,6 @@ fn synthesize_analysis_references(
     image: &BinaryImage,
     instructions: &mut [DecodedInstruction],
     include_annotations: bool,
-    include_value_flow: bool,
 ) {
     let mut known_values = BTreeMap::<String, RecoveredValue>::new();
     let mut jump_table_sources = BTreeMap::<String, (u64, String, u8)>::new();
@@ -641,9 +680,7 @@ fn synthesize_analysis_references(
                     source: RecoveredValueSource::Adr,
                 };
                 known_values.insert(register.clone(), recovered.clone());
-                if include_value_flow {
-                    push_recovered_value(&mut instruction.recovered_values, recovered);
-                }
+                push_recovered_value(&mut instruction.recovered_values, recovered);
                 destination_updated = true;
                 if include_annotations {
                     push_annotation(
@@ -662,9 +699,7 @@ fn synthesize_analysis_references(
                 source: RecoveredValueSource::MoveWide,
             };
             known_values.insert(register, recovered.clone());
-            if include_value_flow {
-                push_recovered_value(&mut instruction.recovered_values, recovered);
-            }
+            push_recovered_value(&mut instruction.recovered_values, recovered);
             destination_updated = true;
         }
 
@@ -676,13 +711,15 @@ fn synthesize_analysis_references(
                         let recovered = RecoveredValue {
                             register: dest.clone(),
                             value: target,
-                            kind: classify_recovered_value(image, target, RecoveredValueKind::Address),
+                            kind: classify_recovered_value(
+                                image,
+                                target,
+                                RecoveredValueKind::Address,
+                            ),
                             source: RecoveredValueSource::AdrpAdd,
                         };
                         known_values.insert(dest.clone(), recovered.clone());
-                        if include_value_flow {
-                            push_recovered_value(&mut instruction.recovered_values, recovered);
-                        }
+                        push_recovered_value(&mut instruction.recovered_values, recovered);
                         destination_updated = true;
                     }
                     push_reference_if_missing(
@@ -704,9 +741,7 @@ fn synthesize_analysis_references(
 
         if let Some((target, recovered)) = synthesize_literal_load(image, instruction, &lower) {
             push_reference_if_missing(&mut instruction.references, Reference::Data { target });
-            if include_value_flow {
-                push_recovered_value(&mut instruction.recovered_values, recovered.clone());
-            }
+            push_recovered_value(&mut instruction.recovered_values, recovered.clone());
             known_values.insert(recovered.register.clone(), recovered);
             destination_updated = true;
         }
@@ -741,13 +776,15 @@ fn synthesize_analysis_references(
                             let recovered = RecoveredValue {
                                 register: dest.clone(),
                                 value: target,
-                                kind: classify_recovered_value(image, target, RecoveredValueKind::Address),
+                                kind: classify_recovered_value(
+                                    image,
+                                    target,
+                                    RecoveredValueKind::Address,
+                                ),
                                 source: RecoveredValueSource::AdrpLoad,
                             };
                             known_values.insert(dest.clone(), recovered.clone());
-                            if include_value_flow {
-                                push_recovered_value(&mut instruction.recovered_values, recovered);
-                            }
+                            push_recovered_value(&mut instruction.recovered_values, recovered);
                             destination_updated = true;
                         }
                     }
@@ -843,7 +880,11 @@ fn page_reference_target(instruction: &DecodedInstruction) -> Option<u64> {
 }
 
 fn push_recovered_value(target: &mut Vec<RecoveredValue>, value: RecoveredValue) {
-    if !target.iter().any(|existing| existing.register == value.register && existing.value == value.value && existing.source == value.source) {
+    if !target.iter().any(|existing| {
+        existing.register == value.register
+            && existing.value == value.value
+            && existing.source == value.source
+    }) {
         target.push(value);
     }
 }
@@ -1066,10 +1107,13 @@ fn synthesize_literal_load(
         return None;
     }
     let register = destination_register(instruction)?;
-    let target = instruction.references.iter().find_map(|reference| match reference {
-        Reference::Data { target } => Some(*target),
-        _ => None,
-    })?;
+    let target = instruction
+        .references
+        .iter()
+        .find_map(|reference| match reference {
+            Reference::Data { target } => Some(*target),
+            _ => None,
+        })?;
     Some((
         target,
         RecoveredValue {
@@ -1226,6 +1270,10 @@ fn push_dyld_target_hooks(
 ) -> bool {
     let mut import_added = false;
 
+    if let Some(helper) = image.dyld().helper_for_address(target) {
+        import_added |= push_helper_context(out.take(), image, instruction_references, helper);
+    }
+
     for binding in image.dyld().bindings_at_address(target) {
         push_reference_if_missing(
             instruction_references,
@@ -1281,6 +1329,9 @@ fn push_dyld_target_hooks(
                 source: stub.source,
             },
         );
+        if let Some(helper) = image.dyld().helper_for_stub_address(stub.stub_address) {
+            push_reference_if_missing(instruction_references, Reference::from_stub_helper(helper));
+        }
         if let (Some(dylib), Some(name)) = (&stub.dylib, &stub.name) {
             push_reference_if_missing(
                 instruction_references,
@@ -1314,6 +1365,121 @@ fn push_dyld_target_hooks(
     import_added
 }
 
+fn push_helper_context(
+    mut out: Option<&mut Vec<DerivedAnnotation>>,
+    image: &BinaryImage,
+    instruction_references: &mut Vec<Reference>,
+    helper: &StubHelperEntry,
+) -> bool {
+    push_reference_if_missing(instruction_references, Reference::from_stub_helper(helper));
+
+    if let Some(binding) = resolve_helper_binding(image, helper) {
+        push_reference_if_missing(instruction_references, Reference::from_binding(binding));
+        push_reference_if_missing(
+            instruction_references,
+            Reference::Import {
+                name: binding.name.clone(),
+                dylib: binding.dylib.clone(),
+                address: binding.address,
+            },
+        );
+        if let Some(out) = out.as_mut() {
+            push_derived(
+                out,
+                DerivedAnnotation::ImportBindingEvidence {
+                    dylib: binding.dylib.clone(),
+                    name: binding.name.clone(),
+                    address: binding.address,
+                    offset: binding.offset,
+                    addend: binding.addend,
+                    binding_kind: binding.binding_kind,
+                    source: binding.source,
+                },
+            );
+        }
+        return true;
+    }
+
+    if let (Some(dylib), Some(name)) = (&helper.dylib, &helper.name) {
+        push_reference_if_missing(
+            instruction_references,
+            Reference::Import {
+                name: name.clone(),
+                dylib: dylib.clone(),
+                address: helper.pointer_address,
+            },
+        );
+        if let Some(out) = out.as_mut() {
+            push_derived(
+                out,
+                DerivedAnnotation::Import {
+                    dylib: dylib.clone(),
+                    name: name.clone(),
+                },
+            );
+            push_derived(
+                out,
+                DerivedAnnotation::ImportBindingEvidence {
+                    dylib: dylib.clone(),
+                    name: name.clone(),
+                    address: helper.pointer_address,
+                    offset: None,
+                    addend: 0,
+                    binding_kind: ImportBindingKind::Lazy,
+                    source: ImportBindingSource::Stub,
+                },
+            );
+        }
+        return true;
+    }
+
+    false
+}
+
+fn resolve_helper_binding<'a>(
+    image: &'a BinaryImage,
+    helper: &StubHelperEntry,
+) -> Option<&'a ImportBindingRecord> {
+    if let Some(pointer_address) = helper.pointer_address {
+        if let Some(binding) = image
+            .dyld()
+            .bindings_at_address(pointer_address)
+            .find(|binding| binding.binding_kind == ImportBindingKind::Lazy)
+        {
+            return Some(binding);
+        }
+    }
+
+    if let Some(binding_ordinal) = helper.binding_ordinal {
+        if let Some(binding) = image.dyld().import_bindings.iter().find(|binding| {
+            binding.ordinal == Some(binding_ordinal)
+                && binding.binding_kind == ImportBindingKind::Lazy
+        }) {
+            return Some(binding);
+        }
+    }
+
+    match (&helper.dylib, &helper.name) {
+        (Some(dylib), Some(name)) => image
+            .dyld()
+            .import_bindings
+            .iter()
+            .find(|binding| {
+                binding.dylib == *dylib
+                    && binding.name == *name
+                    && binding.binding_kind == ImportBindingKind::Lazy
+            })
+            .or_else(|| {
+                image
+                    .dyld()
+                    .import_bindings
+                    .iter()
+                    .find(|binding| binding.dylib == *dylib && binding.name == *name)
+            }),
+        _ => None,
+    }
+}
+
 fn overlapping_relocations<'a>(
     relocations: &'a [Relocation],
     instruction: &DecodedInstruction,
@@ -1329,6 +1495,18 @@ fn overlapping_relocations<'a>(
 
 fn normalize_import_name(name: &str) -> String {
     name.trim_start_matches('_').to_ascii_lowercase()
+}
+
+fn has_indirect_control_flow_annotation(annotations: &[Annotation], via: &str) -> bool {
+    annotations.iter().any(|annotation| {
+        matches!(
+            annotation,
+            Annotation::IndirectControlFlow {
+                via: existing_via,
+                ..
+            } if existing_via == via
+        )
+    })
 }
 
 fn push_derived(target: &mut Vec<DerivedAnnotation>, annotation: DerivedAnnotation) {

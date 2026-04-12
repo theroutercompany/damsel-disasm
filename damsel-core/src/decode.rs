@@ -1,7 +1,7 @@
 use crate::{Annotation, DecodedInstruction, Operand, Reference};
 use capstone::arch;
-use capstone::arch::arm64::{Arm64Operand, Arm64OperandType};
 use capstone::arch::ArchDetail;
+use capstone::arch::arm64::{Arm64Operand, Arm64OperandType};
 use capstone::prelude::*;
 use thiserror::Error;
 
