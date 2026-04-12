@@ -41,6 +41,18 @@ fn decode_benchmarks(criterion: &mut Criterion) {
             target: DisassemblyTarget::Section("__text".to_string()),
             max_instructions: 256,
         },
+        Scenario {
+            name: "import_rich::__text",
+            fixture: "import-rich",
+            target: DisassemblyTarget::Section("__text".to_string()),
+            max_instructions: 256,
+        },
+        Scenario {
+            name: "arm64e_sample::__text",
+            fixture: "arm64e-sample",
+            target: DisassemblyTarget::Section("__text".to_string()),
+            max_instructions: 128,
+        },
     ];
 
     for scenario in scenarios {

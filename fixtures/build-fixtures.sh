@@ -10,7 +10,10 @@ print_manifest() {
 f1550c7234dbef3fb1218e3b3edbf8b8d9f17c9d742109463f8517569f1530c9 arm64-symbolized
 037a16d7b82f24dd0ce4dffae59a374ab7e5ca826d5660cd3fd131c0ff932ca7 arm64-stripped
 d02c320d54e579378b3781c73f0322605873f0c9d681371fe635691cd1199c87 universal-hello
-c04a9535969d0f1132d158dd5e9380f0e6dc4fc1835e2bceb206f66993ab71e6 objc-sample
+ded9b93ac84a4aa7f43dcbeafb7b04014df3d2a57863b8d0752329c0b38fa88d objc-sample
+e8e95af05557291ab0cede971e38389df4fdf77d03985bf43fd22c72db595fcb arm64e-sample
+b200d6d6587af820c258aad12eed1b482d335a8f92f44972e08b0c4f1277d072 x86_64-only-hello
+bec5bb22e25742ac9368876de4a94575d14e91232fbdd3a1ba655d29cb9b550b import-rich
 fd33e4f22bf94f6f75b9bb33e2b99d5c3888a1a7fdc907dd13638f2aba816b66 malformed-truncated
 EOF
 }
@@ -85,6 +88,38 @@ build_fixtures() {
     -mmacosx-version-min=13.0 \
     "$SRC/hello.c" \
     -o "$BIN/universal-hello"
+
+  arm64e_tmp="$BIN/arm64e-sample.tmp"
+  if "$CLANG" \
+    -arch arm64e \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    "$SRC/hello.c" \
+    -o "$arm64e_tmp"
+  then
+    mv "$arm64e_tmp" "$BIN/arm64e-sample"
+  else
+    rm -f "$arm64e_tmp"
+    if [ -f "$BIN/arm64e-sample" ]; then
+      echo "warning: arm64e build unavailable; preserving existing fixture" >&2
+    else
+      echo "warning: arm64e build unavailable and no existing fixture is present" >&2
+    fi
+  fi
+
+  "$CLANG" \
+    -arch x86_64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    "$SRC/hello.c" \
+    -o "$BIN/x86_64-only-hello"
+
+  "$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    "$SRC/import-rich.c" \
+    -o "$BIN/import-rich"
 
   "$CLANG" \
     -arch arm64 \
