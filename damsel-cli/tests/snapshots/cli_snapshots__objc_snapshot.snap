@@ -103,85 +103,85 @@ methods:
   uppercaseString
   zone
 class_records:
-  0x100008578 name=- superclass=- metaclass=0x1000085a0 ro=0x1000080a8 methods=4 class_methods=1 properties=1 ivars=2 protocols=0
-  0x1000085c8 name=- superclass=0x100008578 metaclass=0x1000085f0 ro=0x1000082b8 methods=11 class_methods=3 properties=12 ivars=2 protocols=2
+  0x100008578 name=Speaker source=PointerTable superclass=- metaclass=0x1000085a0 ro=0x1000080a8 methods=4 class_methods=1 properties=1 ivars=2 protocols=0
+  0x1000085c8 name=Greeter source=PointerTable superclass=Speaker metaclass=0x1000085f0 ro=0x1000082b8 methods=11 class_methods=3 properties=12 ivars=2 protocols=2
 protocol_records:
   0x100008618 NSObject required_inst=19 required_class=0 optional_inst=1 optional_class=0 properties=4
   0x100008678 GreetingProviding required_inst=2 required_class=1 optional_inst=1 optional_class=0 properties=1
   0x1000086d8 Excitement required_inst=1 required_class=1 optional_inst=0 optional_class=0 properties=0
 method_records:
-  owner=- kind=class class_method=false selector=- impl=0x100000ad4 types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000b50 types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000bbc types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000bd8 types=v24@0:8@16
-  owner=- kind=metaclass class_method=true selector=- impl=0x100000ab8 types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000e24 types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000e5c types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000e90 types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000c48 types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000cc0 types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000cdc types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000d08 types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000d90 types=@16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000dac types=v24@0:8@16
-  owner=- kind=class class_method=false selector=- impl=0x100000de4 types=q16@0:8
-  owner=- kind=class class_method=false selector=- impl=0x100000e00 types=v24@0:8q16
-  owner=- kind=metaclass class_method=true selector=- impl=0x100000e40 types=@16@0:8
-  owner=- kind=metaclass class_method=true selector=- impl=0x100000c10 types=@16@0:8
-  owner=- kind=metaclass class_method=true selector=- impl=0x100000c2c types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001248 types=B24@0:8@16
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001254 types=#16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001260 types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x10000126c types=@24@0:8:16
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001278 types=@32@0:8:16@24
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001284 types=@40@0:8:16@24@32
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001290 types=B16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x10000129c types=B24@0:8#16
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012a8 types=B24@0:8#16
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012b4 types=B24@0:8@16
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012c0 types=B24@0:8:16
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012cc types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012d8 types=Vv16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012e4 types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012f0 types=Q16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x1000012fc types=^{_NSZone=}16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001308 types=Q16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001314 types=#16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001320 types=@16@0:8
-  owner=NSObject kind=protocol class_method=false selector=- impl=0x100001350 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=false selector=- impl=0x100001228 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=false selector=- impl=0x100001234 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=true selector=- impl=0x1000011f8 types=@16@0:8
-  owner=GreetingProviding kind=protocol class_method=false selector=- impl=0x100001338 types=@16@0:8
-  owner=Excitement kind=protocol class_method=false selector=- impl=0x100001210 types=@16@0:8
-  owner=Excitement kind=protocol class_method=true selector=- impl=0x1000011e0 types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000ad4 types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000b50 types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000bbc types=@16@0:8
+  owner=Speaker kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000bd8 types=v24@0:8@16
+  owner=Speaker kind=metaclass class_method=true selector=- selector_source=Unresolved impl=0x100000ab8 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000e24 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000e5c types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000e90 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000c48 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000cc0 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000cdc types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000d08 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000d90 types=@16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000dac types=v24@0:8@16
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000de4 types=q16@0:8
+  owner=Greeter kind=class class_method=false selector=- selector_source=Unresolved impl=0x100000e00 types=v24@0:8q16
+  owner=Greeter kind=metaclass class_method=true selector=- selector_source=Unresolved impl=0x100000e40 types=@16@0:8
+  owner=Greeter kind=metaclass class_method=true selector=- selector_source=Unresolved impl=0x100000c10 types=@16@0:8
+  owner=Greeter kind=metaclass class_method=true selector=- selector_source=Unresolved impl=0x100000c2c types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001248 types=B24@0:8@16
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001254 types=#16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001260 types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x10000126c types=@24@0:8:16
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001278 types=@32@0:8:16@24
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001284 types=@40@0:8:16@24@32
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001290 types=B16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x10000129c types=B24@0:8#16
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012a8 types=B24@0:8#16
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012b4 types=B24@0:8@16
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012c0 types=B24@0:8:16
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012cc types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012d8 types=Vv16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012e4 types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012f0 types=Q16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x1000012fc types=^{_NSZone=}16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001308 types=Q16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001314 types=#16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001320 types=@16@0:8
+  owner=NSObject kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001350 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001228 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001234 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=true selector=- selector_source=Unresolved impl=0x1000011f8 types=@16@0:8
+  owner=GreetingProviding kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001338 types=@16@0:8
+  owner=Excitement kind=protocol class_method=false selector=- selector_source=Unresolved impl=0x100001210 types=@16@0:8
+  owner=Excitement kind=protocol class_method=true selector=- selector_source=Unresolved impl=0x1000011e0 types=@16@0:8
 property_records:
-  owner=- name=title attrs=T@"NSString",C,N,V_title
-  owner=- name=categoryToken attrs=T@"NSString",R,N
-  owner=- name=hash attrs=TQ,R
-  owner=- name=superclass attrs=T#,R
-  owner=- name=description attrs=T@"NSString",R,C
-  owner=- name=debugDescription attrs=T@"NSString",?,R,C
-  owner=- name=name attrs=T@"NSString",C,N,V_name
-  owner=- name=emphasis attrs=Tq,N,V_emphasis
-  owner=- name=protocolLabel attrs=T@"NSString",R,N
-  owner=- name=hash attrs=TQ,R
-  owner=- name=superclass attrs=T#,R
-  owner=- name=description attrs=T@"NSString",R,C
-  owner=- name=debugDescription attrs=T@"NSString",?,R,C
+  owner=Speaker name=title attrs=T@"NSString",C,N,V_title
+  owner=Greeter name=categoryToken attrs=T@"NSString",R,N
+  owner=Greeter name=hash attrs=TQ,R
+  owner=Greeter name=superclass attrs=T#,R
+  owner=Greeter name=description attrs=T@"NSString",R,C
+  owner=Greeter name=debugDescription attrs=T@"NSString",?,R,C
+  owner=Greeter name=name attrs=T@"NSString",C,N,V_name
+  owner=Greeter name=emphasis attrs=Tq,N,V_emphasis
+  owner=Greeter name=protocolLabel attrs=T@"NSString",R,N
+  owner=Greeter name=hash attrs=TQ,R
+  owner=Greeter name=superclass attrs=T#,R
+  owner=Greeter name=description attrs=T@"NSString",R,C
+  owner=Greeter name=debugDescription attrs=T@"NSString",?,R,C
   owner=NSObject name=hash attrs=TQ,R
   owner=NSObject name=superclass attrs=T#,R
   owner=NSObject name=description attrs=T@"NSString",R,C
   owner=NSObject name=debugDescription attrs=T@"NSString",?,R,C
   owner=GreetingProviding name=protocolLabel attrs=T@"NSString",R,N
 ivar_records:
-  owner=- name=_prefixSeed type=@"NSString" offset=0x8
-  owner=- name=_title type=@"NSString" offset=0x10
-  owner=- name=_name type=@"NSString" offset=0x18
-  owner=- name=_emphasis type=q offset=0x20
+  owner=Speaker name=_prefixSeed type=@"NSString" offset=0x8
+  owner=Speaker name=_title type=@"NSString" offset=0x10
+  owner=Greeter name=_name type=@"NSString" offset=0x18
+  owner=Greeter name=_emphasis type=q offset=0x20
 pointer_refs:
-  classlist  table=0x1000041d8 raw=0x10000000008578 resolved_addr=0x100008578 resolved_name=-
-  classlist  table=0x1000041e0 raw=0x100000000085c8 resolved_addr=0x1000085c8 resolved_name=-
+  classlist  table=0x1000041d8 raw=0x10000000008578 resolved_addr=0x100008578 resolved_name=Speaker
+  classlist  table=0x1000041e0 raw=0x100000000085c8 resolved_addr=0x1000085c8 resolved_name=Greeter
   selref     table=0x100008408 raw=0x10000000001533 resolved_addr=0x100001533 resolved_name=init
   selref     table=0x100008410 raw=0x100000000014fd resolved_addr=0x1000014fd resolved_name=emphasis
   selref     table=0x100008418 raw=0x10000000001506 resolved_addr=0x100001506 resolved_name=emphasizedGreeting
@@ -223,4 +223,4 @@ pointer_refs:
   selref     table=0x100008538 raw=0x100000000014f1 resolved_addr=0x1000014f1 resolved_name=description
   selref     table=0x100008540 raw=0x100000000014e0 resolved_addr=0x1000014e0 resolved_name=debugDescription
   classref   table=0x100008548 raw=0x8010000000000008 resolved_addr=- resolved_name=-
-  classref   table=0x100008550 raw=0x100000000085c8 resolved_addr=0x1000085c8 resolved_name=-
+  classref   table=0x100008550 raw=0x100000000085c8 resolved_addr=0x1000085c8 resolved_name=Greeter
