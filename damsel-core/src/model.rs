@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryFormat {
@@ -62,7 +62,7 @@ pub enum Endianness {
     Big,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Platform {
     MacOS,
     IOS,
@@ -72,7 +72,7 @@ pub enum Platform {
     DriverKit,
     VisionOS,
     VisionOSSimulator,
-    Unknown,
+    Unknown(String),
 }
 
 impl fmt::Display for Platform {
@@ -86,12 +86,16 @@ impl fmt::Display for Platform {
             Self::DriverKit => f.write_str("driverkit"),
             Self::VisionOS => f.write_str("visionos"),
             Self::VisionOSSimulator => f.write_str("visionos-simulator"),
-            Self::Unknown => f.write_str("unknown"),
+            Self::Unknown(value) => f.write_str(value),
         }
     }
 }
 
 impl Platform {
+    pub fn unknown(raw: impl Into<String>) -> Self {
+        Self::Unknown(raw.into())
+    }
+
     pub fn parse(value: &str) -> Self {
         match normalize_identifier(value).as_str() {
             "macos" => Self::MacOS,
@@ -102,7 +106,14 @@ impl Platform {
             "driverkit" => Self::DriverKit,
             "visionos" => Self::VisionOS,
             "visionossimulator" => Self::VisionOSSimulator,
-            _ => Self::Unknown,
+            _ => Self::Unknown(value.to_string()),
+        }
+    }
+
+    pub fn raw_identifier(&self) -> Option<&str> {
+        match self {
+            Self::Unknown(raw) => Some(raw.as_str()),
+            _ => None,
         }
     }
 }
@@ -113,6 +124,41 @@ pub struct SliceInfo {
     pub size: u64,
     pub is_universal: bool,
     pub cpu_subtype: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SliceDescriptor {
+    pub offset: u64,
+    pub size: u64,
+    pub is_universal: bool,
+    pub cpu_subtype: u32,
+    pub architecture: Architecture,
+    pub selected: bool,
+}
+
+impl SliceDescriptor {
+    pub fn from_selected_slice(slice: &SliceInfo, architecture: Architecture) -> Self {
+        Self {
+            offset: slice.offset,
+            size: slice.size,
+            is_universal: slice.is_universal,
+            cpu_subtype: slice.cpu_subtype,
+            architecture,
+            selected: true,
+        }
+    }
+
+    pub fn file_range(&self) -> Option<Range<u64>> {
+        self.offset
+            .checked_add(self.size)
+            .map(|end| self.offset..end)
+    }
+
+    pub fn contains_file_offset(&self, file_offset: u64) -> bool {
+        self.file_range()
+            .map(|range| range.contains(&file_offset))
+            .unwrap_or(false)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -362,6 +408,9 @@ pub struct ObjcMetadata {
     pub method_names: Vec<String>,
     pub image_info_flags: Option<u32>,
     pub pointer_refs: Vec<ObjcPointerRef>,
+    pub classes: Vec<ObjcClassRecord>,
+    pub protocols: Vec<ObjcProtocolRecord>,
+    pub categories: Vec<ObjcCategoryRecord>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,6 +429,32 @@ pub struct ObjcPointerRef {
     pub resolved_name: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjcClassRecord {
+    pub class_pointer: u64,
+    pub name: Option<String>,
+    pub superclass_pointer: Option<u64>,
+    pub superclass_name: Option<String>,
+    pub ro_pointer: Option<u64>,
+    pub method_list_pointer: Option<u64>,
+    pub property_list_pointer: Option<u64>,
+    pub protocol_list_pointer: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjcProtocolRecord {
+    pub pointer: u64,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjcCategoryRecord {
+    pub pointer: u64,
+    pub name: Option<String>,
+    pub class_pointer: Option<u64>,
+    pub class_name: Option<String>,
+}
+
 impl ObjcMetadata {
     pub fn pointer_refs_of_kind(
         &self,
@@ -388,6 +463,24 @@ impl ObjcMetadata {
         self.pointer_refs
             .iter()
             .filter(move |pointer_ref| pointer_ref.kind == kind)
+    }
+
+    pub fn class_by_name(&self, name: &str) -> Option<&ObjcClassRecord> {
+        self.classes
+            .iter()
+            .find(|class_record| class_record.name.as_deref() == Some(name))
+    }
+
+    pub fn protocol_by_name(&self, name: &str) -> Option<&ObjcProtocolRecord> {
+        self.protocols
+            .iter()
+            .find(|protocol_record| protocol_record.name.as_deref() == Some(name))
+    }
+
+    pub fn category_by_name(&self, name: &str) -> Option<&ObjcCategoryRecord> {
+        self.categories
+            .iter()
+            .find(|category_record| category_record.name.as_deref() == Some(name))
     }
 }
 
@@ -400,6 +493,56 @@ pub struct DyldMetadata {
     pub has_rebases: bool,
     pub has_binds: bool,
     pub has_chained_fixups: bool,
+    pub import_bindings: Vec<ImportBindingRecord>,
+    pub stubs: Vec<StubEntry>,
+}
+
+impl DyldMetadata {
+    pub fn binding_for_symbol(&self, dylib: &str, name: &str) -> Option<&ImportBindingRecord> {
+        self.import_bindings
+            .iter()
+            .find(|binding| binding.dylib == dylib && binding.name == name)
+    }
+
+    pub fn bindings_at_address(&self, address: u64) -> impl Iterator<Item = &ImportBindingRecord> {
+        self.import_bindings
+            .iter()
+            .filter(move |binding| binding.address == Some(address))
+    }
+
+    pub fn stub_for_address(&self, address: u64) -> Option<&StubEntry> {
+        self.stubs
+            .iter()
+            .find(|stub_entry| stub_entry.stub_address == address)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportBindingSource {
+    ChainedFixup,
+    IndirectSymbol,
+    Stub,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportBindingRecord {
+    pub dylib: String,
+    pub name: String,
+    pub address: Option<u64>,
+    pub offset: Option<u64>,
+    pub addend: i64,
+    pub source: ImportBindingSource,
+    pub is_weak: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StubEntry {
+    pub stub_address: u64,
+    pub pointer_address: Option<u64>,
+    pub dylib: Option<String>,
+    pub name: Option<String>,
+    pub source: ImportBindingSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -479,6 +622,12 @@ pub enum Reference {
     Branch {
         target: u64,
     },
+    IndirectCall {
+        via: String,
+    },
+    IndirectBranch {
+        via: String,
+    },
     Page {
         target: u64,
     },
@@ -490,13 +639,76 @@ pub enum Reference {
         dylib: String,
         address: Option<u64>,
     },
+    ImportBinding {
+        dylib: String,
+        name: String,
+        address: Option<u64>,
+        offset: Option<u64>,
+        addend: i64,
+        source: ImportBindingSource,
+        is_weak: bool,
+    },
+    Stub {
+        stub_address: u64,
+        pointer_address: Option<u64>,
+        dylib: Option<String>,
+        name: Option<String>,
+        source: ImportBindingSource,
+    },
+    RelocationEvidence {
+        address: u64,
+        kind: String,
+        encoding: String,
+        target: String,
+        addend: i64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Annotation {
     Symbol(String),
-    TargetSymbol { address: u64, name: String },
-    Import { dylib: String, name: String },
+    TargetSymbol {
+        address: u64,
+        name: String,
+    },
+    Import {
+        dylib: String,
+        name: String,
+    },
+    IndirectControlFlow {
+        kind: String,
+        via: String,
+    },
+    Relocation {
+        address: u64,
+        kind: String,
+        encoding: String,
+        target: String,
+        addend: i64,
+    },
+    ImportBinding {
+        dylib: String,
+        name: String,
+        address: Option<u64>,
+        offset: Option<u64>,
+        addend: i64,
+        source: ImportBindingSource,
+    },
+    ImportBindingEvidence {
+        dylib: String,
+        name: String,
+        address: Option<u64>,
+        offset: Option<u64>,
+        addend: i64,
+        source: ImportBindingSource,
+    },
+    RelocationEvidence {
+        address: u64,
+        kind: String,
+        encoding: String,
+        target: String,
+        addend: i64,
+    },
     Note(String),
 }
 
@@ -506,7 +718,103 @@ impl fmt::Display for Annotation {
             Self::Symbol(name) => write!(f, "symbol {name}"),
             Self::TargetSymbol { address, name } => write!(f, "target {name} ({address:#x})"),
             Self::Import { dylib, name } => write!(f, "import {dylib}:{name}"),
+            Self::IndirectControlFlow { kind, via } => {
+                write!(f, "indirect {kind} via {via}")
+            }
+            Self::Relocation {
+                address,
+                kind,
+                encoding,
+                target,
+                addend,
+            } => write!(
+                f,
+                "reloc kind={kind} encoding={encoding} target={target} addend={addend} addr={address:#x}"
+            ),
+            Self::ImportBinding {
+                dylib,
+                name,
+                address,
+                offset,
+                addend,
+                source,
+            } => write!(
+                f,
+                "binding {dylib}:{name} addr={} off={} addend={addend} source={source:?}",
+                address.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string()),
+                offset.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string())
+            ),
+            Self::ImportBindingEvidence {
+                dylib,
+                name,
+                address,
+                offset,
+                addend,
+                source,
+            } => write!(
+                f,
+                "binding-evidence {dylib}:{name} addr={} off={} addend={addend} source={source:?}",
+                address.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string()),
+                offset.map(|value| format!("{value:#x}")).unwrap_or_else(|| "-".to_string())
+            ),
+            Self::RelocationEvidence {
+                address,
+                kind,
+                encoding,
+                target,
+                addend,
+            } => write!(
+                f,
+                "reloc-evidence kind={kind} encoding={encoding} target={target} addend={addend} addr={address:#x}"
+            ),
             Self::Note(note) => f.write_str(note),
+        }
+    }
+}
+
+impl Reference {
+    pub fn from_binding(binding: &ImportBindingRecord) -> Self {
+        Self::ImportBinding {
+            dylib: binding.dylib.clone(),
+            name: binding.name.clone(),
+            address: binding.address,
+            offset: binding.offset,
+            addend: binding.addend,
+            source: binding.source,
+            is_weak: binding.is_weak,
+        }
+    }
+
+    pub fn from_stub(stub: &StubEntry) -> Self {
+        Self::Stub {
+            stub_address: stub.stub_address,
+            pointer_address: stub.pointer_address,
+            dylib: stub.dylib.clone(),
+            name: stub.name.clone(),
+            source: stub.source,
+        }
+    }
+}
+
+impl Annotation {
+    pub fn import_binding_evidence(binding: &ImportBindingRecord) -> Self {
+        Self::ImportBindingEvidence {
+            dylib: binding.dylib.clone(),
+            name: binding.name.clone(),
+            address: binding.address,
+            offset: binding.offset,
+            addend: binding.addend,
+            source: binding.source,
+        }
+    }
+
+    pub fn relocation_evidence(relocation: &Relocation) -> Self {
+        Self::RelocationEvidence {
+            address: relocation.address,
+            kind: relocation.kind.clone(),
+            encoding: relocation.encoding.clone(),
+            target: relocation.target.clone(),
+            addend: relocation.addend,
         }
     }
 }
@@ -575,6 +883,7 @@ pub struct DisassemblyResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisassemblyRequestV2 {
     pub target: DisassemblyTarget,
+    pub range: Option<Range<u64>>,
     pub limit: DisassemblyLimit,
     pub options: DisassemblyOptions,
 }
@@ -588,6 +897,33 @@ pub struct DisassemblyResultV2 {
     pub instruction_count: usize,
     pub stop_reason: DisassemblyStopReason,
     pub instructions: Vec<DecodedInstruction>,
+}
+
+impl DisassemblyRequestV2 {
+    pub fn with_range(mut self, range: Option<Range<u64>>) -> Self {
+        self.range = range;
+        self
+    }
+
+    pub fn has_valid_range(&self) -> bool {
+        self.range
+            .as_ref()
+            .map(|range| range.start < range.end)
+            .unwrap_or(true)
+    }
+
+    pub fn range_contains(&self, address: u64) -> bool {
+        self.range
+            .as_ref()
+            .map(|range| range.contains(&address))
+            .unwrap_or(true)
+    }
+}
+
+impl DisassemblyResultV2 {
+    pub fn bytes_len_compat(&self) -> usize {
+        self.decoded_bytes
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -658,6 +994,7 @@ impl From<&DisassemblyRequest> for DisassemblyRequestV2 {
     fn from(value: &DisassemblyRequest) -> Self {
         Self {
             target: value.target.clone(),
+            range: None,
             limit: value.effective_limit(),
             options: value.options(),
         }
@@ -693,6 +1030,7 @@ pub struct BinaryImage {
     pub entry_point: Option<u64>,
     pub platform: Option<Platform>,
     pub slice: SliceInfo,
+    pub available_slices: Vec<SliceDescriptor>,
     pub segments: Vec<Segment>,
     pub sections: Vec<Section>,
     pub symbols: Vec<Symbol>,
@@ -701,6 +1039,10 @@ pub struct BinaryImage {
     pub objc: ObjcMetadata,
     pub dyld: DyldMetadata,
     data: Arc<[u8]>,
+    section_name_index_cache: OnceLock<BTreeMap<String, Vec<usize>>>,
+    symbol_name_index_cache: OnceLock<BTreeMap<String, Vec<usize>>>,
+    import_name_index_cache: OnceLock<BTreeMap<String, Vec<usize>>>,
+    relocation_address_index_cache: OnceLock<BTreeMap<u64, Vec<usize>>>,
 }
 
 impl fmt::Debug for BinaryImage {
@@ -714,6 +1056,7 @@ impl fmt::Debug for BinaryImage {
             .field("entry_point", &self.entry_point)
             .field("platform", &self.platform)
             .field("slice", &self.slice)
+            .field("available_slices", &self.available_slices)
             .field("segments", &self.segments)
             .field("sections", &self.sections)
             .field("symbols", &self.symbols)
@@ -736,6 +1079,7 @@ impl BinaryImage {
         entry_point: Option<u64>,
         platform: Option<Platform>,
         slice: SliceInfo,
+        available_slices: Vec<SliceDescriptor>,
         segments: Vec<Segment>,
         sections: Vec<Section>,
         symbols: Vec<Symbol>,
@@ -754,6 +1098,7 @@ impl BinaryImage {
             entry_point,
             platform,
             slice,
+            available_slices,
             segments,
             sections,
             symbols,
@@ -762,6 +1107,10 @@ impl BinaryImage {
             objc,
             dyld,
             data,
+            section_name_index_cache: OnceLock::new(),
+            symbol_name_index_cache: OnceLock::new(),
+            import_name_index_cache: OnceLock::new(),
+            relocation_address_index_cache: OnceLock::new(),
         }
     }
 
@@ -783,6 +1132,7 @@ impl BinaryImage {
         dyld: DyldMetadata,
         data: Arc<[u8]>,
     ) -> Self {
+        let available_slices = vec![SliceDescriptor::from_selected_slice(&slice, architecture)];
         Self::new(
             BinarySource::File(path.clone()),
             path,
@@ -792,6 +1142,7 @@ impl BinaryImage {
             entry_point,
             platform,
             slice,
+            available_slices,
             segments,
             sections,
             symbols,
@@ -824,6 +1175,7 @@ impl BinaryImage {
         let source = BinarySource::Memory {
             label: label.clone(),
         };
+        let available_slices = vec![SliceDescriptor::from_selected_slice(&slice, architecture)];
         Self::new(
             source,
             BinarySource::Memory { label }.default_path(),
@@ -833,6 +1185,7 @@ impl BinaryImage {
             entry_point,
             platform,
             slice,
+            available_slices,
             segments,
             sections,
             symbols,
@@ -850,6 +1203,36 @@ impl BinaryImage {
 
     pub fn source_label(&self) -> Option<&str> {
         self.source.memory_label()
+    }
+
+    pub fn platform_raw_identifier(&self) -> Option<&str> {
+        self.platform.as_ref().and_then(Platform::raw_identifier)
+    }
+
+    pub fn selected_slice(&self) -> &SliceInfo {
+        &self.slice
+    }
+
+    pub fn available_slices(&self) -> &[SliceDescriptor] {
+        &self.available_slices
+    }
+
+    pub fn selected_slice_descriptor(&self) -> Option<&SliceDescriptor> {
+        self.available_slices
+            .iter()
+            .find(|descriptor| descriptor.selected)
+    }
+
+    pub fn with_available_slices(mut self, available_slices: Vec<SliceDescriptor>) -> Self {
+        self.available_slices = if available_slices.is_empty() {
+            vec![SliceDescriptor::from_selected_slice(
+                &self.slice,
+                self.architecture,
+            )]
+        } else {
+            available_slices
+        };
+        self
     }
 
     pub fn data_len(&self) -> usize {
@@ -925,42 +1308,39 @@ impl BinaryImage {
     }
 
     pub fn section_name_index(&self) -> BTreeMap<String, Vec<usize>> {
-        let mut index = BTreeMap::<String, Vec<usize>>::new();
-        for (position, section) in self.sections.iter().enumerate() {
-            index
-                .entry(section.name.clone())
-                .or_default()
-                .push(position);
-            index.entry(section.full_name()).or_default().push(position);
-        }
-        index
+        self.section_name_index_cached().clone()
     }
 
     pub fn symbol_name_index(&self) -> BTreeMap<String, Vec<usize>> {
-        let mut index = BTreeMap::<String, Vec<usize>>::new();
-        for (position, symbol) in self.symbols.iter().enumerate() {
-            index.entry(symbol.name.clone()).or_default().push(position);
-        }
-        index
+        self.symbol_name_index_cached().clone()
     }
 
     pub fn import_name_index(&self) -> BTreeMap<String, Vec<usize>> {
-        let mut index = BTreeMap::<String, Vec<usize>>::new();
-        for (position, import) in self.imports.iter().enumerate() {
-            index
-                .entry(format!("{}:{}", import.dylib, import.name))
-                .or_default()
-                .push(position);
-        }
-        index
+        self.import_name_index_cached().clone()
     }
 
     pub fn relocation_address_index(&self) -> BTreeMap<u64, Vec<usize>> {
-        let mut index = BTreeMap::<u64, Vec<usize>>::new();
-        for (position, relocation) in self.relocations.iter().enumerate() {
-            index.entry(relocation.address).or_default().push(position);
-        }
-        index
+        self.relocation_address_index_cached().clone()
+    }
+
+    pub fn section_name_index_cached(&self) -> &BTreeMap<String, Vec<usize>> {
+        self.section_name_index_cache
+            .get_or_init(|| Self::build_section_name_index(&self.sections))
+    }
+
+    pub fn symbol_name_index_cached(&self) -> &BTreeMap<String, Vec<usize>> {
+        self.symbol_name_index_cache
+            .get_or_init(|| Self::build_symbol_name_index(&self.symbols))
+    }
+
+    pub fn import_name_index_cached(&self) -> &BTreeMap<String, Vec<usize>> {
+        self.import_name_index_cache
+            .get_or_init(|| Self::build_import_name_index(&self.imports))
+    }
+
+    pub fn relocation_address_index_cached(&self) -> &BTreeMap<u64, Vec<usize>> {
+        self.relocation_address_index_cache
+            .get_or_init(|| Self::build_relocation_address_index(&self.relocations))
     }
 
     pub fn containing_section(&self, address: u64) -> Option<&Section> {
@@ -995,6 +1375,45 @@ impl BinaryImage {
 
     pub fn effective_instruction_limit(&self, request: &DisassemblyRequest) -> Option<usize> {
         request.effective_limit().instruction_cap()
+    }
+
+    fn build_section_name_index(sections: &[Section]) -> BTreeMap<String, Vec<usize>> {
+        let mut index = BTreeMap::<String, Vec<usize>>::new();
+        for (position, section) in sections.iter().enumerate() {
+            index
+                .entry(section.name.clone())
+                .or_default()
+                .push(position);
+            index.entry(section.full_name()).or_default().push(position);
+        }
+        index
+    }
+
+    fn build_symbol_name_index(symbols: &[Symbol]) -> BTreeMap<String, Vec<usize>> {
+        let mut index = BTreeMap::<String, Vec<usize>>::new();
+        for (position, symbol) in symbols.iter().enumerate() {
+            index.entry(symbol.name.clone()).or_default().push(position);
+        }
+        index
+    }
+
+    fn build_import_name_index(imports: &[Import]) -> BTreeMap<String, Vec<usize>> {
+        let mut index = BTreeMap::<String, Vec<usize>>::new();
+        for (position, import) in imports.iter().enumerate() {
+            index
+                .entry(format!("{}:{}", import.dylib, import.name))
+                .or_default()
+                .push(position);
+        }
+        index
+    }
+
+    fn build_relocation_address_index(relocations: &[Relocation]) -> BTreeMap<u64, Vec<usize>> {
+        let mut index = BTreeMap::<u64, Vec<usize>>::new();
+        for (position, relocation) in relocations.iter().enumerate() {
+            index.entry(relocation.address).or_default().push(position);
+        }
+        index
     }
 }
 
