@@ -1,10 +1,10 @@
 use damsel_core::{
-    Annotation, BinaryImage, DecodedInstruction, ExportFlagName, ExportKind, Import, ImportBindingKind,
-    ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource,
-    ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
-    ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
-    RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry,
-    StubKind, Symbol,
+    Annotation, BinaryImage, DecodedInstruction, ExportFlagName, ExportKind, Import,
+    ImportBindingKind, ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord,
+    ObjcCategoryRecordSource, ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind,
+    ObjcMethodRecord, ObjcNameSource, ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord,
+    ObjcProtocolRecord, ObjcSelectorSource, RecoveredValue, Reference, Relocation, Section,
+    SliceDescriptor, StubEntry, StubHelperEntry, StubKind, Symbol,
 };
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
@@ -1244,7 +1244,10 @@ fn export_matches_kind(export: &damsel_core::ExportRecord, kind: ExportKindFilte
         (ExportKind::Regular, ExportKindFilter::Regular)
             | (ExportKind::Reexport { .. }, ExportKindFilter::Reexport)
             | (ExportKind::Resolver { .. }, ExportKindFilter::Resolver)
-            | (ExportKind::StubAndResolver { .. }, ExportKindFilter::StubAndResolver)
+            | (
+                ExportKind::StubAndResolver { .. },
+                ExportKindFilter::StubAndResolver
+            )
             | (ExportKind::WeakDefinition, ExportKindFilter::WeakDefinition)
             | (ExportKind::Absolute, ExportKindFilter::Absolute)
             | (ExportKind::ThreadLocal, ExportKindFilter::ThreadLocal)
@@ -1427,8 +1430,7 @@ fn objc_category_matches(
             }
             ObjcCategorySourceFilter::SymbolSynthesisWithLists => {
                 record.record_source == ObjcCategoryRecordSource::SymbolSynthesis
-                    && (record.property_list_pointer.is_some()
-                        || record.protocol_list_pointer.is_some())
+                    && record.has_list_backing()
             }
         })
 }
@@ -2204,10 +2206,7 @@ fn export_json(export: &damsel_core::ExportRecord) -> JsonValue {
             "raw_flags".to_string(),
             JsonValue::String(export.raw_flags.clone()),
         ),
-        (
-            "flags".to_string(),
-            export_flags_json(&export.flags),
-        ),
+        ("flags".to_string(), export_flags_json(&export.flags)),
         ("kind".to_string(), export_kind_json(&export.kind)),
         (
             "reexport_target".to_string(),
@@ -2241,10 +2240,7 @@ fn export_json(export: &damsel_core::ExportRecord) -> JsonValue {
 fn export_flags_json(flags: &damsel_core::ExportFlags) -> JsonValue {
     JsonValue::Object(vec![
         ("raw_bits".to_string(), u64_num(flags.raw_bits)),
-        (
-            "kind_bits".to_string(),
-            u64_num(u64::from(flags.kind_bits)),
-        ),
+        ("kind_bits".to_string(), u64_num(u64::from(flags.kind_bits))),
         (
             "is_weak_definition".to_string(),
             JsonValue::Bool(flags.is_weak_definition),
@@ -2265,10 +2261,7 @@ fn export_flags_json(flags: &damsel_core::ExportFlags) -> JsonValue {
             "is_absolute".to_string(),
             JsonValue::Bool(flags.is_absolute),
         ),
-        (
-            "unknown_bits".to_string(),
-            u64_num(flags.unknown_bits),
-        ),
+        ("unknown_bits".to_string(), u64_num(flags.unknown_bits)),
         (
             "flag_names".to_string(),
             JsonValue::Array(
@@ -3539,6 +3532,7 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             slot_address,
             index_register,
             element_size,
+            encoding,
             target,
         } => JsonValue::Object(vec![
             (
@@ -3554,6 +3548,10 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             (
                 "element_size".to_string(),
                 u64_num(u64::from(*element_size)),
+            ),
+            (
+                "encoding".to_string(),
+                JsonValue::String(encoding.to_string()),
             ),
             ("target".to_string(), u64_num(*target)),
         ]),

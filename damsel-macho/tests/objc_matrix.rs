@@ -256,6 +256,8 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
     let mut saw_category_with_class_source = false;
     let mut saw_synthetic_category = false;
     let mut saw_synthetic_category_with_list_pointer = false;
+    let mut saw_list_backed_property_decode = false;
+    let mut saw_list_backed_protocol_decode = false;
     let mut runtime_category_present = false;
     for (index, category_record) in image.objc().categories.iter().enumerate() {
         assert!(
@@ -309,16 +311,60 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
         saw_synthetic_category_with_list_pointer |= matches!(
             category_record.record_source,
             damsel_core::ObjcCategoryRecordSource::SymbolSynthesis
-        ) && (category_record.protocol_list_pointer.is_some()
-            || category_record.property_list_pointer.is_some());
+        ) && category_record.has_list_backing();
         saw_category_methods |=
             !category_record.methods.is_empty() || !category_record.class_methods.is_empty();
         saw_category_properties |= !category_record.properties.is_empty();
+        if category_record.property_list_pointer.is_some() {
+            assert!(
+                !matches!(
+                    category_record.properties_source,
+                    ObjcNameSource::Unresolved
+                ),
+                "list-backed category properties must carry non-unresolved provenance"
+            );
+            saw_list_backed_property_decode |= !category_record.properties.is_empty();
+        }
         if category_record.protocol_list_pointer.is_some() {
+            assert!(
+                !matches!(category_record.protocols_source, ObjcNameSource::Unresolved),
+                "list-backed category protocols must carry non-unresolved provenance"
+            );
             assert!(
                 !category_record.adopted_protocols.is_empty(),
                 "file-backed synthetic/runtime category protocol lists should decode adopted protocols"
             );
+            saw_list_backed_protocol_decode = true;
+        }
+        if category_record.record_source == damsel_core::ObjcCategoryRecordSource::RuntimeList {
+            if category_record.property_list_pointer.is_some() {
+                assert!(
+                    matches!(category_record.properties_source, ObjcNameSource::Runtime),
+                    "runtime category property list provenance should remain runtime-backed"
+                );
+            }
+            if category_record.protocol_list_pointer.is_some() {
+                assert!(
+                    matches!(category_record.protocols_source, ObjcNameSource::Runtime),
+                    "runtime category protocol list provenance should remain runtime-backed"
+                );
+            }
+        } else if category_record.has_list_backing() {
+            if category_record.property_list_pointer.is_some() {
+                assert!(
+                    matches!(
+                        category_record.properties_source,
+                        ObjcNameSource::LegacyPool
+                    ),
+                    "symbol-synthesized list-backed category properties should be marked legacy-pool"
+                );
+            }
+            if category_record.protocol_list_pointer.is_some() {
+                assert!(
+                    matches!(category_record.protocols_source, ObjcNameSource::LegacyPool),
+                    "symbol-synthesized list-backed category protocols should be marked legacy-pool"
+                );
+            }
         }
         for property in &category_record.properties {
             if property.name.is_some() {
@@ -368,6 +414,21 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
             saw_synthetic_category_with_list_pointer,
             "expected at least one synthetic category with list-backed protocol/property metadata"
         );
+        assert!(
+            saw_list_backed_protocol_decode,
+            "expected at least one list-backed category protocol decode"
+        );
+        if image
+            .objc()
+            .categories
+            .iter()
+            .any(|record| record.property_list_pointer.is_some())
+        {
+            assert!(
+                saw_list_backed_property_decode,
+                "expected at least one list-backed category property decode when property list pointers exist"
+            );
+        }
     }
 
     let mut saw_class_with_name_source = false;
@@ -413,6 +474,30 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
 }
 
 #[test]
+fn synthetic_category_helpers_expose_list_backed_records() {
+    let image = load(fixture("objc-sample")).expect("load objc fixture");
+
+    let synthetic_categories = image.objc().synthetic_categories().collect::<Vec<_>>();
+    assert!(
+        !synthetic_categories.is_empty(),
+        "expected synthetic categories to be discoverable via helper iterator"
+    );
+    assert!(
+        synthetic_categories.iter().all(|record| matches!(
+            record.record_source,
+            damsel_core::ObjcCategoryRecordSource::SymbolSynthesis
+        )),
+        "synthetic category helper must not return runtime category records"
+    );
+    assert!(
+        synthetic_categories
+            .iter()
+            .any(|record| record.has_list_backing()),
+        "expected at least one synthetic category with list-backed metadata"
+    );
+}
+
+#[test]
 fn malformed_objc_protocol_list_fixture_stays_bounded() {
     let path = fixture("malformed-objc-protocol-list");
     if !path.exists() {
@@ -425,7 +510,8 @@ fn malformed_objc_protocol_list_fixture_stays_bounded() {
         "malformed objc list fixture should still parse structural category metadata"
     );
     assert!(
-        image.objc()
+        image
+            .objc()
             .categories
             .iter()
             .filter_map(|record| record.protocol_list_pointer)

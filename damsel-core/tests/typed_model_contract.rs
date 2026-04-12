@@ -300,6 +300,7 @@ fn objc_category_provenance_is_constructible() {
         category.record_source,
         damsel_core::ObjcCategoryRecordSource::RuntimeList
     );
+    assert!(category.has_list_backing());
 }
 
 #[test]
@@ -375,6 +376,11 @@ fn objc_records_are_queryable_by_pointer_and_selector_source() {
             .map(|record| record.name.as_deref().unwrap_or("-"))
             .collect::<Vec<_>>(),
         vec!["Excited"]
+    );
+    assert!(
+        metadata
+            .category_by_pointer(0x5000)
+            .is_some_and(|record| record.has_list_backing())
     );
     assert_eq!(
         metadata
@@ -507,6 +513,7 @@ fn structured_export_flag_names_and_table_evidence_are_constructible() {
         slot_address: 0x4010,
         index_register: "w8".to_string(),
         element_size: 8,
+        encoding: damsel_core::TableSlotEncoding::Absolute64,
         target: 0x3000,
     };
 
@@ -517,6 +524,17 @@ fn structured_export_flag_names_and_table_evidence_are_constructible() {
     assert!(matches!(
         annotation,
         damsel_core::Annotation::TableSlotResolved { .. }
+    ));
+
+    let relative = damsel_core::RecoveredValue {
+        register: "x3".to_string(),
+        value: 0x5000,
+        kind: damsel_core::RecoveredValueKind::FunctionPointer,
+        source: damsel_core::RecoveredValueSource::RelativeTableLoad,
+    };
+    assert!(matches!(
+        relative.source,
+        damsel_core::RecoveredValueSource::RelativeTableLoad
     ));
 }
 
@@ -529,7 +547,10 @@ fn dyld_export_lookup_helpers_are_queryable() {
         raw_flags: "Regular".to_string(),
         flags: damsel_core::ExportFlags::from_bits(0),
         kind: damsel_core::ExportKind::Regular,
-        reexport_target: Some(("/usr/lib/libSystem.B.dylib".to_string(), Some("_main".to_string()))),
+        reexport_target: Some((
+            "/usr/lib/libSystem.B.dylib".to_string(),
+            Some("_main".to_string()),
+        )),
         resolver_target: Some(0x2000),
     };
     let bytes: Arc<[u8]> = image.slice_bytes().to_vec().into();

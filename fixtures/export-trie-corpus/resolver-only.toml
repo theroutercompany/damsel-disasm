@@ -1,0 +1,6 @@
+name = "resolver-only"
+flags = 16
+address = 0
+libs = []
+payload_hex = "00 30"
+expect = "resolver"

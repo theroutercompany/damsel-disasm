@@ -248,7 +248,9 @@ impl From<ObjcCategorySourceArg> for output::ObjcCategorySourceFilter {
     fn from(value: ObjcCategorySourceArg) -> Self {
         match value {
             ObjcCategorySourceArg::RuntimeList => output::ObjcCategorySourceFilter::RuntimeList,
-            ObjcCategorySourceArg::SymbolSynthesis => output::ObjcCategorySourceFilter::SymbolSynthesis,
+            ObjcCategorySourceArg::SymbolSynthesis => {
+                output::ObjcCategorySourceFilter::SymbolSynthesis
+            }
             ObjcCategorySourceArg::SymbolSynthesisWithLists => {
                 output::ObjcCategorySourceFilter::SymbolSynthesisWithLists
             }

@@ -78,9 +78,7 @@ pub(crate) fn collect_dyld_metadata(
     validate_export_payload_ranges(bytes, &macho.load_commands)?;
     let exported_symbols = macho
         .exports()
-        .map_err(|error| {
-            MachoError::MalformedDyldPayload(format!("failed to parse export trie: {error}"))
-        })?
+        .map_err(export_trie_parse_error)?
         .into_iter()
         .map(|export| build_export_record(export.name, export.offset, &export.info, image_base))
         .collect::<Vec<_>>();
@@ -170,6 +168,12 @@ pub(crate) fn collect_dyld_metadata(
     })
 }
 
+fn export_trie_parse_error(error: goblin::error::Error) -> MachoError {
+    MachoError::MalformedDyldPayload(format!(
+        "failed to parse export trie (invalid node or terminal payload): {error}"
+    ))
+}
+
 fn validate_export_payload_ranges(
     bytes: &[u8],
     commands: &[goblin::mach::load_command::LoadCommand],
@@ -247,6 +251,7 @@ fn export_record_address(
         }
         ExportInfo::Reexport { .. } => None,
         ExportInfo::Stub { .. } => match kind {
+            ExportKind::Resolver { resolver_address } => *resolver_address,
             ExportKind::StubAndResolver { stub_address, .. } => *stub_address,
             _ => None,
         },
@@ -310,6 +315,10 @@ fn map_export_kind(info: &ExportInfo<'_>, image_base: u64) -> ExportKind {
         } => {
             if raw_bits & u64::from(EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER) == 0 {
                 ExportKind::Unknown(format!("flags={raw_bits:#x}"))
+            } else if u64::from(*stub_offset) == 0 {
+                ExportKind::Resolver {
+                    resolver_address: image_base.checked_add((*resolver_offset).into()),
+                }
             } else {
                 ExportKind::StubAndResolver {
                     stub_address: image_base.checked_add((*stub_offset).into()),
@@ -1025,6 +1034,53 @@ fn read_u64(data: &[u8], offset: usize) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn export_corpus_bytes(name: &str) -> Vec<u8> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/export-trie-corpus")
+            .join(name);
+        let data = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("failed to read export corpus case {:?}: {error}", path)
+        });
+        let payload_hex = data
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("payload_hex = ")
+                    .map(str::trim)
+                    .and_then(|value| value.strip_prefix('"'))
+                    .and_then(|value| value.strip_suffix('"'))
+            })
+            .unwrap_or_else(|| panic!("missing payload_hex in {:?}", path));
+        parse_hex_corpus_bytes(payload_hex, &path)
+    }
+
+    fn parse_hex_corpus_bytes(data: &str, path: &PathBuf) -> Vec<u8> {
+        data.lines()
+            .flat_map(|line| line.split('#').next())
+            .flat_map(|line| line.split_whitespace())
+            .map(|token| {
+                u8::from_str_radix(token, 16).unwrap_or_else(|error| {
+                    panic!("invalid hex token '{token}' in {:?}: {error}", path)
+                })
+            })
+            .collect()
+    }
+
+    fn parse_export_info_case<'a>(
+        case: &str,
+        bytes: &'a [u8],
+        libs: &'a [&'a str],
+        flags: u64,
+    ) -> Result<ExportInfo<'a>> {
+        ExportInfo::parse(bytes, libs, flags, 0).map_err(|error| {
+            MachoError::MalformedDyldPayload(format!(
+                "malformed export trie corpus case '{case}': {error}"
+            ))
+        })
+    }
 
     #[test]
     fn build_export_record_keeps_structured_flag_bits_for_regular_and_absolute_exports() {
@@ -1054,19 +1110,23 @@ mod tests {
         assert!(matches!(absolute.kind, ExportKind::Absolute));
         assert_eq!(absolute.address, Some(0x1234));
         assert!(absolute.flags.is_absolute);
-        assert_eq!(absolute.flags.raw_bits, u64::from(EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE));
+        assert_eq!(
+            absolute.flags.raw_bits,
+            u64::from(EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE)
+        );
     }
 
     #[test]
     fn build_export_record_handles_hand_authored_reexport_and_stub_exports() {
         let libs = ["", "/usr/lib/libSystem.B.dylib"];
-        let reexport_info = ExportInfo::parse(
-            &[0x01, b'_', b'p', b'u', b't', b's', 0x00],
+        let renamed_reexport_bytes = export_corpus_bytes("reexport-renamed-symbol.toml");
+        let reexport_info = parse_export_info_case(
+            "reexport-renamed-symbol.toml",
+            &renamed_reexport_bytes,
             &libs,
             EXPORT_SYMBOL_FLAGS_REEXPORT,
-            0,
         )
-        .expect("parse reexport info");
+        .expect("parse renamed reexport info");
         let reexport = build_export_record("_alias_puts".to_string(), 0, &reexport_info, 0x1000);
         assert!(matches!(
             reexport.kind,
@@ -1078,13 +1138,14 @@ mod tests {
         assert_eq!(reexport.address, None);
         assert!(reexport.flags.is_reexport);
 
-        let stub_info = ExportInfo::parse(
-            &[0x20, 0x30],
+        let stub_and_resolver_bytes = export_corpus_bytes("stub-and-resolver.toml");
+        let stub_info = parse_export_info_case(
+            "stub-and-resolver.toml",
+            &stub_and_resolver_bytes,
             &[],
             EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER,
-            0,
         )
-        .expect("parse stub export info");
+        .expect("parse stub-and-resolver export info");
         let stub = build_export_record("_resolver".to_string(), 0, &stub_info, 0x2000);
         assert!(matches!(
             stub.kind,
@@ -1100,17 +1161,101 @@ mod tests {
 
     #[test]
     fn build_export_record_preserves_unknown_export_flag_bits() {
-        let export = build_export_record(
-            "_mystery".to_string(),
-            0x88,
-            &ExportInfo::Regular {
-                address: 0x88,
-                flags: 0x80,
-            },
-            0x1000,
+        let unknown_flag = 0x80u64;
+        let info = ExportInfo::Regular {
+            address: 0x88,
+            flags: unknown_flag as u64,
+        };
+        let export = build_export_record("_mystery".to_string(), 0x88, &info, 0x1000);
+        assert!(matches!(export.kind, ExportKind::Regular), "{export:?}");
+        assert_eq!(export.flags.raw_bits, unknown_flag);
+        assert_eq!(export.flags.unknown_bits, unknown_flag);
+    }
+
+    #[test]
+    fn build_export_record_handles_same_name_reexport() {
+        let libs = ["", "/usr/lib/libSystem.B.dylib"];
+        let same_name_reexport_bytes = export_corpus_bytes("reexport-same-name.toml");
+        let same_name = parse_export_info_case(
+            "reexport-same-name.toml",
+            &same_name_reexport_bytes,
+            &libs,
+            EXPORT_SYMBOL_FLAGS_REEXPORT,
+        )
+        .expect("parse same-name reexport");
+        let export = build_export_record("_puts".to_string(), 0, &same_name, 0x1000);
+        assert!(matches!(
+            export.kind,
+            ExportKind::Reexport {
+                ref dylib,
+                symbol: None
+            } if dylib == "/usr/lib/libSystem.B.dylib"
+        ));
+        assert!(export.flags.is_reexport);
+        assert_eq!(
+            export.reexport_target,
+            Some(("/usr/lib/libSystem.B.dylib".to_string(), None))
         );
-        assert!(matches!(export.kind, ExportKind::Regular));
-        assert_eq!(export.flags.raw_bits, 0x80);
-        assert_eq!(export.flags.unknown_bits, 0x80);
+    }
+
+    #[test]
+    fn build_export_record_classifies_resolver_only_exports() {
+        let resolver_only_bytes = export_corpus_bytes("resolver-only.toml");
+        let resolver_only = parse_export_info_case(
+            "resolver-only.toml",
+            &resolver_only_bytes,
+            &[],
+            EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER,
+        )
+        .expect("parse resolver-only export");
+        let export = build_export_record("_resolver_only".to_string(), 0, &resolver_only, 0x2000);
+        assert!(matches!(
+            export.kind,
+            ExportKind::Resolver {
+                resolver_address: Some(0x2030)
+            }
+        ));
+        assert_eq!(export.address, Some(0x2030));
+        assert_eq!(export.resolver_target, Some(0x2030));
+        assert!(export.flags.is_stub_and_resolver);
+    }
+
+    #[test]
+    fn export_trie_corpus_reports_malformed_reexport_ordinal() {
+        let bytes = export_corpus_bytes("malformed-reexport-ordinal.toml");
+        let libs = ["", "/usr/lib/libSystem.B.dylib"];
+        let error = parse_export_info_case(
+            "malformed-reexport-ordinal.toml",
+            &bytes,
+            &libs,
+            EXPORT_SYMBOL_FLAGS_REEXPORT,
+        )
+        .expect_err("expected malformed reexport ordinal payload");
+        match error {
+            MachoError::MalformedDyldPayload(message) => {
+                assert!(message.contains("malformed-reexport-ordinal.toml"));
+                assert!(message.contains("reexport"));
+            }
+            other => panic!("unexpected error kind: {other}"),
+        }
+    }
+
+    #[test]
+    fn export_trie_corpus_reports_malformed_stub_resolver_offsets() {
+        let bytes = export_corpus_bytes("malformed-stub-resolver-offsets.toml");
+        let error = parse_export_info_case(
+            "malformed-stub-resolver-offsets.toml",
+            &bytes,
+            &[],
+            EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER,
+        )
+        .expect_err("expected malformed stub/resolver payload");
+        match error {
+            MachoError::MalformedDyldPayload(message) => {
+                assert!(message.contains("malformed-stub-resolver-offsets.toml"));
+                assert!(message.contains("stub"));
+            }
+            other => panic!("unexpected error kind: {other}"),
+        }
     }
 }

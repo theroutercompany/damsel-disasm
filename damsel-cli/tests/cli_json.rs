@@ -304,7 +304,11 @@ fn dyld_json_filters_exports_by_flag() {
     assert_eq!(json["data"]["export_flag_filter"], "Absolute");
     let exports = json["data"]["exports"].as_array().expect("exports array");
     assert!(!exports.is_empty(), "{out}");
-    assert!(exports.iter().all(|export| export["flags"]["is_absolute"] == true));
+    assert!(
+        exports
+            .iter()
+            .all(|export| export["flags"]["is_absolute"] == true)
+    );
     assert!(exports.iter().all(|export| {
         export["flags"]["flag_names"]
             .as_array()
@@ -444,8 +448,14 @@ fn objc_json_contract_exposes_structured_runtime_records() {
         .expect("category array");
     if let Some(category) = categories.first() {
         assert!(category["record_source"].is_string());
-        assert!(category["property_list_pointer"].is_null() || category["property_list_pointer"].is_number());
-        assert!(category["protocol_list_pointer"].is_null() || category["protocol_list_pointer"].is_number());
+        assert!(
+            category["property_list_pointer"].is_null()
+                || category["property_list_pointer"].is_number()
+        );
+        assert!(
+            category["protocol_list_pointer"].is_null()
+                || category["protocol_list_pointer"].is_number()
+        );
         assert!(category["properties_source"].is_string());
         assert!(category["protocols_source"].is_string());
     }
@@ -570,7 +580,8 @@ fn objc_json_category_source_filter_is_applied() {
             .all(|category| category["record_source"] == "SymbolSynthesis")
     );
     assert!(categories.iter().any(|category| {
-        category["protocol_list_pointer"].is_number() || category["property_list_pointer"].is_number()
+        category["protocol_list_pointer"].is_number()
+            || category["property_list_pointer"].is_number()
     }));
 }
 
@@ -588,7 +599,10 @@ fn objc_json_category_source_with_lists_filter_is_applied() {
         "symbol-synthesis-with-lists",
     ]);
     let json = parse_json(&out);
-    assert_eq!(json["data"]["category_source_filter"], "SymbolSynthesisWithLists");
+    assert_eq!(
+        json["data"]["category_source_filter"],
+        "SymbolSynthesisWithLists"
+    );
     let categories = json["data"]["categories"]
         .as_array()
         .expect("categories array");
@@ -708,7 +722,21 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
         assert!(annotation["slot_address"].is_number());
         assert!(annotation["index_register"].is_string());
         assert!(annotation["element_size"].is_number());
+        assert!(annotation["encoding"].is_string());
         assert!(annotation["target"].is_number());
+        assert!(annotation["encoding"] == "absolute64" || annotation["encoding"] == "relative32");
+        assert_exact_object_keys(
+            annotation,
+            &[
+                "type",
+                "table_base",
+                "slot_address",
+                "index_register",
+                "element_size",
+                "encoding",
+                "target",
+            ],
+        );
     }
     let helper_refs = instructions
         .iter()
@@ -799,6 +827,7 @@ fn disasm_json_exposes_typed_indirect_target_reasons() {
             .is_some_and(|annotations| {
                 annotations.iter().any(|annotation| {
                     annotation["type"] == "table_slot_resolved"
+                        && annotation["encoding"].is_string()
                         && annotation["target"].is_number()
                 })
             })
@@ -825,10 +854,91 @@ fn disasm_json_exposes_export_address_recovered_values() {
     assert!(instructions.iter().any(|instruction| {
         instruction["recovered_values"]
             .as_array()
+            .is_some_and(|values| values.iter().any(|value| value["kind"] == "ExportAddress"))
+    }));
+}
+
+#[test]
+fn disasm_json_exposes_table_load_provenance_sources() {
+    let path = fixture("indirect-dispatch");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--symbol",
+        "_dispatch_second_slot",
+        "--show-references",
+        "--show-values",
+    ]);
+    let json = parse_json(&out);
+    let instructions = json["data"]["instructions"]
+        .as_array()
+        .expect("instruction array");
+    let recovered_values = instructions
+        .iter()
+        .flat_map(|instruction| {
+            instruction["recovered_values"]
+                .as_array()
+                .into_iter()
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    assert!(!recovered_values.is_empty(), "{out}");
+    assert!(
+        recovered_values
+            .iter()
+            .any(|value| value["source"] == "TableLoad"),
+        "{out}"
+    );
+    for value in recovered_values {
+        assert_exact_object_keys(value, &["register", "value", "kind", "source"]);
+        assert!(value["source"].is_string());
+        if value["source"] == "RelativeTableLoad" {
+            assert!(value["kind"].is_string());
+        }
+    }
+}
+
+#[test]
+fn disasm_json_exposes_relative_table_load_metadata_when_present() {
+    let path = fixture("relative-dispatch");
+    if !path.exists() {
+        eprintln!("relative-dispatch fixture not present; skipping");
+        return;
+    }
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--symbol",
+        "_relative_dispatch_second_slot",
+        "--show-references",
+        "--show-values",
+    ]);
+    let json = parse_json(&out);
+    let instructions = json["data"]["instructions"]
+        .as_array()
+        .expect("instruction array");
+    assert!(instructions.iter().any(|instruction| {
+        instruction["annotations"]
+            .as_array()
+            .is_some_and(|annotations| {
+                annotations.iter().any(|annotation| {
+                    annotation["type"] == "table_slot_resolved"
+                        && annotation["encoding"] == "relative32"
+                })
+            })
+    }));
+    assert!(instructions.iter().any(|instruction| {
+        instruction["recovered_values"]
+            .as_array()
             .is_some_and(|values| {
-                values
-                    .iter()
-                    .any(|value| value["kind"] == "ExportAddress")
+                values.iter().any(|value| {
+                    value["source"] == "RelativeTableLoad"
+                        && value["kind"] == "FunctionPointer"
+                })
             })
     }));
 }

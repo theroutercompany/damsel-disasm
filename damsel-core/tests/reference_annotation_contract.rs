@@ -236,10 +236,11 @@ fn display_for_table_slot_resolved_annotation_is_stable() {
         slot_address: 0x4010,
         index_register: "w8".to_string(),
         element_size: 8,
+        encoding: damsel_core::TableSlotEncoding::Absolute64,
         target: 0x5000,
     };
     assert_eq!(
         annotation.to_string(),
-        "table-slot base=0x4000 slot=0x4010 index=w8 elem_size=8 target=0x5000"
+        "table-slot base=0x4000 slot=0x4010 index=w8 elem_size=8 encoding=absolute64 target=0x5000"
     );
 }

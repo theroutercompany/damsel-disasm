@@ -4,7 +4,7 @@ use damsel_core::{
     DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
     DisassemblyTarget, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
     IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
-    Reference, Relocation, Section, StubHelperEntry, Symbol,
+    Reference, Relocation, Section, StubHelperEntry, Symbol, TableSlotEncoding,
 };
 use std::collections::BTreeMap;
 
@@ -668,6 +668,7 @@ fn synthesize_analysis_references(
 ) {
     let mut known_values = BTreeMap::<String, RecoveredValue>::new();
     let mut jump_table_sources = BTreeMap::<String, (u64, String, u8)>::new();
+    let mut relative_slot_loads = BTreeMap::<String, TableSlotEvidence>::new();
 
     for instruction in instructions {
         let lower = instruction.mnemonic.to_ascii_lowercase();
@@ -762,6 +763,28 @@ fn synthesize_analysis_references(
             }
         }
 
+        if let Some((recovered, slot_evidence)) =
+            synthesize_register_add_value(image, instruction, &known_values, &relative_slot_loads)
+        {
+            store_known_value(&mut known_values, recovered.clone());
+            push_recovered_value(&mut instruction.recovered_values, recovered.clone());
+            if include_annotations {
+                push_annotation(
+                    &mut instruction.annotations,
+                    Annotation::TableSlotResolved {
+                        table_base: slot_evidence.table_base,
+                        slot_address: slot_evidence.slot_address,
+                        index_register: slot_evidence.index_register.clone(),
+                        element_size: slot_evidence.element_size,
+                        encoding: slot_evidence.encoding,
+                        target: slot_evidence.target,
+                    },
+                );
+            }
+            destination_updated = true;
+            remove_table_slot_evidence(&mut relative_slot_loads, &recovered.register);
+        }
+
         if let Some((target, recovered)) = synthesize_literal_load(image, instruction, &lower) {
             push_reference_if_missing(&mut instruction.references, Reference::Data { target });
             push_recovered_value(&mut instruction.recovered_values, recovered.clone());
@@ -801,53 +824,100 @@ fn synthesize_analysis_references(
                     }
                     if let Some(dest) = destination.as_ref() {
                         if lower.starts_with("ldr") || lower.starts_with("ldur") {
-                            let loaded_value = effective_target.and_then(|slot_address| {
-                                resolve_loaded_pointer_value(
+                            let resolved_slot = effective_target.and_then(|slot_address| {
+                                resolve_table_slot_at_address(
                                     image,
+                                    base_target,
                                     slot_address,
-                                    lower.as_str(),
-                                    dest.as_str(),
+                                    element_size,
                                 )
                             });
-                            let value = loaded_value
-                                .as_ref()
-                                .map(|(resolved, _)| *resolved)
-                                .unwrap_or(reference_target);
-                            let recovered = RecoveredValue {
-                                register: dest.clone(),
-                                value: normalize_value_for_write(dest, value),
-                                kind: loaded_value
-                                    .map(|(_, kind)| kind)
-                                    .unwrap_or_else(|| {
-                                        classify_recovered_value(
-                                            image,
-                                            value,
-                                            RecoveredValueKind::Address,
-                                        )
-                                    }),
-                                source: if loaded_value.is_some() {
-                                    RecoveredValueSource::TableLoad
-                                } else {
-                                    RecoveredValueSource::AdrpLoad
-                                },
-                            };
-                            store_known_value(&mut known_values, recovered.clone());
-                            push_recovered_value(&mut instruction.recovered_values, recovered);
-                            destination_updated = true;
-                            if include_annotations {
-                                if let Some((target, _)) = loaded_value {
-                                    push_annotation(
-                                        &mut instruction.annotations,
-                                        Annotation::TableSlotResolved {
-                                            table_base: base_target,
-                                            slot_address: reference_target,
-                                            index_register: index_register
-                                                .clone()
-                                                .unwrap_or_default(),
-                                            element_size,
-                                            target,
-                                        },
-                                    );
+                            if lower.starts_with("ldrsw") {
+                                if let Some(slot) = resolved_slot
+                                    .filter(|slot| slot.encoding == TableSlotEncoding::Relative32)
+                                {
+                                    if let Some(key) = canonical_state_key(dest) {
+                                        relative_slot_loads.insert(
+                                            key,
+                                            TableSlotEvidence {
+                                                table_base: base_target,
+                                                slot_address: slot.slot_address,
+                                                index_register: index_register
+                                                    .clone()
+                                                    .unwrap_or_default(),
+                                                element_size,
+                                                encoding: slot.encoding,
+                                                target: slot.target,
+                                            },
+                                        );
+                                    }
+                                    if include_annotations {
+                                        push_annotation(
+                                            &mut instruction.annotations,
+                                            Annotation::TableSlotResolved {
+                                                table_base: base_target,
+                                                slot_address: slot.slot_address,
+                                                index_register: index_register
+                                                    .clone()
+                                                    .unwrap_or_default(),
+                                                element_size,
+                                                encoding: slot.encoding,
+                                                target: slot.target,
+                                            },
+                                        );
+                                    }
+                                    destination_updated = true;
+                                }
+                            } else {
+                                let value = resolved_slot
+                                    .as_ref()
+                                    .map(|slot| slot.target)
+                                    .unwrap_or(reference_target);
+                                let source = resolved_slot
+                                    .as_ref()
+                                    .map(|slot| match slot.encoding {
+                                        TableSlotEncoding::Absolute64 => {
+                                            RecoveredValueSource::TableLoad
+                                        }
+                                        TableSlotEncoding::Relative32 => {
+                                            RecoveredValueSource::RelativeTableLoad
+                                        }
+                                    })
+                                    .unwrap_or(RecoveredValueSource::AdrpLoad);
+                                let recovered = RecoveredValue {
+                                    register: dest.clone(),
+                                    value: normalize_value_for_write(dest, value),
+                                    kind: resolved_slot
+                                        .as_ref()
+                                        .map(|slot| slot.kind)
+                                        .unwrap_or_else(|| {
+                                            classify_recovered_value(
+                                                image,
+                                                value,
+                                                RecoveredValueKind::Address,
+                                            )
+                                        }),
+                                    source,
+                                };
+                                store_known_value(&mut known_values, recovered.clone());
+                                push_recovered_value(&mut instruction.recovered_values, recovered);
+                                destination_updated = true;
+                                if include_annotations {
+                                    if let Some(slot) = resolved_slot {
+                                        push_annotation(
+                                            &mut instruction.annotations,
+                                            Annotation::TableSlotResolved {
+                                                table_base: base_target,
+                                                slot_address: slot.slot_address,
+                                                index_register: index_register
+                                                    .clone()
+                                                    .unwrap_or_default(),
+                                                element_size,
+                                                encoding: slot.encoding,
+                                                target: slot.target,
+                                            },
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -888,7 +958,7 @@ fn synthesize_analysis_references(
                 && let Some(index_value) = read_known_value(&known_values, index_register.as_str())
                     .map(|value| value.value)
             {
-                if let Some((slot_address, target, reason)) =
+                if let Some((slot_address, target, resolved_slot)) =
                     resolve_table_slot_target(image, base, index_value, element_size)
                 {
                     push_reference_if_missing(
@@ -897,7 +967,7 @@ fn synthesize_analysis_references(
                             target: slot_address,
                         },
                     );
-                    resolved_target = Some((target, reason));
+                    resolved_target = Some((target, resolved_slot.reason));
                     if include_annotations {
                         push_annotation(
                             &mut instruction.annotations,
@@ -906,6 +976,7 @@ fn synthesize_analysis_references(
                                 slot_address,
                                 index_register: index_register.clone(),
                                 element_size,
+                                encoding: resolved_slot.encoding,
                                 target,
                             },
                         );
@@ -961,12 +1032,14 @@ fn synthesize_analysis_references(
         if let Some(destination) = destination {
             if !destination_updated && instruction_writes_destination(&lower) {
                 remove_known_value(&mut known_values, &destination);
+                remove_table_slot_evidence(&mut relative_slot_loads, &destination);
             }
         }
 
         if is_hard_control_flow_boundary(&lower) && !matches!(lower.as_str(), "bl" | "blr") {
             known_values.clear();
             jump_table_sources.clear();
+            relative_slot_loads.clear();
         }
     }
 }
@@ -1018,6 +1091,15 @@ fn store_known_value(
 fn remove_known_value(known_values: &mut BTreeMap<String, RecoveredValue>, register: &str) {
     if let Some(key) = canonical_state_key(register) {
         known_values.remove(&key);
+    }
+}
+
+fn remove_table_slot_evidence(
+    table_slot_evidence: &mut BTreeMap<String, TableSlotEvidence>,
+    register: &str,
+) {
+    if let Some(key) = canonical_state_key(register) {
+        table_slot_evidence.remove(&key);
     }
 }
 
@@ -1076,6 +1158,47 @@ fn add_immediate_inputs(instruction: &DecodedInstruction) -> Option<(Option<Stri
     }
 
     None
+}
+
+fn synthesize_register_add_value(
+    image: &BinaryImage,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+    relative_slot_loads: &BTreeMap<String, TableSlotEvidence>,
+) -> Option<(RecoveredValue, TableSlotEvidence)> {
+    let lower = instruction.mnemonic.to_ascii_lowercase();
+    if !(lower == "add" || lower == "sub") {
+        return None;
+    }
+
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    let base_register = match instruction.operands.get(1)? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    let source_register = match instruction.operands.get(2)? {
+        Operand::Register(register) => register.clone(),
+        Operand::ShiftedRegister { register, .. } => register.clone(),
+        _ => return None,
+    };
+
+    let source_key = canonical_state_key(&source_register)?;
+    let slot_evidence = relative_slot_loads.get(&source_key)?.clone();
+    let base_value = read_known_value(known_values, base_register.as_str())?.value;
+    if base_value != slot_evidence.table_base {
+        return None;
+    }
+
+    let recovered = RecoveredValue {
+        register: destination,
+        value: slot_evidence.target,
+        kind: classify_recovered_value(image, slot_evidence.target, RecoveredValueKind::Address),
+        source: RecoveredValueSource::RelativeTableLoad,
+    };
+    Some((recovered, slot_evidence))
 }
 
 fn memory_base_index_displacement(
@@ -1236,15 +1359,24 @@ fn synthesize_simple_register_value(
                 Operand::Register(register) => register.clone(),
                 _ => return None,
             };
-            let source = match instruction.operands.get(1)? {
-                Operand::Register(register) => register,
-                _ => return None,
-            };
-            Some((
-                destination,
-                read_known_value(known_values, source)?.value,
-                RecoveredValueSource::Other,
-            ))
+            match instruction.operands.get(1)? {
+                Operand::Register(register) => Some((
+                    destination,
+                    read_known_value(known_values, register)?.value,
+                    RecoveredValueSource::Other,
+                )),
+                Operand::ImmediateUnsigned(value) => Some((
+                    destination,
+                    *value,
+                    RecoveredValueSource::MoveWide,
+                )),
+                Operand::ImmediateSigned(value) if *value >= 0 => Some((
+                    destination,
+                    *value as u64,
+                    RecoveredValueSource::MoveWide,
+                )),
+                _ => None,
+            }
         }
         "and" => {
             let destination = match instruction.operands.first()? {
@@ -1310,33 +1442,92 @@ fn resolve_memory_effective_address(
     base_target.checked_add(slot_offset)
 }
 
-fn resolve_loaded_pointer_value(
-    image: &BinaryImage,
+#[derive(Debug, Clone)]
+struct TableSlotEvidence {
+    table_base: u64,
     slot_address: u64,
-    mnemonic: &str,
-    destination: &str,
-) -> Option<(u64, RecoveredValueKind)> {
-    if mnemonic.starts_with("ldrsw") || destination.starts_with('w') {
+    index_register: String,
+    element_size: u8,
+    encoding: TableSlotEncoding,
+    target: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResolvedTableSlot {
+    slot_address: u64,
+    target: u64,
+    kind: RecoveredValueKind,
+    reason: IndirectTargetReason,
+    encoding: TableSlotEncoding,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResolvedTableSlotReason {
+    reason: IndirectTargetReason,
+    encoding: TableSlotEncoding,
+}
+
+fn resolve_table_slot_at_address(
+    image: &BinaryImage,
+    table_base: u64,
+    slot_address: u64,
+    element_size: u8,
+) -> Option<ResolvedTableSlot> {
+    let (_, bytes) = image.bytes_for_virtual_range(slot_address, usize::from(element_size))?;
+
+    if element_size == 8 {
+        let raw = u64::from_le_bytes(bytes.try_into().ok()?);
+        let kind = classify_recovered_value(image, raw, RecoveredValueKind::Address);
+        if raw != 0
+            && !matches!(
+                kind,
+                RecoveredValueKind::Address | RecoveredValueKind::CString
+            )
+        {
+            return Some(ResolvedTableSlot {
+                slot_address,
+                target: raw,
+                kind,
+                reason: indirect_target_reason(image, raw),
+                encoding: TableSlotEncoding::Absolute64,
+            });
+        }
         return None;
     }
-    if image.dyld().bindings_at_address(slot_address).next().is_some()
-        || image.dyld().stub_for_pointer_address(slot_address).is_some()
+
+    let raw_u32 = u32::from_le_bytes(bytes.try_into().ok()?);
+    let relative = i32::from_le_bytes(raw_u32.to_le_bytes()) as i64;
+    let relative_target = add_signed(table_base, relative)?;
+    if is_executable_target(image, relative_target)
+        || image.dyld().export_by_address(relative_target).is_some()
     {
-        return None;
+        return Some(ResolvedTableSlot {
+            slot_address,
+            target: relative_target,
+            kind: classify_recovered_value(image, relative_target, RecoveredValueKind::Address),
+            reason: indirect_target_reason(image, relative_target),
+            encoding: TableSlotEncoding::Relative32,
+        });
     }
-    let (_, bytes) = image.bytes_for_virtual_range(slot_address, 8)?;
-    let raw = u64::from_le_bytes(bytes.try_into().ok()?);
-    if raw == 0 {
-        return None;
+
+    let absolute = u64::from(raw_u32);
+    let kind = classify_recovered_value(image, absolute, RecoveredValueKind::Address);
+    if absolute != 0
+        && !matches!(
+            kind,
+            RecoveredValueKind::Address | RecoveredValueKind::CString
+        )
+    {
+        return Some(ResolvedTableSlot {
+            slot_address,
+            target: absolute,
+            kind,
+            reason: indirect_target_reason(image, absolute),
+            encoding: TableSlotEncoding::Absolute64,
+        });
     }
-    if image.dyld().helper_for_address(raw).is_some() {
-        return Some((raw, RecoveredValueKind::Address));
-    }
-    let kind = classify_recovered_value(image, raw, RecoveredValueKind::Address);
-    if matches!(kind, RecoveredValueKind::Address | RecoveredValueKind::CString) {
-        return None;
-    }
-    Some((raw, kind))
+
+    None
 }
 
 fn synthesize_literal_load(
@@ -1433,7 +1624,7 @@ fn resolve_table_slot_target(
     base: u64,
     index_value: u64,
     element_size: u8,
-) -> Option<(u64, u64, IndirectTargetReason)> {
+) -> Option<(u64, u64, ResolvedTableSlotReason)> {
     if element_size != 4 && element_size != 8 {
         return None;
     }
@@ -1442,35 +1633,15 @@ fn resolve_table_slot_target(
     }
     let slot_offset = index_value.checked_mul(u64::from(element_size))?;
     let slot_address = base.checked_add(slot_offset)?;
-    let (_, bytes) = image.bytes_for_virtual_range(slot_address, usize::from(element_size))?;
-
-    if element_size == 8 {
-        let raw = u64::from_le_bytes(bytes.try_into().ok()?);
-        if is_executable_target(image, raw) || image.dyld().export_by_address(raw).is_some() {
-            return Some((slot_address, raw, indirect_target_reason(image, raw)));
-        }
-        return None;
-    }
-
-    let raw_u32 = u32::from_le_bytes(bytes.try_into().ok()?);
-    let absolute = u64::from(raw_u32);
-    if is_executable_target(image, absolute) || image.dyld().export_by_address(absolute).is_some() {
-        return Some((slot_address, absolute, indirect_target_reason(image, absolute)));
-    }
-
-    let relative = i32::from_le_bytes(raw_u32.to_le_bytes()) as i64;
-    let relative_target = add_signed(base, relative)?;
-    if is_executable_target(image, relative_target)
-        || image.dyld().export_by_address(relative_target).is_some()
-    {
-        return Some((
-            slot_address,
-            relative_target,
-            indirect_target_reason(image, relative_target),
-        ));
-    }
-
-    None
+    let slot = resolve_table_slot_at_address(image, base, slot_address, element_size)?;
+    Some((
+        slot.slot_address,
+        slot.target,
+        ResolvedTableSlotReason {
+            reason: slot.reason,
+            encoding: slot.encoding,
+        },
+    ))
 }
 
 fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
@@ -1911,7 +2082,7 @@ mod tests {
     use super::*;
     use damsel_core::{
         Architecture, BinaryFormat, BinaryImage, Endianness, ExportFlags, ExportKind, ObjcMetadata,
-        Platform, Section, SliceInfo, Symbol, SymbolKind,
+        Platform, RecoveredValueSource, Section, SliceInfo, Symbol, SymbolKind, TableSlotEncoding,
     };
     use std::sync::Arc;
 
@@ -1941,6 +2112,78 @@ mod tests {
                 kind: "Text".to_string(),
                 executable: true,
             }],
+            vec![Symbol {
+                name: "_dispatch_target".to_string(),
+                address: 0x3000,
+                size: 16,
+                kind: SymbolKind::Text,
+                defined: true,
+                global: true,
+                weak: false,
+                section: Some("__text".to_string()),
+            }],
+            vec![],
+            vec![],
+            ObjcMetadata::default(),
+            damsel_core::DyldMetadata {
+                exported_symbols: vec![damsel_core::ExportRecord {
+                    name: "_exported".to_string(),
+                    address: Some(0x2000),
+                    raw_flags: "Regular".to_string(),
+                    flags: ExportFlags::from_bits(0),
+                    kind: ExportKind::Regular,
+                    reexport_target: None,
+                    resolver_target: None,
+                }],
+                ..damsel_core::DyldMetadata::default()
+            },
+            bytes,
+        )
+    }
+
+    fn synthetic_table_image(relative_target: u64) -> BinaryImage {
+        let mut bytes = vec![0u8; 96];
+        let relative = i32::try_from((relative_target as i64) - 0x4000_i64)
+            .expect("relative target offset fits into i32");
+        bytes[64..68].copy_from_slice(&relative.to_le_bytes());
+        bytes[72..80].copy_from_slice(&0x3000_u64.to_le_bytes());
+        let bytes: Arc<[u8]> = bytes.into();
+        BinaryImage::from_memory_bytes(
+            Some("disasm-synthetic-table".to_string()),
+            BinaryFormat::MachO,
+            Architecture::Arm64,
+            Endianness::Little,
+            None,
+            Some(Platform::unknown("macos")),
+            SliceInfo {
+                offset: 0,
+                size: 96,
+                is_universal: false,
+                cpu_subtype: 0,
+            },
+            vec![],
+            vec![
+                Section {
+                    segment_name: "__TEXT".to_string(),
+                    name: "__text".to_string(),
+                    address: 0x3000,
+                    size: 64,
+                    file_offset: Some(0),
+                    file_size: 64,
+                    kind: "Text".to_string(),
+                    executable: true,
+                },
+                Section {
+                    segment_name: "__DATA_CONST".to_string(),
+                    name: "__const".to_string(),
+                    address: 0x4000,
+                    size: 32,
+                    file_offset: Some(64),
+                    file_size: 32,
+                    kind: "Data".to_string(),
+                    executable: false,
+                },
+            ],
             vec![Symbol {
                 name: "_dispatch_target".to_string(),
                 address: 0x3000,
@@ -2069,6 +2312,176 @@ mod tests {
 
         assert!(instructions[0].recovered_values.iter().any(|value| {
             value.kind == RecoveredValueKind::FunctionPointer && value.value == 0x3000
+        }));
+    }
+
+    #[test]
+    fn synthesize_relative_slot_recovers_function_pointer() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldrsw",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(0x100c, "blr", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[2].recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::FunctionPointer
+                && value.source == RecoveredValueSource::RelativeTableLoad
+                && value.value == 0x3000
+        }));
+        assert!(instructions.iter().any(|instruction| {
+            instruction.annotations.iter().any(|annotation| {
+                matches!(
+                    annotation,
+                    Annotation::TableSlotResolved {
+                        encoding: TableSlotEncoding::Relative32,
+                        target: 0x3000,
+                        ..
+                    }
+                )
+            })
+        }));
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Call { target: 0x3000 })
+        );
+        assert!(instructions[3].annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::IndirectTargetResolved {
+                    target: 0x3000,
+                    reason: IndirectTargetReason::FunctionPointer,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn synthesize_relative_slot_recovers_export_address() {
+        let image = synthetic_table_image(0x2000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldrsw",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(0x100c, "blr", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[2].recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::ExportAddress
+                && value.source == RecoveredValueSource::RelativeTableLoad
+                && value.value == 0x2000
+        }));
+        assert!(instructions[3].annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::IndirectTargetResolved {
+                    target: 0x2000,
+                    reason: IndirectTargetReason::ExportAddress,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn synthesize_constant_slot_dispatch_does_not_emit_jump_table_candidate() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        displacement: 8,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1008, "blr", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions.iter().all(|instruction| {
+            instruction
+                .annotations
+                .iter()
+                .all(|annotation| !matches!(annotation, Annotation::JumpTableCandidate { .. }))
+        }));
+        assert!(instructions[1].recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::FunctionPointer
+                && value.source == RecoveredValueSource::TableLoad
+                && value.value == 0x3000
+        }));
+        assert!(instructions[1].annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::TableSlotResolved {
+                    encoding: TableSlotEncoding::Absolute64,
+                    target: 0x3000,
+                    ..
+                }
+            )
         }));
     }
 }

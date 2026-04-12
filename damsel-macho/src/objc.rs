@@ -377,16 +377,14 @@ fn derive_compatibility_views(
             .classes
             .iter()
             .flat_map(|record| record.methods.iter().chain(record.class_methods.iter()))
-            .chain(
-                metadata.protocols.iter().flat_map(|record| {
-                    record
-                        .required_instance_methods
-                        .iter()
-                        .chain(record.required_class_methods.iter())
-                        .chain(record.optional_instance_methods.iter())
-                        .chain(record.optional_class_methods.iter())
-                }),
-            )
+            .chain(metadata.protocols.iter().flat_map(|record| {
+                record
+                    .required_instance_methods
+                    .iter()
+                    .chain(record.required_class_methods.iter())
+                    .chain(record.optional_instance_methods.iter())
+                    .chain(record.optional_class_methods.iter())
+            }))
             .chain(
                 metadata
                     .categories
@@ -807,14 +805,9 @@ fn collect_category_records(
         }
     }
 
-    if records.is_empty() {
-        records.extend(collect_synthetic_category_records(
-            slices,
-            image_base,
-            classes,
-            symbol_maps,
-        ));
-    }
+    let synthetic_records =
+        collect_synthetic_category_records(slices, image_base, classes, symbol_maps);
+    records = merge_runtime_and_synthetic_category_records(records, synthetic_records);
 
     records.sort_by_key(|record| record.pointer);
     records.dedup_by(|left, right| left.pointer == right.pointer);
@@ -838,8 +831,7 @@ fn collect_synthetic_category_records(
             })
         })
         .collect::<BTreeMap<_, _>>();
-    let mut list_lookup =
-        BTreeMap::<(String, String), (Option<u64>, Option<u64>)>::new();
+    let mut list_lookup = BTreeMap::<(String, String), (Option<u64>, Option<u64>)>::new();
     for list_symbol in &symbol_maps.category_list_symbols {
         let entry = list_lookup
             .entry((
@@ -928,6 +920,140 @@ fn collect_synthetic_category_records(
             })
         })
         .collect()
+}
+
+fn merge_runtime_and_synthetic_category_records(
+    mut runtime_records: Vec<ObjcCategoryRecord>,
+    synthetic_records: Vec<ObjcCategoryRecord>,
+) -> Vec<ObjcCategoryRecord> {
+    if runtime_records.is_empty() {
+        return synthetic_records;
+    }
+    if synthetic_records.is_empty() {
+        return runtime_records;
+    }
+
+    let mut runtime_by_identity = BTreeMap::<(String, String), usize>::new();
+    for (index, record) in runtime_records.iter().enumerate() {
+        if record.record_source != ObjcCategoryRecordSource::RuntimeList {
+            continue;
+        }
+        if let Some(identity) = category_identity(record) {
+            runtime_by_identity.entry(identity).or_insert(index);
+        }
+    }
+
+    for synthetic in synthetic_records {
+        let Some(identity) = category_identity(&synthetic) else {
+            runtime_records.push(synthetic);
+            continue;
+        };
+        if let Some(index) = runtime_by_identity.get(&identity).copied() {
+            merge_runtime_category_with_synthetic(&mut runtime_records[index], synthetic);
+            continue;
+        }
+        runtime_records.push(synthetic);
+    }
+
+    runtime_records
+}
+
+fn category_identity(record: &ObjcCategoryRecord) -> Option<(String, String)> {
+    Some((record.class_name.clone()?, record.name.clone()?))
+}
+
+fn merge_runtime_category_with_synthetic(
+    runtime: &mut ObjcCategoryRecord,
+    synthetic: ObjcCategoryRecord,
+) {
+    if runtime.class_pointer.is_none() {
+        runtime.class_pointer = synthetic.class_pointer;
+    }
+
+    if runtime.class_name.is_none() {
+        runtime.class_name = synthetic.class_name.clone();
+        if runtime.class_name.is_some()
+            && matches!(runtime.class_name_source, ObjcNameSource::Unresolved)
+        {
+            runtime.class_name_source = synthetic.class_name_source;
+        }
+    }
+
+    if runtime.name.is_none() {
+        runtime.name = synthetic.name.clone();
+        if runtime.name.is_some() && matches!(runtime.name_source, ObjcNameSource::Unresolved) {
+            runtime.name_source = synthetic.name_source;
+        }
+    }
+
+    if runtime.property_list_pointer.is_none() {
+        runtime.property_list_pointer = synthetic.property_list_pointer;
+        if runtime.property_list_pointer.is_some()
+            && matches!(runtime.properties_source, ObjcNameSource::Unresolved)
+        {
+            runtime.properties_source = synthetic.properties_source;
+        }
+    }
+    if runtime.protocol_list_pointer.is_none() {
+        runtime.protocol_list_pointer = synthetic.protocol_list_pointer;
+        if runtime.protocol_list_pointer.is_some()
+            && matches!(runtime.protocols_source, ObjcNameSource::Unresolved)
+        {
+            runtime.protocols_source = synthetic.protocols_source;
+        }
+    }
+
+    if runtime.methods.is_empty() && !synthetic.methods.is_empty() {
+        runtime.methods = synthetic.methods;
+    }
+    if runtime.class_methods.is_empty() && !synthetic.class_methods.is_empty() {
+        runtime.class_methods = synthetic.class_methods;
+    }
+
+    if runtime.properties.is_empty() && !synthetic.properties.is_empty() {
+        runtime.properties = synthetic.properties;
+        if matches!(runtime.properties_source, ObjcNameSource::Unresolved)
+            && runtime.property_list_pointer.is_some()
+        {
+            runtime.properties_source = synthetic.properties_source;
+        }
+    } else {
+        merge_property_records(&mut runtime.properties, synthetic.properties);
+    }
+
+    if runtime.adopted_protocols.is_empty() && !synthetic.adopted_protocols.is_empty() {
+        runtime.adopted_protocols = synthetic.adopted_protocols;
+        if matches!(runtime.protocols_source, ObjcNameSource::Unresolved)
+            && runtime.protocol_list_pointer.is_some()
+        {
+            runtime.protocols_source = synthetic.protocols_source;
+        }
+    } else {
+        merge_protocol_names(&mut runtime.adopted_protocols, synthetic.adopted_protocols);
+    }
+}
+
+fn merge_property_records(target: &mut Vec<ObjcPropertyRecord>, incoming: Vec<ObjcPropertyRecord>) {
+    let mut seen = target
+        .iter()
+        .map(property_identity_key)
+        .collect::<BTreeSet<_>>();
+    for property in incoming {
+        let key = property_identity_key(&property);
+        if seen.insert(key) {
+            target.push(property);
+        }
+    }
+}
+
+fn property_identity_key(property: &ObjcPropertyRecord) -> (Option<String>, Option<String>) {
+    (property.name.clone(), property.attributes.clone())
+}
+
+fn merge_protocol_names(target: &mut Vec<String>, incoming: Vec<String>) {
+    target.extend(incoming);
+    target.sort();
+    target.dedup();
 }
 
 fn infer_image_base(sections: &[Section]) -> Option<u64> {
@@ -1500,4 +1626,146 @@ fn find_slice_for_va<'a>(
         }
         Some((slice, offset))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ObjcCategoryRecord, ObjcCategoryRecordSource, ObjcMethodOwnerKind, ObjcMethodRecord,
+        ObjcNameSource, ObjcPropertyRecord, ObjcSelectorSource,
+        merge_runtime_and_synthetic_category_records,
+    };
+
+    fn category_runtime(class_name: &str, category_name: &str) -> ObjcCategoryRecord {
+        ObjcCategoryRecord {
+            pointer: 0x1000,
+            name: Some(category_name.to_string()),
+            name_source: ObjcNameSource::Runtime,
+            record_source: ObjcCategoryRecordSource::RuntimeList,
+            class_pointer: Some(0x2000),
+            class_name: Some(class_name.to_string()),
+            class_name_source: ObjcNameSource::Runtime,
+            property_list_pointer: None,
+            protocol_list_pointer: None,
+            properties_source: ObjcNameSource::Unresolved,
+            protocols_source: ObjcNameSource::Unresolved,
+            methods: Vec::new(),
+            class_methods: Vec::new(),
+            properties: Vec::new(),
+            adopted_protocols: Vec::new(),
+        }
+    }
+
+    fn category_synthetic_with_lists(class_name: &str, category_name: &str) -> ObjcCategoryRecord {
+        ObjcCategoryRecord {
+            pointer: 0x3000,
+            name: Some(category_name.to_string()),
+            name_source: ObjcNameSource::LegacyPool,
+            record_source: ObjcCategoryRecordSource::SymbolSynthesis,
+            class_pointer: Some(0x2000),
+            class_name: Some(class_name.to_string()),
+            class_name_source: ObjcNameSource::LegacyPool,
+            property_list_pointer: Some(0x4000),
+            protocol_list_pointer: Some(0x5000),
+            properties_source: ObjcNameSource::LegacyPool,
+            protocols_source: ObjcNameSource::LegacyPool,
+            methods: vec![ObjcMethodRecord {
+                owner_pointer: 0x3000,
+                owner_kind: ObjcMethodOwnerKind::Category,
+                is_class_method: false,
+                selector: Some("syntheticMethod".to_string()),
+                selector_source: ObjcSelectorSource::LegacyPool,
+                implementation: Some(0x6100),
+                type_encoding: None,
+            }],
+            class_methods: Vec::new(),
+            properties: vec![ObjcPropertyRecord {
+                owner_pointer: 0x3000,
+                name: Some("syntheticProperty".to_string()),
+                name_source: ObjcNameSource::LegacyPool,
+                attributes: Some("T@\"NSString\",R".to_string()),
+            }],
+            adopted_protocols: vec!["SyntheticProtocol".to_string()],
+        }
+    }
+
+    #[test]
+    fn merges_synthetic_category_lists_into_runtime_record() {
+        let runtime = category_runtime("Greeter", "Excited");
+        let synthetic = category_synthetic_with_lists("Greeter", "Excited");
+        let merged = merge_runtime_and_synthetic_category_records(vec![runtime], vec![synthetic]);
+        assert_eq!(
+            merged.len(),
+            1,
+            "matching categories should merge into one record"
+        );
+        let category = &merged[0];
+
+        assert_eq!(
+            category.record_source,
+            ObjcCategoryRecordSource::RuntimeList,
+            "runtime category record should remain canonical"
+        );
+        assert_eq!(
+            category.property_list_pointer,
+            Some(0x4000),
+            "list-backed synthetic property pointer should fill runtime gap"
+        );
+        assert_eq!(
+            category.protocol_list_pointer,
+            Some(0x5000),
+            "list-backed synthetic protocol pointer should fill runtime gap"
+        );
+        assert_eq!(
+            category.properties_source,
+            ObjcNameSource::LegacyPool,
+            "filled property list provenance should stay truthful"
+        );
+        assert_eq!(
+            category.protocols_source,
+            ObjcNameSource::LegacyPool,
+            "filled protocol list provenance should stay truthful"
+        );
+        assert_eq!(
+            category.properties.len(),
+            1,
+            "list-backed synthetic properties should populate runtime category"
+        );
+        assert_eq!(
+            category.adopted_protocols,
+            vec!["SyntheticProtocol".to_string()],
+            "list-backed synthetic protocols should populate runtime category"
+        );
+        assert_eq!(
+            category.methods.len(),
+            1,
+            "synthetic method evidence should fill empty runtime method set"
+        );
+    }
+
+    #[test]
+    fn keeps_unmatched_synthetic_category_as_separate_record() {
+        let runtime = category_runtime("Greeter", "Excited");
+        let synthetic = category_synthetic_with_lists("Speaker", "Diagnostics");
+        let merged = merge_runtime_and_synthetic_category_records(vec![runtime], vec![synthetic]);
+        assert_eq!(
+            merged.len(),
+            2,
+            "non-matching synthetic categories must remain independently queryable"
+        );
+        assert!(
+            merged.iter().any(|record| {
+                record.record_source == ObjcCategoryRecordSource::RuntimeList
+                    && record.class_name.as_deref() == Some("Greeter")
+            }),
+            "runtime category should remain present"
+        );
+        assert!(
+            merged.iter().any(|record| {
+                record.record_source == ObjcCategoryRecordSource::SymbolSynthesis
+                    && record.class_name.as_deref() == Some("Speaker")
+            }),
+            "unmatched synthetic category should be retained"
+        );
+    }
 }

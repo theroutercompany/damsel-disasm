@@ -13,7 +13,7 @@ target: __TEXT:__text start=0x1000004b0 end=0x1000004f0 bytes=0x40 decoded=0x40 
        0x1000004c8  f9400420  ldr x0, [x1, #0x8]
        0x1000004cc  94000031  bl #0x100000590 ; binding-evidence /usr/lib/libSystem.B.dylib:_atoi addr=0x100004008 off=- addend=0 kind=NonLazy source=Stub | ref call 0x100000590 | ref stub 0x100000590 ptr=0x100004008 kind=NonLazy /usr/lib/libSystem.B.dylib:_atoi source=Stub | ref import /usr/lib/libSystem.B.dylib:_atoi (0x100004008)
        0x1000004d0  14000002  b 0x1000004d8 ; ref branch 0x1000004d8
-       0x1000004d4  528000a0  mov w0, #0x5 ; ref data 0x5
+       0x1000004d4  528000a0  mov w0, #0x5 ; ref data 0x5 | value w0=0x5 kind=Literal source=MoveWide
        0x1000004d8  b81ec3a0  stur w0, [fp, #0xffffffffffffffec]
        0x1000004dc  b85ec3a8  ldur w8, [fp, #0xffffffffffffffec]
        0x1000004e0  92400908  and x8, x8, #0x7 ; ref data 0x7

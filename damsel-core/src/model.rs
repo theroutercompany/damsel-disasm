@@ -620,6 +620,12 @@ pub struct ObjcCategoryRecord {
     pub adopted_protocols: Vec<String>,
 }
 
+impl ObjcCategoryRecord {
+    pub fn has_list_backing(&self) -> bool {
+        self.property_list_pointer.is_some() || self.protocol_list_pointer.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjcCategoryRecordSource {
     RuntimeList,
@@ -1138,6 +1144,7 @@ pub enum Annotation {
         slot_address: u64,
         index_register: String,
         element_size: u8,
+        encoding: TableSlotEncoding,
         target: u64,
     },
     IndirectTargetResolved {
@@ -1146,6 +1153,22 @@ pub enum Annotation {
         reason: IndirectTargetReason,
     },
     Note(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TableSlotEncoding {
+    Absolute64,
+    Relative32,
+}
+
+impl fmt::Display for TableSlotEncoding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::Absolute64 => "absolute64",
+            Self::Relative32 => "relative32",
+        };
+        f.write_str(text)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1250,10 +1273,11 @@ impl fmt::Display for Annotation {
                 slot_address,
                 index_register,
                 element_size,
+                encoding,
                 target,
             } => write!(
                 f,
-                "table-slot base={table_base:#x} slot={slot_address:#x} index={index_register} elem_size={element_size} target={target:#x}"
+                "table-slot base={table_base:#x} slot={slot_address:#x} index={index_register} elem_size={element_size} encoding={encoding} target={target:#x}"
             ),
             Self::IndirectTargetResolved {
                 via,
@@ -1498,6 +1522,7 @@ pub enum RecoveredValueSource {
     AdrpAdd,
     AdrpLoad,
     TableLoad,
+    RelativeTableLoad,
     LiteralLoad,
     MoveWide,
     StubMetadata,

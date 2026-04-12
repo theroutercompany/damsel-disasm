@@ -1,6 +1,7 @@
 use damsel_core::{
     Annotation, DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
-    DisassemblyStopReason, DisassemblyTarget, RecoveredValueKind, Reference,
+    DisassemblyStopReason, DisassemblyTarget, RecoveredValueKind, RecoveredValueSource, Reference,
+    TableSlotEncoding,
 };
 use damsel_macho::{MachoError, disassemble, disassemble_v2, load};
 use std::path::{Path, PathBuf};
@@ -430,10 +431,21 @@ fn disasm_resolves_function_pointer_table_slot_for_dispatch_fixture() {
     };
     let result = disassemble_v2(&image, &request).expect("disassemble indirect-dispatch symbol");
     assert!(result.instructions.iter().any(|instruction| {
-        instruction
-            .recovered_values
-            .iter()
-            .any(|value| value.kind == RecoveredValueKind::FunctionPointer)
+        instruction.recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::FunctionPointer
+                && value.source == RecoveredValueSource::TableLoad
+        })
+    }));
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::TableSlotResolved {
+                    encoding: TableSlotEncoding::Absolute64,
+                    ..
+                }
+            )
+        })
     }));
     assert!(result.instructions.iter().any(|instruction| {
         instruction.annotations.iter().any(|annotation| {
@@ -467,11 +479,120 @@ fn disasm_resolves_export_address_table_slot_for_dispatch_fixture() {
     };
     let result = disassemble_v2(&image, &request).expect("disassemble export-target symbol");
     assert!(result.instructions.iter().any(|instruction| {
-        instruction
-            .recovered_values
-            .iter()
-            .any(|value| value.kind == RecoveredValueKind::ExportAddress)
+        instruction.recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::ExportAddress
+                && value.source == RecoveredValueSource::TableLoad
+        })
     }));
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::TableSlotResolved {
+                    encoding: TableSlotEncoding::Absolute64,
+                    ..
+                }
+            )
+        })
+    }));
+}
+
+#[test]
+fn disasm_resolves_relative_function_pointer_targets_when_present() {
+    let path = fixture("relative-dispatch");
+    if !path.exists() {
+        eprintln!("relative-dispatch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load relative-dispatch fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Symbol("_relative_dispatch_second_slot".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(32),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble relative dispatch symbol");
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::FunctionPointer
+                && value.source == damsel_core::RecoveredValueSource::RelativeTableLoad
+        })
+    }));
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::TableSlotResolved {
+                    encoding: damsel_core::TableSlotEncoding::Relative32,
+                    ..
+                }
+            )
+        })
+    }));
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::IndirectTargetResolved {
+                    reason: damsel_core::IndirectTargetReason::FunctionPointer,
+                    ..
+                }
+            )
+        })
+    }));
+}
+
+#[test]
+fn disasm_resolves_relative_export_and_function_targets_for_loads_when_present() {
+    let path = fixture("relative-dispatch");
+    if !path.exists() {
+        eprintln!("relative-dispatch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load relative-dispatch fixture");
+
+    for (symbol, expected_kind) in [
+        (
+            "_relative_load_export_target",
+            RecoveredValueKind::ExportAddress,
+        ),
+        (
+            "_relative_load_function_target",
+            RecoveredValueKind::FunctionPointer,
+        ),
+    ] {
+        let request = DisassemblyRequestV2 {
+            target: DisassemblyTarget::Symbol(symbol.to_string()),
+            range: None,
+            limit: DisassemblyLimit::Instructions(32),
+            options: DisassemblyOptions {
+                include_annotations: true,
+                include_value_flow: true,
+            },
+        };
+        let result = disassemble_v2(&image, &request)
+            .unwrap_or_else(|error| panic!("disassemble {symbol}: {error}"));
+        assert!(result.instructions.iter().any(|instruction| {
+            instruction.recovered_values.iter().any(|value| {
+                value.kind == expected_kind
+                    && value.source == damsel_core::RecoveredValueSource::RelativeTableLoad
+            })
+        }));
+        assert!(result.instructions.iter().any(|instruction| {
+            instruction.annotations.iter().any(|annotation| {
+                matches!(
+                    annotation,
+                    Annotation::TableSlotResolved {
+                        encoding: damsel_core::TableSlotEncoding::Relative32,
+                        ..
+                    }
+                )
+            })
+        }));
+    }
 }
 
 #[test]
@@ -618,6 +739,33 @@ fn disasm_jump_table_candidate_absent_on_non_switch_fixture() {
         },
     };
     let result = disassemble_v2(&image, &request).expect("disassemble symbolized fixture");
+    assert!(result.instructions.iter().all(|instruction| {
+        instruction
+            .annotations
+            .iter()
+            .all(|annotation| !matches!(annotation, Annotation::JumpTableCandidate { .. }))
+    }));
+}
+
+#[test]
+fn disasm_constant_slot_dispatch_does_not_emit_jump_table_candidate() {
+    let path = fixture("indirect-dispatch");
+    if !path.exists() {
+        eprintln!("indirect-dispatch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load indirect-dispatch fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Symbol("_dispatch_second_slot".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(32),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result =
+        disassemble_v2(&image, &request).expect("disassemble constant-slot dispatch symbol");
     assert!(result.instructions.iter().all(|instruction| {
         instruction
             .annotations
