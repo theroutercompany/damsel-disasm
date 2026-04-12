@@ -10,15 +10,18 @@ capabilities:
   macho_analysis: <status>
   fixture_rebuild: <status>
   fixture_drift_check: <status>
+  bench_compile: <status>
+  bench_runtime: <status>
   benchmark: <status>
 tools:
-  xcrun: <detected>
-  strip: <detected>
-  clang: <detected>
-  python3: <detected>
-  nm: <detected>
+  xcrun: <tool_status>
+  strip: <tool_status>
+  clang: <tool_status>
+  python3: <tool_status>
+  nm: <tool_status>
+  sdk_path_probe: <tool_status>
+  sha256sum: <tool_status>
+  shasum: <tool_status>
+  openssl: <tool_status>
   selected_hash_tool: <tool>
-  sha256sum: <detected>
-  shasum: <detected>
-  openssl: <detected>
 issues: <summary>

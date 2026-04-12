@@ -62,6 +62,18 @@ fn info_non_macho_returns_typed_unsupported_input_error() {
 }
 
 #[test]
+fn doctor_require_status_without_check_is_rejected() {
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args(["doctor", "--require-status", "supported"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "the following required arguments were not provided",
+        ));
+}
+
+#[test]
 fn disasm_unknown_section_returns_error() {
     let path = fixture("arm64-symbolized");
     Command::cargo_bin("damsel-cli")

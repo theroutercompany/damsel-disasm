@@ -1,11 +1,11 @@
 use damsel_core::{
-    Annotation, BinaryImage, CapabilityStatus, CompatibilityIssue, DecodedInstruction,
-    ExportFlagName, ExportKind, HostArchitecture, HostPlatform, Import, ImportBindingKind,
-    ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource,
-    ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
-    ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
-    RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry,
-    StubKind, Symbol,
+    Annotation, BinaryImage, CapabilityStatus, CompatibilityCapability, CompatibilityIssue,
+    DecodedInstruction, ExportFlagName, ExportKind, HostArchitecture, HostPlatform, Import,
+    ImportBindingKind, ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord,
+    ObjcCategoryRecordSource, ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind,
+    ObjcMethodRecord, ObjcNameSource, ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord,
+    ObjcProtocolRecord, ObjcSelectorSource, RecoveredValue, Reference, Relocation, Section,
+    SliceDescriptor, StubEntry, StubHelperEntry, StubKind, Symbol,
 };
 use std::env;
 use std::fmt::Write as _;
@@ -22,6 +22,34 @@ pub(crate) enum OutputFormat {
 pub(crate) struct OutputSettings {
     pub format: OutputFormat,
     pub pretty: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DoctorCheckTarget {
+    All,
+    MachoAnalysis,
+    FixtureRebuild,
+    FixtureDriftCheck,
+    BenchCompile,
+    BenchRuntime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DoctorRequireStatus {
+    Supported,
+    SupportedWithDegradedFeatures,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DoctorCheckRequest {
+    pub target: DoctorCheckTarget,
+    pub require_status: DoctorRequireStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DoctorCheckOutcome {
+    Passed,
+    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,13 +179,15 @@ struct CapabilityReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ToolStatus {
     detected: bool,
+    usable: bool,
+    path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HashToolStatus {
-    sha256sum: bool,
-    shasum: bool,
-    openssl: bool,
+    sha256sum: ToolStatus,
+    shasum: ToolStatus,
+    openssl: ToolStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,8 +197,17 @@ struct DoctorTools {
     strip: ToolStatus,
     python3: ToolStatus,
     nm: ToolStatus,
+    sdk_path_probe: ToolStatus,
     hash_tools: HashToolStatus,
     selected_hash_tool: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorContext {
+    host_platform: HostPlatform,
+    host_architecture: HostArchitecture,
+    target_triple: Option<String>,
+    tools: DoctorTools,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,9 +219,24 @@ struct DoctorReport {
     macho_analysis: CapabilityReport,
     fixture_rebuild: CapabilityReport,
     fixture_drift_check: CapabilityReport,
+    bench_compile: CapabilityReport,
+    bench_runtime: CapabilityReport,
     benchmark: CapabilityReport,
     tools: DoctorTools,
     issues: Vec<CompatibilityIssue>,
+}
+
+impl DoctorReport {
+    fn capability(&self, capability: CompatibilityCapability) -> &CapabilityReport {
+        match capability {
+            CompatibilityCapability::MachoAnalysis => &self.macho_analysis,
+            CompatibilityCapability::FixtureRebuild => &self.fixture_rebuild,
+            CompatibilityCapability::FixtureDriftCheck => &self.fixture_drift_check,
+            CompatibilityCapability::Benchmark => &self.benchmark,
+            CompatibilityCapability::BenchCompile => &self.bench_compile,
+            CompatibilityCapability::BenchRuntime => &self.bench_runtime,
+        }
+    }
 }
 
 pub(crate) fn print_error(error: ErrorResponse, output: &OutputSettings) {
@@ -201,13 +255,20 @@ pub(crate) fn print_error(error: ErrorResponse, output: &OutputSettings) {
     }
 }
 
-pub(crate) fn print_doctor(output: &OutputSettings) {
+pub(crate) fn print_doctor(
+    output: &OutputSettings,
+    check: Option<DoctorCheckRequest>,
+) -> DoctorCheckOutcome {
     let report = collect_doctor_report();
     match output.format {
         OutputFormat::Text => print_doctor_text(&report),
         OutputFormat::Json => {
             emit_json_response("doctor", &DoctorJsonDto { report: &report }, output)
         }
+    }
+    match check {
+        Some(request) => evaluate_doctor_check(&report, request),
+        None => DoctorCheckOutcome::Passed,
     }
 }
 
@@ -3168,6 +3229,14 @@ impl JsonDto for DoctorJsonDto<'_> {
                         capability_report_json(&report.fixture_drift_check),
                     ),
                     (
+                        "bench_compile".to_string(),
+                        capability_report_json(&report.bench_compile),
+                    ),
+                    (
+                        "bench_runtime".to_string(),
+                        capability_report_json(&report.bench_runtime),
+                    ),
+                    (
                         "benchmark".to_string(),
                         capability_report_json(&report.benchmark),
                     ),
@@ -3176,55 +3245,32 @@ impl JsonDto for DoctorJsonDto<'_> {
             (
                 "tools".to_string(),
                 JsonValue::Object(vec![
-                    (
-                        "xcrun".to_string(),
-                        JsonValue::Object(vec![(
-                            "detected".to_string(),
-                            JsonValue::Bool(report.tools.xcrun.detected),
-                        )]),
-                    ),
-                    (
-                        "strip".to_string(),
-                        JsonValue::Object(vec![(
-                            "detected".to_string(),
-                            JsonValue::Bool(report.tools.strip.detected),
-                        )]),
-                    ),
-                    (
-                        "clang".to_string(),
-                        JsonValue::Object(vec![(
-                            "detected".to_string(),
-                            JsonValue::Bool(report.tools.clang.detected),
-                        )]),
-                    ),
+                    ("xcrun".to_string(), tool_status_json(&report.tools.xcrun)),
+                    ("strip".to_string(), tool_status_json(&report.tools.strip)),
+                    ("clang".to_string(), tool_status_json(&report.tools.clang)),
                     (
                         "python3".to_string(),
-                        JsonValue::Object(vec![(
-                            "detected".to_string(),
-                            JsonValue::Bool(report.tools.python3.detected),
-                        )]),
+                        tool_status_json(&report.tools.python3),
                     ),
+                    ("nm".to_string(), tool_status_json(&report.tools.nm)),
                     (
-                        "nm".to_string(),
-                        JsonValue::Object(vec![(
-                            "detected".to_string(),
-                            JsonValue::Bool(report.tools.nm.detected),
-                        )]),
+                        "sdk_path_probe".to_string(),
+                        tool_status_json(&report.tools.sdk_path_probe),
                     ),
                     (
                         "hash_tools".to_string(),
                         JsonValue::Object(vec![
                             (
                                 "sha256sum".to_string(),
-                                JsonValue::Bool(report.tools.hash_tools.sha256sum),
+                                tool_status_json(&report.tools.hash_tools.sha256sum),
                             ),
                             (
                                 "shasum".to_string(),
-                                JsonValue::Bool(report.tools.hash_tools.shasum),
+                                tool_status_json(&report.tools.hash_tools.shasum),
                             ),
                             (
                                 "openssl".to_string(),
-                                JsonValue::Bool(report.tools.hash_tools.openssl),
+                                tool_status_json(&report.tools.hash_tools.openssl),
                             ),
                         ]),
                     ),
@@ -3803,6 +3849,21 @@ fn capability_report_json(report: &CapabilityReport) -> JsonValue {
     ])
 }
 
+fn tool_status_json(status: &ToolStatus) -> JsonValue {
+    JsonValue::Object(vec![
+        ("detected".to_string(), JsonValue::Bool(status.detected)),
+        ("usable".to_string(), JsonValue::Bool(status.usable)),
+        (
+            "path".to_string(),
+            status
+                .path
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+    ])
+}
+
 fn compatibility_issue_json(issue: &CompatibilityIssue) -> JsonValue {
     JsonValue::Object(vec![
         (
@@ -3828,75 +3889,22 @@ fn print_doctor_text(report: &DoctorReport) {
     print_capability_line("macho_analysis", &report.macho_analysis);
     print_capability_line("fixture_rebuild", &report.fixture_rebuild);
     print_capability_line("fixture_drift_check", &report.fixture_drift_check);
+    print_capability_line("bench_compile", &report.bench_compile);
+    print_capability_line("bench_runtime", &report.bench_runtime);
     print_capability_line("benchmark", &report.benchmark);
     println!("tools:");
-    println!(
-        "  xcrun: {}",
-        if report.tools.xcrun.detected {
-            "detected"
-        } else {
-            "missing"
-        }
-    );
-    println!(
-        "  strip: {}",
-        if report.tools.strip.detected {
-            "detected"
-        } else {
-            "missing"
-        }
-    );
-    println!(
-        "  clang: {}",
-        if report.tools.clang.detected {
-            "detected"
-        } else {
-            "missing"
-        }
-    );
-    println!(
-        "  python3: {}",
-        if report.tools.python3.detected {
-            "detected"
-        } else {
-            "missing"
-        }
-    );
-    println!(
-        "  nm: {}",
-        if report.tools.nm.detected {
-            "detected"
-        } else {
-            "missing"
-        }
-    );
+    print_tool_line("xcrun", &report.tools.xcrun);
+    print_tool_line("strip", &report.tools.strip);
+    print_tool_line("clang", &report.tools.clang);
+    print_tool_line("python3", &report.tools.python3);
+    print_tool_line("nm", &report.tools.nm);
+    print_tool_line("sdk_path_probe", &report.tools.sdk_path_probe);
+    print_tool_line("sha256sum", &report.tools.hash_tools.sha256sum);
+    print_tool_line("shasum", &report.tools.hash_tools.shasum);
+    print_tool_line("openssl", &report.tools.hash_tools.openssl);
     println!(
         "  selected_hash_tool: {}",
         report.tools.selected_hash_tool.as_deref().unwrap_or("none")
-    );
-    println!(
-        "  sha256sum: {}",
-        if report.tools.hash_tools.sha256sum {
-            "detected"
-        } else {
-            "missing"
-        }
-    );
-    println!(
-        "  shasum: {}",
-        if report.tools.hash_tools.shasum {
-            "detected"
-        } else {
-            "missing"
-        }
-    );
-    println!(
-        "  openssl: {}",
-        if report.tools.hash_tools.openssl {
-            "detected"
-        } else {
-            "missing"
-        }
     );
     if report.issues.is_empty() {
         println!("issues: none");
@@ -3915,14 +3923,26 @@ fn print_capability_line(name: &str, report: &CapabilityReport) {
     }
 }
 
-fn collect_doctor_report() -> DoctorReport {
-    let host_platform = HostPlatform::current();
-    let host_architecture = HostArchitecture::current();
-    let target_triple = option_env!("DAMSEL_TARGET_TRIPLE").map(ToString::to_string);
-    let tools = detect_doctor_tools();
+fn print_tool_line(name: &str, status: &ToolStatus) {
+    let detected = if status.detected { "yes" } else { "no" };
+    let usable = if status.usable { "yes" } else { "no" };
+    let path = status.path.as_deref().unwrap_or("-");
+    println!("  {name}: detected={detected} usable={usable} path={path}");
+}
 
+fn collect_doctor_report() -> DoctorReport {
+    let context = DoctorContext {
+        host_platform: HostPlatform::current(),
+        host_architecture: HostArchitecture::current(),
+        target_triple: option_env!("DAMSEL_TARGET_TRIPLE").map(ToString::to_string),
+        tools: detect_doctor_tools(),
+    };
+    evaluate_doctor_report(&context)
+}
+
+fn evaluate_doctor_report(context: &DoctorContext) -> DoctorReport {
     let host_is_primary_supported = matches!(
-        (&host_platform, &host_architecture),
+        (&context.host_platform, &context.host_architecture),
         (HostPlatform::MacOS, _)
             | (HostPlatform::Linux, HostArchitecture::X86_64)
             | (HostPlatform::Linux, HostArchitecture::Arm64)
@@ -3945,41 +3965,52 @@ fn collect_doctor_report() -> DoctorReport {
 
     let fixture_rebuild = {
         let mut reasons = Vec::new();
-        let status = if host_platform != HostPlatform::MacOS {
+        let status = if context.host_platform != HostPlatform::MacOS {
             reasons.push(compatibility_issue(
                 "fixture_rebuild_macos_only",
                 "Fixture rebuild requires macOS and Xcode tooling.",
             ));
             CapabilityStatus::Unsupported
         } else {
-            if !tools.xcrun.detected {
+            push_tool_requirement(
+                &mut reasons,
+                &context.tools.xcrun,
+                "xcrun",
+                "missing_xcrun",
+                "unusable_xcrun",
+            );
+            push_tool_requirement(
+                &mut reasons,
+                &context.tools.clang,
+                "clang",
+                "missing_clang",
+                "unusable_clang",
+            );
+            push_tool_requirement(
+                &mut reasons,
+                &context.tools.strip,
+                "strip",
+                "missing_strip",
+                "unusable_strip",
+            );
+            push_tool_requirement(
+                &mut reasons,
+                &context.tools.python3,
+                "python3",
+                "missing_python3",
+                "unusable_python3",
+            );
+            push_tool_requirement(
+                &mut reasons,
+                &context.tools.nm,
+                "nm",
+                "missing_nm",
+                "unusable_nm",
+            );
+            if !context.tools.sdk_path_probe.usable {
                 reasons.push(compatibility_issue(
-                    "missing_xcrun",
-                    "xcrun was not found on PATH.",
-                ));
-            }
-            if !tools.clang.detected {
-                reasons.push(compatibility_issue(
-                    "missing_clang",
-                    "clang was not found on PATH.",
-                ));
-            }
-            if !tools.strip.detected {
-                reasons.push(compatibility_issue(
-                    "missing_strip",
-                    "strip was not found on PATH.",
-                ));
-            }
-            if !tools.python3.detected {
-                reasons.push(compatibility_issue(
-                    "missing_python3",
-                    "python3 was not found on PATH.",
-                ));
-            }
-            if !tools.nm.detected {
-                reasons.push(compatibility_issue(
-                    "missing_nm",
-                    "nm was not found on PATH.",
+                    "xcrun_sdk_path_probe_failed",
+                    "xcrun --sdk macosx --show-sdk-path failed.",
                 ));
             }
             if reasons.is_empty() {
@@ -3993,22 +4024,37 @@ fn collect_doctor_report() -> DoctorReport {
 
     let fixture_drift_check = {
         let mut reasons = Vec::new();
-        let status = if tools.selected_hash_tool.is_some() {
+        let status = if context.tools.selected_hash_tool.is_some() {
             CapabilityStatus::Supported
         } else {
             reasons.push(compatibility_issue(
-                "missing_hash_tool",
-                "No supported hash tool detected; fixture drift check expects sha256sum, shasum, or openssl.",
+                "missing_usable_hash_tool",
+                "No usable hash tool detected; fixture drift check expects sha256sum, shasum, or openssl.",
             ));
             CapabilityStatus::Unsupported
         };
         CapabilityReport { status, reasons }
     };
 
-    let benchmark = {
+    let bench_compile = if host_is_primary_supported {
+        CapabilityReport {
+            status: CapabilityStatus::Supported,
+            reasons: Vec::new(),
+        }
+    } else {
+        CapabilityReport {
+            status: CapabilityStatus::SupportedWithDegradedFeatures,
+            reasons: vec![compatibility_issue(
+                "host_not_ci_verified_for_bench_compile",
+                "Bench compile smoke is not CI-verified for this host pair.",
+            )],
+        }
+    };
+
+    let bench_runtime = {
         let mut reasons = Vec::new();
-        let status = if host_platform == HostPlatform::Linux
-            && host_architecture == HostArchitecture::Arm64
+        let status = if context.host_platform == HostPlatform::Linux
+            && context.host_architecture == HostArchitecture::Arm64
         {
             CapabilityStatus::Supported
         } else {
@@ -4021,19 +4067,20 @@ fn collect_doctor_report() -> DoctorReport {
         CapabilityReport { status, reasons }
     };
 
-    let issues = macho_analysis
-        .reasons
-        .iter()
-        .chain(fixture_rebuild.reasons.iter())
-        .chain(fixture_drift_check.reasons.iter())
-        .chain(benchmark.reasons.iter())
-        .cloned()
-        .collect::<Vec<_>>();
+    let benchmark = summarize_capability_reports(&[&bench_compile, &bench_runtime]);
+    let issues = unique_issues_from_reports(&[
+        &macho_analysis,
+        &fixture_rebuild,
+        &fixture_drift_check,
+        &bench_compile,
+        &bench_runtime,
+    ]);
     let overall_status = [
         macho_analysis.status,
         fixture_rebuild.status,
         fixture_drift_check.status,
-        benchmark.status,
+        bench_compile.status,
+        bench_runtime.status,
     ]
     .iter()
     .max_by_key(|status| capability_status_severity(**status))
@@ -4041,65 +4088,227 @@ fn collect_doctor_report() -> DoctorReport {
     .unwrap_or(CapabilityStatus::Supported);
 
     DoctorReport {
-        host_platform,
-        host_architecture,
-        target_triple,
+        host_platform: context.host_platform.clone(),
+        host_architecture: context.host_architecture.clone(),
+        target_triple: context.target_triple.clone(),
         overall_status,
         macho_analysis,
         fixture_rebuild,
         fixture_drift_check,
+        bench_compile,
+        bench_runtime,
         benchmark,
-        tools,
+        tools: context.tools.clone(),
         issues,
     }
 }
 
+fn push_tool_requirement(
+    reasons: &mut Vec<CompatibilityIssue>,
+    status: &ToolStatus,
+    tool_name: &'static str,
+    missing_code: &'static str,
+    unusable_code: &'static str,
+) {
+    if !status.detected {
+        reasons.push(compatibility_issue(
+            missing_code,
+            format!("{tool_name} was not found on PATH."),
+        ));
+    } else if !status.usable {
+        reasons.push(compatibility_issue(
+            unusable_code,
+            format!("{tool_name} was detected but did not pass usability probe."),
+        ));
+    }
+}
+
+fn summarize_capability_reports(reports: &[&CapabilityReport]) -> CapabilityReport {
+    let status = reports
+        .iter()
+        .map(|report| report.status)
+        .max_by_key(|status| capability_status_severity(*status))
+        .unwrap_or(CapabilityStatus::Supported);
+    CapabilityReport {
+        status,
+        reasons: unique_issues_from_reports(reports),
+    }
+}
+
+fn unique_issues_from_reports(reports: &[&CapabilityReport]) -> Vec<CompatibilityIssue> {
+    let mut issues = Vec::new();
+    for report in reports {
+        for issue in &report.reasons {
+            if !issues.iter().any(|item: &CompatibilityIssue| {
+                item.code == issue.code && item.message == issue.message
+            }) {
+                issues.push(issue.clone());
+            }
+        }
+    }
+    issues
+}
+
 fn detect_doctor_tools() -> DoctorTools {
+    let xcrun = probe_tool("xcrun");
+    let clang = probe_tool_via_xcrun_or_path(&xcrun, "clang");
+    let strip = probe_tool_via_xcrun_or_path(&xcrun, "strip");
+    let python3 = probe_tool("python3");
+    let nm = probe_tool("nm");
+    let sdk_path_probe = probe_xcrun_sdk_path(&xcrun);
     let hash_tools = HashToolStatus {
-        sha256sum: command_exists("sha256sum"),
-        shasum: command_exists("shasum"),
-        openssl: command_exists("openssl"),
+        sha256sum: probe_hash_tool("sha256sum"),
+        shasum: probe_hash_tool("shasum"),
+        openssl: probe_hash_tool("openssl"),
     };
-    let selected_hash_tool = if hash_tools.sha256sum {
-        Some("sha256sum".to_string())
-    } else if hash_tools.shasum {
-        Some("shasum".to_string())
-    } else if hash_tools.openssl {
-        Some("openssl".to_string())
-    } else {
-        None
-    };
+    let selected_hash_tool = select_hash_tool(&hash_tools).map(ToString::to_string);
+
     DoctorTools {
-        xcrun: ToolStatus {
-            detected: command_exists("xcrun"),
-        },
-        clang: ToolStatus {
-            detected: command_exists("clang"),
-        },
-        strip: ToolStatus {
-            detected: command_exists("strip"),
-        },
-        python3: ToolStatus {
-            detected: command_exists("python3"),
-        },
-        nm: ToolStatus {
-            detected: command_exists("nm"),
-        },
+        xcrun,
+        clang,
+        strip,
+        python3,
+        nm,
+        sdk_path_probe,
         hash_tools,
         selected_hash_tool,
     }
 }
 
-fn command_exists(name: &str) -> bool {
+fn probe_tool(name: &str) -> ToolStatus {
+    let path = find_command_path(name).map(|value| value.to_string_lossy().to_string());
+    let detected = path.is_some();
+    ToolStatus {
+        detected,
+        usable: detected,
+        path,
+    }
+}
+
+fn probe_tool_via_xcrun_or_path(xcrun: &ToolStatus, name: &str) -> ToolStatus {
+    if xcrun.usable {
+        if let Some(xcrun_path) = xcrun.path.as_deref() {
+            if let Some(path) = probe_xcrun_find(xcrun_path, name) {
+                return ToolStatus {
+                    detected: true,
+                    usable: true,
+                    path: Some(path),
+                };
+            }
+        }
+    }
+    probe_tool(name)
+}
+
+fn probe_xcrun_find(xcrun_path: &str, tool: &str) -> Option<String> {
+    let output = std::process::Command::new(xcrun_path)
+        .args(["--find", tool])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if resolved.is_empty() {
+        None
+    } else {
+        Some(resolved)
+    }
+}
+
+fn probe_xcrun_sdk_path(xcrun: &ToolStatus) -> ToolStatus {
+    if !xcrun.usable {
+        return ToolStatus {
+            detected: false,
+            usable: false,
+            path: None,
+        };
+    }
+    let Some(xcrun_path) = xcrun.path.as_deref() else {
+        return ToolStatus {
+            detected: true,
+            usable: false,
+            path: None,
+        };
+    };
+    let output = std::process::Command::new(xcrun_path)
+        .args(["--sdk", "macosx", "--show-sdk-path"])
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if path.is_empty() {
+                ToolStatus {
+                    detected: true,
+                    usable: false,
+                    path: None,
+                }
+            } else {
+                let usable = Path::new(&path).exists();
+                ToolStatus {
+                    detected: true,
+                    usable,
+                    path: Some(path),
+                }
+            }
+        }
+        _ => ToolStatus {
+            detected: true,
+            usable: false,
+            path: None,
+        },
+    }
+}
+
+fn probe_hash_tool(name: &str) -> ToolStatus {
+    let mut status = probe_tool(name);
+    status.usable = status.detected && run_hash_probe(name);
+    status
+}
+
+fn run_hash_probe(name: &str) -> bool {
+    let null_path = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let mut command = std::process::Command::new(name);
+    match name {
+        "sha256sum" => {
+            command.arg(null_path);
+        }
+        "shasum" => {
+            command.args(["-a", "256", null_path]);
+        }
+        "openssl" => {
+            command.args(["dgst", "-sha256", null_path]);
+        }
+        _ => return false,
+    }
+    match command.output() {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
+fn select_hash_tool(hash_tools: &HashToolStatus) -> Option<&'static str> {
+    if hash_tools.sha256sum.usable {
+        Some("sha256sum")
+    } else if hash_tools.shasum.usable {
+        Some("shasum")
+    } else if hash_tools.openssl.usable {
+        Some("openssl")
+    } else {
+        None
+    }
+}
+
+fn find_command_path(name: &str) -> Option<std::path::PathBuf> {
     if name.is_empty() {
-        return false;
+        return None;
     }
     if Path::new(name).components().count() > 1 {
-        return Path::new(name).is_file();
+        return Path::new(name)
+            .is_file()
+            .then(|| Path::new(name).to_path_buf());
     }
-    let Some(paths) = env::var_os("PATH") else {
-        return false;
-    };
+    let paths = env::var_os("PATH")?;
     #[cfg(windows)]
     let path_exts = env::var_os("PATHEXT")
         .map(|exts| {
@@ -4117,7 +4326,7 @@ fn command_exists(name: &str) -> bool {
         }
         let candidate = dir.join(name);
         if candidate.is_file() {
-            return true;
+            return Some(candidate);
         }
         #[cfg(windows)]
         {
@@ -4125,12 +4334,12 @@ fn command_exists(name: &str) -> bool {
                 let suffix = ext.trim_start_matches('.');
                 let with_ext = dir.join(format!("{name}.{suffix}"));
                 if with_ext.is_file() {
-                    return true;
+                    return Some(with_ext);
                 }
             }
         }
     }
-    false
+    None
 }
 
 fn compatibility_issue(code: &'static str, message: impl Into<String>) -> CompatibilityIssue {
@@ -4142,6 +4351,247 @@ fn capability_status_severity(status: CapabilityStatus) -> u8 {
         CapabilityStatus::Supported => 0,
         CapabilityStatus::SupportedWithDegradedFeatures => 1,
         CapabilityStatus::Unsupported => 2,
+    }
+}
+
+fn evaluate_doctor_check(report: &DoctorReport, request: DoctorCheckRequest) -> DoctorCheckOutcome {
+    let required_status = match request.require_status {
+        DoctorRequireStatus::Supported => CapabilityStatus::Supported,
+        DoctorRequireStatus::SupportedWithDegradedFeatures => {
+            CapabilityStatus::SupportedWithDegradedFeatures
+        }
+    };
+    let required_severity = capability_status_severity(required_status);
+    let capabilities: &[CompatibilityCapability] = match request.target {
+        DoctorCheckTarget::All => &[
+            CompatibilityCapability::MachoAnalysis,
+            CompatibilityCapability::FixtureRebuild,
+            CompatibilityCapability::FixtureDriftCheck,
+            CompatibilityCapability::BenchCompile,
+            CompatibilityCapability::BenchRuntime,
+        ],
+        DoctorCheckTarget::MachoAnalysis => &[CompatibilityCapability::MachoAnalysis],
+        DoctorCheckTarget::FixtureRebuild => &[CompatibilityCapability::FixtureRebuild],
+        DoctorCheckTarget::FixtureDriftCheck => &[CompatibilityCapability::FixtureDriftCheck],
+        DoctorCheckTarget::BenchCompile => &[CompatibilityCapability::BenchCompile],
+        DoctorCheckTarget::BenchRuntime => &[CompatibilityCapability::BenchRuntime],
+    };
+    let passes = capabilities.iter().all(|capability| {
+        capability_status_severity(report.capability(*capability).status) <= required_severity
+    });
+    if passes {
+        DoctorCheckOutcome::Passed
+    } else {
+        DoctorCheckOutcome::Failed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn missing_tool() -> ToolStatus {
+        ToolStatus {
+            detected: false,
+            usable: false,
+            path: None,
+        }
+    }
+
+    fn usable_tool(path: &str) -> ToolStatus {
+        ToolStatus {
+            detected: true,
+            usable: true,
+            path: Some(path.to_string()),
+        }
+    }
+
+    fn doctor_tools(selected_hash_tool: Option<&str>) -> DoctorTools {
+        let sha256sum = if selected_hash_tool == Some("sha256sum") {
+            usable_tool("/usr/bin/sha256sum")
+        } else {
+            missing_tool()
+        };
+        let shasum = if selected_hash_tool == Some("shasum") {
+            usable_tool("/usr/bin/shasum")
+        } else {
+            missing_tool()
+        };
+        let openssl = if selected_hash_tool == Some("openssl") {
+            usable_tool("/usr/bin/openssl")
+        } else {
+            missing_tool()
+        };
+        DoctorTools {
+            xcrun: usable_tool("/usr/bin/xcrun"),
+            clang: usable_tool("/usr/bin/clang"),
+            strip: usable_tool("/usr/bin/strip"),
+            python3: usable_tool("/usr/bin/python3"),
+            nm: usable_tool("/usr/bin/nm"),
+            sdk_path_probe: usable_tool("/Applications/Xcode.app/SDKs/MacOSX.sdk"),
+            hash_tools: HashToolStatus {
+                sha256sum,
+                shasum,
+                openssl,
+            },
+            selected_hash_tool: selected_hash_tool.map(ToString::to_string),
+        }
+    }
+
+    fn context(platform: HostPlatform, architecture: HostArchitecture) -> DoctorContext {
+        DoctorContext {
+            host_platform: platform,
+            host_architecture: architecture,
+            target_triple: Some("test-target".to_string()),
+            tools: doctor_tools(Some("sha256sum")),
+        }
+    }
+
+    #[test]
+    fn evaluator_reports_full_support_on_linux_arm64() {
+        let report = evaluate_doctor_report(&context(HostPlatform::Linux, HostArchitecture::Arm64));
+        assert_eq!(report.macho_analysis.status, CapabilityStatus::Supported);
+        assert_eq!(
+            report.fixture_drift_check.status,
+            CapabilityStatus::Supported
+        );
+        assert_eq!(report.bench_compile.status, CapabilityStatus::Supported);
+        assert_eq!(report.bench_runtime.status, CapabilityStatus::Supported);
+        assert_eq!(report.benchmark.status, CapabilityStatus::Supported);
+    }
+
+    #[test]
+    fn evaluator_reports_degraded_runtime_on_linux_x86_64() {
+        let report =
+            evaluate_doctor_report(&context(HostPlatform::Linux, HostArchitecture::X86_64));
+        assert_eq!(report.bench_compile.status, CapabilityStatus::Supported);
+        assert_eq!(
+            report.bench_runtime.status,
+            CapabilityStatus::SupportedWithDegradedFeatures
+        );
+        assert_eq!(
+            report.benchmark.status,
+            CapabilityStatus::SupportedWithDegradedFeatures
+        );
+        assert!(
+            report
+                .bench_runtime
+                .reasons
+                .iter()
+                .any(|issue| issue.code == "throughput_smoke_linux_arm64_only")
+        );
+    }
+
+    #[test]
+    fn evaluator_reports_graceful_degraded_host_on_windows() {
+        let report =
+            evaluate_doctor_report(&context(HostPlatform::Windows, HostArchitecture::X86_64));
+        assert_eq!(
+            report.macho_analysis.status,
+            CapabilityStatus::SupportedWithDegradedFeatures
+        );
+        assert_eq!(
+            report.bench_compile.status,
+            CapabilityStatus::SupportedWithDegradedFeatures
+        );
+        assert_eq!(report.fixture_rebuild.status, CapabilityStatus::Unsupported);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "host_not_ci_verified")
+        );
+    }
+
+    #[test]
+    fn evaluator_reports_graceful_degraded_host_on_unknown_platform() {
+        let report = evaluate_doctor_report(&context(
+            HostPlatform::Unknown("solaris".to_string()),
+            HostArchitecture::Unknown("sparc64".to_string()),
+        ));
+        assert_eq!(
+            report.macho_analysis.status,
+            CapabilityStatus::SupportedWithDegradedFeatures
+        );
+        assert_eq!(
+            report.bench_compile.status,
+            CapabilityStatus::SupportedWithDegradedFeatures
+        );
+        assert_eq!(
+            report.bench_runtime.status,
+            CapabilityStatus::SupportedWithDegradedFeatures
+        );
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "host_not_ci_verified")
+        );
+    }
+
+    #[test]
+    fn evaluator_requires_sdk_probe_for_fixture_rebuild() {
+        let mut context = context(HostPlatform::MacOS, HostArchitecture::Arm64);
+        context.tools.sdk_path_probe = missing_tool();
+        let report = evaluate_doctor_report(&context);
+        assert_eq!(report.fixture_rebuild.status, CapabilityStatus::Unsupported);
+        assert!(
+            report
+                .fixture_rebuild
+                .reasons
+                .iter()
+                .any(|issue| issue.code == "xcrun_sdk_path_probe_failed")
+        );
+    }
+
+    #[test]
+    fn evaluator_uses_openssl_only_hash_fallback() {
+        let mut context = context(HostPlatform::Linux, HostArchitecture::Arm64);
+        context.tools = doctor_tools(Some("openssl"));
+        let report = evaluate_doctor_report(&context);
+        assert_eq!(
+            report.fixture_drift_check.status,
+            CapabilityStatus::Supported
+        );
+        assert_eq!(report.tools.selected_hash_tool.as_deref(), Some("openssl"));
+        assert!(report.tools.hash_tools.openssl.usable);
+        assert!(!report.tools.hash_tools.sha256sum.usable);
+    }
+
+    #[test]
+    fn doctor_check_targets_split_bench_capabilities() {
+        let report =
+            evaluate_doctor_report(&context(HostPlatform::Linux, HostArchitecture::X86_64));
+        assert_eq!(
+            evaluate_doctor_check(
+                &report,
+                DoctorCheckRequest {
+                    target: DoctorCheckTarget::BenchCompile,
+                    require_status: DoctorRequireStatus::Supported,
+                }
+            ),
+            DoctorCheckOutcome::Passed
+        );
+        assert_eq!(
+            evaluate_doctor_check(
+                &report,
+                DoctorCheckRequest {
+                    target: DoctorCheckTarget::BenchRuntime,
+                    require_status: DoctorRequireStatus::Supported,
+                }
+            ),
+            DoctorCheckOutcome::Failed
+        );
+        assert_eq!(
+            evaluate_doctor_check(
+                &report,
+                DoctorCheckRequest {
+                    target: DoctorCheckTarget::BenchRuntime,
+                    require_status: DoctorRequireStatus::SupportedWithDegradedFeatures,
+                }
+            ),
+            DoctorCheckOutcome::Passed
+        );
     }
 }
 

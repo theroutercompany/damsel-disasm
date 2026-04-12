@@ -238,6 +238,46 @@ enum ObjcSelectorSourceArg {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+enum DoctorCheckArg {
+    All,
+    MachoAnalysis,
+    FixtureRebuild,
+    FixtureDriftCheck,
+    BenchCompile,
+    BenchRuntime,
+}
+
+impl From<DoctorCheckArg> for output::DoctorCheckTarget {
+    fn from(value: DoctorCheckArg) -> Self {
+        match value {
+            DoctorCheckArg::All => output::DoctorCheckTarget::All,
+            DoctorCheckArg::MachoAnalysis => output::DoctorCheckTarget::MachoAnalysis,
+            DoctorCheckArg::FixtureRebuild => output::DoctorCheckTarget::FixtureRebuild,
+            DoctorCheckArg::FixtureDriftCheck => output::DoctorCheckTarget::FixtureDriftCheck,
+            DoctorCheckArg::BenchCompile => output::DoctorCheckTarget::BenchCompile,
+            DoctorCheckArg::BenchRuntime => output::DoctorCheckTarget::BenchRuntime,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DoctorRequireStatusArg {
+    Supported,
+    SupportedWithDegradedFeatures,
+}
+
+impl From<DoctorRequireStatusArg> for output::DoctorRequireStatus {
+    fn from(value: DoctorRequireStatusArg) -> Self {
+        match value {
+            DoctorRequireStatusArg::Supported => output::DoctorRequireStatus::Supported,
+            DoctorRequireStatusArg::SupportedWithDegradedFeatures => {
+                output::DoctorRequireStatus::SupportedWithDegradedFeatures
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum ObjcCategorySourceArg {
     RuntimeList,
     SymbolSynthesis,
@@ -271,7 +311,12 @@ impl From<ObjcSelectorSourceArg> for ObjcSelectorSource {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    Doctor,
+    Doctor {
+        #[arg(long, value_enum)]
+        check: Option<DoctorCheckArg>,
+        #[arg(long, value_enum, requires = "check")]
+        require_status: Option<DoctorRequireStatusArg>,
+    },
     Info {
         path: PathBuf,
     },
@@ -411,16 +456,20 @@ fn main() {
         pretty: cli.pretty,
     };
 
-    if let Err(error) = run(cli, output_settings) {
-        output::print_error(
-            output::ErrorResponse {
-                code: error.code,
-                message: error.message,
-                details: error.details,
-            },
-            &output_settings,
-        );
-        std::process::exit(1);
+    match run(cli, output_settings) {
+        Ok(CliRunOutcome::Success) => {}
+        Ok(CliRunOutcome::DoctorCheckFailed) => std::process::exit(2),
+        Err(error) => {
+            output::print_error(
+                output::ErrorResponse {
+                    code: error.code,
+                    message: error.message,
+                    details: error.details,
+                },
+                &output_settings,
+            );
+            std::process::exit(1);
+        }
     }
 }
 
@@ -460,10 +509,28 @@ impl fmt::Display for CliRunError {
 
 impl Error for CliRunError {}
 
-fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliRunOutcome {
+    Success,
+    DoctorCheckFailed,
+}
+
+fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcome, CliRunError> {
     match cli.command {
-        Command::Doctor => {
-            output::print_doctor(&output_settings);
+        Command::Doctor {
+            check,
+            require_status,
+        } => {
+            let check_request = check.map(|target| output::DoctorCheckRequest {
+                target: target.into(),
+                require_status: require_status
+                    .unwrap_or(DoctorRequireStatusArg::Supported)
+                    .into(),
+            });
+            let check_outcome = output::print_doctor(&output_settings, check_request);
+            if check_request.is_some() && check_outcome == output::DoctorCheckOutcome::Failed {
+                return Ok(CliRunOutcome::DoctorCheckFailed);
+            }
         }
         Command::Info { path } => {
             let image = load_image(path)?;
@@ -744,7 +811,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
         }
     }
 
-    Ok(())
+    Ok(CliRunOutcome::Success)
 }
 
 fn load_image(path: PathBuf) -> Result<BinaryImage, CliRunError> {

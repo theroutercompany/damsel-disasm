@@ -2,6 +2,7 @@ use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,11 +34,7 @@ fn write_temp_input(bytes: &[u8]) -> PathBuf {
 }
 
 fn run_json_ok(args: &[&str]) -> String {
-    let output = Command::cargo_bin("damsel-cli")
-        .expect("binary exists")
-        .args(args)
-        .output()
-        .expect("command runs");
+    let output = run_json_output(args);
     assert!(
         output.status.success(),
         "stdout={:?} stderr={:?}",
@@ -48,11 +45,7 @@ fn run_json_ok(args: &[&str]) -> String {
 }
 
 fn run_json_err(args: &[&str]) -> String {
-    let output = Command::cargo_bin("damsel-cli")
-        .expect("binary exists")
-        .args(args)
-        .output()
-        .expect("command runs");
+    let output = run_json_output(args);
     assert!(
         !output.status.success(),
         "expected failure, stdout={:?} stderr={:?}",
@@ -60,6 +53,14 @@ fn run_json_err(args: &[&str]) -> String {
         output.stderr
     );
     String::from_utf8_lossy(&output.stderr).trim().to_string()
+}
+
+fn run_json_output(args: &[&str]) -> Output {
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args(args)
+        .output()
+        .expect("command runs")
 }
 
 fn parse_json(text: &str) -> Value {
@@ -113,6 +114,8 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
             "macho_analysis",
             "fixture_rebuild",
             "fixture_drift_check",
+            "bench_compile",
+            "bench_runtime",
             "benchmark",
         ],
     );
@@ -120,6 +123,8 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
         "macho_analysis",
         "fixture_rebuild",
         "fixture_drift_check",
+        "bench_compile",
+        "bench_runtime",
         "benchmark",
     ] {
         assert_exact_object_keys(&json["data"]["capabilities"][key], &["status", "reasons"]);
@@ -147,39 +152,99 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
             "clang",
             "python3",
             "nm",
+            "sdk_path_probe",
             "hash_tools",
             "selected_hash_tool",
         ],
     );
-    assert_exact_object_keys(&json["data"]["tools"]["xcrun"], &["detected"]);
-    assert_exact_object_keys(&json["data"]["tools"]["strip"], &["detected"]);
-    assert_exact_object_keys(&json["data"]["tools"]["clang"], &["detected"]);
-    assert_exact_object_keys(&json["data"]["tools"]["python3"], &["detected"]);
-    assert_exact_object_keys(&json["data"]["tools"]["nm"], &["detected"]);
+    assert_exact_object_keys(
+        &json["data"]["tools"]["xcrun"],
+        &["detected", "usable", "path"],
+    );
+    assert_exact_object_keys(
+        &json["data"]["tools"]["strip"],
+        &["detected", "usable", "path"],
+    );
+    assert_exact_object_keys(
+        &json["data"]["tools"]["clang"],
+        &["detected", "usable", "path"],
+    );
+    assert_exact_object_keys(
+        &json["data"]["tools"]["python3"],
+        &["detected", "usable", "path"],
+    );
+    assert_exact_object_keys(
+        &json["data"]["tools"]["nm"],
+        &["detected", "usable", "path"],
+    );
+    assert_exact_object_keys(
+        &json["data"]["tools"]["sdk_path_probe"],
+        &["detected", "usable", "path"],
+    );
     assert_exact_object_keys(
         &json["data"]["tools"]["hash_tools"],
         &["sha256sum", "shasum", "openssl"],
     );
+    for key in ["sha256sum", "shasum", "openssl"] {
+        assert_exact_object_keys(
+            &json["data"]["tools"]["hash_tools"][key],
+            &["detected", "usable", "path"],
+        );
+    }
     assert!(json["data"]["tools"]["xcrun"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["xcrun"]["usable"].is_boolean());
+    assert!(
+        json["data"]["tools"]["xcrun"]["path"].is_string()
+            || json["data"]["tools"]["xcrun"]["path"].is_null()
+    );
     assert!(json["data"]["tools"]["strip"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["strip"]["usable"].is_boolean());
+    assert!(
+        json["data"]["tools"]["strip"]["path"].is_string()
+            || json["data"]["tools"]["strip"]["path"].is_null()
+    );
     assert!(json["data"]["tools"]["clang"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["clang"]["usable"].is_boolean());
+    assert!(
+        json["data"]["tools"]["clang"]["path"].is_string()
+            || json["data"]["tools"]["clang"]["path"].is_null()
+    );
     assert!(json["data"]["tools"]["python3"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["python3"]["usable"].is_boolean());
+    assert!(
+        json["data"]["tools"]["python3"]["path"].is_string()
+            || json["data"]["tools"]["python3"]["path"].is_null()
+    );
     assert!(json["data"]["tools"]["nm"]["detected"].is_boolean());
-    assert!(json["data"]["tools"]["hash_tools"]["sha256sum"].is_boolean());
-    assert!(json["data"]["tools"]["hash_tools"]["shasum"].is_boolean());
-    assert!(json["data"]["tools"]["hash_tools"]["openssl"].is_boolean());
+    assert!(json["data"]["tools"]["nm"]["usable"].is_boolean());
+    assert!(
+        json["data"]["tools"]["nm"]["path"].is_string()
+            || json["data"]["tools"]["nm"]["path"].is_null()
+    );
+    assert!(json["data"]["tools"]["sdk_path_probe"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["sdk_path_probe"]["usable"].is_boolean());
+    assert!(
+        json["data"]["tools"]["sdk_path_probe"]["path"].is_string()
+            || json["data"]["tools"]["sdk_path_probe"]["path"].is_null()
+    );
     let selected_hash_tool = json["data"]["tools"]["selected_hash_tool"].as_str();
-    let has_sha256sum = json["data"]["tools"]["hash_tools"]["sha256sum"] == true;
-    let has_shasum = json["data"]["tools"]["hash_tools"]["shasum"] == true;
-    let has_openssl = json["data"]["tools"]["hash_tools"]["openssl"] == true;
+    let has_sha256sum = json["data"]["tools"]["hash_tools"]["sha256sum"]["detected"] == true;
+    let has_shasum = json["data"]["tools"]["hash_tools"]["shasum"]["detected"] == true;
+    let has_openssl = json["data"]["tools"]["hash_tools"]["openssl"]["detected"] == true;
+    let has_usable_sha256sum = json["data"]["tools"]["hash_tools"]["sha256sum"]["usable"] == true;
+    let has_usable_shasum = json["data"]["tools"]["hash_tools"]["shasum"]["usable"] == true;
+    let has_usable_openssl = json["data"]["tools"]["hash_tools"]["openssl"]["usable"] == true;
     if let Some(selected) = selected_hash_tool {
         assert!(matches!(selected, "sha256sum" | "shasum" | "openssl"));
-        assert!(json["data"]["tools"]["hash_tools"][selected] == true);
+        assert!(json["data"]["tools"]["hash_tools"][selected]["usable"] == true);
     } else {
         assert!(
-            !has_sha256sum && !has_shasum && !has_openssl,
-            "selected_hash_tool should be present when a hash tool is detected"
+            !has_usable_sha256sum && !has_usable_shasum && !has_usable_openssl,
+            "selected_hash_tool should be present when a usable hash tool is detected"
         );
+    }
+    if !has_sha256sum && !has_shasum && !has_openssl {
+        assert!(selected_hash_tool.is_none());
     }
     let status = json["data"]["overall_status"]
         .as_str()
@@ -194,6 +259,85 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
         assert!(issue["code"].is_string());
         assert!(issue["message"].is_string());
     }
+    for key in [
+        "macho_analysis",
+        "fixture_rebuild",
+        "fixture_drift_check",
+        "bench_compile",
+        "bench_runtime",
+        "benchmark",
+    ] {
+        let capability = &json["data"]["capabilities"][key];
+        if capability["status"] != "supported" {
+            assert!(
+                capability["reasons"]
+                    .as_array()
+                    .expect("reasons array")
+                    .len()
+                    > 0,
+                "{key} should include reasons when status is not supported"
+            );
+        }
+    }
+}
+
+#[test]
+fn doctor_check_supported_threshold_matches_reported_capabilities() {
+    let baseline = parse_json(&run_json_ok(&["--format", "json", "doctor"]));
+    let all_supported = [
+        "macho_analysis",
+        "fixture_rebuild",
+        "fixture_drift_check",
+        "bench_compile",
+        "bench_runtime",
+    ]
+    .iter()
+    .all(|key| baseline["data"]["capabilities"][key]["status"] == "supported");
+
+    let output = run_json_output(&[
+        "--format",
+        "json",
+        "doctor",
+        "--check",
+        "all",
+        "--require-status",
+        "supported",
+    ]);
+    let expected_code = if all_supported { 0 } else { 2 };
+    assert_eq!(output.status.code(), Some(expected_code));
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected stderr: {:?}",
+        output.stderr
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let json = parse_json(&stdout);
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["command"], "doctor");
+    assert!(json["data"].is_object());
+}
+
+#[test]
+fn doctor_check_can_succeed_with_degraded_threshold() {
+    let output = run_json_output(&[
+        "--format",
+        "json",
+        "doctor",
+        "--check",
+        "macho-analysis",
+        "--require-status",
+        "supported-with-degraded-features",
+    ]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected stderr: {:?}",
+        output.stderr
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let json = parse_json(&stdout);
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["command"], "doctor");
 }
 
 #[test]

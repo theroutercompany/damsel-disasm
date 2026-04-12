@@ -42,28 +42,34 @@ fn normalize_doctor_snapshot(output: &str) -> String {
                 Some("  fixture_rebuild: <status>".to_string())
             } else if trimmed.starts_with("fixture_drift_check: ") {
                 Some("  fixture_drift_check: <status>".to_string())
+            } else if trimmed.starts_with("bench_compile: ") {
+                Some("  bench_compile: <status>".to_string())
+            } else if trimmed.starts_with("bench_runtime: ") {
+                Some("  bench_runtime: <status>".to_string())
             } else if trimmed.starts_with("benchmark: ") {
                 Some("  benchmark: <status>".to_string())
             } else if line == "tools:" {
                 Some("tools:".to_string())
             } else if trimmed.starts_with("xcrun: ") {
-                Some("  xcrun: <detected>".to_string())
+                Some("  xcrun: <tool_status>".to_string())
             } else if trimmed.starts_with("strip: ") {
-                Some("  strip: <detected>".to_string())
+                Some("  strip: <tool_status>".to_string())
             } else if trimmed.starts_with("clang: ") {
-                Some("  clang: <detected>".to_string())
+                Some("  clang: <tool_status>".to_string())
             } else if trimmed.starts_with("python3: ") {
-                Some("  python3: <detected>".to_string())
+                Some("  python3: <tool_status>".to_string())
             } else if trimmed.starts_with("nm: ") {
-                Some("  nm: <detected>".to_string())
+                Some("  nm: <tool_status>".to_string())
+            } else if trimmed.starts_with("sdk_path_probe: ") {
+                Some("  sdk_path_probe: <tool_status>".to_string())
             } else if trimmed.starts_with("selected_hash_tool: ") {
                 Some("  selected_hash_tool: <tool>".to_string())
             } else if trimmed.starts_with("sha256sum: ") {
-                Some("  sha256sum: <detected>".to_string())
+                Some("  sha256sum: <tool_status>".to_string())
             } else if trimmed.starts_with("shasum: ") {
-                Some("  shasum: <detected>".to_string())
+                Some("  shasum: <tool_status>".to_string())
             } else if trimmed.starts_with("openssl: ") {
-                Some("  openssl: <detected>".to_string())
+                Some("  openssl: <tool_status>".to_string())
             } else if line.starts_with("issues:") {
                 Some("issues: <summary>".to_string())
             } else {
