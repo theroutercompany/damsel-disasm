@@ -3,9 +3,12 @@ mod model;
 
 pub use decode::DecodeError;
 pub use model::{
-    Annotation, Architecture, BinaryFormat, BinaryImage, DecodedInstruction, DisassemblyRequest,
-    DisassemblyResult, DisassemblyTarget, DyldMetadata, Endianness, ExportedSymbol, Import,
-    ObjcMetadata, Operand, Reference, Relocation, Section, Segment, SliceInfo, Symbol, SymbolKind,
+    Annotation, Architecture, BinaryFormat, BinaryImage, BinarySource, DecodedInstruction,
+    DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
+    DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason, DisassemblyTarget, DyldMetadata,
+    Endianness, ExportFlags, ExportedSymbol, Import, ObjcMetadata, ObjcPointerKind, ObjcPointerRef,
+    Operand, Platform, Reference, Relocation, RelocationEncodingId, RelocationKindId,
+    RelocationTargetKind, Section, SectionKind, Segment, SliceInfo, Symbol, SymbolKind,
 };
 
 pub fn decode_aarch64(

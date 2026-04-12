@@ -1,12 +1,44 @@
-use memmap2::Mmap;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryFormat {
     MachO,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BinarySource {
+    File(PathBuf),
+    Memory { label: Option<String> },
+}
+
+impl BinarySource {
+    pub fn file_path(&self) -> Option<&Path> {
+        match self {
+            Self::File(path) => Some(path.as_path()),
+            Self::Memory { .. } => None,
+        }
+    }
+
+    pub fn memory_label(&self) -> Option<&str> {
+        match self {
+            Self::File(_) => None,
+            Self::Memory { label } => label.as_deref(),
+        }
+    }
+
+    pub fn default_path(&self) -> PathBuf {
+        match self {
+            Self::File(path) => path.clone(),
+            Self::Memory { label } => label
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("<memory>")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +60,51 @@ impl fmt::Display for Architecture {
 pub enum Endianness {
     Little,
     Big,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    MacOS,
+    IOS,
+    TVOS,
+    WatchOS,
+    MacCatalyst,
+    DriverKit,
+    VisionOS,
+    VisionOSSimulator,
+    Unknown,
+}
+
+impl fmt::Display for Platform {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MacOS => f.write_str("macos"),
+            Self::IOS => f.write_str("ios"),
+            Self::TVOS => f.write_str("tvos"),
+            Self::WatchOS => f.write_str("watchos"),
+            Self::MacCatalyst => f.write_str("maccatalyst"),
+            Self::DriverKit => f.write_str("driverkit"),
+            Self::VisionOS => f.write_str("visionos"),
+            Self::VisionOSSimulator => f.write_str("visionos-simulator"),
+            Self::Unknown => f.write_str("unknown"),
+        }
+    }
+}
+
+impl Platform {
+    pub fn parse(value: &str) -> Self {
+        match normalize_identifier(value).as_str() {
+            "macos" => Self::MacOS,
+            "ios" => Self::IOS,
+            "tvos" => Self::TVOS,
+            "watchos" => Self::WatchOS,
+            "maccatalyst" => Self::MacCatalyst,
+            "driverkit" => Self::DriverKit,
+            "visionos" => Self::VisionOS,
+            "visionossimulator" => Self::VisionOSSimulator,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,9 +139,55 @@ pub struct Section {
     pub executable: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SectionKind {
+    Text,
+    Data,
+    ReadOnlyData,
+    ReadOnlyString,
+    UninitializedData,
+    Tls,
+    Metadata,
+    Other(String),
+}
+
+impl SectionKind {
+    pub fn parse(value: &str) -> Self {
+        match normalize_identifier(value).as_str() {
+            "text" => Self::Text,
+            "data" => Self::Data,
+            "readonlydata" => Self::ReadOnlyData,
+            "readonlystring" => Self::ReadOnlyString,
+            "uninitializeddata" => Self::UninitializedData,
+            "tls" | "threadlocaldata" => Self::Tls,
+            "metadata" => Self::Metadata,
+            _ => Self::Other(value.to_string()),
+        }
+    }
+}
+
+impl fmt::Display for SectionKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text => f.write_str("text"),
+            Self::Data => f.write_str("data"),
+            Self::ReadOnlyData => f.write_str("readonly-data"),
+            Self::ReadOnlyString => f.write_str("readonly-string"),
+            Self::UninitializedData => f.write_str("uninitialized-data"),
+            Self::Tls => f.write_str("tls"),
+            Self::Metadata => f.write_str("metadata"),
+            Self::Other(value) => f.write_str(value),
+        }
+    }
+}
+
 impl Section {
     pub fn full_name(&self) -> String {
         format!("{}:{}", self.segment_name, self.name)
+    }
+
+    pub fn kind_typed(&self) -> SectionKind {
+        SectionKind::parse(&self.kind)
     }
 }
 
@@ -125,11 +248,111 @@ pub struct Relocation {
     pub addend: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RelocationKindId(String);
+
+impl RelocationKindId {
+    pub fn parse(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RelocationKindId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RelocationEncodingId(String);
+
+impl RelocationEncodingId {
+    pub fn parse(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RelocationEncodingId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelocationTargetKind {
+    Absolute,
+    Symbol(String),
+    Section(String),
+    Other(String),
+}
+
+impl RelocationTargetKind {
+    pub fn parse(value: &str) -> Self {
+        if value.eq_ignore_ascii_case("absolute") {
+            return Self::Absolute;
+        }
+        if let Some(symbol) = value.strip_prefix("symbol#") {
+            return Self::Symbol(symbol.to_string());
+        }
+        if let Some(section) = value.strip_prefix("section#") {
+            return Self::Section(section.to_string());
+        }
+        Self::Other(value.to_string())
+    }
+}
+
+impl Relocation {
+    pub fn kind_typed(&self) -> RelocationKindId {
+        RelocationKindId::parse(self.kind.clone())
+    }
+
+    pub fn encoding_typed(&self) -> RelocationEncodingId {
+        RelocationEncodingId::parse(self.encoding.clone())
+    }
+
+    pub fn target_typed(&self) -> RelocationTargetKind {
+        RelocationTargetKind::parse(&self.target)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportedSymbol {
     pub name: String,
     pub address: Option<u64>,
     pub flags: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExportFlags(String);
+
+impl ExportFlags {
+    pub fn parse(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ExportFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl ExportedSymbol {
+    pub fn flags_typed(&self) -> ExportFlags {
+        ExportFlags::parse(self.flags.clone())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -138,6 +361,34 @@ pub struct ObjcMetadata {
     pub selector_names: Vec<String>,
     pub method_names: Vec<String>,
     pub image_info_flags: Option<u32>,
+    pub pointer_refs: Vec<ObjcPointerRef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjcPointerKind {
+    SelRef,
+    ClassRef,
+    ClassList,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjcPointerRef {
+    pub kind: ObjcPointerKind,
+    pub table_address: u64,
+    pub raw_pointer: u64,
+    pub resolved_address: Option<u64>,
+    pub resolved_name: Option<String>,
+}
+
+impl ObjcMetadata {
+    pub fn pointer_refs_of_kind(
+        &self,
+        kind: ObjcPointerKind,
+    ) -> impl Iterator<Item = &ObjcPointerRef> {
+        self.pointer_refs
+            .iter()
+            .filter(move |pointer_ref| pointer_ref.kind == kind)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -300,6 +551,13 @@ pub enum DisassemblyTarget {
 pub struct DisassemblyRequest {
     pub target: DisassemblyTarget,
     pub max_instructions: Option<usize>,
+    pub limit: Option<DisassemblyLimit>,
+    pub include_annotations: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisassemblyOptions {
+    pub include_annotations: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,16 +565,133 @@ pub struct DisassemblyResult {
     pub target: String,
     pub start_address: u64,
     pub bytes_len: usize,
+    pub decoded_bytes: usize,
+    pub end_address: u64,
+    pub instruction_count: usize,
+    pub stop_reason: DisassemblyStopReason,
     pub instructions: Vec<DecodedInstruction>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyRequestV2 {
+    pub target: DisassemblyTarget,
+    pub limit: DisassemblyLimit,
+    pub options: DisassemblyOptions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyResultV2 {
+    pub target: String,
+    pub start_address: u64,
+    pub decoded_bytes: usize,
+    pub end_address: u64,
+    pub instruction_count: usize,
+    pub stop_reason: DisassemblyStopReason,
+    pub instructions: Vec<DecodedInstruction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisassemblyLimit {
+    Instructions(usize),
+    Bytes(usize),
+    Unlimited,
+}
+
+impl DisassemblyLimit {
+    pub fn instruction_cap(self) -> Option<usize> {
+        match self {
+            Self::Instructions(count) => Some(count),
+            Self::Bytes(bytes) => Some(bytes.div_ceil(4)),
+            Self::Unlimited => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisassemblyStopReason {
+    LimitReached,
+    InputExhausted,
+    DecodeHalt,
+    TargetRangeEnd,
+}
+
+impl Default for DisassemblyOptions {
+    fn default() -> Self {
+        Self {
+            include_annotations: true,
+        }
+    }
+}
+
+impl DisassemblyRequest {
+    pub fn legacy(target: DisassemblyTarget, max_instructions: Option<usize>) -> Self {
+        Self {
+            target,
+            max_instructions,
+            limit: None,
+            include_annotations: true,
+        }
+    }
+
+    pub fn options(&self) -> DisassemblyOptions {
+        DisassemblyOptions {
+            include_annotations: self.include_annotations,
+        }
+    }
+
+    pub fn effective_limit(&self) -> DisassemblyLimit {
+        match self.limit {
+            Some(limit) => limit,
+            None => self
+                .max_instructions
+                .map(DisassemblyLimit::Instructions)
+                .unwrap_or(DisassemblyLimit::Unlimited),
+        }
+    }
+
+    pub fn to_v2(&self) -> DisassemblyRequestV2 {
+        DisassemblyRequestV2::from(self)
+    }
+}
+
+impl From<&DisassemblyRequest> for DisassemblyRequestV2 {
+    fn from(value: &DisassemblyRequest) -> Self {
+        Self {
+            target: value.target.clone(),
+            limit: value.effective_limit(),
+            options: value.options(),
+        }
+    }
+}
+
+impl DisassemblyResult {
+    pub fn to_v2(&self) -> DisassemblyResultV2 {
+        DisassemblyResultV2::from(self)
+    }
+}
+
+impl From<&DisassemblyResult> for DisassemblyResultV2 {
+    fn from(value: &DisassemblyResult) -> Self {
+        Self {
+            target: value.target.clone(),
+            start_address: value.start_address,
+            decoded_bytes: value.decoded_bytes,
+            end_address: value.end_address,
+            instruction_count: value.instruction_count,
+            stop_reason: value.stop_reason,
+            instructions: value.instructions.clone(),
+        }
+    }
+}
+
 pub struct BinaryImage {
+    pub source: BinarySource,
     pub path: PathBuf,
     pub format: BinaryFormat,
     pub architecture: Architecture,
     pub endianness: Endianness,
     pub entry_point: Option<u64>,
-    pub platform: Option<String>,
+    pub platform: Option<Platform>,
     pub slice: SliceInfo,
     pub segments: Vec<Segment>,
     pub sections: Vec<Section>,
@@ -325,7 +700,7 @@ pub struct BinaryImage {
     pub relocations: Vec<Relocation>,
     pub objc: ObjcMetadata,
     pub dyld: DyldMetadata,
-    data: Arc<Mmap>,
+    data: Arc<[u8]>,
 }
 
 impl fmt::Debug for BinaryImage {
@@ -333,6 +708,7 @@ impl fmt::Debug for BinaryImage {
         f.debug_struct("BinaryImage")
             .field("path", &self.path)
             .field("format", &self.format)
+            .field("source", &self.source)
             .field("architecture", &self.architecture)
             .field("endianness", &self.endianness)
             .field("entry_point", &self.entry_point)
@@ -352,12 +728,13 @@ impl fmt::Debug for BinaryImage {
 impl BinaryImage {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        source: BinarySource,
         path: PathBuf,
         format: BinaryFormat,
         architecture: Architecture,
         endianness: Endianness,
         entry_point: Option<u64>,
-        platform: Option<String>,
+        platform: Option<Platform>,
         slice: SliceInfo,
         segments: Vec<Segment>,
         sections: Vec<Section>,
@@ -366,9 +743,10 @@ impl BinaryImage {
         relocations: Vec<Relocation>,
         objc: ObjcMetadata,
         dyld: DyldMetadata,
-        data: Arc<Mmap>,
+        data: Arc<[u8]>,
     ) -> Self {
         Self {
+            source,
             path,
             format,
             architecture,
@@ -387,15 +765,147 @@ impl BinaryImage {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_file_bytes(
+        path: PathBuf,
+        format: BinaryFormat,
+        architecture: Architecture,
+        endianness: Endianness,
+        entry_point: Option<u64>,
+        platform: Option<Platform>,
+        slice: SliceInfo,
+        segments: Vec<Segment>,
+        sections: Vec<Section>,
+        symbols: Vec<Symbol>,
+        imports: Vec<Import>,
+        relocations: Vec<Relocation>,
+        objc: ObjcMetadata,
+        dyld: DyldMetadata,
+        data: Arc<[u8]>,
+    ) -> Self {
+        Self::new(
+            BinarySource::File(path.clone()),
+            path,
+            format,
+            architecture,
+            endianness,
+            entry_point,
+            platform,
+            slice,
+            segments,
+            sections,
+            symbols,
+            imports,
+            relocations,
+            objc,
+            dyld,
+            data,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_memory_bytes(
+        label: Option<String>,
+        format: BinaryFormat,
+        architecture: Architecture,
+        endianness: Endianness,
+        entry_point: Option<u64>,
+        platform: Option<Platform>,
+        slice: SliceInfo,
+        segments: Vec<Segment>,
+        sections: Vec<Section>,
+        symbols: Vec<Symbol>,
+        imports: Vec<Import>,
+        relocations: Vec<Relocation>,
+        objc: ObjcMetadata,
+        dyld: DyldMetadata,
+        data: Arc<[u8]>,
+    ) -> Self {
+        let source = BinarySource::Memory {
+            label: label.clone(),
+        };
+        Self::new(
+            source,
+            BinarySource::Memory { label }.default_path(),
+            format,
+            architecture,
+            endianness,
+            entry_point,
+            platform,
+            slice,
+            segments,
+            sections,
+            symbols,
+            imports,
+            relocations,
+            objc,
+            dyld,
+            data,
+        )
+    }
+
+    pub fn source_path(&self) -> Option<&Path> {
+        self.source.file_path()
+    }
+
+    pub fn source_label(&self) -> Option<&str> {
+        self.source.memory_label()
+    }
+
+    pub fn data_len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn segments(&self) -> &[Segment] {
+        &self.segments
+    }
+
+    pub fn sections(&self) -> &[Section] {
+        &self.sections
+    }
+
+    pub fn symbols(&self) -> &[Symbol] {
+        &self.symbols
+    }
+
+    pub fn imports(&self) -> &[Import] {
+        &self.imports
+    }
+
+    pub fn relocations(&self) -> &[Relocation] {
+        &self.relocations
+    }
+
+    pub fn section_by_short_name(&self, name: &str) -> Option<&Section> {
+        self.sections.iter().find(|section| section.name == name)
+    }
+
+    pub fn section_by_full_name(&self, name: &str) -> Option<&Section> {
+        self.sections
+            .iter()
+            .find(|section| section.full_name() == name)
+    }
+
+    pub fn symbol_by_name_exact(&self, name: &str) -> Option<&Symbol> {
+        self.symbols.iter().find(|symbol| symbol.name == name)
+    }
+
     pub fn slice_bytes(&self) -> &[u8] {
-        let start = self.slice.offset as usize;
-        let end = start + self.slice.size as usize;
-        &self.data[start..end]
+        self.try_slice_bytes().unwrap_or(&[])
+    }
+
+    pub fn try_slice_bytes(&self) -> Option<&[u8]> {
+        let start = usize::try_from(self.slice.offset).ok()?;
+        let size = usize::try_from(self.slice.size).ok()?;
+        let end = start.checked_add(size)?;
+        self.data.get(start..end)
     }
 
     pub fn bytes_for_file_range(&self, file_offset: u64, size: u64) -> Option<&[u8]> {
-        let start = self.slice.offset.checked_add(file_offset)? as usize;
-        let end = start.checked_add(size as usize)?;
+        let absolute_start = self.slice.offset.checked_add(file_offset)?;
+        let absolute_end = absolute_start.checked_add(size)?;
+        let start = usize::try_from(absolute_start).ok()?;
+        let end = usize::try_from(absolute_end).ok()?;
         self.data.get(start..end)
     }
 
@@ -405,15 +915,52 @@ impl BinaryImage {
     }
 
     pub fn section_by_name(&self, name: &str) -> Option<&Section> {
-        self.sections.iter().find(|section| {
-            section.name == name
-                || section.full_name() == name
-                || section.full_name() == format!("__TEXT:{name}")
-        })
+        self.section_by_short_name(name)
+            .or_else(|| self.section_by_full_name(name))
+            .or_else(|| self.section_by_full_name(&format!("__TEXT:{name}")))
     }
 
     pub fn symbol_by_name(&self, name: &str) -> Option<&Symbol> {
-        self.symbols.iter().find(|symbol| symbol.name == name)
+        self.symbol_by_name_exact(name)
+    }
+
+    pub fn section_name_index(&self) -> BTreeMap<String, Vec<usize>> {
+        let mut index = BTreeMap::<String, Vec<usize>>::new();
+        for (position, section) in self.sections.iter().enumerate() {
+            index
+                .entry(section.name.clone())
+                .or_default()
+                .push(position);
+            index.entry(section.full_name()).or_default().push(position);
+        }
+        index
+    }
+
+    pub fn symbol_name_index(&self) -> BTreeMap<String, Vec<usize>> {
+        let mut index = BTreeMap::<String, Vec<usize>>::new();
+        for (position, symbol) in self.symbols.iter().enumerate() {
+            index.entry(symbol.name.clone()).or_default().push(position);
+        }
+        index
+    }
+
+    pub fn import_name_index(&self) -> BTreeMap<String, Vec<usize>> {
+        let mut index = BTreeMap::<String, Vec<usize>>::new();
+        for (position, import) in self.imports.iter().enumerate() {
+            index
+                .entry(format!("{}:{}", import.dylib, import.name))
+                .or_default()
+                .push(position);
+        }
+        index
+    }
+
+    pub fn relocation_address_index(&self) -> BTreeMap<u64, Vec<usize>> {
+        let mut index = BTreeMap::<u64, Vec<usize>>::new();
+        for (position, relocation) in self.relocations.iter().enumerate() {
+            index.entry(relocation.address).or_default().push(position);
+        }
+        index
     }
 
     pub fn containing_section(&self, address: u64) -> Option<&Section> {
@@ -426,16 +973,35 @@ impl BinaryImage {
     pub fn bytes_for_virtual_range(&self, address: u64, size: usize) -> Option<(&Section, &[u8])> {
         let section = self.containing_section(address)?;
         let file_offset = section.file_offset?;
-        let section_end = section.address.checked_add(section.size)?;
-        if address.checked_add(size as u64)? > section_end {
+        let readable_size = section.size.min(section.file_size);
+        let section_end = section.address.checked_add(readable_size)?;
+        let size_u64 = u64::try_from(size).ok()?;
+        if address.checked_add(size_u64)? > section_end {
             return None;
         }
-        let section_offset = address.checked_sub(section.address)? as usize;
-        let data = self.bytes_for_file_range(file_offset + section_offset as u64, size as u64)?;
+        let section_offset = address.checked_sub(section.address)?;
+        let data = self.bytes_for_file_range(file_offset.checked_add(section_offset)?, size_u64)?;
         Some((section, data))
     }
 
     pub fn virtual_range_for_section(&self, section: &Section) -> Range<u64> {
         section.address..section.address.saturating_add(section.size)
     }
+
+    pub fn file_backed_virtual_range_for_section(&self, section: &Section) -> Range<u64> {
+        let mapped_size = section.size.min(section.file_size);
+        section.address..section.address.saturating_add(mapped_size)
+    }
+
+    pub fn effective_instruction_limit(&self, request: &DisassemblyRequest) -> Option<usize> {
+        request.effective_limit().instruction_cap()
+    }
+}
+
+fn normalize_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
 }

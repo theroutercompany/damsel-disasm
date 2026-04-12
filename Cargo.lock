@@ -308,7 +308,6 @@ name = "damsel-core"
 version = "0.1.0"
 dependencies = [
  "capstone",
- "memmap2",
  "thiserror",
 ]
 
