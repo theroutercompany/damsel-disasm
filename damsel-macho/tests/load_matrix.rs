@@ -22,9 +22,13 @@ fn optional_fixture(names: &[&str]) -> Option<PathBuf> {
 
 const MH_MAGIC_64: u32 = 0xfeedfacf;
 const FAT_MAGIC: u32 = 0xcafebabe;
+const FAT_MAGIC_64: u32 = 0xcafebabf;
 const CPU_TYPE_ARM64: u32 = 0x0100_000c;
 const CPU_TYPE_X86_64: u32 = 0x0100_0007;
+const CPU_SUBTYPE_ARM64_ALL: u32 = 0;
+const CPU_SUBTYPE_ARM64E: u32 = 2;
 const LC_SEGMENT_64: u32 = 0x19;
+const LC_BUILD_VERSION: u32 = 0x32;
 const LC_DYLD_INFO: u32 = 0x22;
 const LC_DYLD_INFO_ONLY: u32 = 0x8000_0022;
 const LC_DYLD_EXPORTS_TRIE: u32 = 0x8000_0033;
@@ -51,6 +55,14 @@ fn write_u32_be(bytes: &mut [u8], offset: usize, value: u32) -> bool {
     true
 }
 
+fn write_u64_be(bytes: &mut [u8], offset: usize, value: u64) -> bool {
+    let Some(target) = bytes.get_mut(offset..offset + 8) else {
+        return false;
+    };
+    target.copy_from_slice(&value.to_be_bytes());
+    true
+}
+
 fn make_fat32_fixture(arches: &[(u32, u32, u32, u32, u32)]) -> Vec<u8> {
     let mut bytes = vec![0u8; 8 + arches.len() * 20];
     assert!(write_u32_be(&mut bytes, 0, FAT_MAGIC));
@@ -62,6 +74,22 @@ fn make_fat32_fixture(arches: &[(u32, u32, u32, u32, u32)]) -> Vec<u8> {
         assert!(write_u32_be(&mut bytes, base + 8, *offset));
         assert!(write_u32_be(&mut bytes, base + 12, *size));
         assert!(write_u32_be(&mut bytes, base + 16, *align));
+    }
+    bytes
+}
+
+fn make_fat64_fixture(arches: &[(u32, u32, u64, u64, u32, u32)]) -> Vec<u8> {
+    let mut bytes = vec![0u8; 8 + arches.len() * 32];
+    assert!(write_u32_be(&mut bytes, 0, FAT_MAGIC_64));
+    assert!(write_u32_be(&mut bytes, 4, arches.len() as u32));
+    for (index, (cputype, cpusubtype, offset, size, align, reserved)) in arches.iter().enumerate() {
+        let base = 8 + index * 32;
+        assert!(write_u32_be(&mut bytes, base, *cputype));
+        assert!(write_u32_be(&mut bytes, base + 4, *cpusubtype));
+        assert!(write_u64_be(&mut bytes, base + 8, *offset));
+        assert!(write_u64_be(&mut bytes, base + 16, *size));
+        assert!(write_u32_be(&mut bytes, base + 24, *align));
+        assert!(write_u32_be(&mut bytes, base + 28, *reserved));
     }
     bytes
 }
@@ -125,6 +153,35 @@ fn corrupt_export_offsets(bytes: &mut [u8]) -> bool {
         offset = next_offset;
     }
     patched
+}
+
+fn patch_build_version_platform(bytes: &mut [u8], platform: u32) -> bool {
+    if read_u32_le(bytes, 0) != Some(MH_MAGIC_64) {
+        return false;
+    }
+    let Some(ncmds) = read_u32_le(bytes, 16).map(|value| value as usize) else {
+        return false;
+    };
+    let mut offset = 32usize;
+    for _ in 0..ncmds {
+        let Some(cmd) = read_u32_le(bytes, offset) else {
+            return false;
+        };
+        let Some(cmdsize) = read_u32_le(bytes, offset + 4).map(|value| value as usize) else {
+            return false;
+        };
+        if cmdsize < 8 {
+            return false;
+        }
+        if cmd == LC_BUILD_VERSION {
+            return write_u32_le(bytes, offset + 8, platform);
+        }
+        let Some(next_offset) = offset.checked_add(cmdsize) else {
+            return false;
+        };
+        offset = next_offset;
+    }
+    false
 }
 
 fn find_section_file_range(bytes: &[u8], segment: &str, section: &str) -> Option<(usize, usize)> {
@@ -262,6 +319,106 @@ fn rejects_truncated_fixture_without_panicking() {
             | MachoError::Goblin(_)
             | MachoError::UnsupportedFileKind(_)
             | MachoError::UnsupportedInputKind(_)
+    ));
+}
+
+#[test]
+fn rejects_fat64_universal_without_arm64_slice_with_typed_error() {
+    let bytes = make_fat64_fixture(&[(CPU_TYPE_X86_64, 3, 0x1000, 0x200, 0, 0)]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("fat64 universal without arm64/arm64e must be rejected");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MissingArm64SliceInUniversal));
+}
+
+#[test]
+fn rejects_out_of_range_fat64_arm64_slice_with_typed_error() {
+    let bytes = make_fat64_fixture(&[(CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, 0x2000, 0x80, 0, 0)]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("out-of-range fat64 arm64 slice must be rejected");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::SliceOutOfBounds { .. }));
+}
+
+#[test]
+fn rejects_zero_size_fat64_arm64_slice_with_typed_error() {
+    let bytes = make_fat64_fixture(&[(CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, 0x1000, 0, 0, 0)]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("zero-size fat64 arm64 slice must be rejected");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
+}
+
+#[test]
+fn rejects_overflowing_fat64_arm64_slice_range_with_typed_error() {
+    let bytes = make_fat64_fixture(&[(
+        CPU_TYPE_ARM64,
+        CPU_SUBTYPE_ARM64_ALL,
+        u64::MAX - 0x10,
+        0x40,
+        0,
+        0,
+    )]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("overflowing fat64 arm64 slice range must be rejected");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::SliceOutOfBounds { .. }));
+}
+
+#[test]
+fn prefers_arm64e_over_arm64_when_selecting_fat32_slice() {
+    let arm64e_offset = 0x3000;
+    let bytes = make_fat32_fixture(&[
+        (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, 0x1000, 0x100, 0),
+        (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64E, arm64e_offset, 0x100, 0),
+    ]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path)
+        .expect_err("invalid fat32 range should still prove preferred subtype selection");
+    let _ = fs::remove_file(path);
+    match error {
+        MachoError::SliceOutOfBounds { offset, .. } => assert_eq!(offset, arm64e_offset as u64),
+        other => panic!("expected SliceOutOfBounds, got: {other:?}"),
+    }
+}
+
+#[test]
+fn prefers_arm64e_over_arm64_when_selecting_fat64_slice() {
+    let arm64e_offset = 0x3000_u64;
+    let bytes = make_fat64_fixture(&[
+        (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, 0x1000, 0x100, 0, 0),
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64E,
+            arm64e_offset,
+            0x100,
+            0,
+            0,
+        ),
+    ]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path)
+        .expect_err("invalid fat64 range should still prove preferred subtype selection");
+    let _ = fs::remove_file(path);
+    match error {
+        MachoError::SliceOutOfBounds { offset, .. } => assert_eq!(offset, arm64e_offset),
+        other => panic!("expected SliceOutOfBounds, got: {other:?}"),
+    }
+}
+
+#[test]
+fn maps_unknown_build_version_platform_without_host_dependency() {
+    let mut bytes = fs::read(fixture("arm64-symbolized")).expect("read fixture");
+    if !patch_build_version_platform(&mut bytes, u32::MAX) {
+        eprintln!("build-version load command not present; skipping");
+        return;
+    }
+    let malformed = write_temp_fixture(&bytes);
+    let image = load(&malformed).expect("unknown build-version platform should still load");
+    let _ = fs::remove_file(malformed);
+    assert!(matches!(
+        image.platform(),
+        Some(damsel_core::Platform::Unknown(label)) if label == "unknown"
     ));
 }
 
