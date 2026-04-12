@@ -14,6 +14,26 @@ pub enum MachoError {
     UnsupportedFileKind(String),
     #[error("unsupported architecture: {0}")]
     UnsupportedArchitecture(String),
+    #[error(
+        "slice range is out of bounds (offset={offset:#x}, size={size:#x}, file_len={file_len:#x})"
+    )]
+    SliceOutOfBounds {
+        offset: u64,
+        size: u64,
+        file_len: u64,
+    },
+    #[error("malformed fat binary: {0}")]
+    MalformedFatBinary(String),
+    #[error("malformed dyld chained-fixups payload: {0}")]
+    MalformedDyldPayload(String),
+    #[error(
+        "linkedit payload range is out of bounds (offset={offset:#x}, size={size:#x}, file_len={file_len:#x})"
+    )]
+    LinkeditRangeOutOfBounds {
+        offset: u64,
+        size: u64,
+        file_len: u64,
+    },
     #[error("symbol not found: {0}")]
     SymbolNotFound(String),
     #[error("section not found: {0}")]
