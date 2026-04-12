@@ -1,0 +1,6 @@
+name = "malformed-stub-resolver-offsets"
+flags = 16
+address = 0
+libs = []
+payload_hex = "20"
+expect = "malformed"

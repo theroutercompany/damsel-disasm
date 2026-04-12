@@ -1,0 +1,6 @@
+name = "stub-and-resolver"
+flags = 16
+address = 0
+libs = []
+payload_hex = "20 30"
+expect = "stub-and-resolver"

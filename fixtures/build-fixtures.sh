@@ -18,12 +18,25 @@ b34622e74db24f3829cb2bda8040e80c02eff8fe479339bd654be438a7a701bc import-lazy
 4cece37e15eaed6ebbc8a8961f8d2e000e0eadf3aa43fc5c9b6ebf3aad259f7f semantic-switch
 678eb57e8b45c8be5904a2c1301fa2b6315252e68a7fe579ada23ffcfdb0ec1e export-kinds
 5c459bac25fae382836bee6ff5a0ecde1de8f9594dc7fa7d7be65cef3ff58fc8 indirect-dispatch
+06664157d92032c782a70335800dd6bdf49d9919b05696538eebd95b36b03ffb relative-dispatch
 3ad866e5b98bbaebee790d46d1963319f38d6cc96aeda4e1e3f2f305abb2736c malformed-objc-protocol-list
 5d46560896550803303f6f92027d1c8e622c18761e20cc1b39d7a64b57e2b5dc malformed-dysymtab-indirect
 fd33e4f22bf94f6f75b9bb33e2b99d5c3888a1a7fdc907dd13638f2aba816b66 malformed-truncated
 61ac976ddaf21d6d427c202dfab484a9557ebe7fbb04509443726abc9e95de8d malformed-stub-helper-size
 18ccbc63820072b0572926d566e99a375f2671685f2a7bfcaedf2457c8d42952 malformed-stub-reserved2
 39449cc22b5b090af7abd3b0b811e299827bc36bf4267ca8f32472616291d6a4 duplicate-symbol-ordinal
+EOF
+}
+
+print_export_trie_corpus_manifest() {
+  cat <<'EOF'
+5f19c8c7420dcd5151aa2d185731a66729de10489244fdd4ef33f420dbdfe6b5 README.md
+c2000d2d358fb74990d9efc235d0c02850bd4566bf9ad0123e3a72700aca4395 reexport-same-name.toml
+d9e264b2ff89beb15b067c399adddde46c653730ff6a6d53e41ce9e160a323fe reexport-renamed-symbol.toml
+47603b12003ef5de1456da025a1d1eec2c4326a3730a4fa51e5e836de8968f3c stub-and-resolver.toml
+24607c88435b123c540dd6287f2fe709ef1c1d37146ba7f74ba503115b27826f malformed-reexport-ordinal.toml
+5f26b0fc7bc466d7c9c90aa44fc889f8840e549fbbb1c0a5d327f0ba14717ae5 malformed-stub-resolver-offsets.toml
+03a07548d5878513a7ee4ca6e6e88d81fa43f1d4823a4fc0a9a105f34e108e2b unknown-flag-bits-regular.toml
 EOF
 }
 
@@ -42,8 +55,10 @@ sha256_file() {
 check_fixtures() {
   mkdir -p "$BIN"
   manifest_file="${TMPDIR:-/tmp}/damsel-fixture-manifest.$$"
-  trap 'rm -f "$manifest_file"' EXIT INT TERM
+  corpus_manifest_file="${TMPDIR:-/tmp}/damsel-export-trie-corpus-manifest.$$"
+  trap 'rm -f "$manifest_file" "$corpus_manifest_file"' EXIT INT TERM
   print_manifest > "$manifest_file"
+  print_export_trie_corpus_manifest > "$corpus_manifest_file"
 
   status=0
   while read -r expected_hash fixture_name; do
@@ -63,7 +78,26 @@ check_fixtures() {
     fi
   done < "$manifest_file"
 
+  corpus_root="$ROOT/export-trie-corpus"
+  while read -r expected_hash corpus_name; do
+    [ -n "$expected_hash" ] || continue
+    corpus_path="$corpus_root/$corpus_name"
+    if [ ! -f "$corpus_path" ]; then
+      echo "missing export-trie corpus file: $corpus_name" >&2
+      status=1
+      continue
+    fi
+    actual_hash="$(sha256_file "$corpus_path")"
+    if [ "$actual_hash" != "$expected_hash" ]; then
+      echo "hash mismatch: export-trie-corpus/$corpus_name" >&2
+      echo "  expected: $expected_hash" >&2
+      echo "  actual:   $actual_hash" >&2
+      status=1
+    fi
+  done < "$corpus_manifest_file"
+
   rm -f "$manifest_file"
+  rm -f "$corpus_manifest_file"
   trap - EXIT INT TERM
   exit "$status"
 }
@@ -168,6 +202,16 @@ build_fixtures() {
     -Wl,-exported_symbol,_exported_gamma \
     "$SRC/indirect-dispatch.c" \
     -o "$BIN/indirect-dispatch"
+
+  "$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    -O2 \
+    -Wl,-no_fixup_chains \
+    -Wl,-exported_symbol,_relative_exported_gamma \
+    "$SRC/relative-dispatch.s" \
+    -o "$BIN/relative-dispatch"
 
   "$CLANG" \
     -arch arm64 \

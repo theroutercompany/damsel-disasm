@@ -1,0 +1,6 @@
+name = "malformed-reexport-ordinal"
+flags = 8
+address = 0
+libs = ["", "/usr/lib/libSystem.B.dylib"]
+payload_hex = ""
+expect = "malformed"

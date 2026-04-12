@@ -1,0 +1,6 @@
+name = "unknown-flag-bits-regular"
+flags = 128
+address = 136
+libs = []
+payload_hex = ""
+expect = "regular"

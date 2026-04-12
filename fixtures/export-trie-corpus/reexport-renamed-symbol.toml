@@ -1,0 +1,6 @@
+name = "reexport-renamed-symbol"
+flags = 8
+address = 0
+libs = ["", "/usr/lib/libSystem.B.dylib"]
+payload_hex = "01 5f 70 75 74 73 00"
+expect = "reexport"

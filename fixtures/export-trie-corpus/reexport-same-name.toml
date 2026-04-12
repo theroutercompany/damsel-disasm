@@ -1,0 +1,6 @@
+name = "reexport-same-name"
+flags = 8
+address = 0
+libs = ["", "/usr/lib/libSystem.B.dylib"]
+payload_hex = "01 00"
+expect = "reexport"

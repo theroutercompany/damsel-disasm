@@ -12,6 +12,7 @@ Fixture inventory (checked in under `fixtures/bin`):
 - `import-rich`: arm64 Mach-O with multiple external imports/stubs.
 - `export-kinds`: arm64 export-bearing fixture used for regular, weak, absolute, and thread-local export truth.
 - `indirect-dispatch`: arm64 dispatch fixture used for alias-aware value-flow, table-backed function-pointer recovery, and exported-target recovery.
+- `relative-dispatch`: arm64 companion dispatch fixture with 32-bit relative slot tables for relative-slot recovery into function and export targets.
 - `objc-sample`: Objective-C sample used for ObjC metadata tests.
 - `malformed-objc-protocol-list`: Objective-C sample variant with an inconsistent category protocol-list count for bounded parser coverage.
 - `semantic-switch`: arm64 semantic-analysis fixture with literal loads, `adrp` addressing, and switch-style setup.
@@ -26,6 +27,7 @@ Sources:
 - `src/export-kinds.c` builds the export-kind fixture.
 - `src/export-absolute.s` provides the absolute export companion used by `export-kinds`.
 - `src/indirect-dispatch.c` builds the function-pointer and exported-target dispatch fixture.
+- `src/relative-dispatch.s` builds the relative-slot dispatch fixture.
 - `src/objc-sample.m` builds the Objective-C metadata fixture.
 - `src/semantic-switch.c` builds the semantic-analysis fixture.
 - `src/dup-alpha.c`, `src/dup-beta.c`, and `src/duplicate-symbol-main.c` build the duplicate-symbol fixture.
@@ -33,7 +35,7 @@ Sources:
 Script usage:
 - `fixtures/build-fixtures.sh`: rebuild fixtures on macOS with Xcode installed.
 - `fixtures/build-fixtures.sh --check`: verify checked-in fixture hashes against
-  the inline manifest in the script (drift check).
+  the inline fixture + export-trie corpus manifests in the script (drift check).
 - `fixtures/build-fixtures.sh --manifest`: print the current inline fixture
   manifest.
 - `arm64e-sample` is rebuilt on a best-effort basis; if the local toolchain does
@@ -45,3 +47,5 @@ Notes:
 - The hash check is intended to detect fixture drift in CI and local workflows.
 - The malformed helper fixtures are expected to fail with typed dyld metadata
   errors rather than panic or silently degrade.
+- `fixtures/export-trie-corpus` contains checked-in advanced export payload
+  cases (reexport/stub/malformed/unknown-bit) used for parser-proof coverage.

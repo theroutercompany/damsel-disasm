@@ -68,8 +68,18 @@ jobs:
         uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Verify export-trie corpus inventory
+        run: |
+          test -d fixtures/export-trie-corpus
+          test -f fixtures/export-trie-corpus/README.md
+          test -f fixtures/export-trie-corpus/reexport-same-name.toml
+          test -f fixtures/export-trie-corpus/reexport-renamed-symbol.toml
+          test -f fixtures/export-trie-corpus/stub-and-resolver.toml
+          test -f fixtures/export-trie-corpus/malformed-reexport-ordinal.toml
+          test -f fixtures/export-trie-corpus/malformed-stub-resolver-offsets.toml
+          test -f fixtures/export-trie-corpus/unknown-flag-bits-regular.toml
       - name: Run targeted malformed/duplicate fixture tests
-        run: cargo test -p damsel-macho --test load_matrix --test import_binding_matrix --test disasm_matrix --test export_matrix --test objc_matrix
+        run: cargo test -p damsel-macho --test load_matrix --test import_binding_matrix --test disasm_matrix --test export_matrix --test objc_matrix --test slice_inventory_matrix
 
   decode-throughput-smoke:
     name: decode throughput smoke (linux arm64)
