@@ -57,15 +57,20 @@ impl InstructionDecoder for Bad64Decoder {
                 .insn_detail(insn)
                 .map_err(|err| DecodeError::InvalidInstruction(err.to_string()))?;
             let ArchDetail::Arm64Detail(arm64_detail) = detail.arch_detail();
+            let arm64_operands = arm64_detail.operands().collect::<Vec<_>>();
             let operands = arm64_detail
                 .operands()
                 .map(|operand| map_operand(&cs, &mnemonic, arm64_detail.writeback(), &operand))
                 .collect::<Vec<_>>();
-            let mut references = derive_references(&mnemonic, arm64_detail.operands().collect());
+            let derivation = derive_references(&cs, &detail, &mnemonic, &arm64_operands);
+            let mut references = derivation.references;
             let mut annotations = Vec::new();
 
             if insn.address() == start_address {
                 annotations.push(Annotation::Note("range start".to_string()));
+            }
+            for note in derivation.notes {
+                annotations.push(Annotation::Note(note));
             }
 
             if references.is_empty() {
@@ -87,32 +92,123 @@ impl InstructionDecoder for Bad64Decoder {
     }
 }
 
-fn derive_references(mnemonic: &str, operands: Vec<Arm64Operand>) -> Vec<Reference> {
+struct ReferenceDerivation {
+    references: Vec<Reference>,
+    notes: Vec<String>,
+}
+
+fn derive_references(
+    cs: &Capstone,
+    detail: &InsnDetail<'_>,
+    mnemonic: &str,
+    operands: &[Arm64Operand],
+) -> ReferenceDerivation {
     let mut references = Vec::new();
+    let mut notes = Vec::new();
     let lower = mnemonic.to_ascii_lowercase();
+    let is_call_group = has_group(cs, detail, "call");
+    let is_jump_group = has_group(cs, detail, "jump");
+    let is_page_materialization = lower == "adr" || lower == "adrp";
+    let is_control_flow = is_call_group || is_jump_group;
 
     for operand in operands {
-        if let Arm64OperandType::Imm(value) = operand.op_type {
-            if value >= 0 {
+        match operand.op_type {
+            Arm64OperandType::Imm(value) if value >= 0 => {
                 let target = value as u64;
-                let reference = if lower == "bl" {
-                    Reference::Call { target }
-                } else if lower == "adr" || lower == "adrp" {
+                let reference = if is_page_materialization {
                     Reference::Page { target }
-                } else if lower.starts_with('b')
-                    || lower.starts_with("cb")
-                    || lower.starts_with("tb")
-                {
+                } else if is_call_group || lower == "bl" {
+                    Reference::Call { target }
+                } else if is_jump_group || is_relative_branch(&lower) {
                     Reference::Branch { target }
                 } else {
                     Reference::Data { target }
                 };
-                references.push(reference);
+                push_reference(&mut references, reference);
             }
+            Arm64OperandType::Reg(register) if is_control_flow => {
+                if is_indirect_control(&lower) {
+                    let register = cs
+                        .reg_name(register)
+                        .unwrap_or_else(|| format!("{register:?}"));
+                    let kind = if is_call_group {
+                        "indirect call"
+                    } else {
+                        "indirect branch"
+                    };
+                    push_note(&mut notes, format!("{kind} via {register}"));
+                }
+            }
+            Arm64OperandType::Mem(mem) if is_control_flow => {
+                if is_indirect_control(&lower) {
+                    let base = cs
+                        .reg_name(mem.base())
+                        .unwrap_or_else(|| format!("{:?}", mem.base()));
+                    let kind = if is_call_group {
+                        "indirect call"
+                    } else {
+                        "indirect branch"
+                    };
+                    push_note(&mut notes, format!("{kind} via [{base}]"));
+                }
+            }
+            _ => {}
         }
     }
 
-    references
+    if references.is_empty() && is_control_flow && !is_return_like(&lower) {
+        push_note(
+            &mut notes,
+            format!("control-flow target unresolved ({mnemonic})"),
+        );
+    }
+
+    ReferenceDerivation { references, notes }
+}
+
+fn has_group(cs: &Capstone, detail: &InsnDetail<'_>, expected: &str) -> bool {
+    detail.groups().iter().any(|group| {
+        cs.group_name(*group)
+            .as_deref()
+            .map(|name| name.eq_ignore_ascii_case(expected))
+            .unwrap_or(false)
+    })
+}
+
+fn push_reference(target: &mut Vec<Reference>, reference: Reference) {
+    if !target.contains(&reference) {
+        target.push(reference);
+    }
+}
+
+fn push_note(target: &mut Vec<String>, note: String) {
+    if !target.iter().any(|existing| existing == &note) {
+        target.push(note);
+    }
+}
+
+fn is_relative_branch(mnemonic: &str) -> bool {
+    mnemonic.starts_with('b') || mnemonic.starts_with("cb") || mnemonic.starts_with("tb")
+}
+
+fn is_indirect_control(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "blr"
+            | "br"
+            | "blraa"
+            | "blraaz"
+            | "blrab"
+            | "blrabz"
+            | "braa"
+            | "braaz"
+            | "brab"
+            | "brabz"
+    )
+}
+
+fn is_return_like(mnemonic: &str) -> bool {
+    mnemonic == "ret" || mnemonic == "eret" || mnemonic == "drps"
 }
 
 fn map_operand(cs: &Capstone, mnemonic: &str, writeback: bool, operand: &Arm64Operand) -> Operand {
