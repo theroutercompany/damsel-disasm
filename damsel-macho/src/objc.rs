@@ -1,25 +1,33 @@
-use damsel_core::{ObjcMetadata, ObjcPointerKind, ObjcPointerRef, Section};
-use std::collections::BTreeSet;
+use damsel_core::{
+    ObjcCategoryRecord, ObjcClassRecord, ObjcMetadata, ObjcPointerKind, ObjcPointerRef,
+    ObjcProtocolRecord, Section,
+};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn collect_objc_metadata(bytes: &[u8], sections: &[Section]) -> ObjcMetadata {
     let mut metadata = ObjcMetadata::default();
     let section_slices = collect_section_slices(bytes, sections);
     let image_base = infer_image_base(sections);
+    let mut legacy_class_names = Vec::new();
+    let mut legacy_selector_names = Vec::new();
+    let mut legacy_method_names = Vec::new();
 
     for section in &section_slices {
         match section.section.name.as_str() {
-            "__objc_classname" => metadata
-                .class_names
-                .extend(read_c_strings(section.contents)),
+            "__objc_classname" => legacy_class_names.extend(
+                read_c_strings(section.contents)
+                    .into_iter()
+                    .filter(|name| is_plausible_objc_type_name(name)),
+            ),
             "__objc_methname" => {
                 let names = read_c_strings(section.contents);
-                metadata.method_names.extend(
+                legacy_method_names.extend(
                     names
                         .iter()
                         .filter(|name| is_plausible_selector_name(name))
                         .cloned(),
                 );
-                metadata.selector_names.extend(
+                legacy_selector_names.extend(
                     names
                         .into_iter()
                         .filter(|name| is_plausible_selector_name(name)),
@@ -39,44 +47,30 @@ pub(crate) fn collect_objc_metadata(bytes: &[u8], sections: &[Section]) -> ObjcM
 
     // Bounded structured extraction pass:
     // 1) collect typed ObjC pointer refs from canonical selref/class tables
-    // 2) derive compatibility lists from resolved pointer names
-    // 3) add bounded protocol/category names from their top-level pointer lists
+    // 2) populate class/protocol/category runtime records
+    // 3) derive compatibility flat views from structured records + legacy pools
     let pointer_tables = collect_pointer_tables(&section_slices, image_base);
     let mut pointer_refs = Vec::new();
     pointer_refs.extend(pointer_tables.selrefs.iter().cloned());
     pointer_refs.extend(pointer_tables.classrefs.iter().cloned());
     pointer_refs.extend(pointer_tables.classlist.iter().cloned());
-    pointer_refs.sort_by_key(|entry| entry.table_address);
+    pointer_refs.sort_by_key(|entry| (entry.table_address, pointer_kind_sort_key(entry.kind)));
+    pointer_refs.dedup_by(|left, right| {
+        left.table_address == right.table_address
+            && left.kind == right.kind
+            && left.raw_pointer == right.raw_pointer
+    });
     metadata.pointer_refs = pointer_refs;
+    metadata.classes = collect_class_records(&pointer_tables, &section_slices, image_base);
+    metadata.protocols = collect_protocol_records(&section_slices, image_base);
+    metadata.categories = collect_category_records(&section_slices, image_base, &metadata.classes);
 
-    metadata.selector_names.extend(
-        pointer_tables
-            .selrefs
-            .iter()
-            .filter_map(|entry| entry.resolved_name.clone())
-            .filter(|name| is_plausible_selector_name(name)),
+    derive_compatibility_views(
+        &mut metadata,
+        &legacy_class_names,
+        &legacy_selector_names,
+        &legacy_method_names,
     );
-    metadata.class_names.extend(
-        pointer_tables
-            .classrefs
-            .iter()
-            .chain(pointer_tables.classlist.iter())
-            .filter_map(|entry| entry.resolved_name.clone())
-            .filter(|name| is_plausible_objc_type_name(name)),
-    );
-    metadata
-        .class_names
-        .extend(collect_protocol_names(&section_slices, image_base));
-    metadata
-        .class_names
-        .extend(collect_category_names(&section_slices, image_base));
-
-    metadata.class_names.sort();
-    metadata.class_names.dedup();
-    metadata.method_names.sort();
-    metadata.method_names.dedup();
-    metadata.selector_names.sort();
-    metadata.selector_names.dedup();
     metadata
 }
 
@@ -101,6 +95,101 @@ fn is_plausible_objc_type_name(value: &str) -> bool {
             ch.is_ascii_alphanumeric()
                 || matches!(ch, '_' | '$' | ':' | '(' | ')' | '.' | '+' | '-')
         })
+}
+
+fn pointer_kind_sort_key(kind: ObjcPointerKind) -> u8 {
+    match kind {
+        ObjcPointerKind::SelRef => 0,
+        ObjcPointerKind::ClassRef => 1,
+        ObjcPointerKind::ClassList => 2,
+    }
+}
+
+fn derive_compatibility_views(
+    metadata: &mut ObjcMetadata,
+    legacy_class_names: &[String],
+    legacy_selector_names: &[String],
+    legacy_method_names: &[String],
+) {
+    let mut class_names = Vec::new();
+    class_names.extend(
+        legacy_class_names
+            .iter()
+            .filter(|name| is_plausible_objc_type_name(name))
+            .cloned(),
+    );
+    class_names.extend(
+        metadata
+            .pointer_refs
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.kind,
+                    ObjcPointerKind::ClassRef | ObjcPointerKind::ClassList
+                )
+            })
+            .filter_map(|entry| entry.resolved_name.clone())
+            .filter(|name| is_plausible_objc_type_name(name)),
+    );
+    class_names.extend(
+        metadata
+            .classes
+            .iter()
+            .filter_map(|record| record.name.clone())
+            .filter(|name| is_plausible_objc_type_name(name)),
+    );
+    class_names.extend(
+        metadata
+            .categories
+            .iter()
+            .filter_map(|record| record.class_name.clone())
+            .filter(|name| is_plausible_objc_type_name(name)),
+    );
+    class_names.extend(
+        metadata
+            .protocols
+            .iter()
+            .filter_map(|record| record.name.clone())
+            .filter(|name| is_plausible_objc_type_name(name)),
+    );
+    class_names.extend(
+        metadata
+            .categories
+            .iter()
+            .filter_map(|record| record.name.clone())
+            .filter(|name| is_plausible_objc_type_name(name)),
+    );
+    class_names.sort();
+    class_names.dedup();
+    metadata.class_names = class_names;
+
+    let mut selector_names = Vec::new();
+    selector_names.extend(
+        legacy_selector_names
+            .iter()
+            .filter(|name| is_plausible_selector_name(name))
+            .cloned(),
+    );
+    selector_names.extend(
+        metadata
+            .pointer_refs
+            .iter()
+            .filter(|entry| matches!(entry.kind, ObjcPointerKind::SelRef))
+            .filter_map(|entry| entry.resolved_name.clone())
+            .filter(|name| is_plausible_selector_name(name)),
+    );
+    selector_names.sort();
+    selector_names.dedup();
+    metadata.selector_names = selector_names;
+
+    let mut method_names = legacy_method_names
+        .iter()
+        .filter(|name| is_plausible_selector_name(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    method_names.sort();
+    method_names.dedup();
+    metadata.method_names = method_names;
 }
 
 #[derive(Debug, Default)]
@@ -165,69 +254,6 @@ fn collect_pointer_tables(
     }
 }
 
-fn collect_protocol_names(slices: &[SectionSlice<'_>], image_base: Option<u64>) -> Vec<String> {
-    let mut names = collect_named_entries_from_pointer_table(
-        slices,
-        image_base,
-        "__objc_protolist",
-        resolve_protocol_name_from_pointer,
-    );
-    names.extend(collect_named_entries_from_pointer_table(
-        slices,
-        image_base,
-        "__objc_protorefs",
-        resolve_protocol_name_from_pointer,
-    ));
-    names.sort();
-    names.dedup();
-    names
-}
-
-fn collect_category_names(slices: &[SectionSlice<'_>], image_base: Option<u64>) -> Vec<String> {
-    collect_named_entries_from_pointer_table(
-        slices,
-        image_base,
-        "__objc_catlist",
-        resolve_category_name_from_pointer,
-    )
-}
-
-fn collect_named_entries_from_pointer_table(
-    slices: &[SectionSlice<'_>],
-    image_base: Option<u64>,
-    table_section_name: &str,
-    resolver: fn(&[SectionSlice<'_>], u64, Option<u64>) -> Option<String>,
-) -> Vec<String> {
-    let mut names = Vec::new();
-    for section in slices
-        .iter()
-        .filter(|section| section.section.name == table_section_name)
-    {
-        for chunk in section.contents.chunks_exact(8) {
-            let raw_pointer = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ]);
-            if raw_pointer == 0 {
-                continue;
-            }
-            let Some(resolved_address) =
-                resolve_pointer_to_mapped_va(slices, raw_pointer, image_base)
-            else {
-                continue;
-            };
-            let Some(name) = resolver(slices, resolved_address, image_base) else {
-                continue;
-            };
-            if is_plausible_objc_type_name(&name) {
-                names.push(name);
-            }
-        }
-    }
-    names.sort();
-    names.dedup();
-    names
-}
-
 fn collect_pointer_table(
     slices: &[SectionSlice<'_>],
     image_base: Option<u64>,
@@ -273,6 +299,151 @@ fn collect_pointer_table(
 
     refs.sort_by_key(|entry| entry.table_address);
     refs
+}
+
+fn collect_class_records(
+    tables: &ObjcPointerTables,
+    slices: &[SectionSlice<'_>],
+    image_base: Option<u64>,
+) -> Vec<ObjcClassRecord> {
+    let mut pointers = BTreeSet::new();
+    for entry in tables.classrefs.iter().chain(tables.classlist.iter()) {
+        if let Some(pointer) = entry.resolved_address {
+            pointers.insert(pointer);
+        }
+    }
+
+    let mut records = pointers
+        .into_iter()
+        .map(|class_pointer| build_class_record(slices, class_pointer, image_base))
+        .collect::<Vec<_>>();
+    records.sort_by_key(|record| record.class_pointer);
+    records
+}
+
+fn build_class_record(
+    slices: &[SectionSlice<'_>],
+    class_pointer: u64,
+    image_base: Option<u64>,
+) -> ObjcClassRecord {
+    let superclass_pointer = read_u64_at_va(slices, class_pointer.saturating_add(8))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+    let superclass_name = superclass_pointer
+        .and_then(|pointer| resolve_class_name_from_pointer(slices, pointer, image_base))
+        .filter(|name| is_plausible_objc_type_name(name));
+
+    let class_data_bits = read_u64_at_va(slices, class_pointer.saturating_add(32));
+    let ro_pointer = class_data_bits
+        .and_then(|bits| resolve_pointer_to_mapped_va(slices, bits & !0x7, image_base));
+    let method_list_pointer = ro_pointer
+        .and_then(|pointer| read_u64_at_va(slices, pointer.saturating_add(32)))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+    let protocol_list_pointer = ro_pointer
+        .and_then(|pointer| read_u64_at_va(slices, pointer.saturating_add(40)))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+    let property_list_pointer = ro_pointer
+        .and_then(|pointer| read_u64_at_va(slices, pointer.saturating_add(64)))
+        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+
+    ObjcClassRecord {
+        class_pointer,
+        name: resolve_class_name_from_pointer(slices, class_pointer, image_base)
+            .filter(|name| is_plausible_objc_type_name(name)),
+        superclass_pointer,
+        superclass_name,
+        ro_pointer,
+        method_list_pointer,
+        property_list_pointer,
+        protocol_list_pointer,
+    }
+}
+
+fn collect_protocol_records(
+    slices: &[SectionSlice<'_>],
+    image_base: Option<u64>,
+) -> Vec<ObjcProtocolRecord> {
+    let mut pointers = BTreeSet::new();
+    for table_name in ["__objc_protolist", "__objc_protorefs"] {
+        for section in slices
+            .iter()
+            .filter(|section| section.section.name == table_name)
+        {
+            for chunk in section.contents.chunks_exact(8) {
+                let raw_pointer = u64::from_le_bytes([
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+                ]);
+                if let Some(pointer) = resolve_pointer_to_mapped_va(slices, raw_pointer, image_base)
+                {
+                    pointers.insert(pointer);
+                }
+            }
+        }
+    }
+
+    let mut records = pointers
+        .into_iter()
+        .map(|pointer| ObjcProtocolRecord {
+            pointer,
+            name: resolve_protocol_name_from_pointer(slices, pointer, image_base)
+                .filter(|name| is_plausible_objc_type_name(name)),
+        })
+        .collect::<Vec<_>>();
+    records.sort_by_key(|record| record.pointer);
+    records
+}
+
+fn collect_category_records(
+    slices: &[SectionSlice<'_>],
+    image_base: Option<u64>,
+    classes: &[ObjcClassRecord],
+) -> Vec<ObjcCategoryRecord> {
+    let class_names = classes
+        .iter()
+        .filter_map(|record| {
+            record
+                .name
+                .as_ref()
+                .map(|name| (record.class_pointer, name.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut records = Vec::new();
+
+    for section in slices
+        .iter()
+        .filter(|section| section.section.name == "__objc_catlist")
+    {
+        for chunk in section.contents.chunks_exact(8) {
+            let raw_pointer = u64::from_le_bytes([
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ]);
+            let Some(pointer) = resolve_pointer_to_mapped_va(slices, raw_pointer, image_base)
+            else {
+                continue;
+            };
+            let class_pointer = read_u64_at_va(slices, pointer.saturating_add(8))
+                .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+            let class_name = class_pointer
+                .and_then(|value| class_names.get(&value).cloned())
+                .or_else(|| {
+                    class_pointer.and_then(|value| {
+                        resolve_class_name_from_pointer(slices, value, image_base)
+                            .filter(|name| is_plausible_objc_type_name(name))
+                    })
+                });
+
+            records.push(ObjcCategoryRecord {
+                pointer,
+                name: resolve_category_name_from_pointer(slices, pointer, image_base)
+                    .filter(|name| is_plausible_objc_type_name(name)),
+                class_pointer,
+                class_name,
+            });
+        }
+    }
+
+    records.sort_by_key(|record| record.pointer);
+    records.dedup_by(|left, right| left.pointer == right.pointer);
+    records
 }
 
 fn infer_image_base(sections: &[Section]) -> Option<u64> {
