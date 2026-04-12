@@ -2,17 +2,23 @@ use crate::dyld::{DyldAnalysis, collect_dyld_metadata, detect_platform};
 use crate::errors::{MachoError, Result};
 use crate::objc::collect_objc_metadata;
 use damsel_core::{
-    Architecture, BinaryFormat, BinaryImage, BinarySource, Endianness, Import, Platform,
-    Relocation, Section, Segment, SliceDescriptor, SliceInfo, Symbol, SymbolKind,
+    Architecture, BinaryFormat, BinaryImage, BinarySource, DyldMetadata, Endianness, Import,
+    ImportBindingRecord, ImportBindingSource, Platform, Relocation, Section, Segment,
+    SliceDescriptor, SliceInfo, StubEntry, Symbol, SymbolKind,
 };
 use goblin::mach::Mach;
 use object::macho::{
-    CPU_SUBTYPE_ARM64_ALL, CPU_SUBTYPE_ARM64E, CPU_SUBTYPE_MASK, S_ATTR_PURE_INSTRUCTIONS,
-    S_ATTR_SOME_INSTRUCTIONS,
+    CPU_SUBTYPE_ARM64_ALL, CPU_SUBTYPE_ARM64E, CPU_SUBTYPE_MASK, INDIRECT_SYMBOL_ABS,
+    INDIRECT_SYMBOL_LOCAL, S_ATTR_PURE_INSTRUCTIONS, S_ATTR_SOME_INSTRUCTIONS,
+    S_LAZY_DYLIB_SYMBOL_POINTERS, S_LAZY_SYMBOL_POINTERS, S_NON_LAZY_SYMBOL_POINTERS,
+    S_SYMBOL_STUBS,
 };
-use object::read::macho::{FatArch, MachOFatFile32, MachOFatFile64};
+use object::read::macho::{
+    FatArch, MachHeader, MachOFatFile32, MachOFatFile64, MachOFile64, Section as RawMachOSection,
+};
 use object::{
     Object, ObjectSection, ObjectSegment, ObjectSymbol, RelocationTarget, SectionFlags, SymbolFlags,
+    SymbolIndex,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -22,7 +28,7 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
     let path = path.as_ref().to_path_buf();
     let bytes_arc: Arc<[u8]> = std::fs::read(&path)?.into();
     let bytes: &[u8] = bytes_arc.as_ref();
-    let slice = select_slice(bytes)?;
+    let (slice, available_slices) = select_slice(bytes)?;
     let slice_range = checked_range(slice.offset, slice.size, bytes.len() as u64)?;
     let slice_bytes = &bytes[slice_range];
     let object_file = object::File::parse(slice_bytes)?;
@@ -35,7 +41,8 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
         }
     };
 
-    let architecture = map_architecture(goblin_mach.header.cputype, goblin_mach.header.cpusubtype)?;
+    let architecture =
+        map_selected_architecture(goblin_mach.header.cputype, goblin_mach.header.cpusubtype)?;
     let endianness = if goblin_mach.little_endian {
         Endianness::Little
     } else {
@@ -49,13 +56,12 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
     let relocations = collect_relocations(&object_file)?;
     let objc = collect_objc_metadata(slice_bytes, &sections);
     let mut dyld = collect_dyld_metadata(&goblin_mach, slice_bytes, &segments)?;
-    rebase_stub_addresses(&mut dyld, &sections);
+    augment_dysymtab_bindings_and_stubs(slice_bytes, &imports, &mut dyld.metadata)?;
     merge_import_hints(&mut imports, &dyld);
     let platform = detect_platform(&goblin_mach.load_commands)
         .as_deref()
         .map(map_platform);
 
-    let available_slices = vec![SliceDescriptor::from_selected_slice(&slice, architecture.clone())];
     Ok(BinaryImage::new(
         BinarySource::File(path.clone()),
         path,
@@ -77,7 +83,7 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
     ))
 }
 
-fn select_slice(bytes: &[u8]) -> Result<SliceInfo> {
+fn select_slice(bytes: &[u8]) -> Result<(SliceInfo, Vec<SliceDescriptor>)> {
     let kind = object::FileKind::parse(bytes)?;
     match kind {
         object::FileKind::MachO64 => {
@@ -90,20 +96,30 @@ fn select_slice(bytes: &[u8]) -> Result<SliceInfo> {
                 }
             };
 
-            Ok(SliceInfo {
+            let slice = SliceInfo {
                 offset: 0,
                 size: bytes.len() as u64,
                 is_universal: false,
                 cpu_subtype: mach.header.cpusubtype & !CPU_SUBTYPE_MASK,
-            })
+            };
+            let architecture =
+                map_selected_architecture(mach.header.cputype, mach.header.cpusubtype)?;
+            Ok((
+                slice.clone(),
+                vec![SliceDescriptor::from_selected_slice(&slice, architecture)],
+            ))
         }
         object::FileKind::MachOFat32 => {
             let fat = MachOFatFile32::parse(bytes)?;
-            choose_fat_arch(fat.arches(), bytes.len() as u64)
+            let slice = choose_fat_arch(fat.arches(), bytes.len() as u64)?;
+            let available_slices = collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
+            Ok((slice, available_slices))
         }
         object::FileKind::MachOFat64 => {
             let fat = MachOFatFile64::parse(bytes)?;
-            choose_fat_arch(fat.arches(), bytes.len() as u64)
+            let slice = choose_fat_arch(fat.arches(), bytes.len() as u64)?;
+            let available_slices = collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
+            Ok((slice, available_slices))
         }
         other => Err(MachoError::UnsupportedFileKind(format!("{other:?}"))),
     }
@@ -181,7 +197,7 @@ fn arm64_subtype_rank(subtype: u32) -> u8 {
     }
 }
 
-fn map_architecture(cputype: u32, cpusubtype: u32) -> Result<Architecture> {
+fn map_selected_architecture(cputype: u32, cpusubtype: u32) -> Result<Architecture> {
     let subtype = cpusubtype & !CPU_SUBTYPE_MASK;
     match (cputype, subtype) {
         (object::macho::CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64E) => Ok(Architecture::Arm64e),
@@ -190,6 +206,56 @@ fn map_architecture(cputype: u32, cpusubtype: u32) -> Result<Architecture> {
             "cputype={cputype:#x} subtype={subtype:#x}"
         ))),
     }
+}
+
+fn map_slice_architecture(kind: object::Architecture, cpusubtype: u32) -> Option<Architecture> {
+    let subtype = cpusubtype & !CPU_SUBTYPE_MASK;
+    match kind {
+        object::Architecture::Aarch64 => Some(if subtype == CPU_SUBTYPE_ARM64E {
+            Architecture::Arm64e
+        } else {
+            Architecture::Arm64
+        }),
+        object::Architecture::X86_64 => Some(Architecture::X86_64),
+        _ => None,
+    }
+}
+
+fn collect_fat_slice_descriptors<Fat: FatArch>(
+    arches: &[Fat],
+    file_len: u64,
+    selected: &SliceInfo,
+) -> Vec<SliceDescriptor> {
+    let mut descriptors = arches
+        .iter()
+        .filter_map(|arch| {
+            let architecture = map_slice_architecture(arch.architecture(), arch.cpusubtype())?;
+            let (offset, size) = arch.file_range();
+            if checked_range(offset, size, file_len).is_err() {
+                return None;
+            }
+            Some(SliceDescriptor {
+                offset,
+                size,
+                is_universal: true,
+                cpu_subtype: arch.cpusubtype() & !CPU_SUBTYPE_MASK,
+                architecture,
+                selected: offset == selected.offset
+                    && size == selected.size
+                    && (arch.cpusubtype() & !CPU_SUBTYPE_MASK) == selected.cpu_subtype,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    descriptors.sort_by_key(|descriptor| {
+        (
+            !descriptor.selected,
+            descriptor.offset,
+            descriptor.size,
+            descriptor.cpu_subtype,
+        )
+    });
+    descriptors
 }
 
 fn map_platform(platform: &str) -> Platform {
@@ -441,34 +507,177 @@ fn merge_import_hints(imports: &mut Vec<Import>, dyld: &DyldAnalysis) {
     });
 }
 
-fn rebase_stub_addresses(dyld: &mut DyldAnalysis, sections: &[Section]) {
-    let Some(stubs_section) = sections
+fn augment_dysymtab_bindings_and_stubs(
+    bytes: &[u8],
+    imports: &[Import],
+    dyld: &mut DyldMetadata,
+) -> Result<()> {
+    let macho_file = MachOFile64::<object::Endianness, &[u8]>::parse(bytes)?;
+    let endian = macho_file.macho_header().endian()?;
+    let mut commands = macho_file.macho_load_commands()?;
+    let mut indirect_symbols = None;
+    while let Some(command) = commands.next()? {
+        if let Some(dysymtab) = command.dysymtab()? {
+            indirect_symbols = Some(dysymtab.indirect_symbols(endian, bytes)?);
+            break;
+        }
+    }
+    let Some(indirect_symbols) = indirect_symbols else {
+        return Ok(());
+    };
+
+    let imports_by_name = imports
         .iter()
-        .find(|section| section.segment_name == "__TEXT" && section.name == "__stubs")
-    else {
-        return;
-    };
+        .fold(BTreeMap::<String, &Import>::new(), |mut acc, import| {
+            acc.entry(normalize_import_name(&import.name)).or_insert(import);
+            acc
+        });
 
-    let stub_count = dyld.metadata.stubs.len();
-    if stub_count == 0 {
-        return;
+    let mut pointer_slots_by_name = BTreeMap::<String, Vec<(u64, Option<u64>, String)>>::new();
+    for section in macho_file.sections() {
+        let raw = section.macho_section();
+        let section_type = raw.section_type(endian);
+        if !matches!(
+            section_type,
+            S_NON_LAZY_SYMBOL_POINTERS | S_LAZY_SYMBOL_POINTERS | S_LAZY_DYLIB_SYMBOL_POINTERS
+        ) {
+            continue;
+        }
+        let section_name = section.name().unwrap_or_default().to_string();
+        let segment_name = section.segment_name().ok().flatten().unwrap_or_default().to_string();
+        let full_name = format!("{segment_name}:{section_name}");
+        let entries = raw.indirect_symbols(endian, indirect_symbols)?;
+        let (file_offset, _) = section.file_range().unwrap_or((0, 0));
+        for (index, raw_symbol) in entries.iter().enumerate() {
+            let symbol_index = raw_symbol.get(endian);
+            if is_special_indirect_symbol(symbol_index) {
+                continue;
+            }
+            let Some((name, import)) =
+                resolve_indirect_symbol(&macho_file, SymbolIndex(symbol_index as usize), &imports_by_name)
+            else {
+                continue;
+            };
+            let pointer_address = section.address().saturating_add((index as u64) * 8);
+            let pointer_offset = Some(file_offset.saturating_add((index as u64) * 8));
+            dyld.import_bindings.push(ImportBindingRecord {
+                dylib: import.dylib.clone(),
+                name: import.name.clone(),
+                address: Some(pointer_address),
+                offset: pointer_offset,
+                addend: import.addend,
+                source: ImportBindingSource::IndirectSymbol,
+                is_weak: import.is_weak,
+            });
+            pointer_slots_by_name
+                .entry(name)
+                .or_default()
+                .push((pointer_address, pointer_offset, full_name.clone()));
+        }
     }
 
-    let inferred_stub_size = if stubs_section.size >= stub_count as u64
-        && stubs_section.size % stub_count as u64 == 0
-    {
-        stubs_section.size / stub_count as u64
-    } else {
-        12
-    };
-
-    for (index, stub) in dyld.metadata.stubs.iter_mut().enumerate() {
-        let stub_address = stubs_section
-            .address
-            .saturating_add((index as u64).saturating_mul(inferred_stub_size));
-        stub.stub_address = stub_address;
-        stub.source = damsel_core::ImportBindingSource::Stub;
+    for section in macho_file.sections() {
+        let raw = section.macho_section();
+        if raw.section_type(endian) != S_SYMBOL_STUBS {
+            continue;
+        }
+        let section_name = section.name().unwrap_or_default().to_string();
+        let segment_name = section.segment_name().ok().flatten().unwrap_or_default().to_string();
+        let full_name = format!("{segment_name}:{section_name}");
+        let stub_size = u64::from(raw.symbol_stub_size(endian));
+        if stub_size == 0 {
+            continue;
+        }
+        let entries = raw.indirect_symbols(endian, indirect_symbols)?;
+        for (index, raw_symbol) in entries.iter().enumerate() {
+            let symbol_index = raw_symbol.get(endian);
+            if is_special_indirect_symbol(symbol_index) {
+                continue;
+            }
+            let Some((name, import)) =
+                resolve_indirect_symbol(&macho_file, SymbolIndex(symbol_index as usize), &imports_by_name)
+            else {
+                continue;
+            };
+            let stub_address = section.address().saturating_add((index as u64) * stub_size);
+            let (pointer_address, _, _) = pointer_slots_by_name
+                .get(&name)
+                .and_then(|values| values.get(index).or_else(|| values.first()))
+                .cloned()
+                .unwrap_or((0, None, String::new()));
+            let pointer_address = (pointer_address != 0).then_some(pointer_address);
+            dyld.stubs.push(StubEntry {
+                stub_address,
+                section: Some(full_name.clone()),
+                pointer_address,
+                dylib: Some(import.dylib.clone()),
+                name: Some(import.name.clone()),
+                source: ImportBindingSource::Stub,
+            });
+        }
     }
+
+    dyld.import_bindings.sort_by_key(|binding| {
+        (
+            binding.address.unwrap_or_default(),
+            binding.offset.unwrap_or_default(),
+            binding.dylib.clone(),
+            binding.name.clone(),
+            binding_source_rank(binding.source),
+        )
+    });
+    dyld.import_bindings.dedup_by(|left, right| {
+        left.address == right.address
+            && left.offset == right.offset
+            && left.dylib == right.dylib
+            && left.name == right.name
+            && left.addend == right.addend
+    });
+
+    if dyld.stubs.iter().any(|stub| stub.section.is_some()) {
+        dyld.stubs.retain(|stub| stub.section.is_some());
+    }
+
+    dyld.stubs.sort_by_key(|stub| {
+        (
+            stub.stub_address,
+            stub.pointer_address.unwrap_or_default(),
+            stub.dylib.clone().unwrap_or_default(),
+            stub.name.clone().unwrap_or_default(),
+        )
+    });
+    dyld.stubs.dedup();
+    Ok(())
+}
+
+fn is_special_indirect_symbol(symbol_index: u32) -> bool {
+    symbol_index == INDIRECT_SYMBOL_LOCAL
+        || symbol_index == (INDIRECT_SYMBOL_LOCAL | INDIRECT_SYMBOL_ABS)
+}
+
+fn binding_source_rank(source: ImportBindingSource) -> u8 {
+    match source {
+        ImportBindingSource::IndirectSymbol => 0,
+        ImportBindingSource::ChainedFixup => 1,
+        ImportBindingSource::Stub => 2,
+        ImportBindingSource::Other => 3,
+    }
+}
+
+fn normalize_import_name(name: &str) -> String {
+    name.trim_start_matches('_').to_ascii_lowercase()
+}
+
+fn resolve_indirect_symbol<'a>(
+    macho_file: &'a MachOFile64<'a, object::Endianness>,
+    symbol_index: SymbolIndex,
+    imports_by_name: &BTreeMap<String, &'a Import>,
+) -> Option<(String, &'a Import)> {
+    let symbol = macho_file.symbol_by_index(symbol_index).ok()?;
+    let raw_name = symbol.name().ok()?.to_string();
+    let normalized = normalize_import_name(&raw_name);
+    let import = imports_by_name.get(&normalized).copied()?;
+    Some((normalized, import))
 }
 
 fn collect_relocations<'a>(file: &object::File<'a, &'a [u8]>) -> Result<Vec<Relocation>> {

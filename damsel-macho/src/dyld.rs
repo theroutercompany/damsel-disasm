@@ -576,6 +576,7 @@ fn materialize_stub_entries(
             let export_name = exports_by_address.get(&pointer_address).cloned();
             Some(StubEntry {
                 stub_address: pointer_address,
+                section: None,
                 pointer_address: Some(pointer_address),
                 dylib: Some(binding.dylib.clone()),
                 name: Some(export_name.unwrap_or_else(|| binding.name.clone())),

@@ -13,7 +13,7 @@ fn chained_fixups_materialize_resolved_import_addresses_symbolized_fixture() {
     assert!(image.dyld.has_chained_fixups);
     assert!(image.dyld.has_binds);
     assert!(
-        image.imports.iter().any(|import| import.address.is_some()),
+        image.imports().iter().any(|import| import.address.is_some()),
         "expected at least one import with a resolved bind-site address"
     );
 }
@@ -24,7 +24,7 @@ fn chained_fixups_materialize_resolved_import_addresses_objc_fixture() {
     assert!(image.dyld.has_chained_fixups);
     assert!(image.dyld.has_binds);
     assert!(
-        image.imports.iter().any(|import| import.address.is_some()),
+        image.imports().iter().any(|import| import.address.is_some()),
         "expected at least one import with a resolved bind-site address"
     );
 }

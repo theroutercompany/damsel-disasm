@@ -47,10 +47,25 @@ fn thin_fixture_reports_single_selected_slice_descriptor() {
 fn universal_fixture_selected_descriptor_is_marked_universal() {
     let image = load(fixture("universal-hello")).expect("load universal fixture");
     let available = image.available_slices();
-    assert_eq!(
-        available.len(),
-        1,
-        "current loader semantics expose selected universal slice only"
+    assert!(
+        available.len() >= 2,
+        "universal fixture should expose every supported slice descriptor"
+    );
+    assert!(
+        available.iter().any(|descriptor| descriptor.selected),
+        "one slice descriptor must be marked selected"
+    );
+    assert!(
+        available
+            .iter()
+            .any(|descriptor| descriptor.architecture == Architecture::X86_64),
+        "universal fixture should surface the x86_64 slice inventory too"
+    );
+    assert!(
+        available
+            .iter()
+            .any(|descriptor| descriptor.architecture == Architecture::Arm64),
+        "universal fixture should surface the arm64 slice inventory too"
     );
 
     let selected = image

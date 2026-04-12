@@ -19,7 +19,10 @@ fn loads_arm64e_fixture_when_present() {
     let image = load(&path).expect("load arm64e fixture");
     assert_eq!(image.architecture, Architecture::Arm64e);
     assert_eq!(image.slice.is_universal, false);
-    assert!(!image.sections.is_empty(), "expected non-empty section table");
+    assert!(
+        !image.sections().is_empty(),
+        "expected non-empty section table"
+    );
     assert!(
         image.entry_point.is_some(),
         "expected entry point in arm64e fixture"

@@ -34,8 +34,13 @@ fn assert_import_bindings_and_stubs(path: &Path) {
     assert!(
         dyld.import_bindings
             .iter()
-            .any(|binding| binding.source == ImportBindingSource::ChainedFixup),
-        "expected at least one chained-fixup binding source"
+            .any(|binding| {
+                matches!(
+                    binding.source,
+                    ImportBindingSource::ChainedFixup | ImportBindingSource::IndirectSymbol
+                )
+            }),
+        "expected at least one concrete binding source"
     );
     assert!(
         dyld.import_bindings
@@ -73,8 +78,11 @@ fn assert_import_bindings_and_stubs(path: &Path) {
     assert!(
         dyld.stubs
             .iter()
-            .any(|stub| stub.pointer_address.is_some()
-                && (stub.name.is_some() || stub.dylib.is_some())),
+            .any(|stub| {
+                stub.section.is_some()
+                    && stub.pointer_address.is_some()
+                    && (stub.name.is_some() || stub.dylib.is_some())
+            }),
         "expected at least one resolved stub pointer/name mapping"
     );
 }
