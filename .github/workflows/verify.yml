@@ -58,3 +58,15 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Bench compile smoke
         run: cargo bench -p damsel-macho --bench decode_bench --no-run
+
+  decode-throughput-smoke:
+    name: decode throughput smoke (linux arm64)
+    runs-on: ubuntu-24.04-arm
+    needs: fixture-drift
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Decode throughput smoke
+        run: cargo bench -p damsel-macho --bench decode_bench -- --warm-up-time 0.01 --measurement-time 0.02 --sample-size 10
