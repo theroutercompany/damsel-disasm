@@ -756,6 +756,16 @@ fn collect_category_records(
             }
 
             records.push(ObjcCategoryRecord {
+                properties_source: if property_list_pointer.is_some() {
+                    ObjcNameSource::Runtime
+                } else {
+                    ObjcNameSource::Unresolved
+                },
+                protocols_source: if protocol_list_pointer.is_some() {
+                    ObjcNameSource::Runtime
+                } else {
+                    ObjcNameSource::Unresolved
+                },
                 pointer,
                 name: category_name,
                 name_source: category_name_source,
@@ -882,6 +892,16 @@ fn collect_synthetic_category_records(
                 }
             }
             Some(ObjcCategoryRecord {
+                properties_source: if property_list_pointer.is_some() {
+                    ObjcNameSource::LegacyPool
+                } else {
+                    ObjcNameSource::Unresolved
+                },
+                protocols_source: if protocol_list_pointer.is_some() {
+                    ObjcNameSource::LegacyPool
+                } else {
+                    ObjcNameSource::Unresolved
+                },
                 pointer,
                 name: Some(category_name),
                 name_source: ObjcNameSource::LegacyPool,

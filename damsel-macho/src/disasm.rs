@@ -825,11 +825,31 @@ fn synthesize_analysis_references(
                                             RecoveredValueKind::Address,
                                         )
                                     }),
-                                source: RecoveredValueSource::AdrpLoad,
+                                source: if loaded_value.is_some() {
+                                    RecoveredValueSource::TableLoad
+                                } else {
+                                    RecoveredValueSource::AdrpLoad
+                                },
                             };
                             store_known_value(&mut known_values, recovered.clone());
                             push_recovered_value(&mut instruction.recovered_values, recovered);
                             destination_updated = true;
+                            if include_annotations {
+                                if let Some((target, _)) = loaded_value {
+                                    push_annotation(
+                                        &mut instruction.annotations,
+                                        Annotation::TableSlotResolved {
+                                            table_base: base_target,
+                                            slot_address: reference_target,
+                                            index_register: index_register
+                                                .clone()
+                                                .unwrap_or_default(),
+                                            element_size,
+                                            target,
+                                        },
+                                    );
+                                }
+                            }
                         }
                     }
                     if include_annotations {
@@ -878,6 +898,18 @@ fn synthesize_analysis_references(
                         },
                     );
                     resolved_target = Some((target, reason));
+                    if include_annotations {
+                        push_annotation(
+                            &mut instruction.annotations,
+                            Annotation::TableSlotResolved {
+                                table_base: base,
+                                slot_address,
+                                index_register: index_register.clone(),
+                                element_size,
+                                target,
+                            },
+                        );
+                    }
                 }
                 if include_annotations {
                     push_annotation(

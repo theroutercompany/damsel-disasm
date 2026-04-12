@@ -130,9 +130,9 @@ protocol_records (4/4):
   0x1000087b0 Excitement source=Runtime required_inst=1 required_class=1 optional_inst=0 optional_class=0 properties=0
   0x100008810 DiagnosticProviding source=Runtime required_inst=1 required_class=0 optional_inst=1 optional_class=0 properties=0
 category_records (3/3):
-  0x100000e24 name=Excited name_source=LegacyPool record_source=SymbolSynthesis class=Greeter class_source=PointerTable class_ptr=0x1000086a0 prop_list=- proto_list=- methods=3 class_methods=1 properties=0 protocols=0
-  0x100000ee8 name=Diagnostics name_source=LegacyPool record_source=SymbolSynthesis class=Speaker class_source=PointerTable class_ptr=0x100008650 prop_list=- proto_list=0x100008338 methods=3 class_methods=1 properties=0 protocols=1
-  0x100000fc4 name=Metrics name_source=LegacyPool record_source=SymbolSynthesis class=Greeter class_source=PointerTable class_ptr=0x1000086a0 prop_list=- proto_list=- methods=3 class_methods=1 properties=0 protocols=0
+  0x100000e24 name=Excited name_source=LegacyPool record_source=SymbolSynthesis class=Greeter class_source=PointerTable class_ptr=0x1000086a0 prop_list=- proto_list=- props_source=Unresolved protos_source=Unresolved methods=3 class_methods=1 properties=0 protocols=0
+  0x100000ee8 name=Diagnostics name_source=LegacyPool record_source=SymbolSynthesis class=Speaker class_source=PointerTable class_ptr=0x100008650 prop_list=- proto_list=0x100008338 props_source=Unresolved protos_source=LegacyPool methods=3 class_methods=1 properties=0 protocols=1
+  0x100000fc4 name=Metrics name_source=LegacyPool record_source=SymbolSynthesis class=Greeter class_source=PointerTable class_ptr=0x1000086a0 prop_list=- proto_list=- props_source=Unresolved protos_source=Unresolved methods=3 class_methods=1 properties=0 protocols=0
 method_records (67/67):
   owner=Speaker kind=class class_method=false selector=diagnosticLabel selector_source=Relative impl=0x100000ee8 types=@16@0:8
   owner=Speaker kind=class class_method=false selector=diagnosticToken selector_source=Relative impl=0x100000f20 types=@16@0:8

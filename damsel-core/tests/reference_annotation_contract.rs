@@ -228,3 +228,18 @@ fn display_for_indirect_target_resolved_annotation_is_stable() {
         "indirect-target via x16 -> 0x2000 (helper-target)"
     );
 }
+
+#[test]
+fn display_for_table_slot_resolved_annotation_is_stable() {
+    let annotation = Annotation::TableSlotResolved {
+        table_base: 0x4000,
+        slot_address: 0x4010,
+        index_register: "w8".to_string(),
+        element_size: 8,
+        target: 0x5000,
+    };
+    assert_eq!(
+        annotation.to_string(),
+        "table-slot base=0x4000 slot=0x4010 index=w8 elem_size=8 target=0x5000"
+    );
+}

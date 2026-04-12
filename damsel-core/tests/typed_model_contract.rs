@@ -286,6 +286,8 @@ fn objc_category_provenance_is_constructible() {
         class_name_source: ObjcNameSource::PointerTable,
         property_list_pointer: Some(0x5200),
         protocol_list_pointer: Some(0x5300),
+        properties_source: ObjcNameSource::Runtime,
+        protocols_source: ObjcNameSource::Runtime,
         methods: Vec::new(),
         class_methods: Vec::new(),
         properties: Vec::new(),
@@ -332,6 +334,8 @@ fn objc_records_are_queryable_by_pointer_and_selector_source() {
             class_name_source: ObjcNameSource::PointerTable,
             property_list_pointer: None,
             protocol_list_pointer: Some(0x6100),
+            properties_source: ObjcNameSource::Unresolved,
+            protocols_source: ObjcNameSource::LegacyPool,
             methods: Vec::new(),
             class_methods: Vec::new(),
             properties: Vec::new(),
@@ -361,6 +365,13 @@ fn objc_records_are_queryable_by_pointer_and_selector_source() {
     assert_eq!(
         metadata
             .categories_for_class("Greeter")
+            .map(|record| record.name.as_deref().unwrap_or("-"))
+            .collect::<Vec<_>>(),
+        vec!["Excited"]
+    );
+    assert_eq!(
+        metadata
+            .synthetic_categories()
             .map(|record| record.name.as_deref().unwrap_or("-"))
             .collect::<Vec<_>>(),
         vec!["Excited"]
@@ -466,6 +477,47 @@ fn recovered_value_and_export_kind_variants_are_constructible() {
     assert_eq!(export.flags_typed().raw_bits, 0);
     assert_eq!(export.flags_typed().kind_bits, 0);
     assert!(!export.flags_typed().is_weak_definition);
+    assert_eq!(
+        export.flags_typed().flag_names().collect::<Vec<_>>(),
+        Vec::<damsel_core::ExportFlagName>::new()
+    );
+}
+
+#[test]
+fn structured_export_flag_names_and_table_evidence_are_constructible() {
+    let flags = damsel_core::ExportFlags::from_bits(0x1d);
+    assert_eq!(
+        flags.flag_names().collect::<Vec<_>>(),
+        vec![
+            damsel_core::ExportFlagName::WeakDefinition,
+            damsel_core::ExportFlagName::Reexport,
+            damsel_core::ExportFlagName::StubAndResolver,
+            damsel_core::ExportFlagName::ThreadLocal,
+        ]
+    );
+
+    let recovered = damsel_core::RecoveredValue {
+        register: "x2".to_string(),
+        value: 0x3000,
+        kind: damsel_core::RecoveredValueKind::FunctionPointer,
+        source: damsel_core::RecoveredValueSource::TableLoad,
+    };
+    let annotation = damsel_core::Annotation::TableSlotResolved {
+        table_base: 0x4000,
+        slot_address: 0x4010,
+        index_register: "w8".to_string(),
+        element_size: 8,
+        target: 0x3000,
+    };
+
+    assert!(matches!(
+        recovered.source,
+        damsel_core::RecoveredValueSource::TableLoad
+    ));
+    assert!(matches!(
+        annotation,
+        damsel_core::Annotation::TableSlotResolved { .. }
+    ));
 }
 
 #[test]

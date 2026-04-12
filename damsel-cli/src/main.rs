@@ -3,7 +3,7 @@ mod output;
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
     BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2,
-    DisassemblyTarget, Import, ImportBindingKind, ObjcCategoryRecordSource, ObjcNameSource,
+    DisassemblyTarget, ExportFlagName, Import, ImportBindingKind, ObjcNameSource,
     ObjcSelectorSource, Relocation, Section, StubKind, Symbol,
 };
 use damsel_macho::{disassemble_v2, load};
@@ -171,14 +171,14 @@ enum DyldExportFlagArg {
     Absolute,
 }
 
-impl From<DyldExportFlagArg> for output::ExportFlagFilter {
+impl From<DyldExportFlagArg> for ExportFlagName {
     fn from(value: DyldExportFlagArg) -> Self {
         match value {
-            DyldExportFlagArg::WeakDefinition => output::ExportFlagFilter::WeakDefinition,
-            DyldExportFlagArg::Reexport => output::ExportFlagFilter::Reexport,
-            DyldExportFlagArg::StubAndResolver => output::ExportFlagFilter::StubAndResolver,
-            DyldExportFlagArg::ThreadLocal => output::ExportFlagFilter::ThreadLocal,
-            DyldExportFlagArg::Absolute => output::ExportFlagFilter::Absolute,
+            DyldExportFlagArg::WeakDefinition => ExportFlagName::WeakDefinition,
+            DyldExportFlagArg::Reexport => ExportFlagName::Reexport,
+            DyldExportFlagArg::StubAndResolver => ExportFlagName::StubAndResolver,
+            DyldExportFlagArg::ThreadLocal => ExportFlagName::ThreadLocal,
+            DyldExportFlagArg::Absolute => ExportFlagName::Absolute,
         }
     }
 }
@@ -241,13 +241,17 @@ enum ObjcSelectorSourceArg {
 enum ObjcCategorySourceArg {
     RuntimeList,
     SymbolSynthesis,
+    SymbolSynthesisWithLists,
 }
 
-impl From<ObjcCategorySourceArg> for ObjcCategoryRecordSource {
+impl From<ObjcCategorySourceArg> for output::ObjcCategorySourceFilter {
     fn from(value: ObjcCategorySourceArg) -> Self {
         match value {
-            ObjcCategorySourceArg::RuntimeList => ObjcCategoryRecordSource::RuntimeList,
-            ObjcCategorySourceArg::SymbolSynthesis => ObjcCategoryRecordSource::SymbolSynthesis,
+            ObjcCategorySourceArg::RuntimeList => output::ObjcCategorySourceFilter::RuntimeList,
+            ObjcCategorySourceArg::SymbolSynthesis => output::ObjcCategorySourceFilter::SymbolSynthesis,
+            ObjcCategorySourceArg::SymbolSynthesisWithLists => {
+                output::ObjcCategorySourceFilter::SymbolSynthesisWithLists
+            }
         }
     }
 }

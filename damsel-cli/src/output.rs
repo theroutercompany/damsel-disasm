@@ -1,5 +1,5 @@
 use damsel_core::{
-    Annotation, BinaryImage, DecodedInstruction, ExportKind, Import, ImportBindingKind,
+    Annotation, BinaryImage, DecodedInstruction, ExportFlagName, ExportKind, Import, ImportBindingKind,
     ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource,
     ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
     ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
@@ -36,7 +36,7 @@ pub(crate) struct DyldViewOptions {
     pub binding_kind_filter: Option<ImportBindingKind>,
     pub stub_kind_filter: Option<StubKind>,
     pub export_kind_filter: Option<ExportKindFilter>,
-    pub export_flag_filter: Option<ExportFlagFilter>,
+    pub export_flag_filter: Option<ExportFlagName>,
     pub ordinal_filter: Option<u32>,
     pub sort: Option<DyldSortKey>,
 }
@@ -77,15 +77,6 @@ pub(crate) enum ExportKindFilter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExportFlagFilter {
-    WeakDefinition,
-    Reexport,
-    StubAndResolver,
-    ThreadLocal,
-    Absolute,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DyldSortKey {
     Address,
     Name,
@@ -99,7 +90,14 @@ pub(crate) struct ObjcViewOptions {
     pub owner_filter: Option<String>,
     pub name_source_filter: Option<ObjcNameSource>,
     pub selector_source_filter: Option<ObjcSelectorSource>,
-    pub category_source_filter: Option<ObjcCategoryRecordSource>,
+    pub category_source_filter: Option<ObjcCategorySourceFilter>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ObjcCategorySourceFilter {
+    RuntimeList,
+    SymbolSynthesis,
+    SymbolSynthesisWithLists,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -347,7 +345,7 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                 );
                 for record in &filtered.categories {
                     println!(
-                        "  {:#x} name={} name_source={:?} record_source={:?} class={} class_source={:?} class_ptr={} prop_list={} proto_list={} methods={} class_methods={} properties={} protocols={}",
+                        "  {:#x} name={} name_source={:?} record_source={:?} class={} class_source={:?} class_ptr={} prop_list={} proto_list={} props_source={:?} protos_source={:?} methods={} class_methods={} properties={} protocols={}",
                         record.pointer,
                         record.name.as_deref().unwrap_or("-"),
                         record.name_source,
@@ -366,6 +364,8 @@ pub(crate) fn print_objc(image: &BinaryImage, view: &ObjcViewOptions, output: &O
                             .protocol_list_pointer
                             .map(|value| format!("{value:#x}"))
                             .unwrap_or_else(|| "-".to_string()),
+                        record.properties_source,
+                        record.protocols_source,
                         record.methods.len(),
                         record.class_methods.len(),
                         record.properties.len(),
@@ -1252,13 +1252,13 @@ fn export_matches_kind(export: &damsel_core::ExportRecord, kind: ExportKindFilte
     )
 }
 
-fn export_matches_flag(export: &damsel_core::ExportRecord, flag: ExportFlagFilter) -> bool {
+fn export_matches_flag(export: &damsel_core::ExportRecord, flag: ExportFlagName) -> bool {
     match flag {
-        ExportFlagFilter::WeakDefinition => export.flags.is_weak_definition,
-        ExportFlagFilter::Reexport => export.flags.is_reexport,
-        ExportFlagFilter::StubAndResolver => export.flags.is_stub_and_resolver,
-        ExportFlagFilter::ThreadLocal => export.flags.is_thread_local,
-        ExportFlagFilter::Absolute => export.flags.is_absolute,
+        ExportFlagName::WeakDefinition => export.flags.is_weak_definition,
+        ExportFlagName::Reexport => export.flags.is_reexport,
+        ExportFlagName::StubAndResolver => export.flags.is_stub_and_resolver,
+        ExportFlagName::ThreadLocal => export.flags.is_thread_local,
+        ExportFlagName::Absolute => export.flags.is_absolute,
     }
 }
 
@@ -1405,7 +1405,7 @@ fn objc_category_matches(
     record: &ObjcCategoryRecord,
     owner_filter: Option<&str>,
     name_source_filter: Option<ObjcNameSource>,
-    category_source_filter: Option<ObjcCategoryRecordSource>,
+    category_source_filter: Option<ObjcCategorySourceFilter>,
 ) -> bool {
     owner_filter.is_none_or(|needle| {
         record
@@ -1418,7 +1418,19 @@ fn objc_category_matches(
                 .is_some_and(|value| contains_case_insensitive(value, needle))
     }) && name_source_filter
         .is_none_or(|source| record.name_source == source || record.class_name_source == source)
-        && category_source_filter.is_none_or(|source| record.record_source == source)
+        && category_source_filter.is_none_or(|source| match source {
+            ObjcCategorySourceFilter::RuntimeList => {
+                record.record_source == ObjcCategoryRecordSource::RuntimeList
+            }
+            ObjcCategorySourceFilter::SymbolSynthesis => {
+                record.record_source == ObjcCategoryRecordSource::SymbolSynthesis
+            }
+            ObjcCategorySourceFilter::SymbolSynthesisWithLists => {
+                record.record_source == ObjcCategoryRecordSource::SymbolSynthesis
+                    && (record.property_list_pointer.is_some()
+                        || record.protocol_list_pointer.is_some())
+            }
+        })
 }
 
 fn objc_method_owner_kind_text(kind: ObjcMethodOwnerKind) -> &'static str {
@@ -2257,6 +2269,15 @@ fn export_flags_json(flags: &damsel_core::ExportFlags) -> JsonValue {
             "unknown_bits".to_string(),
             u64_num(flags.unknown_bits),
         ),
+        (
+            "flag_names".to_string(),
+            JsonValue::Array(
+                flags
+                    .flag_names()
+                    .map(|flag| JsonValue::String(format!("{flag:?}")))
+                    .collect(),
+            ),
+        ),
     ])
 }
 
@@ -2703,6 +2724,14 @@ fn objc_category_record_json(record: &ObjcCategoryRecord) -> JsonValue {
                 .protocol_list_pointer
                 .map(u64_num)
                 .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "properties_source".to_string(),
+            JsonValue::String(format!("{:?}", record.properties_source)),
+        ),
+        (
+            "protocols_source".to_string(),
+            JsonValue::String(format!("{:?}", record.protocols_source)),
         ),
         (
             "record_source".to_string(),
@@ -3504,6 +3533,29 @@ fn annotation_json(annotation: &Annotation) -> JsonValue {
             ("encoding".to_string(), JsonValue::String(encoding.clone())),
             ("target".to_string(), JsonValue::String(target.clone())),
             ("addend".to_string(), i64_num(*addend)),
+        ]),
+        Annotation::TableSlotResolved {
+            table_base,
+            slot_address,
+            index_register,
+            element_size,
+            target,
+        } => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("table_slot_resolved".to_string()),
+            ),
+            ("table_base".to_string(), u64_num(*table_base)),
+            ("slot_address".to_string(), u64_num(*slot_address)),
+            (
+                "index_register".to_string(),
+                JsonValue::String(index_register.clone()),
+            ),
+            (
+                "element_size".to_string(),
+                u64_num(u64::from(*element_size)),
+            ),
+            ("target".to_string(), u64_num(*target)),
         ]),
         Annotation::IndirectTargetResolved {
             via,

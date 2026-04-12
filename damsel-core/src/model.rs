@@ -424,6 +424,15 @@ pub struct ExportFlags {
     pub unknown_bits: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExportFlagName {
+    WeakDefinition,
+    Reexport,
+    StubAndResolver,
+    ThreadLocal,
+    Absolute,
+}
+
 impl ExportFlags {
     pub const fn from_bits(raw_bits: u64) -> Self {
         let kind_bits = (raw_bits & EXPORT_FLAG_KIND_MASK) as u8;
@@ -480,6 +489,31 @@ impl ExportFlags {
             EXPORT_FLAG_KIND_ABSOLUTE => "absolute",
             _ => "unknown",
         }
+    }
+
+    pub fn flag_names(&self) -> impl Iterator<Item = ExportFlagName> {
+        let mut flags = [None; 5];
+        let mut index = 0usize;
+        if self.is_weak_definition {
+            flags[index] = Some(ExportFlagName::WeakDefinition);
+            index += 1;
+        }
+        if self.is_reexport {
+            flags[index] = Some(ExportFlagName::Reexport);
+            index += 1;
+        }
+        if self.is_stub_and_resolver {
+            flags[index] = Some(ExportFlagName::StubAndResolver);
+            index += 1;
+        }
+        if self.is_thread_local {
+            flags[index] = Some(ExportFlagName::ThreadLocal);
+            index += 1;
+        }
+        if self.is_absolute {
+            flags[index] = Some(ExportFlagName::Absolute);
+        }
+        flags.into_iter().flatten()
     }
 }
 
@@ -578,6 +612,8 @@ pub struct ObjcCategoryRecord {
     pub class_name_source: ObjcNameSource,
     pub property_list_pointer: Option<u64>,
     pub protocol_list_pointer: Option<u64>,
+    pub properties_source: ObjcNameSource,
+    pub protocols_source: ObjcNameSource,
     pub methods: Vec<ObjcMethodRecord>,
     pub class_methods: Vec<ObjcMethodRecord>,
     pub properties: Vec<ObjcPropertyRecord>,
@@ -705,6 +741,12 @@ impl ObjcMetadata {
     ) -> impl Iterator<Item = &'a ObjcCategoryRecord> {
         self.categories.iter().filter(move |category_record| {
             category_record.class_name.as_deref() == Some(class_name)
+        })
+    }
+
+    pub fn synthetic_categories(&self) -> impl Iterator<Item = &ObjcCategoryRecord> {
+        self.categories.iter().filter(|category_record| {
+            category_record.record_source == ObjcCategoryRecordSource::SymbolSynthesis
         })
     }
 
@@ -1091,6 +1133,13 @@ pub enum Annotation {
         index_register: String,
         element_size: u8,
     },
+    TableSlotResolved {
+        table_base: u64,
+        slot_address: u64,
+        index_register: String,
+        element_size: u8,
+        target: u64,
+    },
     IndirectTargetResolved {
         via: String,
         target: u64,
@@ -1195,6 +1244,16 @@ impl fmt::Display for Annotation {
             } => write!(
                 f,
                 "jump-table base={base:#x} index={index_register} elem_size={element_size}"
+            ),
+            Self::TableSlotResolved {
+                table_base,
+                slot_address,
+                index_register,
+                element_size,
+                target,
+            } => write!(
+                f,
+                "table-slot base={table_base:#x} slot={slot_address:#x} index={index_register} elem_size={element_size} target={target:#x}"
             ),
             Self::IndirectTargetResolved {
                 via,
@@ -1438,6 +1497,7 @@ pub enum RecoveredValueSource {
     Adr,
     AdrpAdd,
     AdrpLoad,
+    TableLoad,
     LiteralLoad,
     MoveWide,
     StubMetadata,

@@ -9,7 +9,7 @@ pub use model::{
     BinaryImageValidationError, BinarySource, DecodedInstruction, DisassemblyLimit,
     DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2, DisassemblyResult,
     DisassemblyResultV2, DisassemblyStopReason, DisassemblyTarget, DyldMetadata, Endianness,
-    ExportFlags, ExportKind, ExportRecord, ExportedSymbol, Import, ImportBindingKind,
+    ExportFlagName, ExportFlags, ExportKind, ExportRecord, ExportedSymbol, Import, ImportBindingKind,
     ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcClassRecord, ObjcIvarRecord,
     ObjcCategoryRecordSource, ObjcMetadata, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
     ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
