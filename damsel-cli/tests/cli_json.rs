@@ -1,6 +1,11 @@
 use assert_cmd::Command;
 use serde_json::Value;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_INPUT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -11,6 +16,20 @@ fn repo_root() -> PathBuf {
 
 fn fixture(name: &str) -> PathBuf {
     repo_root().join("fixtures/bin").join(name)
+}
+
+fn write_temp_input(bytes: &[u8]) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let counter = TEMP_INPUT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "damsel-cli-json-test-{}-{nanos}-{counter}.bin",
+        std::process::id()
+    ));
+    fs::write(&path, bytes).expect("write temp input");
+    path
 }
 
 fn run_json_ok(args: &[&str]) -> String {
@@ -65,6 +84,115 @@ fn assert_exact_object_keys(value: &Value, expected: &[&str]) {
         .collect::<Vec<_>>();
     expected_keys.sort();
     assert_eq!(sorted_object_keys(value), expected_keys);
+}
+
+#[test]
+fn doctor_json_contract_exposes_host_capabilities_and_tools() {
+    let out = run_json_ok(&["--format", "json", "doctor"]);
+    let json = parse_json(&out);
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["command"], "doctor");
+    assert_exact_object_keys(&json, &["schema_version", "command", "data"]);
+    assert_exact_object_keys(
+        &json["data"],
+        &["host", "overall_status", "capabilities", "tools", "issues"],
+    );
+    assert_exact_object_keys(
+        &json["data"]["host"],
+        &["os", "architecture", "target_triple"],
+    );
+    assert!(json["data"]["host"]["os"].is_string());
+    assert!(json["data"]["host"]["architecture"].is_string());
+    assert!(
+        json["data"]["host"]["target_triple"].is_string()
+            || json["data"]["host"]["target_triple"].is_null()
+    );
+    assert_exact_object_keys(
+        &json["data"]["capabilities"],
+        &[
+            "macho_analysis",
+            "fixture_rebuild",
+            "fixture_drift_check",
+            "benchmark",
+        ],
+    );
+    for key in [
+        "macho_analysis",
+        "fixture_rebuild",
+        "fixture_drift_check",
+        "benchmark",
+    ] {
+        assert_exact_object_keys(&json["data"]["capabilities"][key], &["status", "reasons"]);
+        let capability_status = json["data"]["capabilities"][key]["status"]
+            .as_str()
+            .expect("capability status string");
+        assert!(matches!(
+            capability_status,
+            "supported" | "supported-with-degraded-features" | "unsupported"
+        ));
+        let reasons = json["data"]["capabilities"][key]["reasons"]
+            .as_array()
+            .expect("reasons array");
+        for reason in reasons {
+            assert_exact_object_keys(reason, &["code", "message"]);
+            assert!(reason["code"].is_string());
+            assert!(reason["message"].is_string());
+        }
+    }
+    assert_exact_object_keys(
+        &json["data"]["tools"],
+        &["xcrun", "strip", "hash_tools", "selected_hash_tool"],
+    );
+    assert_exact_object_keys(&json["data"]["tools"]["xcrun"], &["detected"]);
+    assert_exact_object_keys(&json["data"]["tools"]["strip"], &["detected"]);
+    assert_exact_object_keys(
+        &json["data"]["tools"]["hash_tools"],
+        &["sha256sum", "shasum", "openssl"],
+    );
+    assert!(json["data"]["tools"]["xcrun"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["strip"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["hash_tools"]["sha256sum"].is_boolean());
+    assert!(json["data"]["tools"]["hash_tools"]["shasum"].is_boolean());
+    assert!(json["data"]["tools"]["hash_tools"]["openssl"].is_boolean());
+    let selected_hash_tool = json["data"]["tools"]["selected_hash_tool"].as_str();
+    let has_sha256sum = json["data"]["tools"]["hash_tools"]["sha256sum"] == true;
+    let has_shasum = json["data"]["tools"]["hash_tools"]["shasum"] == true;
+    let has_openssl = json["data"]["tools"]["hash_tools"]["openssl"] == true;
+    if let Some(selected) = selected_hash_tool {
+        assert!(matches!(selected, "sha256sum" | "shasum" | "openssl"));
+        assert!(json["data"]["tools"]["hash_tools"][selected] == true);
+    } else {
+        assert!(
+            !has_sha256sum && !has_shasum && !has_openssl,
+            "selected_hash_tool should be present when a hash tool is detected"
+        );
+    }
+    let status = json["data"]["overall_status"]
+        .as_str()
+        .expect("overall_status string");
+    assert!(matches!(
+        status,
+        "supported" | "supported-with-degraded-features" | "unsupported"
+    ));
+    let issues = json["data"]["issues"].as_array().expect("issues array");
+    for issue in issues {
+        assert_exact_object_keys(issue, &["code", "message"]);
+        assert!(issue["code"].is_string());
+        assert!(issue["message"].is_string());
+    }
+}
+
+#[test]
+fn error_json_envelope_for_unsupported_input() {
+    let path = write_temp_input(b"not a macho file");
+    let path_string = path.to_string_lossy().to_string();
+    let err = run_json_err(&["--format", "json", "info", path_string.as_str()]);
+    let _ = fs::remove_file(path);
+    let json = parse_json(&err);
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["command"], "error");
+    assert_eq!(json["data"]["code"], "unsupported_input");
+    assert!(json["data"]["message"].is_string());
 }
 
 #[test]
@@ -936,8 +1064,7 @@ fn disasm_json_exposes_relative_table_load_metadata_when_present() {
             .as_array()
             .is_some_and(|values| {
                 values.iter().any(|value| {
-                    value["source"] == "RelativeTableLoad"
-                        && value["kind"] == "FunctionPointer"
+                    value["source"] == "RelativeTableLoad" && value["kind"] == "FunctionPointer"
                 })
             })
     }));

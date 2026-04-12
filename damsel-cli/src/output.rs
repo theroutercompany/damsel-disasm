@@ -1,13 +1,16 @@
 use damsel_core::{
-    Annotation, BinaryImage, DecodedInstruction, ExportFlagName, ExportKind, Import,
-    ImportBindingKind, ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord,
-    ObjcCategoryRecordSource, ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind,
-    ObjcMethodRecord, ObjcNameSource, ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord,
-    ObjcProtocolRecord, ObjcSelectorSource, RecoveredValue, Reference, Relocation, Section,
-    SliceDescriptor, StubEntry, StubHelperEntry, StubKind, Symbol,
+    Annotation, BinaryImage, CapabilityStatus, CompatibilityIssue, DecodedInstruction,
+    ExportFlagName, ExportKind, HostArchitecture, HostPlatform, Import, ImportBindingKind,
+    ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource,
+    ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
+    ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
+    RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry,
+    StubKind, Symbol,
 };
+use std::env;
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OutputFormat {
@@ -139,6 +142,46 @@ pub(crate) struct ErrorResponse {
     pub details: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityReport {
+    status: CapabilityStatus,
+    reasons: Vec<CompatibilityIssue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolStatus {
+    detected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HashToolStatus {
+    sha256sum: bool,
+    shasum: bool,
+    openssl: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorTools {
+    xcrun: ToolStatus,
+    strip: ToolStatus,
+    hash_tools: HashToolStatus,
+    selected_hash_tool: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorReport {
+    host_platform: HostPlatform,
+    host_architecture: HostArchitecture,
+    target_triple: Option<String>,
+    overall_status: CapabilityStatus,
+    macho_analysis: CapabilityReport,
+    fixture_rebuild: CapabilityReport,
+    fixture_drift_check: CapabilityReport,
+    benchmark: CapabilityReport,
+    tools: DoctorTools,
+    issues: Vec<CompatibilityIssue>,
+}
+
 pub(crate) fn print_error(error: ErrorResponse, output: &OutputSettings) {
     match output.format {
         OutputFormat::Text => {
@@ -151,6 +194,16 @@ pub(crate) fn print_error(error: ErrorResponse, output: &OutputSettings) {
         OutputFormat::Json => {
             let dto = ErrorJsonDto { error: &error };
             emit_json_response_to_stderr("error", &dto, output);
+        }
+    }
+}
+
+pub(crate) fn print_doctor(output: &OutputSettings) {
+    let report = collect_doctor_report();
+    match output.format {
+        OutputFormat::Text => print_doctor_text(&report),
+        OutputFormat::Json => {
+            emit_json_response("doctor", &DoctorJsonDto { report: &report }, output)
         }
     }
 }
@@ -3063,6 +3116,113 @@ impl JsonDto for ErrorJsonDto<'_> {
     }
 }
 
+struct DoctorJsonDto<'a> {
+    report: &'a DoctorReport,
+}
+
+impl JsonDto for DoctorJsonDto<'_> {
+    fn to_json_value(&self) -> JsonValue {
+        let report = self.report;
+        JsonValue::Object(vec![
+            (
+                "host".to_string(),
+                JsonValue::Object(vec![
+                    (
+                        "os".to_string(),
+                        JsonValue::String(report.host_platform.to_string()),
+                    ),
+                    (
+                        "architecture".to_string(),
+                        JsonValue::String(report.host_architecture.to_string()),
+                    ),
+                    (
+                        "target_triple".to_string(),
+                        report
+                            .target_triple
+                            .as_ref()
+                            .map(|value| JsonValue::String(value.clone()))
+                            .unwrap_or(JsonValue::Null),
+                    ),
+                ]),
+            ),
+            (
+                "overall_status".to_string(),
+                JsonValue::String(report.overall_status.to_string()),
+            ),
+            (
+                "capabilities".to_string(),
+                JsonValue::Object(vec![
+                    (
+                        "macho_analysis".to_string(),
+                        capability_report_json(&report.macho_analysis),
+                    ),
+                    (
+                        "fixture_rebuild".to_string(),
+                        capability_report_json(&report.fixture_rebuild),
+                    ),
+                    (
+                        "fixture_drift_check".to_string(),
+                        capability_report_json(&report.fixture_drift_check),
+                    ),
+                    (
+                        "benchmark".to_string(),
+                        capability_report_json(&report.benchmark),
+                    ),
+                ]),
+            ),
+            (
+                "tools".to_string(),
+                JsonValue::Object(vec![
+                    (
+                        "xcrun".to_string(),
+                        JsonValue::Object(vec![(
+                            "detected".to_string(),
+                            JsonValue::Bool(report.tools.xcrun.detected),
+                        )]),
+                    ),
+                    (
+                        "strip".to_string(),
+                        JsonValue::Object(vec![(
+                            "detected".to_string(),
+                            JsonValue::Bool(report.tools.strip.detected),
+                        )]),
+                    ),
+                    (
+                        "hash_tools".to_string(),
+                        JsonValue::Object(vec![
+                            (
+                                "sha256sum".to_string(),
+                                JsonValue::Bool(report.tools.hash_tools.sha256sum),
+                            ),
+                            (
+                                "shasum".to_string(),
+                                JsonValue::Bool(report.tools.hash_tools.shasum),
+                            ),
+                            (
+                                "openssl".to_string(),
+                                JsonValue::Bool(report.tools.hash_tools.openssl),
+                            ),
+                        ]),
+                    ),
+                    (
+                        "selected_hash_tool".to_string(),
+                        report
+                            .tools
+                            .selected_hash_tool
+                            .as_ref()
+                            .map(|value| JsonValue::String(value.clone()))
+                            .unwrap_or(JsonValue::Null),
+                    ),
+                ]),
+            ),
+            (
+                "issues".to_string(),
+                JsonValue::Array(report.issues.iter().map(compatibility_issue_json).collect()),
+            ),
+        ])
+    }
+}
+
 fn reference_to_text(reference: &Reference) -> String {
     match reference {
         Reference::Call { target } => format!("call {target:#x}"),
@@ -3598,6 +3758,324 @@ fn recovered_value_json(value: &RecoveredValue) -> JsonValue {
             JsonValue::String(format!("{:?}", value.source)),
         ),
     ])
+}
+
+fn capability_report_json(report: &CapabilityReport) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "status".to_string(),
+            JsonValue::String(report.status.to_string()),
+        ),
+        (
+            "reasons".to_string(),
+            JsonValue::Array(
+                report
+                    .reasons
+                    .iter()
+                    .map(compatibility_issue_json)
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+fn compatibility_issue_json(issue: &CompatibilityIssue) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "code".to_string(),
+            JsonValue::String(issue.code.to_string()),
+        ),
+        (
+            "message".to_string(),
+            JsonValue::String(issue.message.clone()),
+        ),
+    ])
+}
+
+fn print_doctor_text(report: &DoctorReport) {
+    println!("host_os: {}", report.host_platform);
+    println!("host_architecture: {}", report.host_architecture);
+    println!(
+        "target_triple: {}",
+        report.target_triple.as_deref().unwrap_or("-")
+    );
+    println!("overall_status: {}", report.overall_status);
+    println!("capabilities:");
+    print_capability_line("macho_analysis", &report.macho_analysis);
+    print_capability_line("fixture_rebuild", &report.fixture_rebuild);
+    print_capability_line("fixture_drift_check", &report.fixture_drift_check);
+    print_capability_line("benchmark", &report.benchmark);
+    println!("tools:");
+    println!(
+        "  xcrun: {}",
+        if report.tools.xcrun.detected {
+            "detected"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  strip: {}",
+        if report.tools.strip.detected {
+            "detected"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  selected_hash_tool: {}",
+        report.tools.selected_hash_tool.as_deref().unwrap_or("none")
+    );
+    println!(
+        "  sha256sum: {}",
+        if report.tools.hash_tools.sha256sum {
+            "detected"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  shasum: {}",
+        if report.tools.hash_tools.shasum {
+            "detected"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "  openssl: {}",
+        if report.tools.hash_tools.openssl {
+            "detected"
+        } else {
+            "missing"
+        }
+    );
+    if report.issues.is_empty() {
+        println!("issues: none");
+    } else {
+        println!("issues:");
+        for issue in &report.issues {
+            println!("  - {}: {}", issue.code, issue.message);
+        }
+    }
+}
+
+fn print_capability_line(name: &str, report: &CapabilityReport) {
+    println!("  {name}: {}", report.status);
+    for reason in &report.reasons {
+        println!("    - {}: {}", reason.code, reason.message);
+    }
+}
+
+fn collect_doctor_report() -> DoctorReport {
+    let host_platform = HostPlatform::current();
+    let host_architecture = HostArchitecture::current();
+    let target_triple = option_env!("DAMSEL_TARGET_TRIPLE").map(ToString::to_string);
+    let tools = detect_doctor_tools();
+
+    let host_is_primary_supported = matches!(
+        (&host_platform, &host_architecture),
+        (HostPlatform::MacOS, _)
+            | (HostPlatform::Linux, HostArchitecture::X86_64)
+            | (HostPlatform::Linux, HostArchitecture::Arm64)
+    );
+
+    let macho_analysis = if host_is_primary_supported {
+        CapabilityReport {
+            status: CapabilityStatus::Supported,
+            reasons: Vec::new(),
+        }
+    } else {
+        CapabilityReport {
+            status: CapabilityStatus::SupportedWithDegradedFeatures,
+            reasons: vec![compatibility_issue(
+                "host_not_ci_verified",
+                "Mach-O analysis should still work, but this host pair is outside the current CI matrix.",
+            )],
+        }
+    };
+
+    let fixture_rebuild = {
+        let mut reasons = Vec::new();
+        let status = if host_platform != HostPlatform::MacOS {
+            reasons.push(compatibility_issue(
+                "fixture_rebuild_macos_only",
+                "Fixture rebuild requires macOS and Xcode tooling.",
+            ));
+            CapabilityStatus::Unsupported
+        } else {
+            if !tools.xcrun.detected {
+                reasons.push(compatibility_issue(
+                    "missing_xcrun",
+                    "xcrun was not found on PATH.",
+                ));
+            }
+            if !tools.strip.detected {
+                reasons.push(compatibility_issue(
+                    "missing_strip",
+                    "strip was not found on PATH.",
+                ));
+            }
+            if reasons.is_empty() {
+                if host_platform == HostPlatform::MacOS {
+                    CapabilityStatus::Supported
+                } else {
+                    reasons.push(compatibility_issue(
+                        "host_not_ci_verified",
+                        "Fixture rebuild is not covered by the current CI host matrix on this host pair.",
+                    ));
+                    CapabilityStatus::SupportedWithDegradedFeatures
+                }
+            } else {
+                CapabilityStatus::Unsupported
+            }
+        };
+        CapabilityReport { status, reasons }
+    };
+
+    let fixture_drift_check = {
+        let mut reasons = Vec::new();
+        let status = if tools.selected_hash_tool.is_some() {
+            CapabilityStatus::Supported
+        } else {
+            reasons.push(compatibility_issue(
+                "missing_hash_tool",
+                "No supported hash tool detected; fixture drift check expects sha256sum, shasum, or openssl.",
+            ));
+            CapabilityStatus::Unsupported
+        };
+        CapabilityReport { status, reasons }
+    };
+
+    let benchmark = {
+        let mut reasons = Vec::new();
+        let status = if host_platform == HostPlatform::Linux
+            && host_architecture == HostArchitecture::Arm64
+        {
+            CapabilityStatus::Supported
+        } else {
+            reasons.push(compatibility_issue(
+                "throughput_smoke_linux_arm64_only",
+                "Throughput smoke runs only on linux arm64; other hosts support benchmark compile smoke.",
+            ));
+            CapabilityStatus::SupportedWithDegradedFeatures
+        };
+        CapabilityReport { status, reasons }
+    };
+
+    let issues = macho_analysis
+        .reasons
+        .iter()
+        .chain(fixture_rebuild.reasons.iter())
+        .chain(fixture_drift_check.reasons.iter())
+        .chain(benchmark.reasons.iter())
+        .cloned()
+        .collect::<Vec<_>>();
+    let overall_status = [
+        macho_analysis.status,
+        fixture_rebuild.status,
+        fixture_drift_check.status,
+        benchmark.status,
+    ]
+    .iter()
+    .max_by_key(|status| capability_status_severity(**status))
+    .copied()
+    .unwrap_or(CapabilityStatus::Supported);
+
+    DoctorReport {
+        host_platform,
+        host_architecture,
+        target_triple,
+        overall_status,
+        macho_analysis,
+        fixture_rebuild,
+        fixture_drift_check,
+        benchmark,
+        tools,
+        issues,
+    }
+}
+
+fn detect_doctor_tools() -> DoctorTools {
+    let hash_tools = HashToolStatus {
+        sha256sum: command_exists("sha256sum"),
+        shasum: command_exists("shasum"),
+        openssl: command_exists("openssl"),
+    };
+    let selected_hash_tool = if hash_tools.sha256sum {
+        Some("sha256sum".to_string())
+    } else if hash_tools.shasum {
+        Some("shasum".to_string())
+    } else if hash_tools.openssl {
+        Some("openssl".to_string())
+    } else {
+        None
+    };
+    DoctorTools {
+        xcrun: ToolStatus {
+            detected: command_exists("xcrun"),
+        },
+        strip: ToolStatus {
+            detected: command_exists("strip"),
+        },
+        hash_tools,
+        selected_hash_tool,
+    }
+}
+
+fn command_exists(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if Path::new(name).components().count() > 1 {
+        return Path::new(name).is_file();
+    }
+    let Some(paths) = env::var_os("PATH") else {
+        return false;
+    };
+    #[cfg(windows)]
+    let path_exts = env::var_os("PATHEXT")
+        .map(|exts| {
+            exts.to_string_lossy()
+                .split(';')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![".EXE".to_string(), ".BAT".to_string(), ".CMD".to_string()]);
+    for dir in env::split_paths(&paths) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            for ext in &path_exts {
+                let suffix = ext.trim_start_matches('.');
+                let with_ext = dir.join(format!("{name}.{suffix}"));
+                if with_ext.is_file() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn compatibility_issue(code: &'static str, message: impl Into<String>) -> CompatibilityIssue {
+    CompatibilityIssue::new(code, message)
+}
+
+fn capability_status_severity(status: CapabilityStatus) -> u8 {
+    match status {
+        CapabilityStatus::Supported => 0,
+        CapabilityStatus::SupportedWithDegradedFeatures => 1,
+        CapabilityStatus::Unsupported => 2,
+    }
 }
 
 fn emit_json_response<T: JsonDto>(command: &str, dto: &T, output: &OutputSettings) {

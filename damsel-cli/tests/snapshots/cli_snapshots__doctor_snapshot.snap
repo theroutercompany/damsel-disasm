@@ -1,0 +1,21 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: normalized
+---
+host_os: <host_os>
+host_architecture: <host_architecture>
+target_triple: <target_triple>
+overall_status: <status>
+capabilities:
+  macho_analysis: <status>
+  fixture_rebuild: <status>
+  fixture_drift_check: <status>
+  benchmark: <status>
+tools:
+  xcrun: <detected>
+  strip: <detected>
+  selected_hash_tool: <tool>
+  sha256sum: <detected>
+  shasum: <detected>
+  openssl: <detected>
+issues: <summary>

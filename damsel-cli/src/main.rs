@@ -271,6 +271,7 @@ impl From<ObjcSelectorSourceArg> for ObjcSelectorSource {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Doctor,
     Info {
         path: PathBuf,
     },
@@ -461,6 +462,9 @@ impl Error for CliRunError {}
 
 fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunError> {
     match cli.command {
+        Command::Doctor => {
+            output::print_doctor(&output_settings);
+        }
         Command::Info { path } => {
             let image = load_image(path)?;
             output::print_info(&image, &output_settings);
@@ -897,6 +901,15 @@ fn map_disasm_error(error: damsel_macho::MachoError) -> CliRunError {
 
 fn map_macho_error(error: damsel_macho::MachoError) -> CliRunError {
     match error {
+        damsel_macho::MachoError::UnsupportedInputKind(kind) => CliRunError::command(
+            "unsupported_input",
+            format!("unsupported input kind: {kind}"),
+        ),
+        damsel_macho::MachoError::UnsupportedThinArchitecture { .. }
+        | damsel_macho::MachoError::MissingArm64SliceInUniversal
+        | damsel_macho::MachoError::UnsupportedArchitecture(_) => {
+            CliRunError::command("unsupported_architecture", error.to_string())
+        }
         damsel_macho::MachoError::SymbolNotFound(symbol) => {
             CliRunError::command("symbol_not_found", format!("symbol not found: {symbol}"))
         }
@@ -909,6 +922,12 @@ fn map_macho_error(error: damsel_macho::MachoError) -> CliRunError {
         ),
         damsel_macho::MachoError::Decode(inner) => {
             CliRunError::command("decode_error", format!("decode error: {inner}"))
+        }
+        damsel_macho::MachoError::MalformedFatBinary(_)
+        | damsel_macho::MachoError::MalformedDyldPayload(_)
+        | damsel_macho::MachoError::SliceOutOfBounds { .. }
+        | damsel_macho::MachoError::LinkeditRangeOutOfBounds { .. } => {
+            CliRunError::command("malformed_input", error.to_string())
         }
         other => CliRunError::command("load_error", other.to_string()),
     }

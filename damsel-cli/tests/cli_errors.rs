@@ -1,6 +1,11 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_INPUT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -11,6 +16,20 @@ fn repo_root() -> PathBuf {
 
 fn fixture(name: &str) -> PathBuf {
     repo_root().join("fixtures/bin").join(name)
+}
+
+fn write_temp_input(bytes: &[u8]) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let counter = TEMP_INPUT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "damsel-cli-test-{}-{nanos}-{counter}.bin",
+        std::process::id()
+    ));
+    fs::write(&path, bytes).expect("write temp input");
+    path
 }
 
 #[test]
@@ -27,6 +46,19 @@ fn disasm_unknown_symbol_returns_error() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("error [symbol_not_found]"));
+}
+
+#[test]
+fn info_non_macho_returns_typed_unsupported_input_error() {
+    let path = write_temp_input(b"not a macho file");
+    let path_string = path.to_string_lossy().to_string();
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args(["info", path_string.as_str()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [unsupported_input]"));
+    let _ = fs::remove_file(path);
 }
 
 #[test]

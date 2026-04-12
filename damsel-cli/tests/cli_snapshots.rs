@@ -21,6 +21,53 @@ fn normalize(output: &[u8]) -> String {
         .to_string()
 }
 
+fn normalize_doctor_snapshot(output: &str) -> String {
+    output
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if line.starts_with("host_os: ") {
+                Some("host_os: <host_os>".to_string())
+            } else if line.starts_with("host_architecture: ") {
+                Some("host_architecture: <host_architecture>".to_string())
+            } else if line.starts_with("target_triple: ") {
+                Some("target_triple: <target_triple>".to_string())
+            } else if line.starts_with("overall_status: ") {
+                Some("overall_status: <status>".to_string())
+            } else if line == "capabilities:" {
+                Some("capabilities:".to_string())
+            } else if trimmed.starts_with("macho_analysis: ") {
+                Some("  macho_analysis: <status>".to_string())
+            } else if trimmed.starts_with("fixture_rebuild: ") {
+                Some("  fixture_rebuild: <status>".to_string())
+            } else if trimmed.starts_with("fixture_drift_check: ") {
+                Some("  fixture_drift_check: <status>".to_string())
+            } else if trimmed.starts_with("benchmark: ") {
+                Some("  benchmark: <status>".to_string())
+            } else if line == "tools:" {
+                Some("tools:".to_string())
+            } else if trimmed.starts_with("xcrun: ") {
+                Some("  xcrun: <detected>".to_string())
+            } else if trimmed.starts_with("strip: ") {
+                Some("  strip: <detected>".to_string())
+            } else if trimmed.starts_with("selected_hash_tool: ") {
+                Some("  selected_hash_tool: <tool>".to_string())
+            } else if trimmed.starts_with("sha256sum: ") {
+                Some("  sha256sum: <detected>".to_string())
+            } else if trimmed.starts_with("shasum: ") {
+                Some("  shasum: <detected>".to_string())
+            } else if trimmed.starts_with("openssl: ") {
+                Some("  openssl: <detected>".to_string())
+            } else if line.starts_with("issues:") {
+                Some("issues: <summary>".to_string())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn run_snapshot(args: &[&str]) -> String {
     let output = Command::cargo_bin("damsel-cli")
         .expect("binary exists")
@@ -215,4 +262,11 @@ fn disasm_show_values_snapshot() {
         "--show-values",
     ]);
     insta::assert_snapshot!("disasm_show_values_snapshot", stdout);
+}
+
+#[test]
+fn doctor_snapshot() {
+    let stdout = run_snapshot(&["doctor"]);
+    let normalized = normalize_doctor_snapshot(&stdout);
+    insta::assert_snapshot!("doctor_snapshot", normalized);
 }
