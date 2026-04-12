@@ -6,21 +6,27 @@ use damsel_core::{
 use std::collections::BTreeMap;
 
 pub fn disassemble(image: &BinaryImage, request: &DisassemblyRequest) -> Result<DisassemblyResult> {
-    let (target, start_address, bytes) = resolve_disassembly_target(image, request)?;
+    let window = resolve_disassembly_target(image, request)?;
     let mut instructions = damsel_core::decode_aarch64(
-        bytes,
-        start_address,
+        window.bytes,
+        window.start_address,
         image.effective_instruction_limit(request),
     )?;
-    synthesize_adrp_pair_references(&mut instructions);
-    annotate_instructions(image, &mut instructions);
+    let include_annotations = request.include_annotations;
+    if !include_annotations {
+        for instruction in &mut instructions {
+            instruction.annotations.clear();
+        }
+    }
+    synthesize_analysis_references(&mut instructions, include_annotations);
+    annotate_instructions(image, &mut instructions, include_annotations);
     let decoded_bytes = instructions
         .last()
         .map(|instruction| {
             instruction
                 .address
                 .saturating_add(u64::from(instruction.size))
-                .saturating_sub(start_address) as usize
+                .saturating_sub(window.start_address) as usize
         })
         .unwrap_or(0);
     let end_address = instructions
@@ -30,21 +36,14 @@ pub fn disassemble(image: &BinaryImage, request: &DisassemblyRequest) -> Result<
                 .address
                 .saturating_add(u64::from(instruction.size))
         })
-        .unwrap_or(start_address);
+        .unwrap_or(window.start_address);
     let instruction_count = instructions.len();
-    let stop_reason = if image
-        .effective_instruction_limit(request)
-        .is_some_and(|limit| instruction_count >= limit)
-    {
-        damsel_core::DisassemblyStopReason::LimitReached
-    } else {
-        damsel_core::DisassemblyStopReason::InputExhausted
-    };
+    let stop_reason = determine_stop_reason(request, &window, decoded_bytes, instruction_count);
 
     Ok(DisassemblyResult {
-        target,
-        start_address,
-        bytes_len: bytes.len(),
+        target: window.target,
+        start_address: window.start_address,
+        bytes_len: window.bytes.len(),
         decoded_bytes,
         end_address,
         instruction_count,
@@ -53,10 +52,17 @@ pub fn disassemble(image: &BinaryImage, request: &DisassemblyRequest) -> Result<
     })
 }
 
+struct TargetWindow<'a> {
+    target: String,
+    start_address: u64,
+    bytes: &'a [u8],
+    request_limited: bool,
+}
+
 fn resolve_disassembly_target<'a>(
     image: &'a BinaryImage,
     request: &DisassemblyRequest,
-) -> Result<(String, u64, &'a [u8])> {
+) -> Result<TargetWindow<'a>> {
     match &request.target {
         DisassemblyTarget::Section(section_name) => {
             let section = image
@@ -65,21 +71,13 @@ fn resolve_disassembly_target<'a>(
             let data = image
                 .bytes_for_section(section)
                 .ok_or_else(|| MachoError::SectionHasNoFileData(section.full_name()))?;
-            let limit_bytes = match request.limit {
-                Some(damsel_core::DisassemblyLimit::Instructions(count)) => {
-                    Some(count.saturating_mul(4))
-                }
-                Some(damsel_core::DisassemblyLimit::Bytes(bytes)) => Some(bytes),
-                Some(damsel_core::DisassemblyLimit::Unlimited) => None,
-                None => request
-                    .max_instructions
-                    .map(|count| count.saturating_mul(4)),
-            };
-            Ok((
-                section.full_name(),
-                section.address,
-                clamp_bytes(data, limit_bytes),
-            ))
+            let (bytes, request_limited) = clamp_to_request_limit(request, data);
+            Ok(TargetWindow {
+                target: section.full_name(),
+                start_address: section.address,
+                bytes,
+                request_limited,
+            })
         }
         DisassemblyTarget::Address(address) => {
             let section = image
@@ -103,7 +101,12 @@ fn resolve_disassembly_target<'a>(
             let data = image
                 .bytes_for_file_range(file_offset + delta, size as u64)
                 .ok_or(MachoError::AddressNotMapped(*address))?;
-            Ok((format!("{address:#x}"), *address, data))
+            Ok(TargetWindow {
+                target: format!("{address:#x}"),
+                start_address: *address,
+                bytes: data,
+                request_limited: size < available,
+            })
         }
         DisassemblyTarget::Symbol(symbol_name) => {
             let symbol = image
@@ -139,7 +142,12 @@ fn resolve_disassembly_target<'a>(
             let data = image
                 .bytes_for_file_range(file_offset + delta, size)
                 .ok_or(MachoError::AddressNotMapped(symbol.address))?;
-            Ok((symbol.name.clone(), symbol.address, data))
+            Ok(TargetWindow {
+                target: symbol.name.clone(),
+                start_address: symbol.address,
+                bytes: data,
+                request_limited: size < inferred_size.min(section.size.saturating_sub(delta)),
+            })
         }
     }
 }
@@ -160,14 +168,71 @@ fn next_symbol_boundary(image: &BinaryImage, symbol: &Symbol, section: &Section)
         .min()
 }
 
-fn clamp_bytes(bytes: &[u8], limit: Option<usize>) -> &[u8] {
-    match limit {
-        Some(limit) => &bytes[..bytes.len().min(limit)],
-        None => bytes,
+fn clamp_to_request_limit<'a>(request: &DisassemblyRequest, bytes: &'a [u8]) -> (&'a [u8], bool) {
+    let limit_bytes = match request.limit {
+        Some(damsel_core::DisassemblyLimit::Instructions(count)) => Some(count.saturating_mul(4)),
+        Some(damsel_core::DisassemblyLimit::Bytes(bytes)) => Some(bytes),
+        Some(damsel_core::DisassemblyLimit::Unlimited) => None,
+        None => request
+            .max_instructions
+            .map(|count| count.saturating_mul(4)),
+    };
+    match limit_bytes {
+        Some(limit) if limit < bytes.len() => (&bytes[..limit], true),
+        _ => (bytes, false),
     }
 }
 
-fn annotate_instructions(image: &BinaryImage, instructions: &mut [DecodedInstruction]) {
+fn determine_stop_reason(
+    request: &DisassemblyRequest,
+    window: &TargetWindow<'_>,
+    decoded_bytes: usize,
+    instruction_count: usize,
+) -> damsel_core::DisassemblyStopReason {
+    if window.bytes.is_empty() {
+        return damsel_core::DisassemblyStopReason::InputExhausted;
+    }
+
+    if image_limit_reached(
+        request,
+        instruction_count,
+        decoded_bytes,
+        window.bytes.len(),
+    ) {
+        return damsel_core::DisassemblyStopReason::LimitReached;
+    }
+
+    if instruction_count == 0 || decoded_bytes == 0 || decoded_bytes < window.bytes.len() {
+        return damsel_core::DisassemblyStopReason::DecodeHalt;
+    }
+
+    if window.request_limited {
+        return damsel_core::DisassemblyStopReason::LimitReached;
+    }
+
+    damsel_core::DisassemblyStopReason::TargetRangeEnd
+}
+
+fn image_limit_reached(
+    request: &DisassemblyRequest,
+    instruction_count: usize,
+    decoded_bytes: usize,
+    window_len: usize,
+) -> bool {
+    match request.effective_limit() {
+        damsel_core::DisassemblyLimit::Instructions(count) => instruction_count >= count,
+        damsel_core::DisassemblyLimit::Bytes(bytes) => {
+            decoded_bytes >= bytes.min(window_len) && bytes <= window_len
+        }
+        damsel_core::DisassemblyLimit::Unlimited => false,
+    }
+}
+
+fn annotate_instructions(
+    image: &BinaryImage,
+    instructions: &mut [DecodedInstruction],
+    include_annotations: bool,
+) {
     let symbol_map = image
         .symbols
         .iter()
@@ -198,8 +263,48 @@ fn annotate_instructions(image: &BinaryImage, instructions: &mut [DecodedInstruc
 
     for instruction in instructions {
         let mut derived = Vec::new();
-        push_instruction_address_annotations(&mut derived, &symbol_map, instruction.address);
+        if include_annotations {
+            push_instruction_address_annotations(&mut derived, &symbol_map, instruction.address);
+        }
         let mut import_already_tagged = false;
+        let mut synthesized_import_refs = Vec::<Reference>::new();
+
+        if let Some(stub) = image.dyld.stub_for_address(instruction.address) {
+            push_reference_if_missing(
+                &mut instruction.references,
+                Reference::Stub {
+                    stub_address: stub.stub_address,
+                    pointer_address: stub.pointer_address,
+                    dylib: stub.dylib.clone(),
+                    name: stub.name.clone(),
+                    source: stub.source,
+                },
+            );
+            if let (Some(dylib), Some(name)) = (&stub.dylib, &stub.name) {
+                push_reference_if_missing(
+                    &mut instruction.references,
+                    Reference::Import {
+                        name: name.clone(),
+                        dylib: dylib.clone(),
+                        address: stub.pointer_address,
+                    },
+                );
+                if include_annotations {
+                    push_derived(
+                        &mut derived,
+                        DerivedAnnotation::ImportBindingEvidence {
+                            dylib: dylib.clone(),
+                            name: name.clone(),
+                            address: stub.pointer_address,
+                            offset: None,
+                            addend: 0,
+                            source: stub.source,
+                        },
+                    );
+                }
+                import_already_tagged = true;
+            }
+        }
 
         for reference in instruction.references.clone() {
             match reference {
@@ -208,55 +313,171 @@ fn annotate_instructions(image: &BinaryImage, instructions: &mut [DecodedInstruc
                 | Reference::Page { target }
                 | Reference::Data { target } => {
                     import_already_tagged |= push_reference_target_annotations(
-                        &mut derived,
+                        include_annotations.then_some(&mut derived),
                         &symbol_map,
                         &import_address_map,
+                        &import_name_map,
+                        image,
+                        &mut synthesized_import_refs,
                         target,
                     );
+                    import_already_tagged |= push_dyld_target_hooks(
+                        include_annotations.then_some(&mut derived),
+                        image,
+                        &mut instruction.references,
+                        target,
+                    );
+                }
+                Reference::IndirectCall { via } => {
+                    if include_annotations {
+                        push_derived(
+                            &mut derived,
+                            DerivedAnnotation::IndirectControlFlow {
+                                kind: "call".to_string(),
+                                via,
+                            },
+                        );
+                    }
+                }
+                Reference::IndirectBranch { via } => {
+                    if include_annotations {
+                        push_derived(
+                            &mut derived,
+                            DerivedAnnotation::IndirectControlFlow {
+                                kind: "branch".to_string(),
+                                via,
+                            },
+                        );
+                    }
                 }
                 Reference::Import {
                     name,
                     dylib,
                     address,
                 } => {
-                    push_derived(
-                        &mut derived,
-                        DerivedAnnotation::Import {
-                            dylib: dylib.clone(),
-                            name: name.clone(),
-                        },
-                    );
-                    if let Some(address) = address {
+                    if include_annotations {
                         push_derived(
                             &mut derived,
-                            DerivedAnnotation::TargetSymbol {
+                            DerivedAnnotation::Import {
+                                dylib: dylib.clone(),
+                                name: name.clone(),
+                            },
+                        );
+                        if let Some(address) = address {
+                            push_derived(
+                                &mut derived,
+                                DerivedAnnotation::TargetSymbol {
+                                    address,
+                                    name: format!("{dylib}:{name}"),
+                                },
+                            );
+                        }
+                    }
+                    import_already_tagged = true;
+                }
+                Reference::ImportBinding {
+                    dylib,
+                    name,
+                    address,
+                    offset,
+                    addend,
+                    source,
+                    is_weak: _,
+                } => {
+                    push_reference_if_missing(
+                        &mut synthesized_import_refs,
+                        Reference::Import {
+                            name: name.clone(),
+                            dylib: dylib.clone(),
+                            address,
+                        },
+                    );
+                    if include_annotations {
+                        push_derived(
+                            &mut derived,
+                            DerivedAnnotation::ImportBindingEvidence {
+                                dylib,
+                                name,
                                 address,
-                                name: format!("{dylib}:{name}"),
+                                offset,
+                                addend,
+                                source,
                             },
                         );
                     }
                     import_already_tagged = true;
                 }
+                Reference::Stub {
+                    stub_address: _,
+                    pointer_address: _,
+                    dylib,
+                    name,
+                    source,
+                } => {
+                    if include_annotations {
+                        if let (Some(dylib), Some(name)) = (dylib, name) {
+                            push_derived(
+                                &mut derived,
+                                DerivedAnnotation::ImportBindingEvidence {
+                                    dylib,
+                                    name,
+                                    address: None,
+                                    offset: None,
+                                    addend: 0,
+                                    source,
+                                },
+                            );
+                        }
+                    }
+                }
+                Reference::RelocationEvidence {
+                    address,
+                    kind,
+                    encoding,
+                    target,
+                    addend,
+                } => {
+                    if include_annotations {
+                        push_derived(
+                            &mut derived,
+                            DerivedAnnotation::Relocation {
+                                address,
+                                kind,
+                                encoding,
+                                target,
+                                addend,
+                            },
+                        );
+                    }
+                }
             }
         }
 
         for relocation in overlapping_relocations(&image.relocations, instruction) {
-            push_derived(
-                &mut derived,
-                DerivedAnnotation::Relocation {
-                    address: relocation.address,
-                    kind: relocation.kind.clone(),
-                    encoding: relocation.encoding.clone(),
-                    target: relocation.target.clone(),
-                    addend: relocation.addend,
-                },
-            );
+            if include_annotations {
+                push_derived(
+                    &mut derived,
+                    DerivedAnnotation::Relocation {
+                        address: relocation.address,
+                        kind: relocation.kind.clone(),
+                        encoding: relocation.encoding.clone(),
+                        target: relocation.target.clone(),
+                        addend: relocation.addend,
+                    },
+                );
+            }
 
-            if !import_already_tagged {
-                if let Some(imports) =
-                    import_name_map.get(&normalize_import_name(&relocation.target))
-                {
-                    for import in imports {
+            if let Some(imports) = import_name_map.get(&normalize_import_name(&relocation.target)) {
+                for import in imports {
+                    push_reference_if_missing(
+                        &mut synthesized_import_refs,
+                        Reference::Import {
+                            name: import.name.clone(),
+                            dylib: import.dylib.clone(),
+                            address: import.address,
+                        },
+                    );
+                    if include_annotations && !import_already_tagged {
                         push_derived(
                             &mut derived,
                             DerivedAnnotation::Import {
@@ -270,65 +491,153 @@ fn annotate_instructions(image: &BinaryImage, instructions: &mut [DecodedInstruc
             }
         }
 
-        for item in derived {
-            push_annotation(&mut instruction.annotations, item.into_annotation());
+        for reference in synthesized_import_refs {
+            if !instruction.references.contains(&reference) {
+                instruction.references.push(reference);
+            }
+        }
+
+        if include_annotations {
+            for item in derived {
+                push_annotation(&mut instruction.annotations, item.into_annotation());
+            }
         }
     }
 }
 
-fn synthesize_adrp_pair_references(instructions: &mut [DecodedInstruction]) {
-    let mut page_base_by_register = BTreeMap::<String, u64>::new();
+fn synthesize_analysis_references(
+    instructions: &mut [DecodedInstruction],
+    include_annotations: bool,
+) {
+    let mut known_values = BTreeMap::<String, u64>::new();
 
     for instruction in instructions {
         let lower = instruction.mnemonic.to_ascii_lowercase();
+        let destination = destination_register(instruction);
+        let mut destination_updated = false;
 
-        if lower == "adrp" {
-            if let (Some(target), Some(register)) = (
-                page_reference_target(instruction),
-                destination_register(instruction),
-            ) {
-                page_base_by_register.insert(register.clone(), target);
-                push_annotation(
-                    &mut instruction.annotations,
-                    Annotation::Note(format!("adrp base {register} -> {target:#x}")),
-                );
-            }
-            continue;
-        }
-
-        if let Some((base_register, displacement)) = pairing_inputs(instruction)
-            .map(|(base_register, displacement)| (base_register.to_string(), displacement))
-        {
-            if let Some(page_base) = page_base_by_register.get(base_register.as_str()).copied() {
-                if let Some(target) = add_signed(page_base, displacement) {
-                    let synthesized = Reference::Data { target };
-                    if !instruction.references.contains(&synthesized) {
-                        instruction.references.push(synthesized);
-                    }
+        if lower == "adrp" || lower == "adr" {
+            if let (Some(target), Some(register)) =
+                (page_reference_target(instruction), destination.as_ref())
+            {
+                known_values.insert(register.clone(), target);
+                destination_updated = true;
+                if include_annotations {
                     push_annotation(
                         &mut instruction.annotations,
-                        Annotation::Note(format!(
-                            "adrp pair {base_register} + {displacement:#x} -> {target:#x}"
-                        )),
+                        Annotation::Note(format!("page base {register} -> {target:#x}")),
                     );
                 }
             }
         }
 
-        if let Some(register) = indirect_control_register(instruction).map(str::to_string) {
-            if let Some(page_base) = page_base_by_register.get(register.as_str()).copied() {
+        if let Some((register, value)) = synthesize_mov_wide_value(instruction, &known_values) {
+            known_values.insert(register, value);
+            destination_updated = true;
+        }
+
+        let add_inputs = add_immediate_inputs(instruction);
+        if let Some((dest, base_register, displacement)) = add_inputs {
+            if let Some(base) = known_values.get(base_register.as_str()).copied() {
+                if let Some(target) = add_signed(base, displacement) {
+                    if let Some(dest) = dest {
+                        known_values.insert(dest, target);
+                        destination_updated = true;
+                    }
+                    push_reference_if_missing(
+                        &mut instruction.references,
+                        Reference::Data { target },
+                    );
+                    if include_annotations {
+                        push_annotation(
+                            &mut instruction.annotations,
+                            Annotation::Note(format!(
+                                "add synthesis {} + {displacement:#x} -> {target:#x}",
+                                base_register
+                            )),
+                        );
+                    }
+                }
+            }
+        }
+
+        let memory_inputs = memory_base_displacement(instruction);
+        if let Some((base_register, displacement)) = memory_inputs {
+            if let Some(base) = known_values.get(base_register.as_str()).copied() {
+                if let Some(target) = add_signed(base, displacement) {
+                    push_reference_if_missing(
+                        &mut instruction.references,
+                        Reference::Data { target },
+                    );
+                    if include_annotations {
+                        push_annotation(
+                            &mut instruction.annotations,
+                            Annotation::Note(format!(
+                                "memory synthesis {} + {displacement:#x} -> {target:#x}",
+                                base_register
+                            )),
+                        );
+                    }
+                }
+            }
+        }
+
+        let indirect_register = indirect_control_register(instruction);
+        if let Some(register) = indirect_register {
+            let indirect_reference = if is_call_mnemonic(&lower) {
+                Reference::IndirectCall {
+                    via: register.clone(),
+                }
+            } else {
+                Reference::IndirectBranch {
+                    via: register.clone(),
+                }
+            };
+            push_reference_if_missing(&mut instruction.references, indirect_reference);
+
+            if let Some(target) = known_values.get(register.as_str()).copied() {
+                let resolved_reference = if is_call_mnemonic(&lower) {
+                    Reference::Call { target }
+                } else {
+                    Reference::Branch { target }
+                };
+                push_reference_if_missing(&mut instruction.references, resolved_reference);
+                if include_annotations {
+                    push_annotation(
+                        &mut instruction.annotations,
+                        Annotation::IndirectControlFlow {
+                            kind: if is_call_mnemonic(&lower) {
+                                "call".to_string()
+                            } else {
+                                "branch".to_string()
+                            },
+                            via: register.clone(),
+                        },
+                    );
+                }
+            } else if include_annotations {
                 push_annotation(
                     &mut instruction.annotations,
-                    Annotation::Note(format!("adrp hook {register} -> {page_base:#x}")),
+                    Annotation::IndirectControlFlow {
+                        kind: if is_call_mnemonic(&lower) {
+                            "call".to_string()
+                        } else {
+                            "branch".to_string()
+                        },
+                        via: register,
+                    },
                 );
             }
         }
 
-        if let Some(destination) = destination_register(instruction) {
-            page_base_by_register.remove(&destination);
+        if let Some(destination) = destination {
+            if !destination_updated && instruction_writes_destination(&lower) {
+                known_values.remove(&destination);
+            }
         }
-        if is_hard_control_flow_boundary(&lower) {
-            page_base_by_register.clear();
+
+        if is_hard_control_flow_boundary(&lower) && !matches!(lower.as_str(), "bl" | "blr") {
+            known_values.clear();
         }
     }
 }
@@ -352,35 +661,54 @@ fn destination_register(instruction: &DecodedInstruction) -> Option<String> {
     }
 }
 
-fn pairing_inputs(instruction: &DecodedInstruction) -> Option<(&str, i64)> {
+fn add_immediate_inputs(instruction: &DecodedInstruction) -> Option<(Option<String>, String, i64)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
-    if lower.starts_with("add") {
-        if let [_, Operand::Register(base), immediate, ..] = instruction.operands.as_slice() {
+    if lower.starts_with("add") || lower == "sub" || lower.starts_with("subs") {
+        if let [destination, Operand::Register(base), immediate, ..] =
+            instruction.operands.as_slice()
+        {
             let displacement = match immediate {
                 Operand::ImmediateUnsigned(value) => i64::try_from(*value).ok()?,
                 Operand::ImmediateSigned(value) => *value,
                 Operand::Label(value) => i64::try_from(*value).ok()?,
                 _ => return None,
             };
-            return Some((base.as_str(), displacement));
+            let displacement = if lower.starts_with("sub") {
+                displacement.saturating_neg()
+            } else {
+                displacement
+            };
+            let destination = match destination {
+                Operand::Register(register) => Some(register.clone()),
+                _ => None,
+            };
+            return Some((destination, base.clone(), displacement));
         }
     }
 
-    if lower.starts_with("ldr")
-        || lower.starts_with("str")
+    None
+}
+
+fn memory_base_displacement(instruction: &DecodedInstruction) -> Option<(String, i64)> {
+    let lower = instruction.mnemonic.to_ascii_lowercase();
+    if !(lower.starts_with("ldr")
         || lower.starts_with("ldp")
+        || lower.starts_with("str")
         || lower.starts_with("stp")
+        || lower.starts_with("ldur")
+        || lower.starts_with("stur"))
     {
-        for operand in &instruction.operands {
-            if let Operand::Memory {
-                base, displacement, ..
-            } = operand
-            {
-                return Some((base.as_str(), *displacement));
-            }
-        }
+        return None;
     }
 
+    for operand in &instruction.operands {
+        if let Operand::Memory {
+            base, displacement, ..
+        } = operand
+        {
+            return Some((base.clone(), *displacement));
+        }
+    }
     None
 }
 
@@ -392,7 +720,7 @@ fn add_signed(base: u64, delta: i64) -> Option<u64> {
     }
 }
 
-fn indirect_control_register(instruction: &DecodedInstruction) -> Option<&str> {
+fn indirect_control_register(instruction: &DecodedInstruction) -> Option<String> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
     if !matches!(
         lower.as_str(),
@@ -413,7 +741,8 @@ fn indirect_control_register(instruction: &DecodedInstruction) -> Option<&str> {
         .operands
         .iter()
         .find_map(|operand| match operand {
-            Operand::Register(register) => Some(register.as_str()),
+            Operand::Register(register) => Some(register.clone()),
+            Operand::Memory { base, .. } => Some(base.clone()),
             _ => None,
         })
 }
@@ -424,6 +753,97 @@ fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
         || mnemonic.starts_with("b.")
         || mnemonic == "b"
         || mnemonic == "bl"
+}
+
+fn instruction_writes_destination(mnemonic: &str) -> bool {
+    !(mnemonic == "cmp"
+        || mnemonic == "cmn"
+        || mnemonic == "tst"
+        || mnemonic == "tbz"
+        || mnemonic == "tbnz"
+        || mnemonic == "cbz"
+        || mnemonic == "cbnz"
+        || mnemonic.starts_with("b.")
+        || mnemonic == "b"
+        || mnemonic == "bl"
+        || mnemonic == "blr"
+        || mnemonic == "ret")
+}
+
+fn is_call_mnemonic(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "bl" | "blr" | "blraa" | "blraaz" | "blrab" | "blrabz"
+    )
+}
+
+fn synthesize_mov_wide_value(
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, u64>,
+) -> Option<(String, u64)> {
+    let lower = instruction.mnemonic.to_ascii_lowercase();
+    if !(lower.starts_with("movz") || lower.starts_with("movn") || lower.starts_with("movk")) {
+        return None;
+    }
+
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    let imm = match instruction.operands.get(1)? {
+        Operand::ImmediateUnsigned(value) => *value & 0xffff,
+        Operand::ImmediateSigned(value) if *value >= 0 => (*value as u64) & 0xffff,
+        _ => return None,
+    };
+    let shift = instruction
+        .operands
+        .get(2)
+        .and_then(parse_shift_bits)
+        .unwrap_or(0);
+    let lane_mask = 0xffff_u64.checked_shl(shift).unwrap_or(0);
+    let shifted_imm = (imm << shift) & lane_mask;
+
+    let value = if lower.starts_with("movz") {
+        shifted_imm
+    } else if lower.starts_with("movn") {
+        !shifted_imm
+    } else {
+        let previous = known_values.get(&destination).copied()?;
+        (previous & !lane_mask) | shifted_imm
+    };
+
+    Some((destination, value))
+}
+
+fn parse_shift_bits(operand: &Operand) -> Option<u32> {
+    let shift = match operand {
+        Operand::ImmediateUnsigned(value) => u32::try_from(*value).ok()?,
+        Operand::ImmediateSigned(value) if *value >= 0 => u32::try_from(*value).ok()?,
+        Operand::Other(text) | Operand::Name(text) => parse_shift_from_text(text)?,
+        _ => return None,
+    };
+    if shift <= 48 && shift % 16 == 0 {
+        Some(shift)
+    } else {
+        None
+    }
+}
+
+fn parse_shift_from_text(text: &str) -> Option<u32> {
+    let digits = text
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<u32>().ok()
+}
+
+fn push_reference_if_missing(target: &mut Vec<Reference>, reference: Reference) {
+    if !target.contains(&reference) {
+        target.push(reference);
+    }
 }
 
 fn push_instruction_address_annotations(
@@ -439,35 +859,198 @@ fn push_instruction_address_annotations(
 }
 
 fn push_reference_target_annotations(
-    out: &mut Vec<DerivedAnnotation>,
+    mut out: Option<&mut Vec<DerivedAnnotation>>,
     symbol_map: &BTreeMap<u64, Vec<&Symbol>>,
     import_map: &BTreeMap<u64, Vec<&Import>>,
+    import_name_map: &BTreeMap<String, Vec<&Import>>,
+    image: &BinaryImage,
+    synthesized_import_refs: &mut Vec<Reference>,
     target: u64,
 ) -> bool {
     let mut import_added = false;
+
     if let Some(symbols) = symbol_map.get(&target) {
+        if let Some(out) = out.as_mut() {
+            for symbol in symbols {
+                push_derived(
+                    out,
+                    DerivedAnnotation::TargetSymbol {
+                        address: target,
+                        name: symbol.name.clone(),
+                    },
+                );
+            }
+        }
+
         for symbol in symbols {
-            push_derived(
-                out,
-                DerivedAnnotation::TargetSymbol {
-                    address: target,
-                    name: symbol.name.clone(),
-                },
-            );
+            let normalized = normalize_import_name(&symbol.name);
+            if let Some(imports) = import_name_map.get(&normalized) {
+                for import in imports {
+                    push_reference_if_missing(
+                        synthesized_import_refs,
+                        Reference::Import {
+                            name: import.name.clone(),
+                            dylib: import.dylib.clone(),
+                            address: import.address,
+                        },
+                    );
+                    if let Some(out) = out.as_mut() {
+                        push_derived(
+                            out,
+                            DerivedAnnotation::Import {
+                                dylib: import.dylib.clone(),
+                                name: import.name.clone(),
+                            },
+                        );
+                    }
+                    import_added = true;
+                }
+            }
         }
     }
+
     if let Some(imports) = import_map.get(&target) {
         for import in imports {
-            push_derived(
-                out,
-                DerivedAnnotation::Import {
-                    dylib: import.dylib.clone(),
+            push_reference_if_missing(
+                synthesized_import_refs,
+                Reference::Import {
                     name: import.name.clone(),
+                    dylib: import.dylib.clone(),
+                    address: import.address,
                 },
             );
+            if let Some(out) = out.as_mut() {
+                push_derived(
+                    out,
+                    DerivedAnnotation::Import {
+                        dylib: import.dylib.clone(),
+                        name: import.name.clone(),
+                    },
+                );
+            }
             import_added = true;
         }
     }
+
+    // Stub hook: attempt symbol-name import resolution in stub sections even when the
+    // target is not a concrete import address.
+    if let Some(section) = image.containing_section(target) {
+        if section.name.contains("stub") {
+            if let Some(symbols) = symbol_map.get(&target) {
+                for symbol in symbols {
+                    let normalized = normalize_import_name(&symbol.name);
+                    if let Some(imports) = import_name_map.get(&normalized) {
+                        for import in imports {
+                            push_reference_if_missing(
+                                synthesized_import_refs,
+                                Reference::Import {
+                                    name: import.name.clone(),
+                                    dylib: import.dylib.clone(),
+                                    address: import.address,
+                                },
+                            );
+                            if let Some(out) = out.as_mut() {
+                                push_derived(
+                                    out,
+                                    DerivedAnnotation::Import {
+                                        dylib: import.dylib.clone(),
+                                        name: import.name.clone(),
+                                    },
+                                );
+                            }
+                            import_added = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    import_added
+}
+
+fn push_dyld_target_hooks(
+    mut out: Option<&mut Vec<DerivedAnnotation>>,
+    image: &BinaryImage,
+    instruction_references: &mut Vec<Reference>,
+    target: u64,
+) -> bool {
+    let mut import_added = false;
+
+    for binding in image.dyld.bindings_at_address(target) {
+        push_reference_if_missing(
+            instruction_references,
+            Reference::ImportBinding {
+                dylib: binding.dylib.clone(),
+                name: binding.name.clone(),
+                address: binding.address,
+                offset: binding.offset,
+                addend: binding.addend,
+                source: binding.source,
+                is_weak: binding.is_weak,
+            },
+        );
+        push_reference_if_missing(
+            instruction_references,
+            Reference::Import {
+                name: binding.name.clone(),
+                dylib: binding.dylib.clone(),
+                address: binding.address,
+            },
+        );
+        if let Some(out) = out.as_mut() {
+            push_derived(
+                out,
+                DerivedAnnotation::ImportBindingEvidence {
+                    dylib: binding.dylib.clone(),
+                    name: binding.name.clone(),
+                    address: binding.address,
+                    offset: binding.offset,
+                    addend: binding.addend,
+                    source: binding.source,
+                },
+            );
+        }
+        import_added = true;
+    }
+
+    if let Some(stub) = image.dyld.stub_for_address(target) {
+        push_reference_if_missing(
+            instruction_references,
+            Reference::Stub {
+                stub_address: stub.stub_address,
+                pointer_address: stub.pointer_address,
+                dylib: stub.dylib.clone(),
+                name: stub.name.clone(),
+                source: stub.source,
+            },
+        );
+        if let (Some(dylib), Some(name)) = (&stub.dylib, &stub.name) {
+            push_reference_if_missing(
+                instruction_references,
+                Reference::Import {
+                    name: name.clone(),
+                    dylib: dylib.clone(),
+                    address: stub.pointer_address,
+                },
+            );
+            if let Some(out) = out.as_mut() {
+                push_derived(
+                    out,
+                    DerivedAnnotation::ImportBindingEvidence {
+                        dylib: dylib.clone(),
+                        name: name.clone(),
+                        address: stub.pointer_address,
+                        offset: None,
+                        addend: 0,
+                        source: stub.source,
+                    },
+                );
+            }
+            import_added = true;
+        }
+    }
+
     import_added
 }
 
@@ -505,12 +1088,24 @@ enum DerivedAnnotation {
         dylib: String,
         name: String,
     },
+    IndirectControlFlow {
+        kind: String,
+        via: String,
+    },
     Relocation {
         address: u64,
         kind: String,
         encoding: String,
         target: String,
         addend: i64,
+    },
+    ImportBindingEvidence {
+        dylib: String,
+        name: String,
+        address: Option<u64>,
+        offset: Option<u64>,
+        addend: i64,
+        source: damsel_core::ImportBindingSource,
     },
 }
 
@@ -520,15 +1115,37 @@ impl DerivedAnnotation {
             Self::Symbol(name) => Annotation::Symbol(name),
             Self::TargetSymbol { address, name } => Annotation::TargetSymbol { address, name },
             Self::Import { dylib, name } => Annotation::Import { dylib, name },
+            Self::IndirectControlFlow { kind, via } => {
+                Annotation::IndirectControlFlow { kind, via }
+            }
             Self::Relocation {
                 address,
                 kind,
                 encoding,
                 target,
                 addend,
-            } => Annotation::Note(format!(
-                "reloc kind={kind} encoding={encoding} target={target} addend={addend} addr={address:#x}"
-            )),
+            } => Annotation::Relocation {
+                address,
+                kind,
+                encoding,
+                target,
+                addend,
+            },
+            Self::ImportBindingEvidence {
+                dylib,
+                name,
+                address,
+                offset,
+                addend,
+                source,
+            } => Annotation::ImportBindingEvidence {
+                dylib,
+                name,
+                address,
+                offset,
+                addend,
+                source,
+            },
         }
     }
 }

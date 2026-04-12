@@ -1,7 +1,7 @@
 use crate::{Annotation, DecodedInstruction, Operand, Reference};
 use capstone::arch;
-use capstone::arch::ArchDetail;
 use capstone::arch::arm64::{Arm64Operand, Arm64OperandType};
+use capstone::arch::ArchDetail;
 use capstone::prelude::*;
 use thiserror::Error;
 
@@ -109,7 +109,9 @@ fn derive_references(
     let is_call_group = has_group(cs, detail, "call");
     let is_jump_group = has_group(cs, detail, "jump");
     let is_page_materialization = lower == "adr" || lower == "adrp";
-    let is_control_flow = is_call_group || is_jump_group;
+    let is_call_like = is_call_group || is_call_mnemonic(&lower);
+    let is_branch_like = is_jump_group || is_relative_branch(&lower);
+    let is_control_flow = is_call_like || is_branch_like;
 
     for operand in operands {
         match operand.op_type {
@@ -117,9 +119,9 @@ fn derive_references(
                 let target = value as u64;
                 let reference = if is_page_materialization {
                     Reference::Page { target }
-                } else if is_call_group || lower == "bl" {
+                } else if is_call_like {
                     Reference::Call { target }
-                } else if is_jump_group || is_relative_branch(&lower) {
+                } else if is_branch_like {
                     Reference::Branch { target }
                 } else {
                     Reference::Data { target }
@@ -131,7 +133,17 @@ fn derive_references(
                     let register = cs
                         .reg_name(register)
                         .unwrap_or_else(|| format!("{register:?}"));
-                    let kind = if is_call_group {
+                    let reference = if is_call_like {
+                        Reference::IndirectCall {
+                            via: register.clone(),
+                        }
+                    } else {
+                        Reference::IndirectBranch {
+                            via: register.clone(),
+                        }
+                    };
+                    push_reference(&mut references, reference);
+                    let kind = if is_call_like {
                         "indirect call"
                     } else {
                         "indirect branch"
@@ -144,7 +156,13 @@ fn derive_references(
                     let base = cs
                         .reg_name(mem.base())
                         .unwrap_or_else(|| format!("{:?}", mem.base()));
-                    let kind = if is_call_group {
+                    let reference = if is_call_like {
+                        Reference::IndirectCall { via: base.clone() }
+                    } else {
+                        Reference::IndirectBranch { via: base.clone() }
+                    };
+                    push_reference(&mut references, reference);
+                    let kind = if is_call_like {
                         "indirect call"
                     } else {
                         "indirect branch"
@@ -188,7 +206,19 @@ fn push_note(target: &mut Vec<String>, note: String) {
 }
 
 fn is_relative_branch(mnemonic: &str) -> bool {
-    mnemonic.starts_with('b') || mnemonic.starts_with("cb") || mnemonic.starts_with("tb")
+    mnemonic == "b"
+        || mnemonic.starts_with("b.")
+        || mnemonic == "cbz"
+        || mnemonic == "cbnz"
+        || mnemonic == "tbz"
+        || mnemonic == "tbnz"
+}
+
+fn is_call_mnemonic(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "bl" | "blr" | "blraa" | "blraaz" | "blrab" | "blrabz"
+    )
 }
 
 fn is_indirect_control(mnemonic: &str) -> bool {
@@ -219,7 +249,7 @@ fn map_operand(cs: &Capstone, mnemonic: &str, writeback: bool, operand: &Arm64Op
                 .unwrap_or_else(|| format!("{register:?}")),
         ),
         Arm64OperandType::Imm(value) => {
-            if (lower.starts_with('b') || lower == "adr" || lower == "adrp") && value >= 0 {
+            if (is_relative_branch(&lower) || lower == "adr" || lower == "adrp") && value >= 0 {
                 Operand::Label(value as u64)
             } else if value < 0 {
                 Operand::ImmediateSigned(value)
