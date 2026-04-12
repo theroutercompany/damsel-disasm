@@ -59,6 +59,53 @@ fn info_json_contract() {
 }
 
 #[test]
+fn dyld_json_contract_exposes_bindings_and_stubs() {
+    let path = fixture("import-rich");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "dyld",
+        path.to_str().expect("utf8 path"),
+    ]);
+    assert!(out.contains("\"command\":\"dyld\""), "{out}");
+    assert!(out.contains("\"import_bindings\""), "{out}");
+    assert!(out.contains("\"stubs\""), "{out}");
+    assert!(out.contains("\"section\":\"__TEXT:__stubs\""), "{out}");
+}
+
+#[test]
+fn objc_json_contract_exposes_structured_runtime_records() {
+    let path = fixture("objc-sample");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "objc",
+        path.to_str().expect("utf8 path"),
+    ]);
+    assert!(out.contains("\"command\":\"objc\""), "{out}");
+    assert!(out.contains("\"class_names\""), "{out}");
+    assert!(out.contains("\"pointer_refs\""), "{out}");
+    assert!(out.contains("\"classes\""), "{out}");
+    assert!(out.contains("\"protocols\""), "{out}");
+    assert!(out.contains("\"categories\""), "{out}");
+}
+
+#[test]
+fn slices_json_contract_exposes_full_inventory() {
+    let path = fixture("universal-hello");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "slices",
+        path.to_str().expect("utf8 path"),
+    ]);
+    assert!(out.contains("\"command\":\"slices\""), "{out}");
+    assert!(out.contains("\"selected\":true"), "{out}");
+    assert!(out.contains("\"architecture\":\"arm64\""), "{out}");
+    assert!(out.contains("\"architecture\":\"x86_64\""), "{out}");
+}
+
+#[test]
 fn disasm_json_contract_has_window_and_analysis_fields() {
     let path = fixture("arm64-symbolized");
     let out = run_json_ok(&[

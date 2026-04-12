@@ -2,10 +2,10 @@ mod output;
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
-    BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyRequest, DisassemblyTarget,
-    Import, Relocation, Section, Symbol,
+    BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2,
+    DisassemblyTarget, Import, Relocation, Section, Symbol,
 };
-use damsel_macho::{disassemble, load};
+use damsel_macho::{disassemble_v2, load};
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
@@ -125,6 +125,10 @@ enum Command {
         exports: bool,
         #[arg(long = "function-starts")]
         function_starts: bool,
+        #[arg(long)]
+        bindings: bool,
+        #[arg(long)]
+        stubs: bool,
     },
     Slices {
         path: PathBuf,
@@ -232,7 +236,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             sort,
         } => {
             let image = load_image(path)?;
-            let mut sections = image.sections.clone();
+            let mut sections = image.sections().to_vec();
             if executable_only {
                 sections.retain(|section| section.executable);
             }
@@ -257,7 +261,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             sort,
         } => {
             let image = load_image(path)?;
-            let mut symbols = image.symbols.clone();
+            let mut symbols = image.symbols().to_vec();
             if defined {
                 symbols.retain(|symbol| symbol.defined);
             }
@@ -290,7 +294,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             sort,
         } => {
             let image = load_image(path)?;
-            let mut imports = image.imports.clone();
+            let mut imports = image.imports().to_vec();
             if let Some(dylib) = dylib {
                 imports.retain(|import| contains_case_insensitive(&import.dylib, &dylib));
             }
@@ -317,7 +321,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             sort,
         } => {
             let image = load_image(path)?;
-            let mut relocations = image.relocations.clone();
+            let mut relocations = image.relocations().to_vec();
             if let Some(section) = section {
                 relocations
                     .retain(|relocation| contains_case_insensitive(&relocation.section, &section));
@@ -333,15 +337,19 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
             rpaths,
             exports,
             function_starts,
+            bindings,
+            stubs,
         } => {
             let image = load_image(path)?;
-            let show_any = dylibs || rpaths || exports || function_starts;
+            let show_any = dylibs || rpaths || exports || function_starts || bindings || stubs;
             let view_options = if show_any {
                 output::DyldViewOptions {
                     show_dylibs: dylibs,
                     show_rpaths: rpaths,
                     show_exports: exports,
                     show_function_starts: function_starts,
+                    show_bindings: bindings,
+                    show_stubs: stubs,
                 }
             } else {
                 output::DyldViewOptions::all()
@@ -384,13 +392,24 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunEr
                 },
             )?;
 
-            let result = disassemble(
+            let request_limit = disasm_plan.limit.unwrap_or_else(|| {
+                disasm_plan
+                    .max_instructions
+                    .map(DisassemblyLimit::Instructions)
+                    .unwrap_or(DisassemblyLimit::Unlimited)
+            });
+            let request_range = disasm_plan
+                .window_end
+                .map(|end| disasm_plan.window_start..end);
+            let result = disassemble_v2(
                 &image,
-                &DisassemblyRequest {
+                &DisassemblyRequestV2 {
                     target: disasm_plan.decode_target,
-                    max_instructions: disasm_plan.max_instructions,
-                    limit: disasm_plan.limit,
-                    include_annotations: !no_annotations,
+                    range: request_range,
+                    limit: request_limit,
+                    options: DisassemblyOptions {
+                        include_annotations: !no_annotations,
+                    },
                 },
             )
             .map_err(map_disasm_error)?;

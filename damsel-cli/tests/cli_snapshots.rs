@@ -70,6 +70,20 @@ fn imports_snapshot() {
 }
 
 #[test]
+fn dyld_snapshot() {
+    let path = fixture("import-rich");
+    let stdout = run_snapshot(&["dyld", path.to_str().expect("utf8 path")]);
+    insta::assert_snapshot!("dyld_snapshot", stdout);
+}
+
+#[test]
+fn slices_snapshot() {
+    let path = fixture("universal-hello");
+    let stdout = run_snapshot(&["slices", path.to_str().expect("utf8 path")]);
+    insta::assert_snapshot!("slices_snapshot", stdout);
+}
+
+#[test]
 fn objc_snapshot() {
     let path = fixture("objc-sample");
     let stdout = run_snapshot(&["objc", path.to_str().expect("utf8 path")]);

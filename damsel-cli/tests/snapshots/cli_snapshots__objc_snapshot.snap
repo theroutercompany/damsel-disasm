@@ -1,9 +1,10 @@
 ---
 source: damsel-cli/tests/cli_snapshots.rs
-assertion_line: 76
+assertion_line: 90
 expression: stdout
 ---
 image_info_flags: 0x40
+summary: class_names=5 selectors=29 methods=29 pointer_refs=32 classes=2 protocols=2 categories=0
 classes:
   Excited
   Greeter
@@ -70,3 +71,42 @@ methods:
   superclass
   uppercaseString
   zone
+class_records:
+  0x1000083e8 name=- superclass=- ro=0x100008048 methods=0x100000e28 properties=- protocols=-
+  0x100008410 name=- superclass=0x1000083e8 ro=0x100008278 methods=0x100000de0 properties=0x100008220 protocols=0x100008198
+protocol_records:
+  0x100008460 NSObject
+  0x1000084c0 GreetingProviding
+pointer_refs:
+  classlist  table=0x1000040b8 raw=0x100000000083e8 resolved_addr=0x1000083e8 resolved_name=-
+  classlist  table=0x1000040c0 raw=0x10000000008410 resolved_addr=0x100008410 resolved_name=-
+  selref     table=0x1000082c0 raw=0x10000000001078 resolved_addr=0x100001078 resolved_name=init
+  selref     table=0x1000082c8 raw=0x10000000001057 resolved_addr=0x100001057 resolved_name=emphasizedGreeting
+  selref     table=0x1000082d0 raw=0x1000000000106a resolved_addr=0x10000106a resolved_name=greeting
+  selref     table=0x1000082d8 raw=0x100000000010a6 resolved_addr=0x1000010a6 resolved_name=name
+  selref     table=0x1000082e0 raw=0x100000000010ff resolved_addr=0x1000010ff resolved_name=prefix
+  selref     table=0x1000082e8 raw=0x1000000000113b resolved_addr=0x10000113b resolved_name=stringWithFormat:
+  selref     table=0x1000082f0 raw=0x10000000000fc3 resolved_addr=0x100000fc3 resolved_name=uppercaseString
+  selref     table=0x1000082f8 raw=0x10000000001132 resolved_addr=0x100001132 resolved_name=setName:
+  selref     table=0x100008300 raw=0x1000000000107d resolved_addr=0x10000107d resolved_name=isEqual:
+  selref     table=0x100008308 raw=0x10000000001020 resolved_addr=0x100001020 resolved_name=class
+  selref     table=0x100008310 raw=0x1000000000112d resolved_addr=0x10000112d resolved_name=self
+  selref     table=0x100008318 raw=0x100000000010ab resolved_addr=0x1000010ab resolved_name=performSelector:
+  selref     table=0x100008320 raw=0x100000000010bc resolved_addr=0x1000010bc resolved_name=performSelector:withObject:
+  selref     table=0x100008328 raw=0x100000000010d8 resolved_addr=0x1000010d8 resolved_name=performSelector:withObject:withObject:
+  selref     table=0x100008330 raw=0x10000000000fa8 resolved_addr=0x100000fa8 resolved_name=isProxy
+  selref     table=0x100008338 raw=0x10000000001086 resolved_addr=0x100001086 resolved_name=isKindOfClass:
+  selref     table=0x100008340 raw=0x10000000001095 resolved_addr=0x100001095 resolved_name=isMemberOfClass:
+  selref     table=0x100008348 raw=0x10000000001026 resolved_addr=0x100001026 resolved_name=conformsToProtocol:
+  selref     table=0x100008350 raw=0x10000000001106 resolved_addr=0x100001106 resolved_name=respondsToSelector:
+  selref     table=0x100008358 raw=0x1000000000111a resolved_addr=0x10000111a resolved_name=retain
+  selref     table=0x100008360 raw=0x10000000000fd8 resolved_addr=0x100000fd8 resolved_name=release
+  selref     table=0x100008368 raw=0x10000000001014 resolved_addr=0x100001014 resolved_name=autorelease
+  selref     table=0x100008370 raw=0x10000000001121 resolved_addr=0x100001121 resolved_name=retainCount
+  selref     table=0x100008378 raw=0x10000000001158 resolved_addr=0x100001158 resolved_name=zone
+  selref     table=0x100008380 raw=0x10000000001073 resolved_addr=0x100001073 resolved_name=hash
+  selref     table=0x100008388 raw=0x1000000000114d resolved_addr=0x10000114d resolved_name=superclass
+  selref     table=0x100008390 raw=0x1000000000104b resolved_addr=0x10000104b resolved_name=description
+  selref     table=0x100008398 raw=0x1000000000103a resolved_addr=0x10000103a resolved_name=debugDescription
+  classref   table=0x1000083a0 raw=0x8010000000000008 resolved_addr=- resolved_name=-
+  classref   table=0x1000083a8 raw=0x10000000008410 resolved_addr=0x100008410 resolved_name=-

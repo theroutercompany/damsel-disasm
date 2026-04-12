@@ -1,0 +1,31 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+assertion_line: 76
+expression: stdout
+---
+dyld: dylibs=1 rpaths=0 exports=2 function_starts=2 bindings=8 stubs=6 rebases=false binds=true chained_fixups=true
+dylibs:
+  /usr/lib/libSystem.B.dylib
+rpaths:
+exports:
+                 0x0 Regular { address: 0, flags: 0 };offset=0x0 __mh_execute_header
+               0x460 Regular { address: 1120, flags: 0 };offset=0x460 _main
+function_starts:
+  0x100000460
+  0x100000510
+import_bindings:
+         0x100004000             0x4000 /usr/lib/libSystem.B.dylib     ___snprintf_chk          addend=0 source=IndirectSymbol weak=false
+         0x100004008             0x4008 /usr/lib/libSystem.B.dylib     ___stack_chk_fail        addend=0 source=IndirectSymbol weak=false
+         0x100004010             0x4010 /usr/lib/libSystem.B.dylib     ___stack_chk_guard       addend=0 source=IndirectSymbol weak=false
+         0x100004018             0x4018 /usr/lib/libSystem.B.dylib     ___stderrp               addend=0 source=IndirectSymbol weak=false
+         0x100004020             0x4020 /usr/lib/libSystem.B.dylib     _fprintf                 addend=0 source=IndirectSymbol weak=false
+         0x100004028             0x4028 /usr/lib/libSystem.B.dylib     _puts                    addend=0 source=IndirectSymbol weak=false
+         0x100004030             0x4030 /usr/lib/libSystem.B.dylib     _strcmp                  addend=0 source=IndirectSymbol weak=false
+         0x100004038             0x4038 /usr/lib/libSystem.B.dylib     _strlen                  addend=0 source=IndirectSymbol weak=false
+stubs:
+         0x100000588 section=__TEXT:__stubs ptr=0x100004000 /usr/lib/libSystem.B.dylib:___snprintf_chk source=Stub
+         0x100000594 section=__TEXT:__stubs ptr=0x100004008 /usr/lib/libSystem.B.dylib:___stack_chk_fail source=Stub
+         0x1000005a0 section=__TEXT:__stubs ptr=0x100004020 /usr/lib/libSystem.B.dylib:_fprintf source=Stub
+         0x1000005ac section=__TEXT:__stubs ptr=0x100004028 /usr/lib/libSystem.B.dylib:_puts source=Stub
+         0x1000005b8 section=__TEXT:__stubs ptr=0x100004030 /usr/lib/libSystem.B.dylib:_strcmp source=Stub
+         0x1000005c4 section=__TEXT:__stubs ptr=0x100004038 /usr/lib/libSystem.B.dylib:_strlen source=Stub

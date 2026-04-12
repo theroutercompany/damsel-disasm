@@ -1,0 +1,7 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+assertion_line: 83
+expression: stdout
+---
+* offset=0x4000 size=0x82e0 universal=true subtype=0x0 arch=arm64
+- offset=0x1000 size=0x2140 universal=true subtype=0x3 arch=x86_64
