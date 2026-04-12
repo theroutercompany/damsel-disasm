@@ -36,6 +36,8 @@ mod tests {
         let request = DisassemblyRequest {
             target: DisassemblyTarget::Section("__text".to_string()),
             max_instructions: Some(12),
+            limit: None,
+            include_annotations: true,
         };
         let result = disassemble(&image, &request).expect("disassemble stripped fixture");
         assert!(!result.instructions.is_empty());
@@ -47,6 +49,8 @@ mod tests {
         let request = DisassemblyRequest {
             target: DisassemblyTarget::Symbol("_main".to_string()),
             max_instructions: Some(12),
+            limit: None,
+            include_annotations: true,
         };
         let result = disassemble(&image, &request).expect("disassemble main");
         let annotations = result

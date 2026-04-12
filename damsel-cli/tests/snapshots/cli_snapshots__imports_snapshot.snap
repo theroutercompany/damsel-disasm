@@ -1,0 +1,5 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: stdout
+---
+0x100004000 -     -     /usr/lib/libSystem.B.dylib     _puts

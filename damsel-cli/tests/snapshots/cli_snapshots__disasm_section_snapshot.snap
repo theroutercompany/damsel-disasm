@@ -1,0 +1,13 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: stdout
+---
+target: __TEXT:__text start=0x100000460 bytes=0x20
+       0x100000460  d10083ff  sub sp, sp, #0x20 ; range start | symbol _exported_sum
+       0x100000464  a9017bfd  stp fp, lr, [sp, #0x10]
+       0x100000468  910043fd  add fp, sp, #0x10
+       0x10000046c  b81fc3a0  stur w0, [fp, #0xfffffffffffffffc]
+       0x100000470  b9000be1  str w1, [sp, #0x8]
+       0x100000474  b85fc3a8  ldur w8, [fp, #0xfffffffffffffffc]
+       0x100000478  b9400be9  ldr w9, [sp, #0x8]
+       0x10000047c  0b090108  add w8, w8, w9

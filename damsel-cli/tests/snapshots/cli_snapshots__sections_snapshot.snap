@@ -1,0 +1,9 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: stdout
+---
+0x100000460     0x94 exec     __TEXT             __text
+       0x1000004f4      0xc exec     __TEXT             __stubs
+       0x100000500     0x12 -        __TEXT             __cstring
+       0x100000514     0x60 -        __TEXT             __unwind_info
+       0x100004000      0x8 -        __DATA_CONST       __got
