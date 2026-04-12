@@ -1,0 +1,11 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: stdout
+---
+image_info_flags: 0x40
+classes:
+  Greeter
+selectors:
+  greeting
+methods:
+  greeting

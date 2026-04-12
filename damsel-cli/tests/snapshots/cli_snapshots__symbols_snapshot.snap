@@ -1,0 +1,9 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: stdout
+---
+0x0      0x0 Unknown undef  glob  _puts
+       0x100000000      0x0 text def    glob  __mh_execute_header [__text]
+       0x100000460      0x0 text def    glob  _exported_sum [__text]
+       0x1000004a0      0x0 text def    loc   _helper [__text]
+       0x1000004b8      0x0 text def    glob  _main [__text]

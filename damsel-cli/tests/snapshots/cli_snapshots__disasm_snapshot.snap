@@ -1,0 +1,13 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: stdout
+---
+target: _main start=0x1000004b8 bytes=0x20
+       0x1000004b8  d10083ff  sub sp, sp, #0x20 ; range start | symbol _main
+       0x1000004bc  a9017bfd  stp fp, lr, [sp, #0x10]
+       0x1000004c0  910043fd  add fp, sp, #0x10
+       0x1000004c4  b81fc3bf  stur wzr, [fp, #0xfffffffffffffffc]
+       0x1000004c8  90000000  adrp x0, 0x100000000 ; target __mh_execute_header (0x100000000)
+       0x1000004cc  91140000  add x0, x0, #0x500
+       0x1000004d0  94000009  bl 0x1000004f4
+       0x1000004d4  52800040  mov w0, #0x2

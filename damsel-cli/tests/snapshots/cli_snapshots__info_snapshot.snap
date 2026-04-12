@@ -1,0 +1,16 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: stdout
+---
+path: $REPO/fixtures/bin/arm64-symbolized
+format: MachO
+architecture: arm64
+endianness: Little
+entry: 0x1000004b8
+platform: macos
+slice: offset=0x0 size=0x82e0 universal=false subtype=0x0
+counts: segments=4 sections=5 symbols=5 imports=1 relocations=0
+objc: classes=0 selectors=0 methods=0
+dyld: dylibs=1 rpaths=0 exports=3 function_starts=3 rebases=false binds=false chained_fixups=true
+dylibs:
+  /usr/lib/libSystem.B.dylib
