@@ -32,22 +32,18 @@ fn assert_import_bindings_and_stubs(path: &Path, expect_chained_fixups: bool) {
     );
 
     assert!(
-        dyld.import_bindings
-            .iter()
-            .any(|binding| {
-                matches!(
-                    binding.source,
-                    ImportBindingSource::ChainedFixup | ImportBindingSource::IndirectSymbol
-                )
-            }),
+        dyld.import_bindings.iter().any(|binding| {
+            matches!(
+                binding.source,
+                ImportBindingSource::ChainedFixup | ImportBindingSource::IndirectSymbol
+            )
+        }),
         "expected at least one concrete binding source"
     );
     assert!(
         dyld.import_bindings.iter().any(|binding| matches!(
             binding.binding_kind,
-            ImportBindingKind::ChainedFixup
-                | ImportBindingKind::Lazy
-                | ImportBindingKind::NonLazy
+            ImportBindingKind::ChainedFixup | ImportBindingKind::Lazy | ImportBindingKind::NonLazy
         )),
         "expected typed binding kinds for fixture {path:?}"
     );
@@ -67,12 +63,14 @@ fn assert_import_bindings_and_stubs(path: &Path, expect_chained_fixups: bool) {
     let mut binding_keys = HashSet::new();
     for binding in &dyld.import_bindings {
         let key = format!(
-            "{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{:?}|{:?}",
             binding.address.unwrap_or_default(),
             binding.offset.unwrap_or_default(),
             binding.dylib,
             binding.name,
-            binding.addend
+            binding.addend,
+            binding.binding_kind,
+            binding.source
         );
         assert!(
             binding_keys.insert(key),
@@ -85,14 +83,12 @@ fn assert_import_bindings_and_stubs(path: &Path, expect_chained_fixups: bool) {
         "expected stub entries to be materialized for fixture {path:?}"
     );
     assert!(
-        dyld.stubs
-            .iter()
-            .any(|stub| {
-                stub.section.is_some()
-                    && stub.pointer_address.is_some()
-                    && matches!(stub.stub_kind, StubKind::Lazy | StubKind::NonLazy)
-                    && (stub.name.is_some() || stub.dylib.is_some())
-            }),
+        dyld.stubs.iter().any(|stub| {
+            stub.section.is_some()
+                && stub.pointer_address.is_some()
+                && matches!(stub.stub_kind, StubKind::Lazy | StubKind::NonLazy)
+                && (stub.name.is_some() || stub.dylib.is_some())
+        }),
         "expected at least one resolved stub pointer/name mapping"
     );
 }
@@ -123,4 +119,55 @@ fn import_bindings_and_stubs_lazy_fixture_if_present() {
         return;
     };
     assert_import_bindings_and_stubs(&path, false);
+}
+
+#[test]
+fn lazy_fixture_stub_helpers_link_back_to_stub_and_pointer_metadata() {
+    let Some(path) = optional_fixture(&["import-lazy"]) else {
+        eprintln!("import-lazy fixture not present; skipping");
+        return;
+    };
+    let image = load(&path).expect("load lazy fixture");
+    let dyld = image.dyld();
+    assert!(
+        !dyld.stub_helpers.is_empty(),
+        "expected decoded helper entries in lazy fixture"
+    );
+    assert!(
+        dyld.import_bindings
+            .iter()
+            .any(|binding| binding.binding_kind == ImportBindingKind::Lazy),
+        "expected at least one lazy binding"
+    );
+    for helper in &dyld.stub_helpers {
+        assert!(
+            helper.target_stub.is_some(),
+            "helper entry should link to a stub address"
+        );
+        assert!(
+            helper.pointer_address.is_some(),
+            "helper entry should link to a lazy pointer slot"
+        );
+        assert!(
+            helper.stub_section.as_deref().is_some(),
+            "helper entry should carry its stub section"
+        );
+        assert!(
+            helper.pointer_section.as_deref().is_some(),
+            "helper entry should carry its pointer section"
+        );
+        let by_address = dyld
+            .helper_for_address(helper.helper_address)
+            .expect("helper lookup by address should succeed");
+        assert_eq!(by_address.target_stub, helper.target_stub);
+        if let Some(stub_address) = helper.target_stub {
+            let linked = dyld
+                .stubs
+                .iter()
+                .find(|stub| stub.stub_address == stub_address)
+                .expect("linked stub should exist");
+            assert_eq!(linked.helper_address, Some(helper.helper_address));
+            assert_eq!(linked.pointer_address, helper.pointer_address);
+        }
+    }
 }

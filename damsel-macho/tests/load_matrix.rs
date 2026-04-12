@@ -10,6 +10,13 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn optional_fixture(names: &[&str]) -> Option<PathBuf> {
+    names
+        .iter()
+        .map(|name| fixture(name))
+        .find(|path| path.exists())
+}
+
 fn write_temp_fixture(bytes: &[u8]) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -62,5 +69,21 @@ fn rejects_malformed_dysymtab_fixture_without_panicking() {
         return;
     }
     let error = load(path).expect_err("expected malformed dyld fixture to fail");
+    assert!(matches!(error, MachoError::MalformedDyldPayload(_)));
+}
+
+#[test]
+fn rejects_malformed_stub_helper_fixture_without_panicking() {
+    let Some(path) = optional_fixture(&[
+        "malformed-stub-helper-size",
+        "malformed-stub-reserved2",
+        "malformed-stub-helper-truncated",
+        "malformed-stub-helper",
+        "malformed-helper-truncated",
+    ]) else {
+        eprintln!("malformed stub-helper fixture not present; skipping");
+        return;
+    };
+    let error = load(path).expect_err("expected malformed stub-helper fixture to fail");
     assert!(matches!(error, MachoError::MalformedDyldPayload(_)));
 }

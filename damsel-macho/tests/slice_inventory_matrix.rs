@@ -21,7 +21,10 @@ fn thin_fixture_reports_single_selected_slice_descriptor() {
     let selected = image
         .selected_slice_descriptor()
         .expect("selected slice descriptor");
-    assert!(selected.selected, "selected descriptor must be marked selected");
+    assert!(
+        selected.selected,
+        "selected descriptor must be marked selected"
+    );
     assert_eq!(
         selected.architecture,
         Architecture::Arm64,

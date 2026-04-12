@@ -4,8 +4,7 @@ use crate::objc::collect_objc_metadata;
 use damsel_core::{
     Architecture, BinaryFormat, BinaryImage, BinarySource, DyldMetadata, Endianness, Import,
     ImportBindingKind, ImportBindingRecord, ImportBindingSource, Platform, Relocation, Section,
-    Segment, SliceDescriptor, SliceInfo, StubEntry, StubHelperEntry, StubKind, Symbol,
-    SymbolKind,
+    Segment, SliceDescriptor, SliceInfo, StubEntry, StubHelperEntry, StubKind, Symbol, SymbolKind,
 };
 use goblin::mach::Mach;
 use object::macho::{
@@ -18,8 +17,8 @@ use object::read::macho::{
     FatArch, MachHeader, MachOFatFile32, MachOFatFile64, MachOFile64, Section as RawMachOSection,
 };
 use object::{
-    Object, ObjectSection, ObjectSegment, ObjectSymbol, RelocationTarget, SectionFlags, SymbolFlags,
-    SymbolIndex,
+    Object, ObjectSection, ObjectSegment, ObjectSymbol, RelocationTarget, SectionFlags,
+    SymbolFlags, SymbolIndex,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -113,13 +112,15 @@ fn select_slice(bytes: &[u8]) -> Result<(SliceInfo, Vec<SliceDescriptor>)> {
         object::FileKind::MachOFat32 => {
             let fat = MachOFatFile32::parse(bytes)?;
             let slice = choose_fat_arch(fat.arches(), bytes.len() as u64)?;
-            let available_slices = collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
+            let available_slices =
+                collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
             Ok((slice, available_slices))
         }
         object::FileKind::MachOFat64 => {
             let fat = MachOFatFile64::parse(bytes)?;
             let slice = choose_fat_arch(fat.arches(), bytes.len() as u64)?;
-            let available_slices = collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
+            let available_slices =
+                collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
             Ok((slice, available_slices))
         }
         other => Err(MachoError::UnsupportedFileKind(format!("{other:?}"))),
@@ -528,23 +529,41 @@ fn augment_dysymtab_bindings_and_stubs(
         return Ok(());
     };
 
-    let imports_by_name = imports
-        .iter()
-        .fold(BTreeMap::<String, &Import>::new(), |mut acc, import| {
-            acc.entry(normalize_import_name(&import.name)).or_insert(import);
+    let imports_by_name = imports.iter().fold(
+        BTreeMap::<String, Vec<&Import>>::new(),
+        |mut acc, import| {
+            acc.entry(normalize_import_name(&import.name))
+                .or_default()
+                .push(import);
             acc
-        });
-    let imports_by_dylib_and_name =
-        imports
-            .iter()
-            .fold(BTreeMap::<(String, String), &Import>::new(), |mut acc, import| {
-                acc.entry((normalize_import_name(&import.name), import.dylib.clone()))
-                    .or_insert(import);
-                acc
-            });
+        },
+    );
+    let imports_by_dylib_and_name = imports.iter().fold(
+        BTreeMap::<(String, String), &Import>::new(),
+        |mut acc, import| {
+            acc.entry((normalize_import_name(&import.name), import.dylib.clone()))
+                .or_insert(import);
+            acc
+        },
+    );
+    let lazy_bindings_by_sequence = macho
+        .imports()?
+        .into_iter()
+        .filter(|import| import.is_lazy)
+        .map(|import| {
+            (
+                u32::try_from(import.start_of_sequence_offset).unwrap_or(u32::MAX),
+                LazyBindMetadata {
+                    address: import.address,
+                    name: import.name.to_string(),
+                    dylib: import.dylib.to_string(),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let indirect_symbol_metadata = build_indirect_symbol_metadata(macho);
 
-    let mut pointer_slots_by_name = BTreeMap::<String, Vec<PointerSlotMetadata>>::new();
+    let mut pointer_slots_by_symbol_index = BTreeMap::<u32, Vec<PointerSlotMetadata>>::new();
     for section in macho_file.sections() {
         let raw = section.macho_section();
         let section_type = raw.section_type(endian);
@@ -555,7 +574,12 @@ fn augment_dysymtab_bindings_and_stubs(
             continue;
         }
         let section_name = section.name().unwrap_or_default().to_string();
-        let segment_name = section.segment_name().ok().flatten().unwrap_or_default().to_string();
+        let segment_name = section
+            .segment_name()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .to_string();
         let full_name = format!("{segment_name}:{section_name}");
         let binding_kind = match section_type {
             S_NON_LAZY_SYMBOL_POINTERS => PointerBindingKind::NonLazy,
@@ -583,8 +607,7 @@ fn augment_dysymtab_bindings_and_stubs(
                 &indirect_symbol_metadata,
                 &imports_by_name,
                 &imports_by_dylib_and_name,
-            )
-            else {
+            ) else {
                 continue;
             };
             let pointer_address = section.address().saturating_add((index as u64) * 8);
@@ -604,8 +627,8 @@ fn augment_dysymtab_bindings_and_stubs(
                 source: ImportBindingSource::IndirectSymbol,
                 is_weak: resolution.import.is_weak,
             });
-            pointer_slots_by_name
-                .entry(resolution.normalized_name)
+            pointer_slots_by_symbol_index
+                .entry(symbol_index)
                 .or_default()
                 .push(PointerSlotMetadata {
                     pointer_address,
@@ -621,7 +644,12 @@ fn augment_dysymtab_bindings_and_stubs(
             continue;
         }
         let section_name = section.name().unwrap_or_default().to_string();
-        let segment_name = section.segment_name().ok().flatten().unwrap_or_default().to_string();
+        let segment_name = section
+            .segment_name()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .to_string();
         let full_name = format!("{segment_name}:{section_name}");
         let stub_size = u64::from(raw.symbol_stub_size(endian));
         if stub_size == 0 {
@@ -647,14 +675,13 @@ fn augment_dysymtab_bindings_and_stubs(
                 &indirect_symbol_metadata,
                 &imports_by_name,
                 &imports_by_dylib_and_name,
-            )
-            else {
+            ) else {
                 continue;
             };
             let stub_address = section.address().saturating_add((index as u64) * stub_size);
-            let pointer_slot = pointer_slots_by_name
-                .get(&resolution.normalized_name)
-                .and_then(|values| values.get(index).or_else(|| values.first()))
+            let pointer_slot = pointer_slots_by_symbol_index
+                .get(&symbol_index)
+                .and_then(|values| select_pointer_slot_for_stub(values))
                 .cloned();
             let pointer_address = pointer_slot
                 .as_ref()
@@ -682,7 +709,7 @@ fn augment_dysymtab_bindings_and_stubs(
         }
     }
 
-    populate_stub_helpers(&macho_file, &pointer_slots_by_name, dyld)?;
+    populate_stub_helpers(&macho_file, &lazy_bindings_by_sequence, dyld)?;
 
     dyld.import_bindings.sort_by_key(|binding| {
         (
@@ -696,6 +723,9 @@ fn augment_dysymtab_bindings_and_stubs(
             binding.dylib.clone(),
             binding.name.clone(),
             binding_source_rank(binding.source),
+            binding.ordinal.unwrap_or_default(),
+            binding.symbol_index.unwrap_or_default(),
+            binding.is_weak,
         )
     });
     dyld.import_bindings.dedup_by(|left, right| {
@@ -704,6 +734,11 @@ fn augment_dysymtab_bindings_and_stubs(
             && left.dylib == right.dylib
             && left.name == right.name
             && left.addend == right.addend
+            && left.binding_kind == right.binding_kind
+            && left.source == right.source
+            && left.ordinal == right.ordinal
+            && left.symbol_index == right.symbol_index
+            && left.is_weak == right.is_weak
     });
 
     if dyld.stubs.iter().any(|stub| stub.section.is_some()) {
@@ -714,11 +749,25 @@ fn augment_dysymtab_bindings_and_stubs(
         (
             stub.stub_address,
             stub.pointer_address.unwrap_or_default(),
+            stub.binding_ordinal.unwrap_or_default(),
+            stub_kind_rank(&stub.stub_kind),
+            binding_source_rank(stub.source),
             stub.dylib.clone().unwrap_or_default(),
             stub.name.clone().unwrap_or_default(),
         )
     });
-    dyld.stubs.dedup();
+    dyld.stubs.dedup_by(|left, right| {
+        left.stub_address == right.stub_address
+            && left.section == right.section
+            && left.pointer_section == right.pointer_section
+            && left.pointer_address == right.pointer_address
+            && left.helper_address == right.helper_address
+            && left.binding_ordinal == right.binding_ordinal
+            && left.stub_kind == right.stub_kind
+            && left.dylib == right.dylib
+            && left.name == right.name
+            && left.source == right.source
+    });
     Ok(())
 }
 
@@ -736,9 +785,16 @@ fn binding_source_rank(source: ImportBindingSource) -> u8 {
     }
 }
 
+fn stub_kind_rank(kind: &StubKind) -> u8 {
+    match kind {
+        StubKind::Lazy => 0,
+        StubKind::NonLazy => 1,
+    }
+}
+
 fn populate_stub_helpers(
     macho_file: &MachOFile64<'_, object::Endianness>,
-    pointer_slots_by_name: &BTreeMap<String, Vec<PointerSlotMetadata>>,
+    lazy_bindings_by_sequence: &BTreeMap<u32, LazyBindMetadata>,
     dyld: &mut DyldMetadata,
 ) -> Result<()> {
     let Some(helper_section) = macho_file
@@ -748,37 +804,67 @@ fn populate_stub_helpers(
         return Ok(());
     };
 
-    let helper_size = helper_section.size();
-    let mut lazy_stubs = dyld
+    let mut lazy_stubs_by_pointer = dyld
         .stubs
         .iter_mut()
         .filter(|stub| stub.stub_kind == StubKind::Lazy)
-        .collect::<Vec<_>>();
-    if lazy_stubs.is_empty() {
+        .filter_map(|stub| {
+            stub.pointer_address
+                .map(|pointer_address| (pointer_address, stub))
+        })
+        .collect::<BTreeMap<_, _>>();
+    if lazy_stubs_by_pointer.is_empty() {
         return Ok(());
     }
 
-    lazy_stubs.sort_by_key(|stub| stub.stub_address);
-    let helper_entry_size = 12u64;
-    let lazy_count = lazy_stubs.len() as u64;
-    if helper_size < lazy_count.saturating_mul(helper_entry_size) {
+    let (file_offset, file_size) = helper_section.file_range().unwrap_or((0, 0));
+    let start = usize::try_from(file_offset).map_err(|_| {
+        MachoError::MalformedDyldPayload("invalid __stub_helper file offset".to_string())
+    })?;
+    let size = usize::try_from(file_size).map_err(|_| {
+        MachoError::MalformedDyldPayload("invalid __stub_helper file size".to_string())
+    })?;
+    let end = start.checked_add(size).ok_or_else(|| {
+        MachoError::MalformedDyldPayload("invalid __stub_helper file range".to_string())
+    })?;
+    let helper_bytes = bytes_slice(macho_file, start, end).ok_or_else(|| {
+        MachoError::MalformedDyldPayload("truncated __stub_helper section".to_string())
+    })?;
+
+    let helper_entries = decode_stub_helper_entries(helper_section.address(), helper_bytes)?;
+    if helper_entries.is_empty() {
         return Err(MachoError::MalformedDyldPayload(
-            "__stub_helper section is smaller than the expected lazy helper table".to_string(),
+            "__stub_helper section did not contain any decodable helper entries".to_string(),
         ));
     }
-    let preamble_size = helper_size.saturating_sub(lazy_count.saturating_mul(helper_entry_size));
-    let helper_base = helper_section.address().saturating_add(preamble_size);
 
-    for (index, stub) in lazy_stubs.into_iter().enumerate() {
-        let helper_address =
-            helper_base.saturating_add((index as u64).saturating_mul(helper_entry_size));
-        stub.helper_address = Some(helper_address);
+    for helper_entry in helper_entries {
+        let lazy_binding = lazy_bindings_by_sequence
+            .get(&helper_entry.lazy_bind_offset)
+            .ok_or_else(|| {
+                MachoError::MalformedDyldPayload(format!(
+                    "missing lazy bind sequence for helper offset {:#x}",
+                    helper_entry.lazy_bind_offset
+                ))
+            })?;
+        let stub = lazy_stubs_by_pointer
+            .get_mut(&lazy_binding.address)
+            .ok_or_else(|| {
+                MachoError::MalformedDyldPayload(format!(
+                    "missing lazy stub for helper offset {:#x} at pointer {:#x}",
+                    helper_entry.lazy_bind_offset, lazy_binding.address
+                ))
+            })?;
+        stub.helper_address = Some(helper_entry.helper_address);
         dyld.stub_helpers.push(StubHelperEntry {
-            helper_address,
+            helper_address: helper_entry.helper_address,
             target_stub: Some(stub.stub_address),
+            stub_section: stub.section.clone(),
+            pointer_address: stub.pointer_address,
+            pointer_section: stub.pointer_section.clone(),
             binding_ordinal: stub.binding_ordinal,
-            dylib: stub.dylib.clone(),
-            name: stub.name.clone(),
+            dylib: Some(lazy_binding.dylib.clone()),
+            name: Some(lazy_binding.name.clone()),
         });
     }
 
@@ -786,13 +872,24 @@ fn populate_stub_helpers(
         (
             entry.helper_address,
             entry.target_stub.unwrap_or_default(),
+            entry.stub_section.clone().unwrap_or_default(),
+            entry.pointer_address.unwrap_or_default(),
+            entry.pointer_section.clone().unwrap_or_default(),
             entry.binding_ordinal.unwrap_or_default(),
             entry.dylib.clone().unwrap_or_default(),
             entry.name.clone().unwrap_or_default(),
         )
     });
-    dyld.stub_helpers.dedup();
-    let _ = pointer_slots_by_name;
+    dyld.stub_helpers.dedup_by(|left, right| {
+        left.helper_address == right.helper_address
+            && left.target_stub == right.target_stub
+            && left.stub_section == right.stub_section
+            && left.pointer_address == right.pointer_address
+            && left.pointer_section == right.pointer_section
+            && left.binding_ordinal == right.binding_ordinal
+            && left.dylib == right.dylib
+            && left.name == right.name
+    });
     Ok(())
 }
 
@@ -809,7 +906,6 @@ struct IndirectSymbolMetadata {
 
 #[derive(Debug)]
 struct ResolvedIndirectSymbol<'a> {
-    normalized_name: String,
     ordinal: Option<u32>,
     import: &'a Import,
 }
@@ -827,6 +923,164 @@ struct PointerSlotMetadata {
     binding_kind: PointerBindingKind,
 }
 
+fn select_pointer_slot_for_stub(slots: &[PointerSlotMetadata]) -> Option<&PointerSlotMetadata> {
+    slots
+        .iter()
+        .find(|slot| slot.binding_kind == PointerBindingKind::Lazy)
+        .or_else(|| slots.first())
+}
+
+#[derive(Debug, Clone)]
+struct LazyBindMetadata {
+    address: u64,
+    name: String,
+    dylib: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StubHelperDecodeEntry {
+    helper_address: u64,
+    lazy_bind_offset: u32,
+}
+
+fn bytes_slice<'data>(
+    macho_file: &MachOFile64<'data, object::Endianness>,
+    start: usize,
+    end: usize,
+) -> Option<&'data [u8]> {
+    let bytes = macho_file.data();
+    bytes.get(start..end)
+}
+
+fn decode_stub_helper_entries(
+    section_address: u64,
+    helper_bytes: &[u8],
+) -> Result<Vec<StubHelperDecodeEntry>> {
+    let Some(entry_start) = find_stub_helper_entry_start(section_address, helper_bytes) else {
+        return Err(MachoError::MalformedDyldPayload(
+            "__stub_helper section did not contain a decodable helper trampoline".to_string(),
+        ));
+    };
+
+    let mut entries = Vec::new();
+    let mut cursor = entry_start;
+    let remaining_table = helper_bytes.len().saturating_sub(entry_start);
+    if remaining_table % 12 != 0 {
+        return Err(MachoError::MalformedDyldPayload(
+            "__stub_helper table is not a multiple of 12-byte entries".to_string(),
+        ));
+    }
+    let section_end = section_address.saturating_add(helper_bytes.len() as u64);
+    while cursor < helper_bytes.len() {
+        let remaining = helper_bytes.len().saturating_sub(cursor);
+        if remaining < 12 {
+            return Err(MachoError::MalformedDyldPayload(
+                "truncated __stub_helper entry".to_string(),
+            ));
+        }
+        let ldr = read_u32_le(&helper_bytes[cursor..cursor + 4]);
+        let branch = read_u32_le(&helper_bytes[cursor + 4..cursor + 8]);
+        let helper_address = section_address.saturating_add(cursor as u64);
+        if !is_stub_helper_literal_load(ldr) {
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "unexpected __stub_helper literal-load instruction at {helper_address:#x}"
+            )));
+        }
+        let branch_target =
+            decode_unconditional_branch_target(helper_address.saturating_add(4), branch)
+                .ok_or_else(|| {
+                    MachoError::MalformedDyldPayload(format!(
+                        "unexpected __stub_helper branch instruction at {:#x}",
+                        helper_address.saturating_add(4)
+                    ))
+                })?;
+        if branch_target != section_address {
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "__stub_helper branch target {branch_target:#x} did not point at trampoline base {section_address:#x}"
+            )));
+        }
+        let literal_target = decode_literal_load_target(helper_address, ldr).ok_or_else(|| {
+            MachoError::MalformedDyldPayload(format!(
+                "failed to decode __stub_helper literal-load target at {helper_address:#x}"
+            ))
+        })?;
+        if !(section_address..section_end).contains(&literal_target) {
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "__stub_helper literal target {literal_target:#x} is out of section range"
+            )));
+        }
+        let literal_offset = literal_target.saturating_sub(section_address) as usize;
+        let Some(literal_bytes) =
+            helper_bytes.get(literal_offset..literal_offset.saturating_add(4))
+        else {
+            return Err(MachoError::MalformedDyldPayload(format!(
+                "__stub_helper literal target {literal_target:#x} is truncated"
+            )));
+        };
+        let literal = read_u32_le(literal_bytes);
+        entries.push(StubHelperDecodeEntry {
+            helper_address,
+            lazy_bind_offset: literal,
+        });
+        cursor = cursor.saturating_add(12);
+    }
+    Ok(entries)
+}
+
+fn find_stub_helper_entry_start(section_address: u64, helper_bytes: &[u8]) -> Option<usize> {
+    let section_end = section_address.checked_add(helper_bytes.len() as u64)?;
+    for offset in (0..helper_bytes.len().saturating_sub(11)).step_by(4) {
+        let ldr = read_u32_le(&helper_bytes[offset..offset + 4]);
+        let branch = read_u32_le(&helper_bytes[offset + 4..offset + 8]);
+        let helper_address = section_address.saturating_add(offset as u64);
+        let literal_target = decode_literal_load_target(helper_address, ldr);
+        if is_stub_helper_literal_load(ldr)
+            && decode_unconditional_branch_target(helper_address.saturating_add(4), branch)
+                == Some(section_address)
+            && literal_target.is_some_and(|target| (section_address..section_end).contains(&target))
+        {
+            return Some(offset);
+        }
+    }
+    None
+}
+
+fn is_stub_helper_literal_load(word: u32) -> bool {
+    word & 0xff00_001f == 0x1800_0010
+}
+
+fn decode_unconditional_branch_target(instruction_address: u64, word: u32) -> Option<u64> {
+    if word & 0x7c00_0000 != 0x1400_0000 {
+        return None;
+    }
+    let imm26 = (word & 0x03ff_ffff) as i32;
+    let signed = (imm26 << 6) >> 6;
+    let delta = i64::from(signed) * 4;
+    if delta >= 0 {
+        instruction_address.checked_add(delta as u64)
+    } else {
+        instruction_address.checked_sub(delta.unsigned_abs())
+    }
+}
+
+fn decode_literal_load_target(instruction_address: u64, word: u32) -> Option<u64> {
+    if !is_stub_helper_literal_load(word) {
+        return None;
+    }
+    let imm19 = ((word >> 5) & 0x7ffff) as i32;
+    let signed = (imm19 << 13) >> 13;
+    let delta = i64::from(signed) * 4;
+    if delta >= 0 {
+        instruction_address.checked_add(delta as u64)
+    } else {
+        instruction_address.checked_sub(delta.unsigned_abs())
+    }
+}
+
+fn read_u32_le(bytes: &[u8]) -> u32 {
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
 fn build_indirect_symbol_metadata(
     macho: &goblin::mach::MachO<'_>,
 ) -> BTreeMap<usize, IndirectSymbolMetadata> {
@@ -834,10 +1088,14 @@ fn build_indirect_symbol_metadata(
     let Some(symbols) = macho.symbols.as_ref() else {
         return result;
     };
-    let Some(dysymtab) = macho.load_commands.iter().find_map(|command| match &command.command {
-        goblin::mach::load_command::CommandVariant::Dysymtab(command) => Some(command),
-        _ => None,
-    }) else {
+    let Some(dysymtab) = macho
+        .load_commands
+        .iter()
+        .find_map(|command| match &command.command {
+            goblin::mach::load_command::CommandVariant::Dysymtab(command) => Some(command),
+            _ => None,
+        })
+    else {
         return result;
     };
 
@@ -872,7 +1130,7 @@ fn resolve_indirect_symbol<'a>(
     macho_file: &'a MachOFile64<'a, object::Endianness>,
     symbol_index: SymbolIndex,
     metadata: &BTreeMap<usize, IndirectSymbolMetadata>,
-    imports_by_name: &BTreeMap<String, &'a Import>,
+    imports_by_name: &BTreeMap<String, Vec<&'a Import>>,
     imports_by_dylib_and_name: &BTreeMap<(String, String), &'a Import>,
 ) -> Option<ResolvedIndirectSymbol<'a>> {
     let metadata_entry = metadata.get(&symbol_index.0);
@@ -888,15 +1146,25 @@ fn resolve_indirect_symbol<'a>(
         (normalize_import_name(&raw_name), None, None)
     };
 
-    let import = dylib_name
-        .as_ref()
-        .and_then(|dylib| imports_by_dylib_and_name.get(&(normalized_name.clone(), dylib.clone())).copied())
-        .or_else(|| imports_by_name.get(&normalized_name).copied())?;
-    Some(ResolvedIndirectSymbol {
-        normalized_name,
-        ordinal,
-        import,
-    })
+    let import = if let Some(dylib) = dylib_name.as_ref() {
+        imports_by_dylib_and_name
+            .get(&(normalized_name.clone(), dylib.clone()))
+            .copied()
+            .or_else(|| {
+                imports_by_name
+                    .get(&normalized_name)
+                    .and_then(|matches| (matches.len() == 1).then_some(matches[0]))
+            })
+    } else {
+        imports_by_name.get(&normalized_name).and_then(|matches| {
+            if matches.len() == 1 {
+                Some(matches[0])
+            } else {
+                None
+            }
+        })
+    }?;
+    Some(ResolvedIndirectSymbol { ordinal, import })
 }
 
 fn collect_relocations<'a>(file: &object::File<'a, &'a [u8]>) -> Result<Vec<Relocation>> {

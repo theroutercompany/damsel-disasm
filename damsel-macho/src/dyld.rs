@@ -3,8 +3,8 @@ use damsel_core::{
     DyldMetadata, ExportKind, ExportedSymbol, ImportBindingKind, ImportBindingRecord,
     ImportBindingSource, Segment, StubEntry, StubHelperEntry, StubKind,
 };
-use goblin::mach::{load_command, segment};
 use goblin::mach::exports::ExportInfo;
+use goblin::mach::{load_command, segment};
 
 const DYLD_CHAINED_PTR_START_NONE: u16 = 0xFFFF;
 const DYLD_CHAINED_PTR_START_MULTI: u16 = 0x8000;
