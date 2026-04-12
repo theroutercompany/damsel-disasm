@@ -74,6 +74,7 @@ jobs:
           test -f fixtures/export-trie-corpus/README.md
           test -f fixtures/export-trie-corpus/reexport-same-name.toml
           test -f fixtures/export-trie-corpus/reexport-renamed-symbol.toml
+          test -f fixtures/export-trie-corpus/resolver-only.toml
           test -f fixtures/export-trie-corpus/stub-and-resolver.toml
           test -f fixtures/export-trie-corpus/malformed-reexport-ordinal.toml
           test -f fixtures/export-trie-corpus/malformed-stub-resolver-offsets.toml

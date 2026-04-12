@@ -11,6 +11,7 @@ Each `*.toml` case encodes:
 Current cases:
 - `reexport-same-name.toml`
 - `reexport-renamed-symbol.toml`
+- `resolver-only.toml`
 - `stub-and-resolver.toml`
 - `malformed-reexport-ordinal.toml`
 - `malformed-stub-resolver-offsets.toml`
