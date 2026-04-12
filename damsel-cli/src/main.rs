@@ -2,10 +2,12 @@ mod output;
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
-    DecodedInstruction, DisassemblyLimit, DisassemblyRequest, DisassemblyTarget, Import,
-    Relocation, Section, Symbol,
+    BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyRequest, DisassemblyTarget,
+    Import, Relocation, Section, Symbol,
 };
 use damsel_macho::{disassemble, load};
+use std::error::Error;
+use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -161,21 +163,67 @@ enum Command {
 }
 
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("error: {error}");
-        std::process::exit(1);
-    }
-}
-
-fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let output_settings = output::OutputSettings {
         format: cli.format.into(),
         pretty: cli.pretty,
     };
 
+    if let Err(error) = run(cli, output_settings) {
+        output::print_error(
+            output::ErrorResponse {
+                code: error.code,
+                message: error.message,
+                details: error.details,
+            },
+            &output_settings,
+        );
+        std::process::exit(1);
+    }
+}
+
+#[derive(Debug)]
+struct CliRunError {
+    code: &'static str,
+    message: String,
+    details: Option<String>,
+}
+
+impl CliRunError {
+    fn invalid_args(message: impl Into<String>) -> Self {
+        Self {
+            code: "invalid_args",
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    fn command(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            details: None,
+        }
+    }
+}
+
+impl fmt::Display for CliRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.details {
+            Some(details) => write!(f, "{}: {} ({details})", self.code, self.message),
+            None => write!(f, "{}: {}", self.code, self.message),
+        }
+    }
+}
+
+impl Error for CliRunError {}
+
+fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<(), CliRunError> {
     match cli.command {
-        Command::Info { path } => output::print_info(&load(path)?, &output_settings),
+        Command::Info { path } => {
+            let image = load_image(path)?;
+            output::print_info(&image, &output_settings);
+        }
         Command::Sections {
             path,
             executable_only,
@@ -183,7 +231,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             name,
             sort,
         } => {
-            let image = load(path)?;
+            let image = load_image(path)?;
             let mut sections = image.sections.clone();
             if executable_only {
                 sections.retain(|section| section.executable);
@@ -208,7 +256,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             name,
             sort,
         } => {
-            let image = load(path)?;
+            let image = load_image(path)?;
             let mut symbols = image.symbols.clone();
             if defined {
                 symbols.retain(|symbol| symbol.defined);
@@ -241,7 +289,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             resolved,
             sort,
         } => {
-            let image = load(path)?;
+            let image = load_image(path)?;
             let mut imports = image.imports.clone();
             if let Some(dylib) = dylib {
                 imports.retain(|import| contains_case_insensitive(&import.dylib, &dylib));
@@ -268,7 +316,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             section,
             sort,
         } => {
-            let image = load(path)?;
+            let image = load_image(path)?;
             let mut relocations = image.relocations.clone();
             if let Some(section) = section {
                 relocations
@@ -286,7 +334,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             exports,
             function_starts,
         } => {
-            let image = load(path)?;
+            let image = load_image(path)?;
             let show_any = dylibs || rpaths || exports || function_starts;
             let view_options = if show_any {
                 output::DyldViewOptions {
@@ -301,10 +349,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             output::print_dyld(&image, view_options, &output_settings);
         }
         Command::Slices { path } => {
-            let image = load(path)?;
+            let image = load_image(path)?;
             output::print_slices(&image, &output_settings);
         }
-        Command::Objc { path } => output::print_objc(&load(path)?, &output_settings),
+        Command::Objc { path } => {
+            let image = load_image(path)?;
+            output::print_objc(&image, &output_settings);
+        }
         Command::Disasm {
             path,
             symbol,
@@ -318,59 +369,60 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             no_annotations,
             show_references,
         } => {
-            if let (Some(from), Some(to)) = (from, to) {
-                if to <= from {
-                    return Err("`--to` must be greater than `--from`".into());
-                }
-            }
-
-            let image = load(path)?;
-            let target = if let Some(symbol) = symbol {
-                DisassemblyTarget::Symbol(symbol)
-            } else if let Some(addr) = addr {
-                DisassemblyTarget::Address(addr)
-            } else {
-                DisassemblyTarget::Section(section.expect("section target"))
-            };
-            let count_limit = count.or(limit);
-            let request_limit = match (count_limit, bytes) {
-                (Some(count), Some(bytes)) => {
-                    Some(DisassemblyLimit::Instructions(count.min(bytes.div_ceil(4))))
-                }
-                (Some(count), None) => Some(DisassemblyLimit::Instructions(count)),
-                (None, Some(bytes)) => Some(DisassemblyLimit::Bytes(bytes)),
-                (None, None) => None,
-            };
-            let instruction_limit = request_limit.and_then(|limit| match limit {
-                DisassemblyLimit::Instructions(count) => Some(count),
-                DisassemblyLimit::Bytes(bytes) => Some(bytes.div_ceil(4)),
-                DisassemblyLimit::Unlimited => None,
-            });
-            let result = disassemble(
+            let image = load_image(path)?;
+            let disasm_plan = plan_disassembly(
                 &image,
-                &DisassemblyRequest {
-                    target,
-                    max_instructions: instruction_limit,
-                    limit: request_limit,
-                    include_annotations: !no_annotations,
+                DisasmFlagArgs {
+                    symbol,
+                    addr,
+                    section,
+                    count,
+                    limit,
+                    bytes,
+                    from,
+                    to,
                 },
             )?;
 
-            let range_start = from.unwrap_or(result.start_address);
-            let range_end =
-                to.or_else(|| bytes.map(|count| range_start.saturating_add(count as u64)));
-            let instructions = filter_instructions(&result.instructions, range_start, range_end);
-            let bytes_len = if from.is_none() && range_end.is_none() {
-                result.bytes_len
-            } else {
-                infer_bytes_len(range_start, range_end, &instructions)
+            let result = disassemble(
+                &image,
+                &DisassemblyRequest {
+                    target: disasm_plan.decode_target,
+                    max_instructions: disasm_plan.max_instructions,
+                    limit: disasm_plan.limit,
+                    include_annotations: !no_annotations,
+                },
+            )
+            .map_err(map_disasm_error)?;
+
+            let instructions = filter_instructions(
+                &result.instructions,
+                disasm_plan.window_start,
+                disasm_plan.window_end,
+            );
+            let bytes_len = match disasm_plan.window_end {
+                Some(end) => end.saturating_sub(disasm_plan.window_start) as usize,
+                None => infer_bytes_len(disasm_plan.window_start, None, &instructions),
             };
+            let end_address = instructions
+                .last()
+                .map(|instruction| {
+                    instruction
+                        .address
+                        .saturating_add(u64::from(instruction.size))
+                })
+                .unwrap_or(disasm_plan.window_start);
 
             output::print_disassembly(
                 output::DisassemblyView {
                     target: &result.target,
-                    start_address: range_start,
+                    start_address: disasm_plan.window_start,
                     bytes_len,
+                    decoded_bytes: result.decoded_bytes,
+                    end_address,
+                    instruction_count: instructions.len(),
+                    stop_reason: format!("{:?}", result.stop_reason),
+                    window_end: disasm_plan.window_end,
                     instructions: &instructions,
                 },
                 output::DisassemblyRenderOptions {
@@ -383,6 +435,169 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn load_image(path: PathBuf) -> Result<BinaryImage, CliRunError> {
+    load(path).map_err(|error| CliRunError::command("load_error", error.to_string()))
+}
+
+#[derive(Debug)]
+struct DisasmFlagArgs {
+    symbol: Option<String>,
+    addr: Option<u64>,
+    section: Option<String>,
+    count: Option<usize>,
+    limit: Option<usize>,
+    bytes: Option<usize>,
+    from: Option<u64>,
+    to: Option<u64>,
+}
+
+#[derive(Debug)]
+struct DisasmPlan {
+    decode_target: DisassemblyTarget,
+    max_instructions: Option<usize>,
+    limit: Option<DisassemblyLimit>,
+    window_start: u64,
+    window_end: Option<u64>,
+}
+
+fn plan_disassembly(image: &BinaryImage, args: DisasmFlagArgs) -> Result<DisasmPlan, CliRunError> {
+    let instruction_limit = normalize_instruction_limit(args.count, args.limit)?;
+
+    if args.bytes.is_some() && instruction_limit.is_some() {
+        return Err(CliRunError::invalid_args(
+            "`--bytes` cannot be combined with `--count` or `--limit`",
+        ));
+    }
+    if args.to.is_some() && args.bytes.is_some() {
+        return Err(CliRunError::invalid_args(
+            "`--to` cannot be combined with `--bytes`",
+        ));
+    }
+    if args.to.is_some() && instruction_limit.is_some() {
+        return Err(CliRunError::invalid_args(
+            "`--to` cannot be combined with `--count` or `--limit`",
+        ));
+    }
+    if let Some(bytes) = args.bytes
+        && bytes == 0
+    {
+        return Err(CliRunError::invalid_args(
+            "`--bytes` must be greater than 0",
+        ));
+    }
+
+    let (base_target, base_start) = if let Some(symbol) = args.symbol {
+        let symbol_entry = image
+            .symbol_by_name(&symbol)
+            .ok_or_else(|| CliRunError::command("symbol_not_found", symbol.clone()))?;
+        (DisassemblyTarget::Symbol(symbol), symbol_entry.address)
+    } else if let Some(addr) = args.addr {
+        (DisassemblyTarget::Address(addr), addr)
+    } else {
+        let section_name = args.section.expect("section target");
+        let section_entry = image
+            .section_by_name(&section_name)
+            .ok_or_else(|| CliRunError::command("section_not_found", section_name.clone()))?;
+        (
+            DisassemblyTarget::Section(section_name),
+            section_entry.address,
+        )
+    };
+
+    if let (Some(addr), Some(from)) = (args.addr, args.from)
+        && addr != from
+    {
+        return Err(CliRunError::invalid_args(
+            "`--from` must match `--addr` when both are provided",
+        ));
+    }
+
+    let window_start = args.from.unwrap_or(base_start);
+    if let Some(to) = args.to
+        && to <= window_start
+    {
+        return Err(CliRunError::invalid_args(
+            "`--to` must be greater than the decode start",
+        ));
+    }
+
+    let window_end =
+        if let Some(to) = args.to {
+            Some(to)
+        } else if let Some(bytes) = args.bytes {
+            Some(window_start.checked_add(bytes as u64).ok_or_else(|| {
+                CliRunError::invalid_args("decode window overflows address space")
+            })?)
+        } else {
+            None
+        };
+
+    let max_instructions = if let Some(limit) = instruction_limit {
+        Some(limit)
+    } else if let Some(end) = window_end {
+        let window_bytes = end.saturating_sub(window_start) as usize;
+        Some((window_bytes.saturating_add(3)) / 4)
+    } else {
+        None
+    };
+
+    let request_limit = if let Some(limit) = instruction_limit {
+        Some(DisassemblyLimit::Instructions(limit))
+    } else if let Some(end) = window_end {
+        Some(DisassemblyLimit::Bytes(
+            end.saturating_sub(window_start) as usize
+        ))
+    } else {
+        None
+    };
+
+    let decode_target = if args.from.is_some() {
+        DisassemblyTarget::Address(window_start)
+    } else {
+        base_target
+    };
+
+    Ok(DisasmPlan {
+        decode_target,
+        max_instructions,
+        limit: request_limit,
+        window_start,
+        window_end,
+    })
+}
+
+fn normalize_instruction_limit(
+    count: Option<usize>,
+    limit: Option<usize>,
+) -> Result<Option<usize>, CliRunError> {
+    match (count, limit) {
+        (Some(left), Some(right)) if left != right => Err(CliRunError::invalid_args(
+            "`--count` and `--limit` cannot differ when both are provided",
+        )),
+        (Some(0), _) | (_, Some(0)) => Err(CliRunError::invalid_args(
+            "instruction limit must be greater than 0",
+        )),
+        (Some(value), _) => Ok(Some(value)),
+        (_, Some(value)) => Ok(Some(value)),
+        (None, None) => Ok(None),
+    }
+}
+
+fn map_disasm_error(error: damsel_macho::MachoError) -> CliRunError {
+    let message = error.to_string();
+    if message.contains("symbol not found") {
+        CliRunError::command("symbol_not_found", message)
+    } else if message.contains("section not found") {
+        CliRunError::command("section_not_found", message)
+    } else if message.contains("not mapped") {
+        CliRunError::command("address_not_mapped", message)
+    } else if message.contains("decode error") {
+        CliRunError::command("decode_error", message)
+    } else {
+        CliRunError::command("disasm_error", message)
+    }
 }
 
 fn parse_address(value: &str) -> Result<u64, String> {
@@ -444,7 +659,7 @@ fn filter_instructions(
     instructions
         .iter()
         .filter(|instruction| {
-            instruction.address >= from && to.map_or(true, |end| instruction.address < end)
+            instruction.address >= from && to.is_none_or(|end| instruction.address < end)
         })
         .cloned()
         .collect()

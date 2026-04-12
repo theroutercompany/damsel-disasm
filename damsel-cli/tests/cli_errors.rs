@@ -26,7 +26,7 @@ fn disasm_unknown_symbol_returns_error() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("symbol not found"));
+        .stderr(predicate::str::contains("error [symbol_not_found]"));
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn disasm_unknown_section_returns_error() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("section not found"));
+        .stderr(predicate::str::contains("error [section_not_found]"));
 }
 
 #[test]
@@ -70,4 +70,70 @@ fn disasm_rejects_invalid_address_value() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("invalid"));
+}
+
+#[test]
+fn disasm_rejects_conflicting_count_and_limit() {
+    let path = fixture("arm64-symbolized");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "disasm",
+            path.to_str().expect("utf8 path"),
+            "--symbol",
+            "_main",
+            "--count",
+            "8",
+            "--limit",
+            "4",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "`--count` and `--limit` cannot differ",
+        ));
+}
+
+#[test]
+fn disasm_rejects_bytes_with_to() {
+    let path = fixture("arm64-symbolized");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "disasm",
+            path.to_str().expect("utf8 path"),
+            "--section",
+            "__text",
+            "--bytes",
+            "32",
+            "--to",
+            "0x100000480",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "`--to` cannot be combined with `--bytes`",
+        ));
+}
+
+#[test]
+fn disasm_rejects_invalid_range() {
+    let path = fixture("arm64-symbolized");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "disasm",
+            path.to_str().expect("utf8 path"),
+            "--addr",
+            "0x1000004d0",
+            "--from",
+            "0x1000004d0",
+            "--to",
+            "0x1000004c0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "`--to` must be greater than the decode start",
+        ));
 }

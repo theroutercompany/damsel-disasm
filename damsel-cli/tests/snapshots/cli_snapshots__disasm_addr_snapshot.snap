@@ -2,12 +2,12 @@
 source: damsel-cli/tests/cli_snapshots.rs
 expression: stdout
 ---
-target: 0x1000004b8 start=0x1000004b8 bytes=0x20
+target: 0x1000004b8 start=0x1000004b8 end=0x1000004d8 bytes=0x20 decoded=0x20 instructions=8 stop=LimitReached
        0x1000004b8  d10083ff  sub sp, sp, #0x20 ; range start | symbol _main
        0x1000004bc  a9017bfd  stp fp, lr, [sp, #0x10]
        0x1000004c0  910043fd  add fp, sp, #0x10
        0x1000004c4  b81fc3bf  stur wzr, [fp, #0xfffffffffffffffc]
-       0x1000004c8  90000000  adrp x0, 0x100000000 ; adrp base x0 -> 0x100000000 | target __mh_execute_header (0x100000000)
-       0x1000004cc  91140000  add x0, x0, #0x500 ; adrp pair x0 + 0x500 -> 0x100000500
-       0x1000004d0  94000009  bl 0x1000004f4
+       0x1000004c8  90000000  adrp x0, 0x100000000 ; page base x0 -> 0x100000000 | target __mh_execute_header (0x100000000)
+       0x1000004cc  91140000  add x0, x0, #0x500 ; add synthesis x0 + 0x500 -> 0x100000500
+       0x1000004d0  94000009  bl #0x1000004f4 ; binding-evidence /usr/lib/libSystem.B.dylib:_puts addr=0x100004000 off=- addend=0 source=Stub
        0x1000004d4  52800040  mov w0, #0x2

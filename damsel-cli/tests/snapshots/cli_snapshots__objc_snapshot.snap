@@ -1,11 +1,72 @@
 ---
 source: damsel-cli/tests/cli_snapshots.rs
+assertion_line: 76
 expression: stdout
 ---
 image_info_flags: 0x40
 classes:
+  Excited
   Greeter
+  GreetingProviding
+  NSObject
+  Speaker
 selectors:
+  _name
+  autorelease
+  class
+  conformsToProtocol:
+  debugDescription
+  description
+  emphasizedGreeting
   greeting
+  hash
+  init
+  isEqual:
+  isKindOfClass:
+  isMemberOfClass:
+  isProxy
+  name
+  performSelector:
+  performSelector:withObject:
+  performSelector:withObject:withObject:
+  prefix
+  release
+  respondsToSelector:
+  retain
+  retainCount
+  self
+  setName:
+  stringWithFormat:
+  superclass
+  uppercaseString
+  zone
 methods:
+  _name
+  autorelease
+  class
+  conformsToProtocol:
+  debugDescription
+  description
+  emphasizedGreeting
   greeting
+  hash
+  init
+  isEqual:
+  isKindOfClass:
+  isMemberOfClass:
+  isProxy
+  name
+  performSelector:
+  performSelector:withObject:
+  performSelector:withObject:withObject:
+  prefix
+  release
+  respondsToSelector:
+  retain
+  retainCount
+  self
+  setName:
+  stringWithFormat:
+  superclass
+  uppercaseString
+  zone
