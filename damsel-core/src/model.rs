@@ -164,6 +164,67 @@ impl CapabilityStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CompatibilityCapability {
+    MachoAnalysis,
+    FixtureRebuild,
+    FixtureDriftCheck,
+    Benchmark,
+    BenchCompile,
+    BenchRuntime,
+}
+
+impl CompatibilityCapability {
+    pub const ALL: [Self; 6] = [
+        Self::MachoAnalysis,
+        Self::FixtureRebuild,
+        Self::FixtureDriftCheck,
+        Self::Benchmark,
+        Self::BenchCompile,
+        Self::BenchRuntime,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::MachoAnalysis => "macho_analysis",
+            Self::FixtureRebuild => "fixture_rebuild",
+            Self::FixtureDriftCheck => "fixture_drift_check",
+            Self::Benchmark => "benchmark",
+            Self::BenchCompile => "bench_compile",
+            Self::BenchRuntime => "bench_runtime",
+        }
+    }
+
+    pub fn cli_name(self) -> &'static str {
+        match self {
+            Self::MachoAnalysis => "macho-analysis",
+            Self::FixtureRebuild => "fixture-rebuild",
+            Self::FixtureDriftCheck => "fixture-drift-check",
+            Self::Benchmark => "benchmark",
+            Self::BenchCompile => "bench-compile",
+            Self::BenchRuntime => "bench-runtime",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match normalize_identifier(value).as_str() {
+            "machoanalysis" => Some(Self::MachoAnalysis),
+            "fixturerebuild" => Some(Self::FixtureRebuild),
+            "fixturedriftcheck" => Some(Self::FixtureDriftCheck),
+            "benchmark" => Some(Self::Benchmark),
+            "benchcompile" => Some(Self::BenchCompile),
+            "benchruntime" => Some(Self::BenchRuntime),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for CompatibilityCapability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.key())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CompatibilityIssue {
     pub code: String,

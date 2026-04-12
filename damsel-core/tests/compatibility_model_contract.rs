@@ -1,4 +1,6 @@
-use damsel_core::{CapabilityStatus, CompatibilityIssue, HostArchitecture, HostPlatform};
+use damsel_core::{
+    CapabilityStatus, CompatibilityCapability, CompatibilityIssue, HostArchitecture, HostPlatform,
+};
 
 #[test]
 fn host_platform_parsing_and_display_is_stable() {
@@ -67,4 +69,89 @@ fn compatibility_issue_constructor_and_display_are_stable() {
     assert_eq!(issue.code, "missing-tool");
     assert_eq!(issue.message, "xcrun was not found");
     assert_eq!(issue.to_string(), "missing-tool: xcrun was not found");
+}
+
+#[test]
+fn compatibility_capability_key_and_cli_name_are_stable() {
+    assert_eq!(
+        CompatibilityCapability::MachoAnalysis.key(),
+        "macho_analysis"
+    );
+    assert_eq!(
+        CompatibilityCapability::FixtureRebuild.key(),
+        "fixture_rebuild"
+    );
+    assert_eq!(
+        CompatibilityCapability::FixtureDriftCheck.key(),
+        "fixture_drift_check"
+    );
+    assert_eq!(CompatibilityCapability::Benchmark.key(), "benchmark");
+    assert_eq!(CompatibilityCapability::BenchCompile.key(), "bench_compile");
+    assert_eq!(CompatibilityCapability::BenchRuntime.key(), "bench_runtime");
+
+    assert_eq!(
+        CompatibilityCapability::MachoAnalysis.cli_name(),
+        "macho-analysis"
+    );
+    assert_eq!(
+        CompatibilityCapability::FixtureRebuild.cli_name(),
+        "fixture-rebuild"
+    );
+    assert_eq!(
+        CompatibilityCapability::FixtureDriftCheck.cli_name(),
+        "fixture-drift-check"
+    );
+    assert_eq!(CompatibilityCapability::Benchmark.cli_name(), "benchmark");
+    assert_eq!(
+        CompatibilityCapability::BenchCompile.cli_name(),
+        "bench-compile"
+    );
+    assert_eq!(
+        CompatibilityCapability::BenchRuntime.cli_name(),
+        "bench-runtime"
+    );
+}
+
+#[test]
+fn compatibility_capability_parse_supports_json_and_cli_forms() {
+    assert_eq!(
+        CompatibilityCapability::parse("macho_analysis"),
+        Some(CompatibilityCapability::MachoAnalysis)
+    );
+    assert_eq!(
+        CompatibilityCapability::parse("macho-analysis"),
+        Some(CompatibilityCapability::MachoAnalysis)
+    );
+    assert_eq!(
+        CompatibilityCapability::parse("fixture_rebuild"),
+        Some(CompatibilityCapability::FixtureRebuild)
+    );
+    assert_eq!(
+        CompatibilityCapability::parse("fixture-drift-check"),
+        Some(CompatibilityCapability::FixtureDriftCheck)
+    );
+    assert_eq!(
+        CompatibilityCapability::parse("bench_compile"),
+        Some(CompatibilityCapability::BenchCompile)
+    );
+    assert_eq!(
+        CompatibilityCapability::parse("bench-runtime"),
+        Some(CompatibilityCapability::BenchRuntime)
+    );
+    assert_eq!(CompatibilityCapability::parse("unknown"), None);
+}
+
+#[test]
+fn compatibility_capability_all_is_deterministic() {
+    assert_eq!(
+        CompatibilityCapability::ALL,
+        [
+            CompatibilityCapability::MachoAnalysis,
+            CompatibilityCapability::FixtureRebuild,
+            CompatibilityCapability::FixtureDriftCheck,
+            CompatibilityCapability::Benchmark,
+            CompatibilityCapability::BenchCompile,
+            CompatibilityCapability::BenchRuntime,
+        ]
+    );
 }
