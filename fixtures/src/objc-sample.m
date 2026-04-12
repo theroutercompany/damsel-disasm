@@ -88,6 +88,13 @@
 + (NSString *)categoryKind;
 @end
 
+@protocol DiagnosticProviding <NSObject>
+@required
+- (NSString *)diagnosticSummary;
+@optional
+- (NSString *)diagnosticToken;
+@end
+
 @interface Greeter (Excited) <Excitement>
 @property (nonatomic, readonly) NSString *categoryToken;
 + (NSString *)categoryKind;
@@ -112,11 +119,63 @@
 }
 @end
 
+@interface Speaker (Diagnostics) <DiagnosticProviding>
+@property (nonatomic, readonly) NSString *diagnosticLabel;
++ (NSString *)diagnosticCategory;
+- (NSString *)diagnosticToken;
+- (NSString *)diagnosticSummary;
+@end
+
+@implementation Speaker (Diagnostics)
+- (NSString *)diagnosticLabel {
+    return @"speaker-diagnostics";
+}
+
++ (NSString *)diagnosticCategory {
+    return @"diagnostics";
+}
+
+- (NSString *)diagnosticToken {
+    return @"diag";
+}
+
+- (NSString *)diagnosticSummary {
+    return [NSString stringWithFormat:@"%@ [%@:%@]", [self prefix], self.diagnosticLabel, self.diagnosticToken];
+}
+@end
+
+@interface Greeter (Metrics)
+@property (nonatomic, readonly) NSString *metricsToken;
++ (NSString *)metricsCategory;
+- (NSString *)metricsSummary;
+- (NSString *)metricsSummaryWithPrefix:(NSString *)prefix;
+@end
+
+@implementation Greeter (Metrics)
+- (NSString *)metricsToken {
+    return @"metrics";
+}
+
++ (NSString *)metricsCategory {
+    return @"metrics";
+}
+
+- (NSString *)metricsSummary {
+    return [NSString stringWithFormat:@"%@:%ld:%@", self.name, (long)self.emphasis, self.metricsToken];
+}
+
+- (NSString *)metricsSummaryWithPrefix:(NSString *)prefix {
+    return [NSString stringWithFormat:@"%@:%@", prefix, [self metricsSummary]];
+}
+@end
+
 int main(void) {
     @autoreleasepool {
         Greeter *greeter = [Greeter new];
         NSLog(@"%@", [greeter greeting]);
         NSLog(@"%@", [greeter emphasizedGreeting]);
+        NSLog(@"%@", [greeter diagnosticSummary]);
+        NSLog(@"%@", [greeter metricsSummary]);
     }
     return 0;
 }

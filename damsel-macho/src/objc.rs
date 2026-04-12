@@ -110,6 +110,13 @@ struct ObjcSymbolMaps {
     class_names: BTreeMap<u64, String>,
     metaclass_names: BTreeMap<u64, String>,
     protocol_names: BTreeMap<u64, String>,
+    category_hints_by_list_pointer: BTreeMap<u64, ObjcCategorySymbolHint>,
+}
+
+#[derive(Debug, Clone)]
+struct ObjcCategorySymbolHint {
+    class_name: String,
+    category_name: String,
 }
 
 fn collect_objc_symbol_maps(symbols: &[Symbol]) -> ObjcSymbolMaps {
@@ -118,14 +125,52 @@ fn collect_objc_symbol_maps(symbols: &[Symbol]) -> ObjcSymbolMaps {
         if let Some(name) = symbol.name.strip_prefix("_OBJC_CLASS_$_") {
             maps.class_names.insert(symbol.address, name.to_string());
         } else if let Some(name) = symbol.name.strip_prefix("_OBJC_METACLASS_$_") {
-            maps.metaclass_names.insert(symbol.address, name.to_string());
+            maps.metaclass_names
+                .insert(symbol.address, name.to_string());
         } else if let Some(name) = symbol.name.strip_prefix("__OBJC_PROTOCOL_$_") {
             maps.protocol_names.insert(symbol.address, name.to_string());
         } else if let Some(name) = symbol.name.strip_prefix("_OBJC_PROTOCOL_$_") {
             maps.protocol_names.insert(symbol.address, name.to_string());
+        } else if let Some(hint) = parse_category_hint_symbol(&symbol.name) {
+            maps.category_hints_by_list_pointer
+                .insert(symbol.address, hint);
         }
     }
     maps
+}
+
+fn parse_category_hint_symbol(symbol_name: &str) -> Option<ObjcCategorySymbolHint> {
+    const PREFIXES: [&str; 4] = [
+        "__OBJC_$_INSTANCE_METHODS_",
+        "__OBJC_$_CLASS_METHODS_",
+        "__OBJC_CLASS_PROTOCOLS_$_",
+        "__OBJC_$_PROP_LIST_",
+    ];
+    for prefix in PREFIXES {
+        if let Some(rest) = symbol_name.strip_prefix(prefix) {
+            return parse_category_hint_rest(rest).map(|(class_name, category_name)| {
+                ObjcCategorySymbolHint {
+                    class_name,
+                    category_name,
+                }
+            });
+        }
+    }
+    None
+}
+
+fn parse_category_hint_rest(value: &str) -> Option<(String, String)> {
+    let open_index = value.find('(')?;
+    let close_index = value.rfind(')')?;
+    if close_index <= open_index + 1 || close_index + 1 != value.len() {
+        return None;
+    }
+    let class_name = value[..open_index].trim();
+    let category_name = value[open_index + 1..close_index].trim();
+    if !is_plausible_objc_type_name(class_name) || !is_plausible_objc_type_name(category_name) {
+        return None;
+    }
+    Some((class_name.to_string(), category_name.to_string()))
 }
 
 fn pointer_kind_sort_key(kind: ObjcPointerKind) -> u8 {
@@ -370,7 +415,9 @@ fn build_class_record(
     let superclass_pointer = read_u64_at_va(slices, class_pointer.saturating_add(8))
         .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
     let superclass_name = superclass_pointer
-        .and_then(|pointer| resolve_class_name_from_pointer(slices, pointer, image_base, symbol_maps))
+        .and_then(|pointer| {
+            resolve_class_name_from_pointer(slices, pointer, image_base, symbol_maps)
+        })
         .filter(|name| is_plausible_objc_type_name(name));
 
     let class_data_bits = read_u64_at_va(slices, class_pointer.saturating_add(32));
@@ -389,9 +436,8 @@ fn build_class_record(
         .and_then(|pointer| read_u64_at_va(slices, pointer.saturating_add(64)))
         .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
 
-    let runtime_name =
-        resolve_runtime_class_name_from_pointer(slices, class_pointer, image_base)
-            .filter(|name| is_plausible_objc_type_name(name));
+    let runtime_name = resolve_runtime_class_name_from_pointer(slices, class_pointer, image_base)
+        .filter(|name| is_plausible_objc_type_name(name));
     let pointer_table_name = symbol_maps
         .class_names
         .get(&class_pointer)
@@ -468,7 +514,7 @@ fn collect_category_records(
             record
                 .name
                 .as_ref()
-                .map(|name| (record.class_pointer, name.clone()))
+                .map(|name| (record.class_pointer, (name.clone(), record.name_source)))
         })
         .collect::<BTreeMap<_, _>>();
     let mut records = Vec::new();
@@ -485,27 +531,107 @@ fn collect_category_records(
             else {
                 continue;
             };
-            let class_pointer = read_u64_at_va(slices, pointer.saturating_add(8))
+            let raw_class_pointer = read_u64_at_va(slices, pointer.saturating_add(8));
+            let class_pointer = raw_class_pointer
                 .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
-            let class_name = class_pointer
-                .and_then(|value| class_names.get(&value).cloned())
-                .or_else(|| {
-                    class_pointer.and_then(|value| {
-                        resolve_class_name_from_pointer(slices, value, image_base, symbol_maps)
-                            .filter(|name| is_plausible_objc_type_name(name))
+            let method_list_pointer = read_u64_at_va(slices, pointer.saturating_add(16))
+                .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+            let class_method_list_pointer = read_u64_at_va(slices, pointer.saturating_add(24))
+                .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+            let protocol_list_pointer = read_u64_at_va(slices, pointer.saturating_add(32))
+                .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+            let property_list_pointer = read_u64_at_va(slices, pointer.saturating_add(40))
+                .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base));
+
+            let category_symbol_hint = [
+                method_list_pointer,
+                class_method_list_pointer,
+                property_list_pointer,
+                protocol_list_pointer,
+            ]
+            .into_iter()
+            .flatten()
+            .find_map(|list_pointer| {
+                symbol_maps
+                    .category_hints_by_list_pointer
+                    .get(&list_pointer)
+                    .cloned()
+            });
+
+            let runtime_category_name =
+                resolve_category_name_from_pointer(slices, pointer, image_base)
+                    .filter(|name| is_plausible_objc_type_name(name));
+            let symbol_category_name = category_symbol_hint
+                .as_ref()
+                .map(|hint| hint.category_name.clone());
+            let category_name = runtime_category_name
+                .clone()
+                .or(symbol_category_name.clone());
+            let category_name_source = if runtime_category_name.is_some() {
+                ObjcNameSource::Runtime
+            } else if symbol_category_name.is_some() {
+                ObjcNameSource::LegacyPool
+            } else {
+                ObjcNameSource::Unresolved
+            };
+
+            let mut class_name_source = ObjcNameSource::Unresolved;
+            let mut class_name = None;
+            if let Some(value) = class_pointer {
+                if let Some((name, source)) = class_names.get(&value).cloned() {
+                    class_name = Some(name);
+                    class_name_source = source;
+                } else if let Some(name) =
+                    resolve_runtime_class_name_from_pointer(slices, value, image_base)
+                        .filter(|name| is_plausible_objc_type_name(name))
+                {
+                    class_name = Some(name);
+                    class_name_source = ObjcNameSource::Runtime;
+                } else if let Some(name) = symbol_maps
+                    .class_names
+                    .get(&value)
+                    .cloned()
+                    .or_else(|| symbol_maps.metaclass_names.get(&value).cloned())
+                    .filter(|name| is_plausible_objc_type_name(name))
+                {
+                    class_name = Some(name);
+                    class_name_source = ObjcNameSource::PointerTable;
+                }
+            }
+            if class_name.is_none() {
+                class_name = raw_class_pointer
+                    .and_then(|value| {
+                        symbol_maps
+                            .class_names
+                            .get(&value)
+                            .cloned()
+                            .or_else(|| symbol_maps.metaclass_names.get(&value).cloned())
                     })
-                });
+                    .filter(|name| is_plausible_objc_type_name(name));
+                if class_name.is_some() {
+                    class_name_source = ObjcNameSource::PointerTable;
+                }
+            }
+            if class_name.is_none() {
+                class_name = category_symbol_hint
+                    .as_ref()
+                    .map(|hint| hint.class_name.clone())
+                    .filter(|name| is_plausible_objc_type_name(name));
+                if class_name.is_some() {
+                    class_name_source = ObjcNameSource::LegacyPool;
+                }
+            }
 
             records.push(ObjcCategoryRecord {
                 pointer,
-                name: resolve_category_name_from_pointer(slices, pointer, image_base)
-                    .filter(|name| is_plausible_objc_type_name(name)),
+                name: category_name,
+                name_source: category_name_source,
                 class_pointer,
                 class_name,
+                class_name_source,
                 methods: read_method_list_at_pointer(
                     slices,
-                    read_u64_at_va(slices, pointer.saturating_add(16))
-                        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base)),
+                    method_list_pointer,
                     pointer,
                     ObjcMethodOwnerKind::Category,
                     false,
@@ -513,8 +639,7 @@ fn collect_category_records(
                 ),
                 class_methods: read_method_list_at_pointer(
                     slices,
-                    read_u64_at_va(slices, pointer.saturating_add(24))
-                        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base)),
+                    class_method_list_pointer,
                     pointer,
                     ObjcMethodOwnerKind::Category,
                     true,
@@ -522,15 +647,13 @@ fn collect_category_records(
                 ),
                 properties: read_property_list_at_pointer(
                     slices,
-                    read_u64_at_va(slices, pointer.saturating_add(40))
-                        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base)),
+                    property_list_pointer,
                     pointer,
                     image_base,
                 ),
                 adopted_protocols: read_protocol_name_list(
                     slices,
-                    read_u64_at_va(slices, pointer.saturating_add(32))
-                        .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base)),
+                    protocol_list_pointer,
                     image_base,
                     symbol_maps,
                 ),
@@ -577,7 +700,6 @@ fn resolve_runtime_class_name_from_pointer(
     class_pointer: u64,
     image_base: Option<u64>,
 ) -> Option<String> {
-
     // Some entries can already point at a C string.
     if let Some(name) = read_c_string_at_va(slices, class_pointer) {
         return Some(name);
@@ -666,18 +788,19 @@ fn enrich_class_records(
             symbol_maps,
         );
         if let Some(metaclass_pointer) = record.metaclass_pointer {
-            let metaclass_methods = extract_class_list_pointers(slices, metaclass_pointer, image_base)
-                .and_then(|lists| {
-                    Some(read_method_list_at_pointer(
-                        slices,
-                        lists.method_list_pointer,
-                        metaclass_pointer,
-                        ObjcMethodOwnerKind::Metaclass,
-                        true,
-                        image_base,
-                    ))
-                })
-                .unwrap_or_default();
+            let metaclass_methods =
+                extract_class_list_pointers(slices, metaclass_pointer, image_base)
+                    .and_then(|lists| {
+                        Some(read_method_list_at_pointer(
+                            slices,
+                            lists.method_list_pointer,
+                            metaclass_pointer,
+                            ObjcMethodOwnerKind::Metaclass,
+                            true,
+                            image_base,
+                        ))
+                    })
+                    .unwrap_or_default();
             record.class_methods = metaclass_methods;
         }
     }
@@ -777,19 +900,21 @@ fn read_method_list_at_pointer(
     };
     let mut methods = Vec::new();
     let is_small = (entsize_flags & 0x8000_0000) != 0;
-    let entry_size = usize::try_from((entsize_flags & 0x0000_FFFF).max(if is_small { 12 } else { 24 }))
-        .unwrap_or(if is_small { 12 } else { 24 });
+    let entry_size =
+        usize::try_from((entsize_flags & 0x0000_FFFF).max(if is_small { 12 } else { 24 }))
+            .unwrap_or(if is_small { 12 } else { 24 });
     let count = count.min(256);
     for index in 0..count {
-        let entry = list_pointer.saturating_add(8).saturating_add((index as u64) * (entry_size as u64));
+        let entry = list_pointer
+            .saturating_add(8)
+            .saturating_add((index as u64) * (entry_size as u64));
         let mut record = if is_small {
             let name_rel = read_i32_at_va(slices, entry);
             let types_rel = read_i32_at_va(slices, entry.saturating_add(4));
             let imp_rel = read_i32_at_va(slices, entry.saturating_add(8));
             let selector = name_rel
                 .and_then(|rel| add_relative_address(entry, rel))
-                .and_then(|ptr| resolve_pointer_to_mapped_va(slices, ptr, image_base).or(Some(ptr)))
-                .and_then(|ptr| read_c_string_at_va(slices, ptr));
+                .and_then(|ptr| resolve_selector_from_location(slices, ptr, image_base));
             ObjcMethodRecord {
                 owner_pointer,
                 owner_kind,
@@ -800,16 +925,18 @@ fn read_method_list_at_pointer(
                 } else {
                     ObjcSelectorSource::Unresolved
                 },
-                implementation: imp_rel.and_then(|rel| add_relative_address(entry.saturating_add(8), rel)),
+                implementation: imp_rel
+                    .and_then(|rel| add_relative_address(entry.saturating_add(8), rel)),
                 type_encoding: types_rel
                     .and_then(|rel| add_relative_address(entry.saturating_add(4), rel))
-                    .and_then(|ptr| resolve_pointer_to_mapped_va(slices, ptr, image_base).or(Some(ptr)))
+                    .and_then(|ptr| {
+                        resolve_pointer_to_mapped_va(slices, ptr, image_base).or(Some(ptr))
+                    })
                     .and_then(|ptr| read_c_string_at_va(slices, ptr)),
             }
         } else {
             let selector = read_u64_at_va(slices, entry)
-                .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
-                .and_then(|ptr| read_c_string_at_va(slices, ptr));
+                .and_then(|raw| resolve_selector_from_raw_pointer(slices, raw, image_base));
             ObjcMethodRecord {
                 owner_pointer,
                 owner_kind,
@@ -818,7 +945,9 @@ fn read_method_list_at_pointer(
                 selector_source: ObjcSelectorSource::Direct,
                 implementation: read_u64_at_va(slices, entry.saturating_add(16)),
                 type_encoding: read_u64_at_va(slices, entry.saturating_add(8))
-                    .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
+                    .and_then(|raw| {
+                        resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw))
+                    })
                     .and_then(|ptr| read_c_string_at_va(slices, ptr)),
             }
         };
@@ -828,11 +957,45 @@ fn read_method_list_at_pointer(
         if record.selector.is_none() {
             record.selector_source = ObjcSelectorSource::Unresolved;
         }
-        if record.selector.is_some() || record.implementation.is_some() || record.type_encoding.is_some() {
+        if record.selector.is_some()
+            || record.implementation.is_some()
+            || record.type_encoding.is_some()
+        {
             methods.push(record);
         }
     }
     methods
+}
+
+fn resolve_selector_from_raw_pointer(
+    slices: &[SectionSlice<'_>],
+    raw_pointer: u64,
+    image_base: Option<u64>,
+) -> Option<String> {
+    for candidate in pointer_candidates(raw_pointer, image_base) {
+        if let Some(selector) = resolve_selector_from_location(slices, candidate, image_base) {
+            return Some(selector);
+        }
+    }
+    None
+}
+
+fn resolve_selector_from_location(
+    slices: &[SectionSlice<'_>],
+    selector_location: u64,
+    image_base: Option<u64>,
+) -> Option<String> {
+    if let Some(selector) = read_c_string_at_va(slices, selector_location)
+        .filter(|value| is_plausible_selector_name(value))
+    {
+        return Some(selector);
+    }
+
+    // If this points at a selref slot, dereference it once and retry.
+    let selector_pointer_raw = read_u64_at_va(slices, selector_location)?;
+    let selector_pointer = resolve_pointer_to_mapped_va(slices, selector_pointer_raw, image_base)
+        .or(Some(selector_pointer_raw))?;
+    read_c_string_at_va(slices, selector_pointer).filter(|value| is_plausible_selector_name(value))
 }
 
 fn read_property_list_at_pointer(
@@ -853,7 +1016,9 @@ fn read_property_list_at_pointer(
     let entry_size = usize::try_from(entsize.max(16)).unwrap_or(16);
     let mut properties = Vec::new();
     for index in 0..count.min(128) {
-        let entry = list_pointer.saturating_add(8).saturating_add((index as u64) * (entry_size as u64));
+        let entry = list_pointer
+            .saturating_add(8)
+            .saturating_add((index as u64) * (entry_size as u64));
         let name = read_u64_at_va(slices, entry)
             .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
             .and_then(|ptr| read_c_string_at_va(slices, ptr));
@@ -889,7 +1054,9 @@ fn read_ivar_list_at_pointer(
     let entry_size = usize::try_from(entsize.max(32)).unwrap_or(32);
     let mut ivars = Vec::new();
     for index in 0..count.min(128) {
-        let entry = list_pointer.saturating_add(8).saturating_add((index as u64) * (entry_size as u64));
+        let entry = list_pointer
+            .saturating_add(8)
+            .saturating_add((index as u64) * (entry_size as u64));
         let offset = read_u64_at_va(slices, entry)
             .and_then(|raw| resolve_pointer_to_mapped_va(slices, raw, image_base).or(Some(raw)))
             .and_then(|ptr| read_u32_at_va(slices, ptr).map(u64::from));
@@ -1018,11 +1185,7 @@ fn read_c_string_at_va(slices: &[SectionSlice<'_>], va: u64) -> Option<String> {
         return None;
     }
     let value = String::from_utf8_lossy(&tail[..length]).into_owned();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn find_slice_for_va<'a>(

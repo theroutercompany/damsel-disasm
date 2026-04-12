@@ -1,4 +1,4 @@
-use damsel_core::ObjcPointerKind;
+use damsel_core::{ObjcNameSource, ObjcPointerKind, ObjcSelectorSource};
 use damsel_macho::load;
 use std::path::{Path, PathBuf};
 
@@ -148,9 +148,18 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
         saw_ivars |= !class_record.ivars.is_empty();
         saw_protocol_adoption |= !class_record.adopted_protocols.is_empty();
     }
-    assert!(saw_class_methods, "expected class methods in structured class records");
-    assert!(saw_properties, "expected property records in structured class records");
-    assert!(saw_ivars, "expected ivar records in structured class records");
+    assert!(
+        saw_class_methods,
+        "expected class methods in structured class records"
+    );
+    assert!(
+        saw_properties,
+        "expected property records in structured class records"
+    );
+    assert!(
+        saw_ivars,
+        "expected ivar records in structured class records"
+    );
     assert!(
         saw_protocol_adoption,
         "expected adopted protocols in structured class records"
@@ -159,6 +168,7 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
     let mut previous_protocol_pointer = 0u64;
     let mut saw_protocol_methods = false;
     let mut saw_protocol_properties = false;
+    let mut saw_resolved_selectors = false;
     for (index, protocol_record) in image.objc().protocols.iter().enumerate() {
         assert!(
             protocol_record.pointer != 0,
@@ -182,6 +192,21 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
             || !protocol_record.optional_instance_methods.is_empty()
             || !protocol_record.optional_class_methods.is_empty();
         saw_protocol_properties |= !protocol_record.properties.is_empty();
+        saw_resolved_selectors |= protocol_record
+            .required_instance_methods
+            .iter()
+            .chain(protocol_record.required_class_methods.iter())
+            .chain(protocol_record.optional_instance_methods.iter())
+            .chain(protocol_record.optional_class_methods.iter())
+            .any(|method| {
+                method.selector.is_some()
+                    && matches!(
+                        method.selector_source,
+                        ObjcSelectorSource::Direct
+                            | ObjcSelectorSource::Relative
+                            | ObjcSelectorSource::LegacyPool
+                    )
+            });
     }
     assert!(
         saw_protocol_methods,
@@ -191,10 +216,16 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
         saw_protocol_properties,
         "expected structured protocol properties to be decoded"
     );
+    assert!(
+        saw_resolved_selectors,
+        "expected protocol method selector recovery with non-unresolved provenance"
+    );
 
     let mut previous_category_pointer = 0u64;
     let mut saw_category_methods = false;
     let mut saw_category_properties = false;
+    let mut saw_category_with_name_source = false;
+    let mut saw_category_with_class_source = false;
     for (index, category_record) in image.objc().categories.iter().enumerate() {
         assert!(
             category_record.pointer != 0,
@@ -212,6 +243,11 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
                 !name.is_empty(),
                 "structured category names should be non-empty"
             );
+            assert!(
+                !matches!(category_record.name_source, ObjcNameSource::Unresolved),
+                "resolved category name must not be marked unresolved"
+            );
+            saw_category_with_name_source = true;
         }
         if let Some(class_name) = &category_record.class_name {
             assert!(
@@ -222,10 +258,30 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
                     .any(|existing| existing == class_name),
                 "compatibility view missing category owner class name: {class_name}"
             );
+            assert!(
+                !matches!(
+                    category_record.class_name_source,
+                    ObjcNameSource::Unresolved
+                ),
+                "resolved category class name must not be marked unresolved"
+            );
+            saw_category_with_class_source = true;
         }
         saw_category_methods |=
             !category_record.methods.is_empty() || !category_record.class_methods.is_empty();
         saw_category_properties |= !category_record.properties.is_empty();
+        for method in category_record
+            .methods
+            .iter()
+            .chain(category_record.class_methods.iter())
+        {
+            if method.selector.is_some() {
+                assert!(
+                    !matches!(method.selector_source, ObjcSelectorSource::Unresolved),
+                    "resolved selector must not be marked unresolved"
+                );
+            }
+        }
     }
     if !image.objc().categories.is_empty() {
         assert!(
@@ -236,7 +292,48 @@ fn structured_objc_runtime_records_are_populated_and_ordered() {
             saw_category_properties,
             "expected structured category properties to be decoded"
         );
+        assert!(
+            saw_category_with_name_source,
+            "expected at least one category with resolved provenance-labeled name"
+        );
+        assert!(
+            saw_category_with_class_source,
+            "expected at least one category with resolved provenance-labeled class name"
+        );
     }
+
+    let mut saw_class_with_name_source = false;
+    let mut saw_selector_with_source = false;
+    for class_record in &image.objc().classes {
+        if class_record.name.is_some() {
+            assert!(
+                !matches!(class_record.name_source, ObjcNameSource::Unresolved),
+                "resolved class name must not be marked unresolved"
+            );
+            saw_class_with_name_source = true;
+        }
+        for method in class_record
+            .methods
+            .iter()
+            .chain(class_record.class_methods.iter())
+        {
+            if method.selector.is_some() {
+                assert!(
+                    !matches!(method.selector_source, ObjcSelectorSource::Unresolved),
+                    "resolved class selector must not be marked unresolved"
+                );
+                saw_selector_with_source = true;
+            }
+        }
+    }
+    assert!(
+        saw_class_with_name_source,
+        "expected class records with resolved provenance-labeled names"
+    );
+    assert!(
+        saw_selector_with_source,
+        "expected resolved selectors in structured class method records"
+    );
 }
 
 fn assert_sorted_deduped(values: &[String]) {
