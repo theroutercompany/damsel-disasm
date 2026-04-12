@@ -1,0 +1,9 @@
+[package]
+name = "damsel-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+capstone.workspace = true
+memmap2.workspace = true
+thiserror.workspace = true

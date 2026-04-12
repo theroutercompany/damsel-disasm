@@ -1,0 +1,19 @@
+[workspace]
+members = ["damsel-core", "damsel-macho", "damsel-cli"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+assert_cmd = "2.0.17"
+capstone = { version = "0.14.0", default-features = false, features = ["std", "full", "arch_arm64"] }
+clap = { version = "4.5.38", features = ["derive"] }
+criterion = { version = "0.5.1", default-features = false }
+goblin = "0.10.5"
+insta = { version = "1.43.1", features = ["glob"] }
+memmap2 = "0.9.5"
+object = { version = "0.39.0", features = ["read", "macho"] }
+predicates = "3.1.3"
+thiserror = "2.0.12"

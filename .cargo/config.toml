@@ -1,0 +1,13 @@
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/clang"
+rustflags = [
+  "-L",
+  "native=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib",
+]
+
+[target.x86_64-apple-darwin]
+linker = "/usr/bin/clang"
+rustflags = [
+  "-L",
+  "native=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib",
+]
