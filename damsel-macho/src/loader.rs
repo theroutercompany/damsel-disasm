@@ -91,6 +91,11 @@ fn select_slice(bytes: &[u8]) -> Result<(SliceInfo, Vec<SliceDescriptor>)> {
                 "unrecognized Mach-O magic".to_string(),
             ));
         }
+        Err(error) if has_fat_magic(bytes) => {
+            return Err(MachoError::MalformedFatBinary(format!(
+                "fat header parse error: {error}"
+            )));
+        }
         Err(error) => return Err(MachoError::Object(error)),
     };
     match kind {
@@ -118,14 +123,18 @@ fn select_slice(bytes: &[u8]) -> Result<(SliceInfo, Vec<SliceDescriptor>)> {
             ))
         }
         object::FileKind::MachOFat32 => {
-            let fat = MachOFatFile32::parse(bytes)?;
+            let fat = MachOFatFile32::parse(bytes).map_err(|error| {
+                MachoError::MalformedFatBinary(format!("fat32 header/table parse error: {error}"))
+            })?;
             let slice = choose_fat_arch(fat.arches(), bytes.len() as u64)?;
             let available_slices =
                 collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
             Ok((slice, available_slices))
         }
         object::FileKind::MachOFat64 => {
-            let fat = MachOFatFile64::parse(bytes)?;
+            let fat = MachOFatFile64::parse(bytes).map_err(|error| {
+                MachoError::MalformedFatBinary(format!("fat64 header/table parse error: {error}"))
+            })?;
             let slice = choose_fat_arch(fat.arches(), bytes.len() as u64)?;
             let available_slices =
                 collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
@@ -153,13 +162,86 @@ fn has_macho_magic(bytes: &[u8]) -> bool {
         .is_some_and(|magic| KNOWN_MAGICS.iter().any(|known| known == magic))
 }
 
+fn has_fat_magic(bytes: &[u8]) -> bool {
+    matches!(
+        bytes.get(..4),
+        Some(
+            [0xca, 0xfe, 0xba, 0xbe]
+                | [0xbe, 0xba, 0xfe, 0xca]
+                | [0xca, 0xfe, 0xba, 0xbf]
+                | [0xbf, 0xba, 0xfe, 0xca]
+        )
+    )
+}
+
 fn choose_fat_arch<Fat: FatArch>(arches: &[Fat], file_len: u64) -> Result<SliceInfo> {
-    let selected = arches
-        .iter()
-        .filter(|arch| arch.architecture() == object::Architecture::Aarch64)
-        .max_by_key(|arch| arm64_subtype_rank(arch.cpusubtype() & !CPU_SUBTYPE_MASK))
-        .ok_or(MachoError::MissingArm64SliceInUniversal)?;
-    let (offset, size) = selected.file_range();
+    if arches.is_empty() {
+        return Err(MachoError::MalformedFatBinary(
+            "fat binary declares zero architecture entries".to_string(),
+        ));
+    }
+
+    let mut saw_arm64_candidate = false;
+    let mut best_valid: Option<(u8, usize, SliceInfo)> = None;
+    let mut best_invalid: Option<(u8, usize, MachoError)> = None;
+
+    for (index, arch) in arches.iter().enumerate() {
+        if arch.architecture() != object::Architecture::Aarch64 {
+            continue;
+        }
+        saw_arm64_candidate = true;
+
+        let subtype = arch.cpusubtype() & !CPU_SUBTYPE_MASK;
+        let rank = arm64_subtype_rank(subtype);
+        let (offset, size) = arch.file_range();
+        match validate_fat_slice_range(offset, size, file_len) {
+            Ok(()) => {
+                let slice = SliceInfo {
+                    offset,
+                    size,
+                    is_universal: true,
+                    cpu_subtype: subtype,
+                };
+                let should_replace = match &best_valid {
+                    None => true,
+                    Some((best_rank, best_index, _)) => {
+                        rank > *best_rank || (rank == *best_rank && index < *best_index)
+                    }
+                };
+                if should_replace {
+                    best_valid = Some((rank, index, slice));
+                }
+            }
+            Err(error) => {
+                let should_replace = match &best_invalid {
+                    None => true,
+                    Some((best_rank, best_index, _)) => {
+                        rank > *best_rank || (rank == *best_rank && index < *best_index)
+                    }
+                };
+                if should_replace {
+                    best_invalid = Some((rank, index, error));
+                }
+            }
+        }
+    }
+
+    if let Some((_rank, _index, slice)) = best_valid {
+        return Ok(slice);
+    }
+    if !saw_arm64_candidate {
+        return Err(MachoError::MissingArm64SliceInUniversal);
+    }
+    if let Some((_rank, _index, error)) = best_invalid {
+        return Err(error);
+    }
+
+    Err(MachoError::MalformedFatBinary(
+        "universal binary contains no usable arm64/arm64e slices".to_string(),
+    ))
+}
+
+fn validate_fat_slice_range(offset: u64, size: u64, file_len: u64) -> Result<()> {
     if size == 0 {
         return Err(MachoError::MalformedFatBinary(
             "selected arm64 slice has zero size".to_string(),
@@ -179,13 +261,7 @@ fn choose_fat_arch<Fat: FatArch>(arches: &[Fat], file_len: u64) -> Result<SliceI
             file_len,
         });
     }
-
-    Ok(SliceInfo {
-        offset,
-        size,
-        is_universal: true,
-        cpu_subtype: selected.cpusubtype() & !CPU_SUBTYPE_MASK,
-    })
+    Ok(())
 }
 
 fn checked_range(offset: u64, size: u64, file_len: u64) -> Result<std::ops::Range<usize>> {

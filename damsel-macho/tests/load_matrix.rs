@@ -27,6 +27,7 @@ const CPU_TYPE_ARM64: u32 = 0x0100_000c;
 const CPU_TYPE_X86_64: u32 = 0x0100_0007;
 const CPU_SUBTYPE_ARM64_ALL: u32 = 0;
 const CPU_SUBTYPE_ARM64E: u32 = 2;
+const CPU_SUBTYPE_MASK: u32 = object::macho::CPU_SUBTYPE_MASK;
 const LC_SEGMENT_64: u32 = 0x19;
 const LC_BUILD_VERSION: u32 = 0x32;
 const LC_DYLD_INFO: u32 = 0x22;
@@ -92,6 +93,14 @@ fn make_fat64_fixture(arches: &[(u32, u32, u64, u64, u32, u32)]) -> Vec<u8> {
         assert!(write_u32_be(&mut bytes, base + 28, *reserved));
     }
     bytes
+}
+
+fn embed_payload(bytes: &mut Vec<u8>, offset: usize, payload: &[u8]) {
+    let required_len = offset.saturating_add(payload.len());
+    if bytes.len() < required_len {
+        bytes.resize(required_len, 0);
+    }
+    bytes[offset..required_len].copy_from_slice(payload);
 }
 
 fn find_chained_fixups_command(bytes: &[u8]) -> Option<(usize, usize)> {
@@ -332,6 +341,46 @@ fn rejects_fat64_universal_without_arm64_slice_with_typed_error() {
 }
 
 #[test]
+fn rejects_fat32_universal_with_zero_arch_entries_as_malformed() {
+    let bytes = make_fat32_fixture(&[]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("fat32 universal with zero entries must be malformed");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
+}
+
+#[test]
+fn rejects_fat64_universal_with_zero_arch_entries_as_malformed() {
+    let bytes = make_fat64_fixture(&[]);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("fat64 universal with zero entries must be malformed");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
+}
+
+#[test]
+fn rejects_truncated_fat32_arch_table_as_malformed() {
+    let mut bytes = vec![0u8; 8];
+    assert!(write_u32_be(&mut bytes, 0, FAT_MAGIC));
+    assert!(write_u32_be(&mut bytes, 4, 1));
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("truncated fat32 arch table must be malformed");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
+}
+
+#[test]
+fn rejects_truncated_fat64_arch_table_as_malformed() {
+    let mut bytes = vec![0u8; 8];
+    assert!(write_u32_be(&mut bytes, 0, FAT_MAGIC_64));
+    assert!(write_u32_be(&mut bytes, 4, 1));
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path).expect_err("truncated fat64 arch table must be malformed");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
+}
+
+#[test]
 fn rejects_out_of_range_fat64_arm64_slice_with_typed_error() {
     let bytes = make_fat64_fixture(&[(CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, 0x2000, 0x80, 0, 0)]);
     let path = write_temp_fixture(&bytes);
@@ -366,44 +415,187 @@ fn rejects_overflowing_fat64_arm64_slice_range_with_typed_error() {
 }
 
 #[test]
-fn prefers_arm64e_over_arm64_when_selecting_fat32_slice() {
-    let arm64e_offset = 0x3000;
-    let bytes = make_fat32_fixture(&[
-        (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, 0x1000, 0x100, 0),
+fn falls_back_to_valid_arm64_when_preferred_arm64e_is_invalid_fat32() {
+    let arm64_payload = fs::read(fixture("arm64-symbolized")).expect("read arm64 payload");
+    let arm64_offset = 0x200_u32;
+    let arm64e_offset = 0xf000_0000_u32;
+    let arm64_size = arm64_payload.len() as u32;
+    let mut bytes = make_fat32_fixture(&[
         (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64E, arm64e_offset, 0x100, 0),
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            arm64_offset,
+            arm64_size,
+            0,
+        ),
     ]);
+    embed_payload(&mut bytes, arm64_offset as usize, &arm64_payload);
     let path = write_temp_fixture(&bytes);
-    let error = load(&path)
-        .expect_err("invalid fat32 range should still prove preferred subtype selection");
+    let image = load(&path).expect("valid arm64 should be selected when arm64e is invalid");
     let _ = fs::remove_file(path);
-    match error {
-        MachoError::SliceOutOfBounds { offset, .. } => assert_eq!(offset, arm64e_offset as u64),
-        other => panic!("expected SliceOutOfBounds, got: {other:?}"),
-    }
+    assert_eq!(image.architecture(), Architecture::Arm64);
+    assert_eq!(image.selected_slice().offset, arm64_offset as u64);
+    assert_eq!(image.selected_slice().cpu_subtype, CPU_SUBTYPE_ARM64_ALL);
 }
 
 #[test]
-fn prefers_arm64e_over_arm64_when_selecting_fat64_slice() {
-    let arm64e_offset = 0x3000_u64;
-    let bytes = make_fat64_fixture(&[
-        (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, 0x1000, 0x100, 0, 0),
+fn falls_back_to_valid_arm64_when_preferred_arm64e_is_invalid_fat64() {
+    let arm64_payload = fs::read(fixture("arm64-symbolized")).expect("read arm64 payload");
+    let arm64_offset = 0x200_u64;
+    let arm64e_offset = u64::MAX - 0x20;
+    let arm64_size = arm64_payload.len() as u64;
+    let mut bytes = make_fat64_fixture(&[
         (
             CPU_TYPE_ARM64,
             CPU_SUBTYPE_ARM64E,
             arm64e_offset,
-            0x100,
+            0x40,
+            0,
+            0,
+        ),
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            arm64_offset,
+            arm64_size,
             0,
             0,
         ),
     ]);
+    embed_payload(&mut bytes, arm64_offset as usize, &arm64_payload);
     let path = write_temp_fixture(&bytes);
-    let error = load(&path)
-        .expect_err("invalid fat64 range should still prove preferred subtype selection");
+    let image = load(&path).expect("valid arm64 should be selected when arm64e is invalid");
     let _ = fs::remove_file(path);
-    match error {
-        MachoError::SliceOutOfBounds { offset, .. } => assert_eq!(offset, arm64e_offset),
-        other => panic!("expected SliceOutOfBounds, got: {other:?}"),
-    }
+    assert_eq!(image.architecture(), Architecture::Arm64);
+    assert_eq!(image.selected_slice().offset, arm64_offset);
+    assert_eq!(image.selected_slice().cpu_subtype, CPU_SUBTYPE_ARM64_ALL);
+}
+
+#[test]
+fn chooses_valid_same_rank_arm64_candidate_when_other_is_invalid_fat32() {
+    let arm64_payload = fs::read(fixture("arm64-symbolized")).expect("read arm64 payload");
+    let valid_offset = 0x200_u32;
+    let valid_size = arm64_payload.len() as u32;
+    let mut bytes = make_fat32_fixture(&[
+        (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, 0xfff0_0000, 0x100, 0),
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            valid_offset,
+            valid_size,
+            0,
+        ),
+    ]);
+    embed_payload(&mut bytes, valid_offset as usize, &arm64_payload);
+    let path = write_temp_fixture(&bytes);
+    let image = load(&path).expect("valid arm64 candidate should be selected");
+    let _ = fs::remove_file(path);
+    assert_eq!(image.selected_slice().offset, valid_offset as u64);
+    assert_eq!(image.selected_slice().cpu_subtype, CPU_SUBTYPE_ARM64_ALL);
+}
+
+#[test]
+fn chooses_valid_same_rank_arm64_candidate_when_other_is_invalid_fat64() {
+    let arm64_payload = fs::read(fixture("arm64-symbolized")).expect("read arm64 payload");
+    let valid_offset = 0x200_u64;
+    let valid_size = arm64_payload.len() as u64;
+    let mut bytes = make_fat64_fixture(&[
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            u64::MAX - 0x10,
+            0x40,
+            0,
+            0,
+        ),
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            valid_offset,
+            valid_size,
+            0,
+            0,
+        ),
+    ]);
+    embed_payload(&mut bytes, valid_offset as usize, &arm64_payload);
+    let path = write_temp_fixture(&bytes);
+    let image = load(&path).expect("valid arm64 candidate should be selected");
+    let _ = fs::remove_file(path);
+    assert_eq!(image.selected_slice().offset, valid_offset);
+    assert_eq!(image.selected_slice().cpu_subtype, CPU_SUBTYPE_ARM64_ALL);
+}
+
+#[test]
+fn preserves_arm64e_preference_when_subtype_mask_bits_are_present_fat32() {
+    let arm64_payload = fs::read(fixture("arm64-symbolized")).expect("read arm64 payload");
+    let mut arm64e_payload = arm64_payload.clone();
+    assert!(write_u32_le(&mut arm64e_payload, 8, CPU_SUBTYPE_ARM64E));
+    let arm64_offset = 0x200_u32;
+    let arm64e_offset = 0x200 + arm64_payload.len() as u32 + 0x200;
+    let arm64_size = arm64_payload.len() as u32;
+    let arm64e_with_mask_bits = CPU_SUBTYPE_ARM64E | CPU_SUBTYPE_MASK;
+    let mut bytes = make_fat32_fixture(&[
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            arm64_offset,
+            arm64_size,
+            0,
+        ),
+        (
+            CPU_TYPE_ARM64,
+            arm64e_with_mask_bits,
+            arm64e_offset,
+            arm64_size,
+            0,
+        ),
+    ]);
+    embed_payload(&mut bytes, arm64_offset as usize, &arm64_payload);
+    embed_payload(&mut bytes, arm64e_offset as usize, &arm64e_payload);
+    let path = write_temp_fixture(&bytes);
+    let image = load(&path).expect("masked arm64e subtype should still be preferred");
+    let _ = fs::remove_file(path);
+    assert_eq!(image.selected_slice().offset, arm64e_offset as u64);
+    assert_eq!(image.selected_slice().cpu_subtype, CPU_SUBTYPE_ARM64E);
+    assert_eq!(image.architecture(), Architecture::Arm64e);
+}
+
+#[test]
+fn preserves_arm64e_preference_when_subtype_mask_bits_are_present_fat64() {
+    let arm64_payload = fs::read(fixture("arm64-symbolized")).expect("read arm64 payload");
+    let mut arm64e_payload = arm64_payload.clone();
+    assert!(write_u32_le(&mut arm64e_payload, 8, CPU_SUBTYPE_ARM64E));
+    let arm64_offset = 0x200_u64;
+    let arm64e_offset = arm64_offset + arm64_payload.len() as u64 + 0x200;
+    let arm64_size = arm64_payload.len() as u64;
+    let arm64e_with_mask_bits = CPU_SUBTYPE_ARM64E | CPU_SUBTYPE_MASK;
+    let mut bytes = make_fat64_fixture(&[
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            arm64_offset,
+            arm64_size,
+            0,
+            0,
+        ),
+        (
+            CPU_TYPE_ARM64,
+            arm64e_with_mask_bits,
+            arm64e_offset,
+            arm64_size,
+            0,
+            0,
+        ),
+    ]);
+    embed_payload(&mut bytes, arm64_offset as usize, &arm64_payload);
+    embed_payload(&mut bytes, arm64e_offset as usize, &arm64e_payload);
+    let path = write_temp_fixture(&bytes);
+    let image = load(&path).expect("masked arm64e subtype should still be preferred");
+    let _ = fs::remove_file(path);
+    assert_eq!(image.selected_slice().offset, arm64e_offset);
+    assert_eq!(image.selected_slice().cpu_subtype, CPU_SUBTYPE_ARM64E);
+    assert_eq!(image.architecture(), Architecture::Arm64e);
 }
 
 #[test]
