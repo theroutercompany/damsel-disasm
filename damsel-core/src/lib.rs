@@ -6,8 +6,10 @@ pub use decode::decode_aarch64_v2;
 pub use decode::decode_aarch64_with_limit;
 pub use model::{
     Annotation, Architecture, BinaryFormat, BinaryImage, BinaryImageBuilder,
-    BinaryImageValidationError, BinarySource, CacheImageId, CacheImageRecord, CacheLookupResult,
-    CacheMappingContext, CacheSymbolSource, CapabilityStatus, CompatibilityCapability,
+    BinaryImageValidationError, BinarySource, CacheDependentRecord, CacheImageDependencyRecord,
+    CacheImageId, CacheImageRecord, CacheLookupResult, CacheMappingContext, CacheReexportRecord,
+    CacheSymbolImporterRecord, CacheSymbolProviderKind, CacheSymbolProviderRecord,
+    CacheSymbolSource, CapabilityStatus, CompatibilityCapability,
     CompatibilityCapabilityExpectation, CompatibilityCapabilityPolicy, CompatibilityCapabilityRole,
     CompatibilityHostClass, CompatibilityHostRule, CompatibilityIssue, CompatibilityPolicy,
     CompatibilityToolRequirement, CompatibilityVerificationScenario, DecodedInstruction,

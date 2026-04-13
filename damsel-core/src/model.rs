@@ -2755,6 +2755,65 @@ pub enum CacheLookupResult {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheSymbolProviderKind {
+    Export,
+    Reexport,
+}
+
+impl fmt::Display for CacheSymbolProviderKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Export => f.write_str("export"),
+            Self::Reexport => f.write_str("reexport"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheImageDependencyRecord {
+    pub source_image: ProjectedImageProvenance,
+    pub target_dylib_install_name: String,
+    pub target_image: Option<ProjectedImageProvenance>,
+    pub within_cache: bool,
+    pub reference_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheDependentRecord {
+    pub dependent_image: ProjectedImageProvenance,
+    pub dependency_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheReexportRecord {
+    pub source_image: ProjectedImageProvenance,
+    pub export_name: String,
+    pub target_dylib: String,
+    pub target_symbol: Option<String>,
+    pub resolved_target_image: Option<ProjectedImageProvenance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheSymbolProviderRecord {
+    pub provider_image: ProjectedImageProvenance,
+    pub symbol_name: String,
+    pub provider_kind: CacheSymbolProviderKind,
+    pub target_dylib: Option<String>,
+    pub target_symbol: Option<String>,
+    pub resolved_target_image: Option<ProjectedImageProvenance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheSymbolImporterRecord {
+    pub importer_image: ProjectedImageProvenance,
+    pub symbol_name: String,
+    pub dylib_name: String,
+    pub import_binding_kind: Option<ImportBindingKind>,
+    pub import_binding_source: Option<ImportBindingSource>,
+    pub resolved_provider_image: Option<ProjectedImageProvenance>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SharedCacheValidationError {
     MissingMembers,

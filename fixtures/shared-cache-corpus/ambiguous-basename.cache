@@ -3,8 +3,10 @@ scenario=ambiguous-basename
 arch=arm64
 uuid=77777777-1111-2222-3333-999999999999
 images=3
-image[0].install_name=/usr/lib/libcommonCrypto.dylib
+image[0].install_name=/usr/lib/CommonCrypto
+image[0].base_vmaddr=0x0000000183000000
 image[1].install_name=/System/Library/PrivateFrameworks/CommonCrypto.framework/CommonCrypto
+image[1].base_vmaddr=0x0000000183100000
 image[2].install_name=/usr/lib/libsqlite3.dylib
+image[2].base_vmaddr=0x0000000183200000
 ambiguous_basename=CommonCrypto
-

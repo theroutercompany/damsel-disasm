@@ -1,6 +1,8 @@
 use damsel_core::{
-    Architecture, BinaryFormat, CacheImageId, CacheImageRecord, CacheLookupResult,
-    CacheMappingContext, CacheSymbolSource, Endianness, ProjectedBinaryImage,
+    Architecture, BinaryFormat, CacheDependentRecord, CacheImageDependencyRecord, CacheImageId,
+    CacheImageRecord, CacheLookupResult, CacheMappingContext, CacheReexportRecord,
+    CacheSymbolImporterRecord, CacheSymbolProviderKind, CacheSymbolProviderRecord,
+    CacheSymbolSource, Endianness, ImportBindingKind, ImportBindingSource, ProjectedBinaryImage,
     ProjectedImageProvenance, SharedCache, SharedCacheHeader, SharedCacheMapping,
     SharedCacheMember, SharedCacheMemberRole, SharedCacheSource, SharedCacheValidationError,
     SliceInfo, SymbolicationMatch,
@@ -372,4 +374,79 @@ fn projected_image_and_lookup_types_are_constructible() {
         }
         other => panic!("unexpected result variant: {other:?}"),
     }
+}
+
+#[test]
+fn cache_relation_record_types_are_constructible() {
+    let cache = sample_cache();
+    let image_a = cache.image_by_id_str("CACHE-UUID-1234:7").expect("image a");
+    let image_b = cache.image_by_id_str("CACHE-UUID-1234:2").expect("image b");
+    let provenance_a = ProjectedImageProvenance {
+        cache_uuid: cache.header().cache_uuid.clone(),
+        image_id: image_a.id.clone(),
+        install_name: image_a.install_name.clone(),
+        basename: image_a.basename.clone(),
+        image_base_vmaddr: image_a.image_base_vmaddr,
+        member_name: "dyld_shared_cache_arm64".to_string(),
+        local_symbols_available: false,
+    };
+    let provenance_b = ProjectedImageProvenance {
+        cache_uuid: cache.header().cache_uuid.clone(),
+        image_id: image_b.id.clone(),
+        install_name: image_b.install_name.clone(),
+        basename: image_b.basename.clone(),
+        image_base_vmaddr: image_b.image_base_vmaddr,
+        member_name: "dyld_shared_cache_arm64".to_string(),
+        local_symbols_available: false,
+    };
+
+    let dependency = CacheImageDependencyRecord {
+        source_image: provenance_a.clone(),
+        target_dylib_install_name: provenance_b.install_name.clone(),
+        target_image: Some(provenance_b.clone()),
+        within_cache: true,
+        reference_count: 3,
+    };
+    assert_eq!(dependency.target_dylib_install_name, "/usr/lib/libB.dylib");
+
+    let dependent = CacheDependentRecord {
+        dependent_image: provenance_a.clone(),
+        dependency_count: 3,
+    };
+    assert_eq!(
+        dependent.dependent_image.image_id.as_str(),
+        "CACHE-UUID-1234:7"
+    );
+
+    let reexport = CacheReexportRecord {
+        source_image: provenance_a.clone(),
+        export_name: "_alias".to_string(),
+        target_dylib: provenance_b.install_name.clone(),
+        target_symbol: Some("_target".to_string()),
+        resolved_target_image: Some(provenance_b.clone()),
+    };
+    assert_eq!(reexport.target_symbol.as_deref(), Some("_target"));
+
+    let provider = CacheSymbolProviderRecord {
+        provider_image: provenance_a.clone(),
+        symbol_name: "_alias".to_string(),
+        provider_kind: CacheSymbolProviderKind::Reexport,
+        target_dylib: Some(provenance_b.install_name.clone()),
+        target_symbol: Some("_target".to_string()),
+        resolved_target_image: Some(provenance_b.clone()),
+    };
+    assert_eq!(provider.provider_kind, CacheSymbolProviderKind::Reexport);
+
+    let importer = CacheSymbolImporterRecord {
+        importer_image: provenance_a,
+        symbol_name: "_target".to_string(),
+        dylib_name: provenance_b.install_name.clone(),
+        import_binding_kind: Some(ImportBindingKind::NonLazy),
+        import_binding_source: Some(ImportBindingSource::IndirectSymbol),
+        resolved_provider_image: Some(provenance_b),
+    };
+    assert_eq!(
+        importer.import_binding_source,
+        Some(ImportBindingSource::IndirectSymbol)
+    );
 }

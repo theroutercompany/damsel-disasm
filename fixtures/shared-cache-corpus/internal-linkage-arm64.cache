@@ -1,0 +1,10 @@
+SYNTHETIC_DYLD_CACHE
+scenario=internal-linkage-arm64
+arch=arm64
+uuid=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5
+subcaches=0
+images=2
+image[0].install_name=/usr/lib/libSystem.B.dylib
+image[0].base_vmaddr=0x0000000187000000
+image[1].install_name=/usr/lib/libdispatch.dylib
+image[1].base_vmaddr=0x0000000187100000

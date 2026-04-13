@@ -5,10 +5,12 @@ use crate::shared_cache_query::{
     SharedCacheQueryError,
 };
 use damsel_core::{
-    Architecture, BinaryFormat, BinaryImage, CacheImageId, CacheImageRecord, CacheLookupResult,
-    CacheMappingContext, CacheSymbolSource, ExportFlags, ObjcMetadata, ProjectedBinaryImage,
-    ProjectedImageProvenance, SharedCache, SharedCacheHeader, SharedCacheMapping,
-    SharedCacheMember, SharedCacheMemberRole, SharedCacheSource, SliceInfo, SymbolicationMatch,
+    Architecture, BinaryFormat, BinaryImage, CacheDependentRecord, CacheImageDependencyRecord,
+    CacheImageId, CacheImageRecord, CacheLookupResult, CacheMappingContext, CacheReexportRecord,
+    CacheSymbolImporterRecord, CacheSymbolProviderKind, CacheSymbolProviderRecord,
+    CacheSymbolSource, ExportFlags, ObjcMetadata, ProjectedBinaryImage, ProjectedImageProvenance,
+    SharedCache, SharedCacheHeader, SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole,
+    SharedCacheSource, SliceInfo, SymbolicationMatch,
 };
 use object::macho::DyldCacheHeader;
 use object::read::macho::DyldCache;
@@ -40,6 +42,8 @@ pub struct SharedCacheExportRecord {
 pub struct SharedCacheSession {
     cache: SharedCache,
     kind: SharedCacheSessionKind,
+    import_relations: RefCell<Option<CacheImportRelations>>,
+    export_relations: RefCell<Option<CacheExportRelations>>,
 }
 
 #[derive(Debug)]
@@ -104,6 +108,8 @@ pub fn inspect_shared_cache<P: AsRef<Path>>(path: P) -> Result<SharedCacheSessio
             root_path,
             projections: RefCell::new(BTreeMap::new()),
         },
+        import_relations: RefCell::new(None),
+        export_relations: RefCell::new(None),
     })
 }
 
@@ -366,6 +372,99 @@ impl SharedCacheSession {
         }
     }
 
+    pub fn image_dependencies(&self, selector: &str) -> Result<Vec<CacheImageDependencyRecord>> {
+        let image = self.resolve_image(selector)?;
+        let relations = self.import_relations()?;
+        Ok(relations
+            .dependencies_by_image
+            .get(&image.id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    pub fn dependents(&self, selector: &str) -> Result<Vec<CacheDependentRecord>> {
+        let image = self.resolve_image(selector)?;
+        let relations = self.import_relations()?;
+        Ok(relations
+            .dependents_by_image
+            .get(&image.id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    pub fn symbol_providers(&self, symbol_name: &str) -> Result<Vec<CacheSymbolProviderRecord>> {
+        let relations = self.export_relations()?;
+        let matches = relations
+            .providers_by_symbol
+            .get(symbol_name)
+            .cloned()
+            .unwrap_or_default();
+        if matches.is_empty() {
+            return Err(MachoError::SymbolNotFound(symbol_name.to_string()));
+        }
+        Ok(matches)
+    }
+
+    pub fn symbol_importers(&self, symbol_name: &str) -> Result<Vec<CacheSymbolImporterRecord>> {
+        let import_relations = self.import_relations()?;
+        let export_relations = self.export_relations()?;
+        let edges = import_relations
+            .importers_by_symbol
+            .get(symbol_name)
+            .cloned()
+            .unwrap_or_default();
+        if edges.is_empty() {
+            return Err(MachoError::SymbolNotFound(symbol_name.to_string()));
+        }
+
+        let providers = export_relations
+            .providers_by_symbol
+            .get(symbol_name)
+            .cloned()
+            .unwrap_or_default();
+        let mut records = edges
+            .into_iter()
+            .map(|edge| CacheSymbolImporterRecord {
+                importer_image: edge.importer_image.clone(),
+                symbol_name: edge.symbol_name.clone(),
+                dylib_name: edge.dylib_name.clone(),
+                import_binding_kind: edge.import_binding_kind,
+                import_binding_source: edge.import_binding_source,
+                resolved_provider_image: uniquely_resolved_provider_image(
+                    &providers,
+                    &edge.dylib_name,
+                ),
+            })
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| {
+            (
+                record.importer_image.install_name.clone(),
+                record.dylib_name.clone(),
+                record.symbol_name.clone(),
+                format!("{:?}", record.import_binding_kind),
+                format!("{:?}", record.import_binding_source),
+            )
+        });
+        records.dedup_by(|left, right| {
+            left.importer_image.image_id == right.importer_image.image_id
+                && left.symbol_name == right.symbol_name
+                && left.dylib_name == right.dylib_name
+                && left.import_binding_kind == right.import_binding_kind
+                && left.import_binding_source == right.import_binding_source
+        });
+        Ok(records)
+    }
+
+    pub fn reexports(&self, selector: &str) -> Result<Vec<CacheReexportRecord>> {
+        let image = self.resolve_image(selector)?;
+        let relations = self.export_relations()?;
+        Ok(relations
+            .reexports_by_image
+            .get(&image.id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
     fn real_symbol_candidates(
         &self,
         root_path: &Path,
@@ -405,6 +504,283 @@ impl SharedCacheSession {
                 }
             }
             Ok(candidates)
+        })
+    }
+
+    fn import_relations(&self) -> Result<CacheImportRelations> {
+        if let Some(existing) = self.import_relations.borrow().as_ref().cloned() {
+            return Ok(existing);
+        }
+        let built = self.build_import_relations()?;
+        *self.import_relations.borrow_mut() = Some(built.clone());
+        Ok(built)
+    }
+
+    fn export_relations(&self) -> Result<CacheExportRelations> {
+        if let Some(existing) = self.export_relations.borrow().as_ref().cloned() {
+            return Ok(existing);
+        }
+        let built = self.build_export_relations()?;
+        *self.export_relations.borrow_mut() = Some(built.clone());
+        Ok(built)
+    }
+
+    fn build_import_relations(&self) -> Result<CacheImportRelations> {
+        let mut dependencies_by_image = BTreeMap::new();
+        let mut dependents_acc = BTreeMap::<
+            CacheImageId,
+            BTreeMap<CacheImageId, (ProjectedImageProvenance, usize)>,
+        >::new();
+        let mut importers_by_symbol = BTreeMap::<String, Vec<ImportEdge>>::new();
+
+        for cache_image in self.cache.images() {
+            let projected = self.project_image(&cache_image.id.to_string())?;
+            let source = projected.provenance.clone();
+
+            let mut dependency_counts = BTreeMap::<String, usize>::new();
+            for dylib in &projected.image.dyld().imported_dylibs {
+                dependency_counts.entry(dylib.clone()).or_insert(0);
+            }
+            for import in projected.image.imports() {
+                *dependency_counts.entry(import.dylib.clone()).or_insert(0) += 1;
+            }
+
+            let mut seen_edges = BTreeMap::<String, ()>::new();
+            for binding in &projected.image.dyld().import_bindings {
+                dependency_counts.entry(binding.dylib.clone()).or_insert(0);
+                let edge = ImportEdge {
+                    importer_image: source.clone(),
+                    symbol_name: binding.name.clone(),
+                    dylib_name: binding.dylib.clone(),
+                    import_binding_kind: Some(binding.binding_kind),
+                    import_binding_source: Some(binding.source),
+                };
+                let dedup_key = format!(
+                    "{}|{}|{}|{:?}|{:?}",
+                    edge.importer_image.image_id,
+                    edge.dylib_name,
+                    edge.symbol_name,
+                    edge.import_binding_kind,
+                    edge.import_binding_source
+                );
+                if seen_edges.insert(dedup_key, ()).is_none() {
+                    importers_by_symbol
+                        .entry(edge.symbol_name.clone())
+                        .or_default()
+                        .push(edge);
+                }
+            }
+            for import in projected.image.imports() {
+                let edge = ImportEdge {
+                    importer_image: source.clone(),
+                    symbol_name: import.name.clone(),
+                    dylib_name: import.dylib.clone(),
+                    import_binding_kind: None,
+                    import_binding_source: None,
+                };
+                let dedup_key = format!(
+                    "{}|{}|{}|{:?}|{:?}",
+                    edge.importer_image.image_id,
+                    edge.dylib_name,
+                    edge.symbol_name,
+                    edge.import_binding_kind,
+                    edge.import_binding_source
+                );
+                if seen_edges.insert(dedup_key, ()).is_none() {
+                    importers_by_symbol
+                        .entry(edge.symbol_name.clone())
+                        .or_default()
+                        .push(edge);
+                }
+            }
+
+            let mut dependencies = dependency_counts
+                .into_iter()
+                .map(|(target_dylib_install_name, reference_count)| {
+                    let target_image = self
+                        .cache
+                        .image_by_install_name(&target_dylib_install_name)
+                        .map(|image| {
+                            projected_image_provenance(
+                                &self.cache,
+                                image,
+                                self.cache.header().has_local_symbols,
+                            )
+                        });
+                    CacheImageDependencyRecord {
+                        source_image: source.clone(),
+                        target_dylib_install_name,
+                        within_cache: target_image.is_some(),
+                        target_image,
+                        reference_count,
+                    }
+                })
+                .collect::<Vec<_>>();
+            dependencies.sort_by_key(|record| record.target_dylib_install_name.clone());
+
+            for dependency in &dependencies {
+                if let Some(target_image) = &dependency.target_image {
+                    dependents_acc
+                        .entry(target_image.image_id.clone())
+                        .or_default()
+                        .entry(source.image_id.clone())
+                        .and_modify(|(_, count)| *count += dependency.reference_count)
+                        .or_insert((source.clone(), dependency.reference_count));
+                }
+            }
+
+            dependencies_by_image.insert(source.image_id.clone(), dependencies);
+        }
+
+        let mut dependents_by_image = BTreeMap::new();
+        for (target_id, dependents) in dependents_acc {
+            let mut records = dependents
+                .into_values()
+                .map(|(dependent_image, dependency_count)| CacheDependentRecord {
+                    dependent_image,
+                    dependency_count,
+                })
+                .collect::<Vec<_>>();
+            records.sort_by_key(|record| record.dependent_image.install_name.clone());
+            dependents_by_image.insert(target_id, records);
+        }
+        for edges in importers_by_symbol.values_mut() {
+            edges.sort_by_key(|edge| {
+                (
+                    edge.importer_image.install_name.clone(),
+                    edge.dylib_name.clone(),
+                    edge.symbol_name.clone(),
+                    format!("{:?}", edge.import_binding_kind),
+                    format!("{:?}", edge.import_binding_source),
+                )
+            });
+            edges.dedup_by(|left, right| {
+                left.importer_image.image_id == right.importer_image.image_id
+                    && left.dylib_name == right.dylib_name
+                    && left.symbol_name == right.symbol_name
+                    && left.import_binding_kind == right.import_binding_kind
+                    && left.import_binding_source == right.import_binding_source
+            });
+        }
+
+        Ok(CacheImportRelations {
+            dependencies_by_image,
+            dependents_by_image,
+            importers_by_symbol,
+        })
+    }
+
+    fn build_export_relations(&self) -> Result<CacheExportRelations> {
+        let mut providers_by_symbol = BTreeMap::<String, Vec<CacheSymbolProviderRecord>>::new();
+        let mut reexports_by_image = BTreeMap::<CacheImageId, Vec<CacheReexportRecord>>::new();
+        let mut reexports_by_symbol = BTreeMap::<String, Vec<CacheReexportRecord>>::new();
+
+        for cache_image in self.cache.images() {
+            let projected = self.project_image(&cache_image.id.to_string())?;
+            let source = projected.provenance.clone();
+            let mut image_reexports = Vec::new();
+
+            for export in &projected.image.dyld().exported_symbols {
+                if let Some((target_dylib, target_symbol)) = &export.reexport_target {
+                    let resolved_target_image =
+                        self.cache.image_by_install_name(target_dylib).map(|image| {
+                            projected_image_provenance(
+                                &self.cache,
+                                image,
+                                self.cache.header().has_local_symbols,
+                            )
+                        });
+                    let reexport = CacheReexportRecord {
+                        source_image: source.clone(),
+                        export_name: export.name.clone(),
+                        target_dylib: target_dylib.clone(),
+                        target_symbol: target_symbol.clone(),
+                        resolved_target_image: resolved_target_image.clone(),
+                    };
+                    image_reexports.push(reexport.clone());
+                    reexports_by_symbol
+                        .entry(reexport.export_name.clone())
+                        .or_default()
+                        .push(reexport.clone());
+                    providers_by_symbol
+                        .entry(export.name.clone())
+                        .or_default()
+                        .push(CacheSymbolProviderRecord {
+                            provider_image: source.clone(),
+                            symbol_name: export.name.clone(),
+                            provider_kind: CacheSymbolProviderKind::Reexport,
+                            target_dylib: Some(target_dylib.clone()),
+                            target_symbol: target_symbol.clone(),
+                            resolved_target_image,
+                        });
+                } else if export.address.is_some() {
+                    providers_by_symbol
+                        .entry(export.name.clone())
+                        .or_default()
+                        .push(CacheSymbolProviderRecord {
+                            provider_image: source.clone(),
+                            symbol_name: export.name.clone(),
+                            provider_kind: CacheSymbolProviderKind::Export,
+                            target_dylib: None,
+                            target_symbol: None,
+                            resolved_target_image: None,
+                        });
+                }
+            }
+
+            image_reexports.sort_by_key(|record| {
+                (
+                    record.export_name.clone(),
+                    record.target_dylib.clone(),
+                    record.target_symbol.clone(),
+                )
+            });
+            image_reexports.dedup_by(|left, right| {
+                left.export_name == right.export_name
+                    && left.target_dylib == right.target_dylib
+                    && left.target_symbol == right.target_symbol
+            });
+            if !image_reexports.is_empty() {
+                reexports_by_image.insert(source.image_id.clone(), image_reexports);
+            }
+        }
+
+        for providers in providers_by_symbol.values_mut() {
+            providers.sort_by_key(|record| {
+                (
+                    record.provider_image.install_name.clone(),
+                    cache_provider_kind_rank(record.provider_kind),
+                    record.target_dylib.clone(),
+                    record.target_symbol.clone(),
+                )
+            });
+            providers.dedup_by(|left, right| {
+                left.provider_image.image_id == right.provider_image.image_id
+                    && left.provider_kind == right.provider_kind
+                    && left.target_dylib == right.target_dylib
+                    && left.target_symbol == right.target_symbol
+            });
+        }
+        for reexports in reexports_by_symbol.values_mut() {
+            reexports.sort_by_key(|record| {
+                (
+                    record.source_image.install_name.clone(),
+                    record.target_dylib.clone(),
+                    record.target_symbol.clone(),
+                )
+            });
+            reexports.dedup_by(|left, right| {
+                left.source_image.image_id == right.source_image.image_id
+                    && left.export_name == right.export_name
+                    && left.target_dylib == right.target_dylib
+                    && left.target_symbol == right.target_symbol
+            });
+        }
+
+        Ok(CacheExportRelations {
+            providers_by_symbol,
+            reexports_by_image,
+            reexports_by_symbol,
         })
     }
 
@@ -458,6 +834,30 @@ struct RealSymbolCandidate {
     name: String,
     cache_vmaddr: u64,
     source: CacheSymbolSource,
+}
+
+#[derive(Debug, Clone)]
+struct ImportEdge {
+    importer_image: ProjectedImageProvenance,
+    symbol_name: String,
+    dylib_name: String,
+    import_binding_kind: Option<damsel_core::ImportBindingKind>,
+    import_binding_source: Option<damsel_core::ImportBindingSource>,
+}
+
+#[derive(Debug, Clone)]
+struct CacheImportRelations {
+    dependencies_by_image: BTreeMap<CacheImageId, Vec<damsel_core::CacheImageDependencyRecord>>,
+    dependents_by_image: BTreeMap<CacheImageId, Vec<damsel_core::CacheDependentRecord>>,
+    importers_by_symbol: BTreeMap<String, Vec<ImportEdge>>,
+}
+
+#[derive(Debug, Clone)]
+struct CacheExportRelations {
+    providers_by_symbol: BTreeMap<String, Vec<damsel_core::CacheSymbolProviderRecord>>,
+    reexports_by_image: BTreeMap<CacheImageId, Vec<damsel_core::CacheReexportRecord>>,
+    #[allow(dead_code)]
+    reexports_by_symbol: BTreeMap<String, Vec<damsel_core::CacheReexportRecord>>,
 }
 
 fn load_real_shared_cache_inventory(
@@ -848,6 +1248,8 @@ fn build_synthetic_session(
             engine,
             projections: RefCell::new(BTreeMap::new()),
         },
+        import_relations: RefCell::new(None),
+        export_relations: RefCell::new(None),
     })
 }
 
@@ -1033,6 +1435,35 @@ fn rebased_synthetic_binary(install_name: &str, image_base_vmaddr: u64) -> Resul
         helper.pointer_address = helper
             .pointer_address
             .map(|address| address.wrapping_add(delta));
+    }
+    if install_name.contains("libreexporter.dylib")
+        && let Some(export) = rebased_dyld
+            .exported_symbols
+            .iter_mut()
+            .find(|record| record.name == "_exported_regular")
+    {
+        export.address = None;
+        export.raw_flags = "offset=0x0 flags=reexport".to_string();
+        export.flags = ExportFlags::from_bits(0x08);
+        export.kind = damsel_core::ExportKind::Reexport {
+            dylib: "/usr/lib/libprovider.dylib".to_string(),
+            symbol: Some("_exported_regular".to_string()),
+        };
+        export.reexport_target = Some((
+            "/usr/lib/libprovider.dylib".to_string(),
+            Some("_exported_regular".to_string()),
+        ));
+        export.resolver_target = None;
+    }
+    if install_name.ends_with("libSystem.B.dylib") {
+        for export in &mut rebased_dyld.exported_symbols {
+            export.name = match export.name.as_str() {
+                "_exported_regular" => "_puts".to_string(),
+                "_exported_weak" => "_fprintf".to_string(),
+                "_exported_absolute" => "_strcmp".to_string(),
+                other => other.to_string(),
+            };
+        }
     }
 
     let rebased_objc = rebase_objc_metadata(image.objc().clone(), delta);
@@ -1651,6 +2082,31 @@ fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
     haystack
         .to_ascii_lowercase()
         .contains(needle.to_ascii_lowercase().as_str())
+}
+
+fn cache_provider_kind_rank(kind: CacheSymbolProviderKind) -> u8 {
+    match kind {
+        CacheSymbolProviderKind::Export => 0,
+        CacheSymbolProviderKind::Reexport => 1,
+    }
+}
+
+fn uniquely_resolved_provider_image(
+    providers: &[CacheSymbolProviderRecord],
+    dylib_name: &str,
+) -> Option<ProjectedImageProvenance> {
+    let mut matches = providers
+        .iter()
+        .filter(|record| record.provider_image.install_name == dylib_name)
+        .map(|record| record.provider_image.clone())
+        .collect::<Vec<_>>();
+    matches.sort_by_key(|provenance| provenance.image_id.to_string());
+    matches.dedup_by(|left, right| left.image_id == right.image_id);
+    if matches.len() == 1 {
+        matches.into_iter().next()
+    } else {
+        None
+    }
 }
 
 fn export_kind_name(kind: &damsel_core::ExportKind) -> &'static str {

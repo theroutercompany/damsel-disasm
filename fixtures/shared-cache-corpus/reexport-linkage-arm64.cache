@@ -1,0 +1,10 @@
+SYNTHETIC_DYLD_CACHE
+scenario=reexport-linkage-arm64
+arch=arm64
+uuid=91919191-a2a2-b3b3-c4c4-d5d5d5d5d5d5
+subcaches=0
+images=2
+image[0].install_name=/usr/lib/libprovider.dylib
+image[0].base_vmaddr=0x0000000186000000
+image[1].install_name=/usr/lib/libreexporter.dylib
+image[1].base_vmaddr=0x0000000186100000
