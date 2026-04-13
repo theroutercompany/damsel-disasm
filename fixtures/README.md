@@ -42,6 +42,9 @@ Script usage:
   export-trie corpus hashes only.
 - `fixtures/build-fixtures.sh --manifest-all`: print both manifests with
   section headers.
+- `sh fixtures/tests/build-fixtures-parity.sh`: read-only parity probes for
+  `--help`, `--manifest`, `--manifest-corpus`, `--manifest-all`, and the
+  non-macOS rebuild failure message.
 - `arm64e-sample` is rebuilt on a best-effort basis; if the local toolchain does
   not support `-arch arm64e`, the script preserves the checked-in binary.
 
@@ -50,8 +53,11 @@ Host/tool portability notes:
   hosts with a clear fallback message (`--check` / manifest modes).
 - Drift-check mode is host-portable and selects a SHA-256 backend from:
   `sha256sum`, `shasum`, then `openssl` (in that order).
-- Rebuild mode validates required tooling (`xcrun`, SDK access, `clang`,
-  `strip`, `python3`, `nm`) and emits actionable diagnostics when unavailable.
+- Rebuild mode validates required tooling with a canonical probe contract:
+  `xcrun` must be present, SDK resolution must succeed via
+  `xcrun --show-sdk-path`, `clang`/`strip` are resolved via `xcrun --find`
+  (with PATH fallback), `python3` must be invocable, and `nm` must resolve to
+  an executable path.
 - Temporary files/directories now use `mktemp` when available; a pid-scoped
   fallback is retained with warnings for constrained environments.
 

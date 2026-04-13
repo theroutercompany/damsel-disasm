@@ -10,6 +10,8 @@ HASH_TOOL=""
 SDKROOT=""
 CLANG=""
 STRIP=""
+PYTHON3_BIN=""
+NM_BIN=""
 
 warn() {
   echo "warning: $*" >&2
@@ -170,6 +172,9 @@ detect_macos_build_tools() {
   if ! SDKROOT="$(xcrun --show-sdk-path 2>/dev/null)"; then
     die "unable to resolve macOS SDK path via 'xcrun --show-sdk-path'"
   fi
+  if [ -z "$SDKROOT" ]; then
+    die "xcrun reported an empty SDK path via 'xcrun --show-sdk-path'"
+  fi
 
   if ! CLANG="$(xcrun --find clang 2>/dev/null)"; then
     if command -v clang >/dev/null 2>&1; then
@@ -189,12 +194,28 @@ detect_macos_build_tools() {
     fi
   fi
 
-  if ! command -v python3 >/dev/null 2>&1; then
+  if [ ! -x "$CLANG" ]; then
+    die "resolved clang is not executable: $CLANG"
+  fi
+
+  if [ ! -x "$STRIP" ]; then
+    die "resolved strip is not executable: $STRIP"
+  fi
+
+  if ! PYTHON3_BIN="$(command -v python3 2>/dev/null)"; then
     die "fixture rebuild requires python3"
   fi
 
-  if ! command -v nm >/dev/null 2>&1; then
+  if ! "$PYTHON3_BIN" -c 'import sys; sys.exit(0)' >/dev/null 2>&1; then
+    die "fixture rebuild requires invocable python3 (python3 -c 'import sys; sys.exit(0)' failed)"
+  fi
+
+  if ! NM_BIN="$(command -v nm 2>/dev/null)"; then
     die "fixture rebuild requires nm"
+  fi
+
+  if [ ! -x "$NM_BIN" ]; then
+    die "resolved nm is not executable: $NM_BIN"
   fi
 }
 
@@ -312,7 +333,7 @@ build_fixtures() {
     "$SRC/objc-sample.m" \
     -o "$BIN/objc-sample"
 
-  ROOT_BIN="$BIN" python3 - <<'PY'
+  ROOT_BIN="$BIN" NM_BIN="$NM_BIN" "$PYTHON3_BIN" - <<'PY'
 from pathlib import Path
 import os
 import struct
@@ -327,7 +348,8 @@ out = root / "malformed-objc-protocol-list"
 data = bytearray(src.read_bytes())
 
 def find_symbol_address(path: Path, name: str) -> int:
-    output = subprocess.check_output(["nm", "-a", str(path)], text=True)
+    nm_bin = os.environ.get("NM_BIN", "nm")
+    output = subprocess.check_output([nm_bin, "-a", str(path)], text=True)
     for line in output.splitlines():
         parts = line.split()
         if len(parts) >= 3 and parts[-1] == name:
@@ -392,7 +414,7 @@ PY
 
   head -c 256 "$BIN/arm64-symbolized" > "$BIN/malformed-truncated"
 
-  ROOT_BIN="$BIN" python3 - <<'PY'
+  ROOT_BIN="$BIN" "$PYTHON3_BIN" - <<'PY'
 from pathlib import Path
 import struct
 import os
@@ -456,7 +478,7 @@ struct.pack_into("<I", broken_stub, stub["offset"] + 68, 1)
 (root / "malformed-stub-reserved2").write_bytes(broken_stub)
 PY
 
-  ROOT_BIN="$BIN" python3 - <<'PY'
+  ROOT_BIN="$BIN" "$PYTHON3_BIN" - <<'PY'
 from pathlib import Path
 import struct
 import os
