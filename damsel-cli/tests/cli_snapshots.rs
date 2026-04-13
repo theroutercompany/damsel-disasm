@@ -1,6 +1,17 @@
 use assert_cmd::Command;
 use damsel_macho::load;
+#[cfg(unix)]
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(unix)]
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -112,6 +123,17 @@ fn run_snapshot(args: &[&str]) -> String {
     normalize(&output.stdout)
 }
 
+fn run_snapshot_with_env(args: &[&str], envs: &[(&str, &str)]) -> String {
+    let mut command = Command::cargo_bin("damsel-cli").expect("binary exists");
+    command.args(args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let output = command.output().expect("command runs");
+    assert!(output.status.success(), "command failed: {:?}", output);
+    normalize(&output.stdout)
+}
+
 fn run_snapshot_owned(args: &[String]) -> String {
     let output = Command::cargo_bin("damsel-cli")
         .expect("binary exists")
@@ -120,6 +142,78 @@ fn run_snapshot_owned(args: &[String]) -> String {
         .expect("command runs");
     assert!(output.status.success(), "command failed: {:?}", output);
     normalize(&output.stdout)
+}
+
+#[cfg(unix)]
+fn unique_temp_dir(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "damsel-cli-{prefix}-{}-{nanos}-{counter}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&path).expect("create temp dir");
+    path
+}
+
+#[cfg(unix)]
+fn write_exec_script(path: &Path, body: &str) {
+    fs::write(path, body).expect("write script");
+    let mut perms = fs::metadata(path).expect("script metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod script");
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct DoctorSnapshotHarness {
+    root: PathBuf,
+}
+
+#[cfg(unix)]
+impl DoctorSnapshotHarness {
+    fn new() -> Self {
+        let root = unique_temp_dir("doctor-snapshot");
+        let sdk_dir = root.join("sdk");
+        fs::create_dir_all(&sdk_dir).expect("create fake sdk");
+        let xcrun_script = format!(
+            "#!/bin/sh\ncase \"$1\" in\n  --version) exit 0 ;;\n  --find)\n    case \"$2\" in\n      clang) echo \"{root}/clang\"; exit 0 ;;\n      strip) echo \"{root}/strip\"; exit 0 ;;\n      *) exit 1 ;;\n    esac ;;\n  --show-sdk-path)\n    echo \"{sdk}\"; exit 0 ;;\n  *) exit 1 ;;\nesac\n",
+            root = root.display(),
+            sdk = sdk_dir.display(),
+        );
+        write_exec_script(&root.join("xcrun"), &xcrun_script);
+        write_exec_script(
+            &root.join("clang"),
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n",
+        );
+        write_exec_script(
+            &root.join("strip"),
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n",
+        );
+        write_exec_script(&root.join("python3"), "#!/bin/sh\nexit 0\n");
+        write_exec_script(
+            &root.join("nm"),
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n",
+        );
+        write_exec_script(&root.join("sha256sum"), "#!/bin/sh\nexit 0\n");
+        write_exec_script(&root.join("shasum"), "#!/bin/sh\nexit 0\n");
+        write_exec_script(&root.join("openssl"), "#!/bin/sh\nexit 0\n");
+        Self { root }
+    }
+
+    fn path(&self) -> &str {
+        self.root.to_str().expect("utf8 harness path")
+    }
+}
+
+#[cfg(unix)]
+impl Drop for DoctorSnapshotHarness {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
 }
 
 #[test]
@@ -300,6 +394,19 @@ fn disasm_show_values_snapshot() {
 
 #[test]
 fn doctor_snapshot() {
+    #[cfg(unix)]
+    let stdout = {
+        let harness = DoctorSnapshotHarness::new();
+        run_snapshot_with_env(
+            &["doctor"],
+            &[
+                ("PATH", harness.path()),
+                ("DAMSEL_DOCTOR_TEST_SCENARIO", "macos-arm64"),
+                ("DAMSEL_DOCTOR_TEST_TARGET_TRIPLE", "aarch64-apple-darwin"),
+            ],
+        )
+    };
+    #[cfg(not(unix))]
     let stdout = run_snapshot(&["doctor"]);
     let normalized = normalize_doctor_snapshot(&stdout);
     insta::assert_snapshot!("doctor_snapshot", normalized);

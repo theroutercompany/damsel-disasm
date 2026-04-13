@@ -38,9 +38,10 @@ jobs:
           require "yaml"
           release = YAML.load_file(".github/workflows/release.yml")
           verify = YAML.load_file(".github/workflows/verify.yml")
-          abort("release workflow missing workflow_dispatch trigger") unless release["on"].key?("workflow_dispatch")
-          abort("release workflow missing schedule trigger") unless release["on"].key?("schedule")
-          push = release["on"]["push"] || {}
+          triggers = release["on"] || release[true] || {}
+          abort("release workflow missing workflow_dispatch trigger") unless triggers.key?("workflow_dispatch")
+          abort("release workflow missing schedule trigger") unless triggers.key?("schedule")
+          push = triggers["push"] || {}
           tags = push["tags"] || []
           abort("release workflow missing beta tag pattern") unless tags.include?("v*-beta.*")
           jobs = release["jobs"] || {}
@@ -194,7 +195,7 @@ jobs:
               cat "${stderr_file}" >&2 || true
               exit 1
             fi
-            grep -q "Host:" "${stdout_file}" || {
+            grep -Eq "^(host_os:|Host:)" "${stdout_file}" || {
               echo "expected doctor report on stdout for ${label}" >&2
               cat "${stdout_file}" >&2 || true
               exit 1
@@ -616,7 +617,7 @@ jobs:
             cat "${tmpdir}/strict.stderr" >&2 || true
             exit 1
           fi
-          grep -q "Host:" "${tmpdir}/strict.stdout"
+          grep -Eq "^(host_os:|Host:)" "${tmpdir}/strict.stdout"
           [[ ! -s "${tmpdir}/strict.stderr" ]]
 
           cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "${EXPECTED_BENCH_RUNTIME_STATUS}"
