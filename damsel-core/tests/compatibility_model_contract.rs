@@ -1,5 +1,6 @@
 use damsel_core::{
-    CapabilityStatus, CompatibilityCapability, CompatibilityIssue, HostArchitecture, HostPlatform,
+    CapabilityStatus, CompatibilityCapability, CompatibilityCapabilityRole, CompatibilityIssue,
+    HostArchitecture, HostPlatform,
 };
 
 #[test]
@@ -153,5 +154,80 @@ fn compatibility_capability_all_is_deterministic() {
             CompatibilityCapability::BenchCompile,
             CompatibilityCapability::BenchRuntime,
         ]
+    );
+}
+
+#[test]
+fn compatibility_capability_doctor_check_all_is_stable() {
+    assert_eq!(
+        CompatibilityCapability::DOCTOR_CHECK_ALL,
+        [
+            CompatibilityCapability::MachoAnalysis,
+            CompatibilityCapability::FixtureRebuild,
+            CompatibilityCapability::FixtureDriftCheck,
+            CompatibilityCapability::BenchCompile,
+            CompatibilityCapability::BenchRuntime,
+        ]
+    );
+    assert!(
+        !CompatibilityCapability::DOCTOR_CHECK_ALL.contains(&CompatibilityCapability::Benchmark)
+    );
+}
+
+#[test]
+fn compatibility_capability_roles_distinguish_primary_and_derived() {
+    assert_eq!(
+        CompatibilityCapability::Benchmark.role(),
+        CompatibilityCapabilityRole::DerivedSummary
+    );
+    assert!(CompatibilityCapability::Benchmark.is_derived_summary());
+    assert!(!CompatibilityCapability::Benchmark.is_primary_input());
+
+    for capability in [
+        CompatibilityCapability::MachoAnalysis,
+        CompatibilityCapability::FixtureRebuild,
+        CompatibilityCapability::FixtureDriftCheck,
+        CompatibilityCapability::BenchCompile,
+        CompatibilityCapability::BenchRuntime,
+    ] {
+        assert_eq!(capability.role(), CompatibilityCapabilityRole::PrimaryInput);
+        assert!(capability.is_primary_input());
+        assert!(!capability.is_derived_summary());
+    }
+}
+
+#[test]
+fn compatibility_capability_benchmark_summary_inputs_are_stable() {
+    assert_eq!(
+        CompatibilityCapability::Benchmark.summary_inputs(),
+        &[
+            CompatibilityCapability::BenchCompile,
+            CompatibilityCapability::BenchRuntime,
+        ]
+    );
+    assert!(
+        CompatibilityCapability::MachoAnalysis
+            .summary_inputs()
+            .is_empty()
+    );
+    assert!(
+        CompatibilityCapability::FixtureRebuild
+            .summary_inputs()
+            .is_empty()
+    );
+    assert!(
+        CompatibilityCapability::FixtureDriftCheck
+            .summary_inputs()
+            .is_empty()
+    );
+    assert!(
+        CompatibilityCapability::BenchCompile
+            .summary_inputs()
+            .is_empty()
+    );
+    assert!(
+        CompatibilityCapability::BenchRuntime
+            .summary_inputs()
+            .is_empty()
     );
 }

@@ -174,6 +174,12 @@ pub enum CompatibilityCapability {
     BenchRuntime,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CompatibilityCapabilityRole {
+    PrimaryInput,
+    DerivedSummary,
+}
+
 impl CompatibilityCapability {
     pub const ALL: [Self; 6] = [
         Self::MachoAnalysis,
@@ -183,6 +189,15 @@ impl CompatibilityCapability {
         Self::BenchCompile,
         Self::BenchRuntime,
     ];
+    pub const DOCTOR_CHECK_ALL: [Self; 5] = [
+        Self::MachoAnalysis,
+        Self::FixtureRebuild,
+        Self::FixtureDriftCheck,
+        Self::BenchCompile,
+        Self::BenchRuntime,
+    ];
+    const BENCHMARK_SUMMARY_INPUTS: [Self; 2] = [Self::BenchCompile, Self::BenchRuntime];
+    const NO_SUMMARY_INPUTS: [Self; 0] = [];
 
     pub fn key(self) -> &'static str {
         match self {
@@ -215,6 +230,36 @@ impl CompatibilityCapability {
             "benchcompile" => Some(Self::BenchCompile),
             "benchruntime" => Some(Self::BenchRuntime),
             _ => None,
+        }
+    }
+
+    pub fn role(self) -> CompatibilityCapabilityRole {
+        match self {
+            Self::Benchmark => CompatibilityCapabilityRole::DerivedSummary,
+            Self::MachoAnalysis
+            | Self::FixtureRebuild
+            | Self::FixtureDriftCheck
+            | Self::BenchCompile
+            | Self::BenchRuntime => CompatibilityCapabilityRole::PrimaryInput,
+        }
+    }
+
+    pub fn is_primary_input(self) -> bool {
+        matches!(self.role(), CompatibilityCapabilityRole::PrimaryInput)
+    }
+
+    pub fn is_derived_summary(self) -> bool {
+        matches!(self.role(), CompatibilityCapabilityRole::DerivedSummary)
+    }
+
+    pub fn summary_inputs(self) -> &'static [Self] {
+        match self {
+            Self::Benchmark => &Self::BENCHMARK_SUMMARY_INPUTS,
+            Self::MachoAnalysis
+            | Self::FixtureRebuild
+            | Self::FixtureDriftCheck
+            | Self::BenchCompile
+            | Self::BenchRuntime => &Self::NO_SUMMARY_INPUTS,
         }
     }
 }
