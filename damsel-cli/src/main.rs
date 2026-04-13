@@ -3,10 +3,12 @@ mod ui;
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
-    BinaryImage, CacheImageRecord, CacheLookupResult, DecodedInstruction, DisassemblyLimit,
-    DisassemblyOptions, DisassemblyRequestV2, DisassemblyTarget, ExportFlagName, Import,
-    ImportBindingKind, ObjcNameSource, ObjcSelectorSource, ProjectedBinaryImage, Relocation,
-    Section, SharedCache, SharedCacheMemberRole, StubKind, Symbol, SymbolicationMatch,
+    BinaryImage, CacheDependentRecord, CacheImageDependencyRecord, CacheImageRecord,
+    CacheLookupResult, CacheReexportRecord, CacheSymbolImporterRecord, CacheSymbolProviderRecord,
+    DecodedInstruction, DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2,
+    DisassemblyTarget, ExportFlagName, Import, ImportBindingKind, ObjcNameSource,
+    ObjcSelectorSource, ProjectedBinaryImage, Relocation, Section, SharedCache,
+    SharedCacheMemberRole, StubKind, Symbol, SymbolicationMatch,
 };
 use damsel_macho::{disassemble_v2, inspect_shared_cache, load};
 use std::error::Error;
@@ -85,6 +87,13 @@ enum CacheImageSortArg {
 enum CacheExportSortArg {
     Address,
     Name,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CacheDependencyKindArg {
+    Internal,
+    External,
+    All,
 }
 
 impl From<DyldSortArg> for output::DyldSortKey {
@@ -526,6 +535,44 @@ enum CacheCommand {
         symbol: String,
         #[arg(long)]
         image: Option<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    ImageDeps {
+        cache: PathBuf,
+        image: String,
+        #[arg(long, value_enum, default_value_t = CacheDependencyKindArg::All)]
+        kind: CacheDependencyKindArg,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    Dependents {
+        cache: PathBuf,
+        image: String,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    SymbolProviders {
+        cache: PathBuf,
+        symbol: String,
+        #[arg(long)]
+        image: Option<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    SymbolImporters {
+        cache: PathBuf,
+        symbol: String,
+        #[arg(long)]
+        image: Option<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    Reexports {
+        cache: PathBuf,
+        image: String,
+        #[arg(long)]
+        name: Option<String>,
         #[arg(long)]
         limit: Option<usize>,
     },
@@ -1092,6 +1139,188 @@ fn handle_cache_command(
             let output_matches = apply_limit(matches, metadata.returned);
             output::print_cache_resolve_symbol(&metadata, &output_matches, output_settings);
         }
+        CacheCommand::ImageDeps {
+            cache,
+            image,
+            kind,
+            limit,
+        } => {
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let cache_image = session.resolve_image(&image).map_err(map_cache_error)?;
+            let mut dependencies = session
+                .image_dependencies(&image)
+                .map_err(map_cache_error)?
+                .into_iter()
+                .filter(|record| match kind {
+                    CacheDependencyKindArg::Internal => record.within_cache,
+                    CacheDependencyKindArg::External => !record.within_cache,
+                    CacheDependencyKindArg::All => true,
+                })
+                .map(cache_dependency_view)
+                .collect::<Vec<_>>();
+            dependencies.sort_by_key(|record| record.target_dylib_install_name.clone());
+            let metadata =
+                collection_metadata(dependencies.len(), normalize_limit(limit, "--limit")?);
+            let output_dependencies = apply_limit(dependencies, metadata.returned);
+            output::print_cache_image_deps(
+                &cache_image_view(session.cache(), cache_image),
+                &metadata,
+                &output_dependencies,
+                output_settings,
+            );
+        }
+        CacheCommand::Dependents {
+            cache,
+            image,
+            limit,
+        } => {
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let cache_image = session.resolve_image(&image).map_err(map_cache_error)?;
+            let mut dependents = session
+                .dependents(&image)
+                .map_err(map_cache_error)?
+                .into_iter()
+                .map(cache_dependent_view)
+                .collect::<Vec<_>>();
+            dependents.sort_by_key(|record| record.install_name.clone());
+            let metadata =
+                collection_metadata(dependents.len(), normalize_limit(limit, "--limit")?);
+            let output_dependents = apply_limit(dependents, metadata.returned);
+            output::print_cache_dependents(
+                &cache_image_view(session.cache(), cache_image),
+                &metadata,
+                &output_dependents,
+                output_settings,
+            );
+        }
+        CacheCommand::SymbolProviders {
+            cache,
+            symbol,
+            image,
+            limit,
+        } => {
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let mut providers = session
+                .symbol_providers(&symbol)
+                .map_err(map_cache_error)?
+                .into_iter()
+                .filter(|record| {
+                    image.as_ref().map_or(true, |needle| {
+                        contains_case_insensitive(&record.provider_image.install_name, needle)
+                            || contains_case_insensitive(
+                                &record.provider_image.image_id.to_string(),
+                                needle,
+                            )
+                            || contains_case_insensitive(&record.provider_image.basename, needle)
+                    })
+                })
+                .map(cache_provider_view)
+                .collect::<Vec<_>>();
+            providers.sort_by_key(|record| {
+                (
+                    record.install_name.clone(),
+                    record.provider_kind.clone(),
+                    record.target_dylib.clone(),
+                    record.target_symbol.clone(),
+                )
+            });
+            if providers.is_empty() {
+                return Err(CliRunError::command(
+                    "symbol_not_found",
+                    format!("symbol not found: {symbol}"),
+                ));
+            }
+            let metadata = collection_metadata(providers.len(), normalize_limit(limit, "--limit")?);
+            let output_providers = apply_limit(providers, metadata.returned);
+            output::print_cache_symbol_providers(
+                &symbol,
+                &metadata,
+                &output_providers,
+                output_settings,
+            );
+        }
+        CacheCommand::SymbolImporters {
+            cache,
+            symbol,
+            image,
+            limit,
+        } => {
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let mut importers = session
+                .symbol_importers(&symbol)
+                .map_err(map_cache_error)?
+                .into_iter()
+                .filter(|record| {
+                    image.as_ref().map_or(true, |needle| {
+                        contains_case_insensitive(&record.importer_image.install_name, needle)
+                            || contains_case_insensitive(
+                                &record.importer_image.image_id.to_string(),
+                                needle,
+                            )
+                            || contains_case_insensitive(&record.importer_image.basename, needle)
+                    })
+                })
+                .map(cache_importer_view)
+                .collect::<Vec<_>>();
+            importers.sort_by_key(|record| {
+                (
+                    record.install_name.clone(),
+                    record.dylib_name.clone(),
+                    record.symbol_name.clone(),
+                    record.import_binding_kind.clone(),
+                    record.import_binding_source.clone(),
+                )
+            });
+            if importers.is_empty() {
+                return Err(CliRunError::command(
+                    "symbol_not_found",
+                    format!("symbol not found: {symbol}"),
+                ));
+            }
+            let metadata = collection_metadata(importers.len(), normalize_limit(limit, "--limit")?);
+            let output_importers = apply_limit(importers, metadata.returned);
+            output::print_cache_symbol_importers(
+                &symbol,
+                &metadata,
+                &output_importers,
+                output_settings,
+            );
+        }
+        CacheCommand::Reexports {
+            cache,
+            image,
+            name,
+            limit,
+        } => {
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let cache_image = session.resolve_image(&image).map_err(map_cache_error)?;
+            let mut reexports = session
+                .reexports(&image)
+                .map_err(map_cache_error)?
+                .into_iter()
+                .filter(|record| {
+                    name.as_ref()
+                        .map(|needle| contains_case_insensitive(&record.export_name, needle))
+                        .unwrap_or(true)
+                })
+                .map(cache_reexport_view)
+                .collect::<Vec<_>>();
+            reexports.sort_by_key(|record| {
+                (
+                    record.export_name.clone(),
+                    record.target_dylib.clone(),
+                    record.target_symbol.clone(),
+                )
+            });
+            let metadata = collection_metadata(reexports.len(), normalize_limit(limit, "--limit")?);
+            let output_reexports = apply_limit(reexports, metadata.returned);
+            output::print_cache_reexports(
+                &cache_image_view(session.cache(), cache_image),
+                &metadata,
+                &output_reexports,
+                output_settings,
+            );
+        }
         CacheCommand::Sections {
             cache,
             image,
@@ -1511,6 +1740,105 @@ fn cache_symbolication_view(entry: SymbolicationMatch) -> output::CacheSymbolica
         image_offset: entry.image_offset,
         member_file_offset: entry.member_file_offset,
         source: entry.symbol_source.to_string(),
+    }
+}
+
+fn cache_dependency_view(entry: CacheImageDependencyRecord) -> output::CacheImageDependencyView {
+    output::CacheImageDependencyView {
+        target_dylib_install_name: entry.target_dylib_install_name,
+        target_image_id: entry
+            .target_image
+            .as_ref()
+            .map(|image| image.image_id.to_string()),
+        target_install_name: entry
+            .target_image
+            .as_ref()
+            .map(|image| image.install_name.clone()),
+        target_member_name: entry
+            .target_image
+            .as_ref()
+            .map(|image| image.member_name.clone()),
+        within_cache: entry.within_cache,
+        reference_count: entry.reference_count,
+    }
+}
+
+fn cache_dependent_view(entry: CacheDependentRecord) -> output::CacheDependentView {
+    output::CacheDependentView {
+        image_id: entry.dependent_image.image_id.to_string(),
+        install_name: entry.dependent_image.install_name,
+        member_name: entry.dependent_image.member_name,
+        dependency_count: entry.dependency_count,
+    }
+}
+
+fn cache_provider_view(entry: CacheSymbolProviderRecord) -> output::CacheSymbolProviderView {
+    output::CacheSymbolProviderView {
+        image_id: entry.provider_image.image_id.to_string(),
+        install_name: entry.provider_image.install_name,
+        member_name: entry.provider_image.member_name,
+        symbol_name: entry.symbol_name,
+        provider_kind: entry.provider_kind.to_string(),
+        target_dylib: entry.target_dylib,
+        target_symbol: entry.target_symbol,
+        resolved_target_image_id: entry
+            .resolved_target_image
+            .as_ref()
+            .map(|image| image.image_id.to_string()),
+        resolved_target_install_name: entry
+            .resolved_target_image
+            .as_ref()
+            .map(|image| image.install_name.clone()),
+        resolved_target_member_name: entry
+            .resolved_target_image
+            .as_ref()
+            .map(|image| image.member_name.clone()),
+    }
+}
+
+fn cache_importer_view(entry: CacheSymbolImporterRecord) -> output::CacheSymbolImporterView {
+    output::CacheSymbolImporterView {
+        image_id: entry.importer_image.image_id.to_string(),
+        install_name: entry.importer_image.install_name,
+        member_name: entry.importer_image.member_name,
+        symbol_name: entry.symbol_name,
+        dylib_name: entry.dylib_name,
+        import_binding_kind: entry.import_binding_kind.map(|kind| format!("{kind:?}")),
+        import_binding_source: entry
+            .import_binding_source
+            .map(|source| format!("{source:?}")),
+        resolved_provider_image_id: entry
+            .resolved_provider_image
+            .as_ref()
+            .map(|image| image.image_id.to_string()),
+        resolved_provider_install_name: entry
+            .resolved_provider_image
+            .as_ref()
+            .map(|image| image.install_name.clone()),
+        resolved_provider_member_name: entry
+            .resolved_provider_image
+            .as_ref()
+            .map(|image| image.member_name.clone()),
+    }
+}
+
+fn cache_reexport_view(entry: CacheReexportRecord) -> output::CacheReexportView {
+    output::CacheReexportView {
+        export_name: entry.export_name,
+        target_dylib: entry.target_dylib,
+        target_symbol: entry.target_symbol,
+        resolved_target_image_id: entry
+            .resolved_target_image
+            .as_ref()
+            .map(|image| image.image_id.to_string()),
+        resolved_target_install_name: entry
+            .resolved_target_image
+            .as_ref()
+            .map(|image| image.install_name.clone()),
+        resolved_target_member_name: entry
+            .resolved_target_image
+            .as_ref()
+            .map(|image| image.member_name.clone()),
     }
 }
 

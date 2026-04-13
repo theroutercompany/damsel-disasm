@@ -2402,3 +2402,171 @@ fn cache_disasm_json_contract() {
     assert_exact_object_keys(&json["data"], &["image", "disassembly"]);
     assert!(json["data"]["disassembly"].is_object());
 }
+
+#[test]
+fn cache_image_deps_json_contract() {
+    let path = cache_fixture("internal-linkage-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "image-deps",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libdispatch.dylib",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "metadata", "dependencies"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_image_deps");
+    assert_exact_object_keys(&json["data"], &["image", "metadata", "dependencies"]);
+    let dependencies = json["data"]["dependencies"]
+        .as_array()
+        .expect("dependencies array");
+    assert!(!dependencies.is_empty());
+    for entry in dependencies {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "target_dylib_install_name",
+                "target_image_id",
+                "target_install_name",
+                "target_member_name",
+                "within_cache",
+                "reference_count",
+            ],
+        );
+    }
+}
+
+#[test]
+fn cache_dependents_json_contract() {
+    let path = cache_fixture("internal-linkage-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "dependents",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libSystem.B.dylib",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "metadata", "dependents"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_dependents");
+    assert_exact_object_keys(&json["data"], &["image", "metadata", "dependents"]);
+    let dependents = json["data"]["dependents"].as_array().expect("dependents");
+    assert!(!dependents.is_empty());
+    for entry in dependents {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "image_id",
+                "install_name",
+                "member_name",
+                "dependency_count",
+            ],
+        );
+    }
+}
+
+#[test]
+fn cache_symbol_providers_json_contract() {
+    let path = cache_fixture("reexport-linkage-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "symbol-providers",
+        path.to_str().expect("utf8 path"),
+        "_exported_regular",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["metadata", "providers"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_symbol_providers");
+    assert_exact_object_keys(&json["data"], &["metadata", "providers"]);
+    let providers = json["data"]["providers"].as_array().expect("providers");
+    assert!(!providers.is_empty());
+    for entry in providers {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "image_id",
+                "install_name",
+                "member_name",
+                "symbol_name",
+                "provider_kind",
+                "target_dylib",
+                "target_symbol",
+                "resolved_target_image_id",
+                "resolved_target_install_name",
+                "resolved_target_member_name",
+            ],
+        );
+    }
+}
+
+#[test]
+fn cache_symbol_importers_json_contract() {
+    let path = cache_fixture("internal-linkage-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "symbol-importers",
+        path.to_str().expect("utf8 path"),
+        "_puts",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["metadata", "importers"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_symbol_importers");
+    assert_exact_object_keys(&json["data"], &["metadata", "importers"]);
+    let importers = json["data"]["importers"].as_array().expect("importers");
+    assert!(!importers.is_empty());
+    for entry in importers {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "image_id",
+                "install_name",
+                "member_name",
+                "symbol_name",
+                "dylib_name",
+                "import_binding_kind",
+                "import_binding_source",
+                "resolved_provider_image_id",
+                "resolved_provider_install_name",
+                "resolved_provider_member_name",
+            ],
+        );
+    }
+}
+
+#[test]
+fn cache_reexports_json_contract() {
+    let path = cache_fixture("reexport-linkage-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "reexports",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libreexporter.dylib",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "metadata", "reexports"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_reexports");
+    assert_exact_object_keys(&json["data"], &["image", "metadata", "reexports"]);
+    let reexports = json["data"]["reexports"].as_array().expect("reexports");
+    assert!(!reexports.is_empty());
+    for entry in reexports {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "export_name",
+                "target_dylib",
+                "target_symbol",
+                "resolved_target_image_id",
+                "resolved_target_install_name",
+                "resolved_target_member_name",
+            ],
+        );
+    }
+}

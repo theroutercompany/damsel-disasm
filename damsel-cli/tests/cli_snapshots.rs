@@ -617,3 +617,118 @@ fn cache_disasm_snapshot() {
         "###
     );
 }
+
+#[test]
+fn cache_image_deps_snapshot() {
+    let path = cache_fixture("internal-linkage-arm64.cache");
+    let stdout = run_snapshot(&[
+        "cache",
+        "image-deps",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libdispatch.dylib",
+    ]);
+    insta::assert_snapshot!(
+        stdout,
+        @r###"
+        image:
+          id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:1
+          index=1
+          install_name=/usr/lib/libdispatch.dylib
+          basename=libdispatch.dylib
+          image_base_vmaddr=0x187100000
+          member=internal-linkage-arm64.cache
+        image_dependencies: returned=1 total=1 truncated=false
+          - target_dylib=/usr/lib/libSystem.B.dylib within_cache=true target_image_id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:0 target_install_name=/usr/lib/libSystem.B.dylib target_member_name=internal-linkage-arm64.cache reference_count=8
+        "###
+    );
+}
+
+#[test]
+fn cache_dependents_snapshot() {
+    let path = cache_fixture("internal-linkage-arm64.cache");
+    let stdout = run_snapshot(&[
+        "cache",
+        "dependents",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libSystem.B.dylib",
+    ]);
+    insta::assert_snapshot!(
+        stdout,
+        @r###"
+        image:
+          id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:0
+          index=0
+          install_name=/usr/lib/libSystem.B.dylib
+          basename=libSystem.B.dylib
+          image_base_vmaddr=0x187000000
+          member=internal-linkage-arm64.cache
+        dependents: returned=2 total=2 truncated=false
+          - image_id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:0 install_name=/usr/lib/libSystem.B.dylib member_name=internal-linkage-arm64.cache dependency_count=1
+          - image_id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:1 install_name=/usr/lib/libdispatch.dylib member_name=internal-linkage-arm64.cache dependency_count=8
+        "###
+    );
+}
+
+#[test]
+fn cache_symbol_providers_snapshot() {
+    let path = cache_fixture("reexport-linkage-arm64.cache");
+    let stdout = run_snapshot(&[
+        "cache",
+        "symbol-providers",
+        path.to_str().expect("utf8 path"),
+        "_exported_regular",
+    ]);
+    insta::assert_snapshot!(
+        stdout,
+        @r###"
+        symbol_providers: symbol=_exported_regular returned=2 total=2 truncated=false
+          - image_id=91919191-a2a2-b3b3-c4c4-d5d5d5d5d5d5:0 install_name=/usr/lib/libprovider.dylib member_name=reexport-linkage-arm64.cache kind=export symbol=_exported_regular target_dylib=- target_symbol=- resolved_target_image_id=- resolved_target_install_name=- resolved_target_member_name=-
+          - image_id=91919191-a2a2-b3b3-c4c4-d5d5d5d5d5d5:1 install_name=/usr/lib/libreexporter.dylib member_name=reexport-linkage-arm64.cache kind=reexport symbol=_exported_regular target_dylib=/usr/lib/libprovider.dylib target_symbol=_exported_regular resolved_target_image_id=91919191-a2a2-b3b3-c4c4-d5d5d5d5d5d5:0 resolved_target_install_name=/usr/lib/libprovider.dylib resolved_target_member_name=reexport-linkage-arm64.cache
+        "###
+    );
+}
+
+#[test]
+fn cache_symbol_importers_snapshot() {
+    let path = cache_fixture("internal-linkage-arm64.cache");
+    let stdout = run_snapshot(&[
+        "cache",
+        "symbol-importers",
+        path.to_str().expect("utf8 path"),
+        "_puts",
+    ]);
+    insta::assert_snapshot!(
+        stdout,
+        @r###"
+        symbol_importers: symbol=_puts returned=3 total=3 truncated=false
+          - image_id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:1 install_name=/usr/lib/libdispatch.dylib member_name=internal-linkage-arm64.cache symbol=_puts dylib=/usr/lib/libSystem.B.dylib binding_kind=- binding_source=- resolved_provider_image_id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:0 resolved_provider_install_name=/usr/lib/libSystem.B.dylib resolved_provider_member_name=internal-linkage-arm64.cache
+          - image_id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:1 install_name=/usr/lib/libdispatch.dylib member_name=internal-linkage-arm64.cache symbol=_puts dylib=/usr/lib/libSystem.B.dylib binding_kind=ChainedFixup binding_source=ChainedFixup resolved_provider_image_id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:0 resolved_provider_install_name=/usr/lib/libSystem.B.dylib resolved_provider_member_name=internal-linkage-arm64.cache
+          - image_id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:1 install_name=/usr/lib/libdispatch.dylib member_name=internal-linkage-arm64.cache symbol=_puts dylib=/usr/lib/libSystem.B.dylib binding_kind=NonLazy binding_source=IndirectSymbol resolved_provider_image_id=81818181-9292-a3a3-b4b4-c5c5c5c5c5c5:0 resolved_provider_install_name=/usr/lib/libSystem.B.dylib resolved_provider_member_name=internal-linkage-arm64.cache
+        "###
+    );
+}
+
+#[test]
+fn cache_reexports_snapshot() {
+    let path = cache_fixture("reexport-linkage-arm64.cache");
+    let stdout = run_snapshot(&[
+        "cache",
+        "reexports",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libreexporter.dylib",
+    ]);
+    insta::assert_snapshot!(
+        stdout,
+        @r###"
+        image:
+          id=91919191-a2a2-b3b3-c4c4-d5d5d5d5d5d5:1
+          index=1
+          install_name=/usr/lib/libreexporter.dylib
+          basename=libreexporter.dylib
+          image_base_vmaddr=0x186100000
+          member=reexport-linkage-arm64.cache
+        reexports: returned=1 total=1 truncated=false
+          - export_name=_exported_regular target_dylib=/usr/lib/libprovider.dylib target_symbol=_exported_regular resolved_target_image_id=91919191-a2a2-b3b3-c4c4-d5d5d5d5d5d5:0 resolved_target_install_name=/usr/lib/libprovider.dylib resolved_target_member_name=reexport-linkage-arm64.cache
+        "###
+    );
+}

@@ -256,6 +256,62 @@ pub(crate) struct CacheSymbolicationMatchView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CacheImageDependencyView {
+    pub target_dylib_install_name: String,
+    pub target_image_id: Option<String>,
+    pub target_install_name: Option<String>,
+    pub target_member_name: Option<String>,
+    pub within_cache: bool,
+    pub reference_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CacheDependentView {
+    pub image_id: String,
+    pub install_name: String,
+    pub member_name: String,
+    pub dependency_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CacheSymbolProviderView {
+    pub image_id: String,
+    pub install_name: String,
+    pub member_name: String,
+    pub symbol_name: String,
+    pub provider_kind: String,
+    pub target_dylib: Option<String>,
+    pub target_symbol: Option<String>,
+    pub resolved_target_image_id: Option<String>,
+    pub resolved_target_install_name: Option<String>,
+    pub resolved_target_member_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CacheSymbolImporterView {
+    pub image_id: String,
+    pub install_name: String,
+    pub member_name: String,
+    pub symbol_name: String,
+    pub dylib_name: String,
+    pub import_binding_kind: Option<String>,
+    pub import_binding_source: Option<String>,
+    pub resolved_provider_image_id: Option<String>,
+    pub resolved_provider_install_name: Option<String>,
+    pub resolved_provider_member_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CacheReexportView {
+    pub export_name: String,
+    pub target_dylib: String,
+    pub target_symbol: Option<String>,
+    pub resolved_target_image_id: Option<String>,
+    pub resolved_target_install_name: Option<String>,
+    pub resolved_target_member_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CapabilityReport {
     status: CapabilityStatus,
     reasons: Vec<CompatibilityIssue>,
@@ -565,6 +621,228 @@ pub(crate) fn print_cache_resolve_symbol(
         OutputFormat::Json => emit_json_response(
             "cache_resolve_symbol",
             &CacheResolveSymbolJsonDto { metadata, matches },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_image_deps(
+    image: &CacheImageView,
+    metadata: &CacheCollectionMetadata,
+    dependencies: &[CacheImageDependencyView],
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            print_cache_image_text(image);
+            println!(
+                "image_dependencies: returned={} total={} truncated={}",
+                metadata.returned, metadata.total, metadata.truncated
+            );
+            for dependency in dependencies {
+                println!(
+                    "  - target_dylib={} within_cache={} target_image_id={} target_install_name={} target_member_name={} reference_count={}",
+                    dependency.target_dylib_install_name,
+                    dependency.within_cache,
+                    dependency.target_image_id.as_deref().unwrap_or("-"),
+                    dependency.target_install_name.as_deref().unwrap_or("-"),
+                    dependency.target_member_name.as_deref().unwrap_or("-"),
+                    dependency.reference_count
+                );
+            }
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_image_deps",
+            &CacheImageScopedCollectionJsonDto {
+                image,
+                metadata,
+                payload_key: "dependencies",
+                payload: JsonValue::Array(
+                    dependencies
+                        .iter()
+                        .map(cache_image_dependency_json)
+                        .collect(),
+                ),
+            },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_dependents(
+    image: &CacheImageView,
+    metadata: &CacheCollectionMetadata,
+    dependents: &[CacheDependentView],
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            print_cache_image_text(image);
+            println!(
+                "dependents: returned={} total={} truncated={}",
+                metadata.returned, metadata.total, metadata.truncated
+            );
+            for dependent in dependents {
+                println!(
+                    "  - image_id={} install_name={} member_name={} dependency_count={}",
+                    dependent.image_id,
+                    dependent.install_name,
+                    dependent.member_name,
+                    dependent.dependency_count
+                );
+            }
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_dependents",
+            &CacheImageScopedCollectionJsonDto {
+                image,
+                metadata,
+                payload_key: "dependents",
+                payload: JsonValue::Array(dependents.iter().map(cache_dependent_json).collect()),
+            },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_symbol_providers(
+    symbol: &str,
+    metadata: &CacheCollectionMetadata,
+    providers: &[CacheSymbolProviderView],
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            println!(
+                "symbol_providers: symbol={} returned={} total={} truncated={}",
+                symbol, metadata.returned, metadata.total, metadata.truncated
+            );
+            for provider in providers {
+                println!(
+                    "  - image_id={} install_name={} member_name={} kind={} symbol={} target_dylib={} target_symbol={} resolved_target_image_id={} resolved_target_install_name={} resolved_target_member_name={}",
+                    provider.image_id,
+                    provider.install_name,
+                    provider.member_name,
+                    provider.provider_kind,
+                    provider.symbol_name,
+                    provider.target_dylib.as_deref().unwrap_or("-"),
+                    provider.target_symbol.as_deref().unwrap_or("-"),
+                    provider.resolved_target_image_id.as_deref().unwrap_or("-"),
+                    provider
+                        .resolved_target_install_name
+                        .as_deref()
+                        .unwrap_or("-"),
+                    provider
+                        .resolved_target_member_name
+                        .as_deref()
+                        .unwrap_or("-"),
+                );
+            }
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_symbol_providers",
+            &CacheSymbolScopedCollectionJsonDto {
+                metadata,
+                payload_key: "providers",
+                payload: JsonValue::Array(
+                    providers.iter().map(cache_symbol_provider_json).collect(),
+                ),
+            },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_symbol_importers(
+    symbol: &str,
+    metadata: &CacheCollectionMetadata,
+    importers: &[CacheSymbolImporterView],
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            println!(
+                "symbol_importers: symbol={} returned={} total={} truncated={}",
+                symbol, metadata.returned, metadata.total, metadata.truncated
+            );
+            for importer in importers {
+                println!(
+                    "  - image_id={} install_name={} member_name={} symbol={} dylib={} binding_kind={} binding_source={} resolved_provider_image_id={} resolved_provider_install_name={} resolved_provider_member_name={}",
+                    importer.image_id,
+                    importer.install_name,
+                    importer.member_name,
+                    importer.symbol_name,
+                    importer.dylib_name,
+                    importer.import_binding_kind.as_deref().unwrap_or("-"),
+                    importer.import_binding_source.as_deref().unwrap_or("-"),
+                    importer
+                        .resolved_provider_image_id
+                        .as_deref()
+                        .unwrap_or("-"),
+                    importer
+                        .resolved_provider_install_name
+                        .as_deref()
+                        .unwrap_or("-"),
+                    importer
+                        .resolved_provider_member_name
+                        .as_deref()
+                        .unwrap_or("-"),
+                );
+            }
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_symbol_importers",
+            &CacheSymbolScopedCollectionJsonDto {
+                metadata,
+                payload_key: "importers",
+                payload: JsonValue::Array(
+                    importers.iter().map(cache_symbol_importer_json).collect(),
+                ),
+            },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_reexports(
+    image: &CacheImageView,
+    metadata: &CacheCollectionMetadata,
+    reexports: &[CacheReexportView],
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            print_cache_image_text(image);
+            println!(
+                "reexports: returned={} total={} truncated={}",
+                metadata.returned, metadata.total, metadata.truncated
+            );
+            for reexport in reexports {
+                println!(
+                    "  - export_name={} target_dylib={} target_symbol={} resolved_target_image_id={} resolved_target_install_name={} resolved_target_member_name={}",
+                    reexport.export_name,
+                    reexport.target_dylib,
+                    reexport.target_symbol.as_deref().unwrap_or("-"),
+                    reexport.resolved_target_image_id.as_deref().unwrap_or("-"),
+                    reexport
+                        .resolved_target_install_name
+                        .as_deref()
+                        .unwrap_or("-"),
+                    reexport
+                        .resolved_target_member_name
+                        .as_deref()
+                        .unwrap_or("-"),
+                );
+            }
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_reexports",
+            &CacheImageScopedCollectionJsonDto {
+                image,
+                metadata,
+                payload_key: "reexports",
+                payload: JsonValue::Array(reexports.iter().map(cache_reexport_json).collect()),
+            },
             output,
         ),
     }
@@ -2980,6 +3258,44 @@ impl JsonDto for CacheResolveSymbolJsonDto<'_> {
     }
 }
 
+struct CacheImageScopedCollectionJsonDto<'a> {
+    image: &'a CacheImageView,
+    metadata: &'a CacheCollectionMetadata,
+    payload_key: &'static str,
+    payload: JsonValue,
+}
+
+impl JsonDto for CacheImageScopedCollectionJsonDto<'_> {
+    fn to_json_value(&self) -> JsonValue {
+        JsonValue::Object(vec![
+            ("image".to_string(), cache_image_json(self.image)),
+            (
+                "metadata".to_string(),
+                collection_metadata_json(self.metadata),
+            ),
+            (self.payload_key.to_string(), self.payload.clone()),
+        ])
+    }
+}
+
+struct CacheSymbolScopedCollectionJsonDto<'a> {
+    metadata: &'a CacheCollectionMetadata,
+    payload_key: &'static str,
+    payload: JsonValue,
+}
+
+impl JsonDto for CacheSymbolScopedCollectionJsonDto<'_> {
+    fn to_json_value(&self) -> JsonValue {
+        JsonValue::Object(vec![
+            (
+                "metadata".to_string(),
+                collection_metadata_json(self.metadata),
+            ),
+            (self.payload_key.to_string(), self.payload.clone()),
+        ])
+    }
+}
+
 struct CacheProjectedJsonDto<'a> {
     image: &'a CacheImageView,
     payload_key: &'static str,
@@ -3027,6 +3343,243 @@ fn cache_export_json(export: &CacheExportView) -> JsonValue {
         ),
         ("kind".to_string(), JsonValue::String(export.kind.clone())),
         ("flags".to_string(), JsonValue::String(export.flags.clone())),
+    ])
+}
+
+fn cache_image_dependency_json(record: &CacheImageDependencyView) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "target_dylib_install_name".to_string(),
+            JsonValue::String(record.target_dylib_install_name.clone()),
+        ),
+        (
+            "target_image_id".to_string(),
+            record
+                .target_image_id
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "target_install_name".to_string(),
+            record
+                .target_install_name
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "target_member_name".to_string(),
+            record
+                .target_member_name
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "within_cache".to_string(),
+            JsonValue::Bool(record.within_cache),
+        ),
+        (
+            "reference_count".to_string(),
+            usize_num(record.reference_count),
+        ),
+    ])
+}
+
+fn cache_dependent_json(record: &CacheDependentView) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "image_id".to_string(),
+            JsonValue::String(record.image_id.clone()),
+        ),
+        (
+            "install_name".to_string(),
+            JsonValue::String(record.install_name.clone()),
+        ),
+        (
+            "member_name".to_string(),
+            JsonValue::String(record.member_name.clone()),
+        ),
+        (
+            "dependency_count".to_string(),
+            usize_num(record.dependency_count),
+        ),
+    ])
+}
+
+fn cache_symbol_provider_json(record: &CacheSymbolProviderView) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "image_id".to_string(),
+            JsonValue::String(record.image_id.clone()),
+        ),
+        (
+            "install_name".to_string(),
+            JsonValue::String(record.install_name.clone()),
+        ),
+        (
+            "member_name".to_string(),
+            JsonValue::String(record.member_name.clone()),
+        ),
+        (
+            "symbol_name".to_string(),
+            JsonValue::String(record.symbol_name.clone()),
+        ),
+        (
+            "provider_kind".to_string(),
+            JsonValue::String(record.provider_kind.clone()),
+        ),
+        (
+            "target_dylib".to_string(),
+            record
+                .target_dylib
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "target_symbol".to_string(),
+            record
+                .target_symbol
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolved_target_image_id".to_string(),
+            record
+                .resolved_target_image_id
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolved_target_install_name".to_string(),
+            record
+                .resolved_target_install_name
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolved_target_member_name".to_string(),
+            record
+                .resolved_target_member_name
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+    ])
+}
+
+fn cache_symbol_importer_json(record: &CacheSymbolImporterView) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "image_id".to_string(),
+            JsonValue::String(record.image_id.clone()),
+        ),
+        (
+            "install_name".to_string(),
+            JsonValue::String(record.install_name.clone()),
+        ),
+        (
+            "member_name".to_string(),
+            JsonValue::String(record.member_name.clone()),
+        ),
+        (
+            "symbol_name".to_string(),
+            JsonValue::String(record.symbol_name.clone()),
+        ),
+        (
+            "dylib_name".to_string(),
+            JsonValue::String(record.dylib_name.clone()),
+        ),
+        (
+            "import_binding_kind".to_string(),
+            record
+                .import_binding_kind
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "import_binding_source".to_string(),
+            record
+                .import_binding_source
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolved_provider_image_id".to_string(),
+            record
+                .resolved_provider_image_id
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolved_provider_install_name".to_string(),
+            record
+                .resolved_provider_install_name
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolved_provider_member_name".to_string(),
+            record
+                .resolved_provider_member_name
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+    ])
+}
+
+fn cache_reexport_json(record: &CacheReexportView) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "export_name".to_string(),
+            JsonValue::String(record.export_name.clone()),
+        ),
+        (
+            "target_dylib".to_string(),
+            JsonValue::String(record.target_dylib.clone()),
+        ),
+        (
+            "target_symbol".to_string(),
+            record
+                .target_symbol
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolved_target_image_id".to_string(),
+            record
+                .resolved_target_image_id
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolved_target_install_name".to_string(),
+            record
+                .resolved_target_install_name
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "resolved_target_member_name".to_string(),
+            record
+                .resolved_target_member_name
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
     ])
 }
 

@@ -410,3 +410,51 @@ fn cache_disasm_unmapped_address_returns_typed_address_not_mapped_error() {
         .failure()
         .stderr(predicate::str::contains("error [address_not_mapped]"));
 }
+
+#[test]
+fn cache_reexports_ambiguous_selector_returns_typed_ambiguous_error() {
+    let path = cache_fixture("ambiguous-basename.cache");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "cache",
+            "reexports",
+            path.to_str().expect("utf8 path"),
+            "CommonCrypto",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [cache_image_ambiguous]"));
+}
+
+#[test]
+fn cache_symbol_providers_missing_symbol_returns_typed_error() {
+    let path = cache_fixture("reexport-linkage-arm64.cache");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "cache",
+            "symbol-providers",
+            path.to_str().expect("utf8 path"),
+            "__missing_symbol__",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [symbol_not_found]"));
+}
+
+#[test]
+fn cache_symbol_importers_missing_symbol_returns_typed_error() {
+    let path = cache_fixture("internal-linkage-arm64.cache");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "cache",
+            "symbol-importers",
+            path.to_str().expect("utf8 path"),
+            "__missing_symbol__",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [symbol_not_found]"));
+}
