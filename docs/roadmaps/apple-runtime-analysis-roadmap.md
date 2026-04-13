@@ -1,6 +1,6 @@
 # Apple Runtime Analysis Roadmap
 
-Status: Planned. This roadmap describes intended future implementation waves. None of the shared-cache-specific roadmap items below are implemented yet unless explicitly called out as present.
+Status: Planned. This roadmap describes intended implementation waves. Shared-cache-specific items below are planned unless explicitly marked as current.
 
 ## Summary
 
@@ -14,7 +14,7 @@ The roadmap preserves:
 
 - Apple-only focus
 - Mach-O-first foundations
-- `arm64` / `arm64e` boundary in the first cache wave
+- `arm64` / `arm64e` boundary in the first shared-cache wave
 - current standalone Mach-O behavior as the compatibility baseline
 
 ## Wave 1: Shared-Cache Inventory, Query, and Symbolication MVP
@@ -22,19 +22,20 @@ The roadmap preserves:
 ### Themes
 
 - make the dyld shared cache loadable as a first-class container
-- expose image inventory and mappings
+- expose deterministic image inventory and mappings
 - support cache-wide address lookup and symbol/export resolution
 - ship the first `cache` command family
 
 ### Major Subsystems Touched
 
 - `damsel-core`
-  - shared-cache model types
+  - shared-cache model types and indexes
   - typed symbolication results
 - `damsel-macho`
-  - cache-set discovery
+  - deterministic cache-set discovery
   - cache/container parsing
   - image inventory and mapping indexes
+  - projected-image internals for metadata reuse
 - `damsel-cli`
   - `cache info`
   - `cache images`
@@ -43,32 +44,39 @@ The roadmap preserves:
   - `cache lookup-address`
   - `cache resolve-symbol`
 - fixtures / CI
-  - cache fixture inventory
-  - typed malformed-cache coverage
+  - shared-cache corpus hash checks
+  - typed malformed/incomplete/ambiguous coverage
 
 ### Verification Expectations
 
-- typed loader tests for valid and malformed cache sets
-- split-cache discovery tests
+- typed loader tests for valid, malformed, incomplete, and unsupported-architecture cache sets
+- split-cache discovery tests with deterministic member ordering
 - deterministic image-list tests
-- address lookup tests with exact and nearest-symbol cases
-- CLI JSON contract tests for all cache commands
-- text snapshots for representative query flows
+- address lookup tests for `exact_symbol`, `nearest_symbol`, and `mapping_only`
+- symbol/image ambiguity tests with `cache_image_ambiguous`
+- CLI JSON contract tests for all six cache commands with exact key ordering
+- text snapshots for representative success and typed failure flows
 
 ### Explicit Non-Goals
 
 - generalized cache-backed disassembly
 - debugger transport or live-process integration
-- cache mutation
+- cache mutation or rebuilding
 - non-Apple formats
+- `doctor` capability expansion
 
 ### Exit Criteria
 
 - one cache set can be opened and queried read-only
 - image inventory is deterministic
-- address lookup returns image + symbol/export context
+- address lookup returns mapping/image/symbol context with locked address vocabulary:
+  - `cache_vmaddr`
+  - `image_base_vmaddr`
+  - `image_offset`
+  - `member_file_offset`
 - symbol resolution works across the cache with stable text/JSON output
 - current standalone Mach-O commands remain unchanged
+- root docs are truthful about implemented versus planned shared-cache surfaces
 
 ## Wave 2: Projected-Image Workflows and Debugger-Oriented Resolution
 
@@ -76,7 +84,7 @@ The roadmap preserves:
 
 - bridge from cache container to per-image analysis
 - allow selected cache images to reuse existing Mach-O analysis workflows
-- improve debugging-oriented address and symbol resolution
+- improve debugging-oriented address and symbol resolution quality
 
 ### Major Subsystems Touched
 
@@ -88,35 +96,35 @@ The roadmap preserves:
   - richer symbolication result types
 - `damsel-cli`
   - cache-selected image workflows that reuse current renderers
-  - debugger-friendly lookup output and contextual hints
+  - debugger-oriented lookup output and contextual hints
 - UI
-  - optional image browser / selection flows if the UI path is continued
+  - optional image browser/selection flows if UI direction remains active
 
 ### Verification Expectations
 
-- projection fidelity tests against equivalent standalone Mach-O fixtures where possible
+- projection-fidelity tests against equivalent standalone Mach-O fixtures where possible
 - section/symbol/dyld parity checks on projected images
 - disassembly smoke tests for projected images
-- regression coverage proving current image workflows do not change for standalone files
+- regressions proving standalone image workflows remain unchanged
 
 ### Explicit Non-Goals
 
-- full debugger integration
-- process attachment
+- full debugger transport integration
+- process attachment/injection
 - cache rebuilding or mutation
-- broad architecture expansion beyond the locked Apple-focused direction
+- architecture expansion outside the Apple-focused direction
 
 ### Exit Criteria
 
-- a selected cache image can be projected into a per-image analysis view
-- at least a limited set of existing image-oriented analysis flows can operate on projected images without format-specific rewrites
-- debugging-oriented address resolution is materially better than Wave 1 inventory-only workflows
+- selected cache images can be projected into per-image analysis views
+- a limited set of existing image-oriented analysis flows operates on projected images without format-specific rewrites
+- debugging-oriented resolution is materially better than Wave 1 inventory/query workflows
 
 ## Wave 3: Shared-Cache-Native Analysis and System-Framework Spelunking
 
 ### Themes
 
-- make cache-native exploration first-class rather than a thin query layer
+- make cache-native exploration first-class
 - deepen framework spelunking and runtime-linkage understanding
 - improve research-oriented navigation across cache-contained frameworks
 
@@ -131,14 +139,14 @@ The roadmap preserves:
 - `damsel-cli`
   - richer cache-native explorer commands and filters
 - UI
-  - higher-value browsing and navigation surfaces if still aligned with product direction
+  - higher-value browsing/navigation surfaces if still aligned with product direction
 
 ### Verification Expectations
 
 - cross-image linkage tests
 - framework-boundary traversal tests
 - richer cache-native snapshots
-- fixture matrix expansion for framework-spelunking and symbolication scenarios
+- fixture-matrix expansion for framework-spelunking and symbolication scenarios
 
 ### Explicit Non-Goals
 
@@ -148,9 +156,9 @@ The roadmap preserves:
 
 ### Exit Criteria
 
-- cache-native workflows are useful without requiring immediate projection into standalone-image semantics
+- cache-native workflows are useful without immediate projection into standalone-image semantics
 - system-framework spelunking is meaningfully supported
-- symbolication and address-resolution quality is sufficient for low-level Apple runtime research workflows
+- symbolication/address-resolution quality is sufficient for low-level Apple runtime research workflows
 
 ## Cross-Wave Rules
 
@@ -158,7 +166,7 @@ The roadmap preserves:
 - keep shared-cache work read-only until a separate decision says otherwise
 - keep non-Apple formats out of the near-term roadmap
 - preserve typed failure classes and deterministic CLI/JSON output
-- keep release and README docs honest about implemented versus planned cache/runtime surfaces
+- keep release and README docs honest about implemented versus planned runtime surfaces
 
 ## Present vs Planned Boundary
 

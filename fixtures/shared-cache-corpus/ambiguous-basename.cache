@@ -1,0 +1,10 @@
+SYNTHETIC_DYLD_CACHE
+scenario=ambiguous-basename
+arch=arm64
+uuid=77777777-1111-2222-3333-999999999999
+images=3
+image[0].install_name=/usr/lib/libcommonCrypto.dylib
+image[1].install_name=/System/Library/PrivateFrameworks/CommonCrypto.framework/CommonCrypto
+image[2].install_name=/usr/lib/libsqlite3.dylib
+ambiguous_basename=CommonCrypto
+

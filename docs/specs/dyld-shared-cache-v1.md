@@ -39,7 +39,7 @@ Included:
 
 - read-only cache inspection
 - `arm64` / `arm64e` cache sets only
-- cache-set discovery from a provided file path
+- deterministic cache-set discovery from a provided file path
 - typed cache image inventory
 - typed cache address lookup
 - typed cross-image symbol/export lookup
@@ -77,7 +77,7 @@ Purpose:
 Required responsibilities:
 
 - accept a path to any cache member file
-- canonicalize the cache root/member set
+- canonicalize the cache root/member set deterministically
 - discover sibling subcaches needed for a complete view
 - record the ordered member list used for analysis
 
@@ -112,8 +112,8 @@ Purpose:
 
 Rule:
 
-- `CacheImageId` is an opaque identifier derived from cache UUID plus image index
-- CLI users do not need to type it by default, but JSON output should expose it
+- `CacheImageId` is a stable string: `<cache_uuid>:<image_index>`
+- `image_index` is the cache image-table order and must not depend on display sorting
 
 ### `CacheImageRecord`
 
@@ -124,9 +124,10 @@ Purpose:
 Minimum fields:
 
 - `id: CacheImageId`
+- `image_index: u32`
 - `install_name: String`
 - `uuid: Option<String>`
-- `base_vmaddr: u64`
+- `image_base_vmaddr: u64`
 - `end_vmaddr: u64`
 - `member_path: PathBuf`
 - `mapping_names: Vec<String>`
@@ -150,7 +151,7 @@ Purpose:
 Minimum responsibilities:
 
 - identify containing cache mapping
-- identify containing `CacheImageRecord`
+- identify containing `CacheImageRecord` when one can be resolved
 - resolve exact symbol/export match when available
 - return nearest lower symbol/export and offset when exact match is absent
 
@@ -160,29 +161,46 @@ Purpose:
 
 - return one typed lookup result for `lookup-address` and `resolve-symbol`
 
+Lookup result kinds:
+
+- `exact_symbol`
+- `nearest_symbol`
+- `mapping_only`
+
 Minimum fields:
 
 - `query_kind`
 - `query_value`
 - `cache_uuid`
-- `image_id`
-- `install_name`
+- `image_id: Option<CacheImageId>`
+- `install_name: Option<String>`
 - `cache_vmaddr`
-- `image_relative_vmaddr`
+- `image_base_vmaddr: Option<u64>`
+- `image_offset: Option<u64>`
+- `member_file_offset`
 - `exact_symbol: Option<String>`
 - `nearest_symbol: Option<String>`
 - `symbol_offset: Option<u64>`
 - `export_kind: Option<ExportKind>`
 
-## Input Model
+## Input Model and Deterministic Discovery
 
 The CLI accepts a `<cache>` argument for every cache command.
 
-v1 input rule:
+v1 discovery algorithm:
 
-- `<cache>` may point to any file belonging to a shared-cache set
-- the loader must canonicalize the set and discover required sibling members automatically
-- if required members are missing, the command fails with a typed incomplete-cache error
+1. `<cache>` may point to root cache file, numbered subcache member, or `.symbols` sidecar.
+2. Root-candidate derivation:
+   - if basename ends with `.symbols`, strip `.symbols`
+   - else if basename ends with `.<decimal>`, strip that numeric suffix
+   - else treat the input path as root candidate
+3. Parse the root candidate and use `subcache_suffixes()` order as the authoritative required member list.
+4. Member ordering is fixed as:
+   - root first
+   - required numbered members in `subcache_suffixes()` order
+   - optional `.symbols` sidecar last, only if present and UUID-compatible
+5. Missing required members fail with `cache_incomplete`.
+6. UUID mismatch across required members fails with `cache_incomplete`.
 
 ## CLI Contract
 
@@ -224,13 +242,20 @@ Default order:
 
 Supported filters/options in v1:
 
-- `--name <substring>`
+- `--name <substring>` (ASCII case-insensitive substring)
 - `--limit <count>`
 - `--sort name|address`
+
+Limit semantics:
+
+- apply operations in this order: filter -> sort -> limit
 
 JSON contract:
 
 - `command = "cache_images"`
+- `data.metadata.total`
+- `data.metadata.returned`
+- `data.metadata.truncated`
 - `data.images[]`
 
 ### `damsel cache image <cache> <image>`
@@ -241,11 +266,14 @@ Behavior:
 
 Image resolution rules, in order:
 
-1. exact install-name match
-2. basename match if unique
-3. exact opaque `CacheImageId` match
+1. exact `CacheImageId` match (case-sensitive)
+2. exact install-name match (case-sensitive)
+3. exact basename match if unique (case-sensitive)
 
-If basename lookup is ambiguous, fail with `cache_image_not_found` and include an ambiguity hint in text mode.
+Failure semantics:
+
+- no match -> `cache_image_not_found`
+- basename ambiguity -> `cache_image_ambiguous`
 
 JSON contract:
 
@@ -261,7 +289,7 @@ Behavior:
 
 Supported filters/options in v1:
 
-- `--name <substring>`
+- `--name <substring>` (ASCII case-insensitive substring)
 - `--kind <regular|reexport|resolver|stub-and-resolver|weak-definition|absolute|thread-local|unknown>`
 - `--flag <weak-definition|reexport|stub-and-resolver|thread-local|absolute>`
 - `--sort address|name`
@@ -270,6 +298,9 @@ JSON contract:
 
 - `command = "cache_exports"`
 - `data.image`
+- `data.metadata.total`
+- `data.metadata.returned`
+- `data.metadata.truncated`
 - `data.exports[]`
 
 ### `damsel cache lookup-address <cache> <vmaddr>`
@@ -277,8 +308,14 @@ JSON contract:
 Behavior:
 
 - parse `<vmaddr>` with the same address parser style as current CLI commands
-- resolve the cache VM address
-- report mapping, image, and nearest symbol/export context
+- interpret input as `cache_vmaddr`
+- resolve mapping/image/symbol context
+
+Result semantics:
+
+- `exact_symbol`, `nearest_symbol`, `mapping_only`
+- if mapped but no containing image is identified: return `mapping_only` success
+- if not mapped: fail with `address_not_mapped`
 
 JSON contract:
 
@@ -290,46 +327,55 @@ JSON contract:
 Behavior:
 
 - resolve symbol/export matches across the whole cache
-- return all exact matches in deterministic order
+- symbol name matching is exact and case-sensitive
 
 Supported options in v1:
 
-- `--image <substring>` to constrain by image install name
+- `--image <substring>` (ASCII case-insensitive substring on install name)
 - `--limit <count>`
 
 Default order:
 
 - install name ascending, then symbol name ascending
 
+Limit semantics:
+
+- apply operations in this order: filter -> sort -> limit
+
 JSON contract:
 
 - `command = "cache_resolve_symbol"`
+- `data.metadata.total`
+- `data.metadata.returned`
+- `data.metadata.truncated`
 - `data.matches[]`
 
 ## Address Semantics
 
-This spec locks three address classes:
+This spec locks four address classes:
 
 - `cache_vmaddr`
   - absolute VM address in the shared-cache address space
-- `image_vmaddr`
-  - VM address interpreted relative to a projected image's loaded image view
-- `file_offset`
+- `image_base_vmaddr`
+  - image base address for the resolved `CacheImageRecord`
+- `image_offset`
+  - `cache_vmaddr - image_base_vmaddr`
+- `member_file_offset`
   - absolute file offset inside the owning cache member file
 
 Rules:
 
 - `lookup-address` inputs are always interpreted as `cache_vmaddr`
 - outputs must label all address classes explicitly
-- text output must never print an unlabeled hex address when more than one address class is in play
-- JSON output must use distinct keys for cache and image address forms
+- text output must never print unlabeled addresses when more than one address class is in play
+- JSON output must use the exact field names above
 
 ## Image Identity Rules
 
 - every `CacheImageRecord` exposes both `id` and `install_name`
-- `install_name` is the primary user-facing identity
-- `CacheImageId` is the stable machine identity
-- basename-only lookup is convenience behavior and must only succeed when unique
+- `install_name` is primary user-facing identity
+- `CacheImageId` is stable machine identity
+- basename lookup is convenience behavior and must only succeed when unique
 
 ## Failure Model
 
@@ -337,14 +383,14 @@ v1 must use typed failures end-to-end.
 
 Planned library-side failure classes:
 
-- `UnsupportedSharedCacheInput`
+- `UnsupportedInputKind`
 - `UnsupportedSharedCacheArchitecture`
 - `MalformedSharedCache`
 - `IncompleteSharedCacheSet`
 - `CacheImageNotFound`
-- `CacheAddressNotMapped`
-- `CacheSymbolNotFound`
-- `LocalSymbolsUnavailable`
+- `CacheImageAmbiguous`
+- `AddressNotMapped`
+- `SymbolNotFound`
 
 Planned CLI error envelope mapping:
 
@@ -353,6 +399,7 @@ Planned CLI error envelope mapping:
 - `malformed_input`
 - `cache_incomplete`
 - `cache_image_not_found`
+- `cache_image_ambiguous`
 - `address_not_mapped`
 - `symbol_not_found`
 
@@ -361,31 +408,33 @@ Rules:
 - missing required subcache members map to `cache_incomplete`
 - malformed cache headers/mappings/image tables map to `malformed_input`
 - unsupported architecture maps to `unsupported_architecture`
-- missing symbol-sidecar data that is optional for the current command must degrade the result rather than hard-fail, unless the command explicitly requires local-symbol data
+- optional local-symbol sidecar absence must degrade lookup quality rather than fail commands in v1
 
 ## Output Principles
 
 Text mode:
 
-- concise, operator-readable, and explicit about planned cache address semantics
+- concise, operator-readable, explicit about address classes
 - deterministic ordering
-- ambiguity and partial-resolution messages should be explicit, not silent
+- ambiguity and partial-resolution outcomes are explicit
 
 JSON mode:
 
 - deterministic key ordering
 - additive evolution only
 - every record includes enough identity to be joined later (`cache_uuid`, `image_id`, `install_name` where applicable)
+- collection commands always include `metadata.total`, `metadata.returned`, `metadata.truncated`
 
 ## Verification Requirements
 
 The first implementation wave should include:
 
 - typed parser tests for supported and malformed cache sets
-- fixture coverage for split-cache discovery
+- fixture coverage for split-cache discovery and missing-member handling
 - deterministic image-inventory tests
-- exact address-resolution tests
-- symbol lookup ambiguity tests
+- exact and nearest address-resolution tests
+- mapped-without-image `mapping_only` tests
+- symbol lookup ambiguity tests (`cache_image_ambiguous`)
 - CLI JSON contract tests for every `cache` subcommand
 - text snapshots for representative happy-path and failure-path flows
 

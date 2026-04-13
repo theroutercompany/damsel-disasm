@@ -108,7 +108,20 @@ Release-time smoke checks on the built/package binary:
 ```sh
 ./damsel --help
 ./damsel doctor --help
+./damsel cache --help
 ```
+
+Wave 1 note:
+- `cache --help` and `cache info fixtures/shared-cache-corpus/valid-single-arm64.cache` are mandatory release smokes.
+- Release verification keeps Wave 1 scope narrow:
+  - read-only inspection/query only
+  - Apple Silicon shared-cache sets only
+  - no debugger transport
+  - no cache mutation or rebuilding
+- The implementation contract and follow-on roadmap live in:
+  - `docs/specs/dyld-shared-cache-v1.md`
+  - `docs/architecture/apple-runtime-analysis-architecture.md`
+  - `docs/roadmaps/apple-runtime-analysis-roadmap.md`
 
 ## Future Toggle Points
 

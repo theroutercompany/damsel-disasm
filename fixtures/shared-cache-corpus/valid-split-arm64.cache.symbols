@@ -1,0 +1,10 @@
+SYNTHETIC_DYLD_CACHE_SYMBOLS
+scenario=valid-split-arm64-symbols
+arch=arm64
+uuid=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+symbols=2
+symbol[0].name=_dispatch_async
+symbol[0].cache_vmaddr=0x0000000182001234
+symbol[1].name=_xpc_connection_create
+symbol[1].cache_vmaddr=0x0000000182102345
+

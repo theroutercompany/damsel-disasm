@@ -1,0 +1,292 @@
+use damsel_core::{
+    Architecture, CacheImageId, CacheImageRecord, SharedCache, SharedCacheHeader,
+    SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,
+    SharedCacheValidationError,
+};
+use std::path::PathBuf;
+use std::ptr;
+
+fn sample_header() -> SharedCacheHeader {
+    SharedCacheHeader {
+        cache_uuid: "CACHE-UUID-1234".to_string(),
+        architecture: Architecture::Arm64,
+        mapping_count: 2,
+        image_count: 3,
+        base_address: Some(0x1800_0000_0),
+        has_local_symbols: false,
+    }
+}
+
+fn sample_members() -> Vec<SharedCacheMember> {
+    vec![
+        SharedCacheMember {
+            role: SharedCacheMemberRole::Root,
+            path: PathBuf::from("/tmp/dyld_shared_cache_arm64"),
+            file_size: 0x10_000,
+            suffix: None,
+            uuid: Some("CACHE-UUID-1234".to_string()),
+        },
+        SharedCacheMember {
+            role: SharedCacheMemberRole::Subcache,
+            path: PathBuf::from("/tmp/dyld_shared_cache_arm64.1"),
+            file_size: 0x8_000,
+            suffix: Some(".1".to_string()),
+            uuid: Some("CACHE-UUID-1234".to_string()),
+        },
+    ]
+}
+
+fn sample_mappings() -> Vec<SharedCacheMapping> {
+    vec![
+        SharedCacheMapping {
+            member_index: 0,
+            cache_vmaddr: 0x1800_0000_0,
+            size: 0x4000,
+            member_file_offset: 0,
+        },
+        SharedCacheMapping {
+            member_index: 1,
+            cache_vmaddr: 0x1800_1000_0,
+            size: 0x1000,
+            member_file_offset: 0x2000,
+        },
+    ]
+}
+
+fn sample_images(header: &SharedCacheHeader) -> Vec<CacheImageRecord> {
+    vec![
+        CacheImageRecord {
+            id: CacheImageId::new(header.cache_uuid.clone(), 7),
+            image_index: 7,
+            install_name: "/usr/lib/libA.dylib".to_string(),
+            basename: "libA.dylib".to_string(),
+            image_base_vmaddr: 0x1800_0010_0,
+            image_size: 0x200,
+            member_index: 0,
+        },
+        CacheImageRecord {
+            id: CacheImageId::new(header.cache_uuid.clone(), 2),
+            image_index: 2,
+            install_name: "/usr/lib/libB.dylib".to_string(),
+            basename: "libB.dylib".to_string(),
+            image_base_vmaddr: 0x1800_0050_0,
+            image_size: 0x300,
+            member_index: 0,
+        },
+        CacheImageRecord {
+            id: CacheImageId::new(header.cache_uuid.clone(), 9),
+            image_index: 9,
+            install_name: "/System/Library/PrivateFrameworks/Another.framework/libA.dylib"
+                .to_string(),
+            basename: "libA.dylib".to_string(),
+            image_base_vmaddr: 0x1800_1010_0,
+            image_size: 0x180,
+            member_index: 1,
+        },
+    ]
+}
+
+fn sample_cache() -> SharedCache {
+    let header = sample_header();
+    SharedCache::builder(
+        SharedCacheSource::File(PathBuf::from("/tmp/dyld_shared_cache_arm64")),
+        PathBuf::from("/tmp/dyld_shared_cache_arm64"),
+        header.clone(),
+    )
+    .with_members(sample_members())
+    .with_mappings(sample_mappings())
+    .with_images(sample_images(&header))
+    .build()
+    .expect("build sample shared cache")
+}
+
+#[test]
+fn cache_image_id_generation_and_parsing_is_stable() {
+    let id = CacheImageId::new("ABCDEF", 42);
+    assert_eq!(id.as_str(), "ABCDEF:42");
+    assert_eq!(id.cache_uuid(), "ABCDEF");
+    assert_eq!(id.image_index(), 42);
+
+    let parsed = CacheImageId::parse("ABCDEF:42").expect("parse cache image id");
+    assert_eq!(parsed, id);
+    assert!(CacheImageId::parse("ABCDEF").is_none());
+    assert!(CacheImageId::parse("ABCDEF:xyz").is_none());
+}
+
+#[test]
+fn builder_rejects_invalid_inventories() {
+    let header = sample_header();
+    let source = SharedCacheSource::File(PathBuf::from("/tmp/dyld_shared_cache_arm64"));
+    let path = PathBuf::from("/tmp/dyld_shared_cache_arm64");
+
+    let missing_members = SharedCache::builder(source.clone(), path.clone(), header.clone())
+        .with_mappings(sample_mappings())
+        .with_images(sample_images(&header))
+        .build();
+    assert!(matches!(
+        missing_members,
+        Err(SharedCacheValidationError::MissingMembers)
+    ));
+
+    let missing_mappings = SharedCache::builder(source.clone(), path.clone(), header.clone())
+        .with_members(sample_members())
+        .with_images(sample_images(&header))
+        .build();
+    assert!(matches!(
+        missing_mappings,
+        Err(SharedCacheValidationError::MissingMappings)
+    ));
+
+    let missing_images = SharedCache::builder(source.clone(), path.clone(), header.clone())
+        .with_members(sample_members())
+        .with_mappings(sample_mappings())
+        .build();
+    assert!(matches!(
+        missing_images,
+        Err(SharedCacheValidationError::MissingImages)
+    ));
+
+    let mut bad_header = header.clone();
+    bad_header.mapping_count = 1;
+    let mapping_mismatch = SharedCache::builder(source.clone(), path.clone(), bad_header)
+        .with_members(sample_members())
+        .with_mappings(sample_mappings())
+        .with_images(sample_images(&header))
+        .build();
+    assert!(matches!(
+        mapping_mismatch,
+        Err(SharedCacheValidationError::HeaderMappingCountMismatch)
+    ));
+
+    let mut images = sample_images(&header);
+    images[0].id = CacheImageId::new("WRONG-UUID", 7);
+    let id_mismatch = SharedCache::builder(source.clone(), path.clone(), header.clone())
+        .with_members(sample_members())
+        .with_mappings(sample_mappings())
+        .with_images(images)
+        .build();
+    assert!(matches!(
+        id_mismatch,
+        Err(SharedCacheValidationError::CacheImageIdMismatch)
+    ));
+
+    let mut bad_mappings = sample_mappings();
+    bad_mappings[0].member_index = 9;
+    let mapping_member_out_of_range = SharedCache::builder(source, path, header.clone())
+        .with_members(sample_members())
+        .with_mappings(bad_mappings)
+        .with_images(sample_images(&header))
+        .build();
+    assert!(matches!(
+        mapping_member_out_of_range,
+        Err(SharedCacheValidationError::MappingMemberOutOfRange)
+    ));
+}
+
+#[test]
+fn cached_indexes_are_memoized_and_deterministic() {
+    let cache = sample_cache();
+
+    let image_id_index_a = cache.image_id_index_cached();
+    let image_id_index_b = cache.image_id_index_cached();
+    assert!(ptr::eq(image_id_index_a, image_id_index_b));
+
+    let install_name_index_a = cache.image_install_name_index_cached();
+    let install_name_index_b = cache.image_install_name_index_cached();
+    assert!(ptr::eq(install_name_index_a, install_name_index_b));
+
+    let basename_index_a = cache.image_basename_index_cached();
+    let basename_index_b = cache.image_basename_index_cached();
+    assert!(ptr::eq(basename_index_a, basename_index_b));
+
+    let mapping_index_a = cache.mapping_start_index_cached();
+    let mapping_index_b = cache.mapping_start_index_cached();
+    assert!(ptr::eq(mapping_index_a, mapping_index_b));
+
+    let id_keys: Vec<String> = cache
+        .image_id_index_cached()
+        .keys()
+        .map(|id| id.as_str().to_string())
+        .collect();
+    assert_eq!(
+        id_keys,
+        vec![
+            "CACHE-UUID-1234:2".to_string(),
+            "CACHE-UUID-1234:7".to_string(),
+            "CACHE-UUID-1234:9".to_string(),
+        ]
+    );
+
+    let install_name_keys: Vec<String> = cache
+        .image_install_name_index_cached()
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(
+        install_name_keys,
+        vec![
+            "/System/Library/PrivateFrameworks/Another.framework/libA.dylib".to_string(),
+            "/usr/lib/libA.dylib".to_string(),
+            "/usr/lib/libB.dylib".to_string(),
+        ]
+    );
+
+    let basename_keys: Vec<String> = cache
+        .image_basename_index_cached()
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(
+        basename_keys,
+        vec!["libA.dylib".to_string(), "libB.dylib".to_string()]
+    );
+}
+
+#[test]
+fn mapping_and_image_lookup_helpers_are_correct() {
+    let cache = sample_cache();
+
+    let by_id = cache
+        .image_by_id_str("CACHE-UUID-1234:7")
+        .expect("lookup by id");
+    assert_eq!(by_id.install_name, "/usr/lib/libA.dylib");
+
+    let by_install_name = cache
+        .image_by_install_name("/usr/lib/libB.dylib")
+        .expect("lookup by install name");
+    assert_eq!(by_install_name.id.as_str(), "CACHE-UUID-1234:2");
+
+    let basename_matches = cache.images_by_basename("libA.dylib");
+    assert_eq!(basename_matches.len(), 2);
+    assert!(cache.image_by_basename_unique("libA.dylib").is_none());
+    let unique = cache
+        .image_by_basename_unique("libB.dylib")
+        .expect("unique basename");
+    assert_eq!(unique.id.as_str(), "CACHE-UUID-1234:2");
+
+    let mapped = cache
+        .mapping_for_vm_address(0x1800_0002_0)
+        .expect("mapped address");
+    assert_eq!(mapped.member_index, 0);
+    assert_eq!(
+        mapped.member_file_offset_for_vmaddr(0x1800_0002_0),
+        Some(0x20)
+    );
+
+    let mapped_second = cache
+        .mapping_for_vm_address(0x1800_1000_1)
+        .expect("mapped address in second member");
+    assert_eq!(mapped_second.member_index, 1);
+
+    let image = cache
+        .image_for_vm_address(0x1800_0015_0)
+        .expect("image for vmaddr");
+    assert_eq!(image.id.as_str(), "CACHE-UUID-1234:7");
+    assert_eq!(
+        cache.image_offset_for_vm_address(image, 0x1800_0015_0),
+        Some(0x50)
+    );
+
+    assert!(cache.mapping_for_vm_address(0x1900_0000_0).is_none());
+    assert!(cache.image_for_vm_address(0x1800_0000_8).is_none());
+}

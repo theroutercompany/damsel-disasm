@@ -1,0 +1,10 @@
+SYNTHETIC_DYLD_CACHE_SYMBOLS
+scenario=local-symbols-present
+arch=arm64
+uuid=31313131-4242-5353-6464-757575757575
+symbols=2
+symbol[0].name=_nw_connection_create
+symbol[0].cache_vmaddr=0x0000000184001000
+symbol[1].name=_nw_path_monitor_create
+symbol[1].cache_vmaddr=0x0000000184002000
+

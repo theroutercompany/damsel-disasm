@@ -1,0 +1,7 @@
+SYNTHETIC_DYLD_CACHE
+scenario=malformed-header
+arch=arm64
+uuid=deadbeef-dead-beef-dead-beefdeadbeef
+header=corrupt_magic
+header_bytes=0000000000000000
+

@@ -1,0 +1,12 @@
+SYNTHETIC_DYLD_CACHE
+scenario=valid-split-arm64-root
+arch=arm64
+uuid=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+subcaches=1
+required_subcache[0]=.1
+images=2
+image[0].install_name=/usr/lib/libdispatch.dylib
+image[0].base_vmaddr=0x0000000182000000
+image[1].install_name=/usr/lib/libxpc.dylib
+image[1].base_vmaddr=0x0000000182100000
+

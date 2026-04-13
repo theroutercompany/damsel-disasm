@@ -1,0 +1,10 @@
+SYNTHETIC_DYLD_CACHE
+scenario=local-symbols-absent
+arch=arm64
+uuid=51515151-6262-7373-8484-959595959595
+subcaches=0
+images=1
+image[0].install_name=/usr/lib/libsqlite3.dylib
+image[0].base_vmaddr=0x0000000185000000
+symbols_sidecar_expected=false
+

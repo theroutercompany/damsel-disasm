@@ -1,0 +1,8 @@
+SYNTHETIC_DYLD_CACHE
+scenario=malformed-image-table
+arch=arm64
+uuid=abcdefab-cdef-abcd-efab-cdefabcdefab
+images_declared=4
+images_present=2
+image_error=truncated_or_invalid_install_name_offset
+

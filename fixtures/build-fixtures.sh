@@ -86,6 +86,25 @@ e4592ad7d2b9a314ef355d6616725fe3a8adfe648bf07b46f2bf440dc7f634d9 reexport-rename
 EOF
 }
 
+print_shared_cache_corpus_manifest() {
+  cat <<'EOF'
+dd2676a303088970022921099ee2e87ee2696d93766073ded64c5f83d3140be1 README.md
+ba2f2308db4aa6309e9d90e60d28d82e27ed1e848dd5faec2918b25e62cf65af ambiguous-basename.cache
+0f1abed4fd9d73934535aa5ff46b330f5f3da9c89834f587b1f6134fdf8c0eb6 local-symbols-absent-arm64.cache
+b099169bec9009f5effc98339606ef99eeed54d16852f671b59760a31139886d local-symbols-present-arm64.cache
+5dc62097cab55db3033b2057abed437e241bddb12d50da9d53e6915da7f6feb0 local-symbols-present-arm64.cache.symbols
+0baa242bbb59a099c9cd6ceb302ef0e1f6d4503527bd2337f5c939722ca90df3 malformed-header.cache
+2e370aa160f7cf7d9f124c03a78395d60ae0a473dae852b5120880c3243713f4 malformed-image-table.cache
+dea31163b2ad476af61ce0383af69a0c2aed67e5f98ab5fc5767ee66a1e70990 malformed-mapping-table.cache
+a0a6d12c0a1f7719c5affee35b511333e27b5e24067ef6d47838a9ae22451d6f missing-subcache-root.cache
+35cbda813773abdfd05934e52a1d89d2a099cf21a8cfb9741fb0c312080222b1 unsupported-arch-x86_64.cache
+7ba332f329067576994b71d4cf88fc354510ce7a16e181be693162ab8cc351a2 valid-single-arm64.cache
+dd7d161534aecc8170619246f43aa631183bbc6d70394c7e571c27c7bef772a2 valid-split-arm64.cache
+1df0402588ffe1576a8be45d70c16bf0760040e08a1777c2b86975f5862ffd37 valid-split-arm64.cache.1
+63185628385887601fdbfc25decc84e0fa9fe6a97deeb1a96b8d4b22238f4c73 valid-split-arm64.cache.symbols
+EOF
+}
+
 sha256_file() {
   file="$1"
   if [ -z "$HASH_TOOL" ]; then
@@ -142,9 +161,13 @@ check_fixtures() {
   mkdir -p "$BIN"
   manifest_file="$(mktemp_file fixture-manifest)"
   corpus_manifest_file="$(mktemp_file export-trie-corpus-manifest)"
-  trap 'rm -f "$manifest_file" "$corpus_manifest_file"' EXIT INT TERM
+  shared_cache_manifest_file="$(mktemp_file shared-cache-corpus-manifest)"
+  shared_cache_expected_list="$(mktemp_file shared-cache-corpus-expected)"
+  shared_cache_actual_list="$(mktemp_file shared-cache-corpus-actual)"
+  trap 'rm -f "$manifest_file" "$corpus_manifest_file" "$shared_cache_manifest_file" "$shared_cache_expected_list" "$shared_cache_actual_list"' EXIT INT TERM
   print_manifest > "$manifest_file"
   print_export_trie_corpus_manifest > "$corpus_manifest_file"
+  print_shared_cache_corpus_manifest > "$shared_cache_manifest_file"
 
   status=0
   while read -r expected_hash fixture_name; do
@@ -182,8 +205,42 @@ check_fixtures() {
     fi
   done < "$corpus_manifest_file"
 
+  shared_cache_root="$ROOT/shared-cache-corpus"
+  while read -r expected_hash corpus_name; do
+    [ -n "$expected_hash" ] || continue
+    corpus_path="$shared_cache_root/$corpus_name"
+    if [ ! -f "$corpus_path" ]; then
+      echo "missing shared-cache corpus file: $corpus_name" >&2
+      status=1
+      continue
+    fi
+    actual_hash="$(sha256_file "$corpus_path")"
+    if [ "$actual_hash" != "$expected_hash" ]; then
+      echo "hash mismatch: shared-cache-corpus/$corpus_name" >&2
+      echo "  expected: $expected_hash" >&2
+      echo "  actual:   $actual_hash" >&2
+      status=1
+    fi
+  done < "$shared_cache_manifest_file"
+
+  awk 'NF >= 2 { print $2 }' "$shared_cache_manifest_file" | LC_ALL=C sort > "$shared_cache_expected_list"
+  find "$shared_cache_root" -maxdepth 1 -type f -print | while read -r shared_cache_file; do
+    basename "$shared_cache_file"
+  done | LC_ALL=C sort > "$shared_cache_actual_list"
+  if ! diff -u "$shared_cache_expected_list" "$shared_cache_actual_list" >/dev/null 2>&1; then
+    echo "shared-cache corpus inventory drift detected" >&2
+    echo "expected files:" >&2
+    cat "$shared_cache_expected_list" >&2
+    echo "actual files:" >&2
+    cat "$shared_cache_actual_list" >&2
+    status=1
+  fi
+
   rm -f "$manifest_file"
   rm -f "$corpus_manifest_file"
+  rm -f "$shared_cache_manifest_file"
+  rm -f "$shared_cache_expected_list"
+  rm -f "$shared_cache_actual_list"
   trap - EXIT INT TERM
   exit "$status"
 }
@@ -586,11 +643,13 @@ Usage:
   fixtures/build-fixtures.sh --manifest       Print fixture hash manifest.
   fixtures/build-fixtures.sh --manifest-corpus
                                               Print export-trie corpus hash manifest.
-  fixtures/build-fixtures.sh --manifest-all   Print both manifests with section headers.
+  fixtures/build-fixtures.sh --manifest-shared-cache
+                                              Print shared-cache corpus hash manifest.
+  fixtures/build-fixtures.sh --manifest-all   Print all manifests with section headers.
 
 Modes:
   portable drift check    --check
-  manifest display        --manifest | --manifest-corpus | --manifest-all
+  manifest display        --manifest | --manifest-corpus | --manifest-shared-cache | --manifest-all
   macOS-only rebuild      (no argument)
 EOF
 }
@@ -605,6 +664,9 @@ case "${1:-}" in
   --manifest-corpus)
     print_export_trie_corpus_manifest
     ;;
+  --manifest-shared-cache)
+    print_shared_cache_corpus_manifest
+    ;;
   --manifest-all)
     cat <<'EOF'
 # fixtures
@@ -614,6 +676,10 @@ EOF
 # export-trie-corpus
 EOF
     print_export_trie_corpus_manifest
+    cat <<'EOF'
+# shared-cache-corpus
+EOF
+    print_shared_cache_corpus_manifest
     ;;
   --help|-h)
     print_help

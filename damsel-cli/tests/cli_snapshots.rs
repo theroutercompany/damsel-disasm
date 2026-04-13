@@ -24,6 +24,10 @@ fn fixture(name: &str) -> PathBuf {
     repo_root().join("fixtures/bin").join(name)
 }
 
+fn cache_fixture(name: &str) -> PathBuf {
+    repo_root().join("fixtures/shared-cache-corpus").join(name)
+}
+
 fn normalize(output: &[u8]) -> String {
     let root = repo_root();
     String::from_utf8_lossy(output)
@@ -462,27 +466,27 @@ fn doctor_snapshot() {
 
 #[test]
 fn cache_info_snapshot() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let stdout = run_snapshot(&["cache", "info", path.to_str().expect("utf8 path")]);
     let normalized = normalize_cache_snapshot(&stdout);
     insta::assert_snapshot!(
         normalized,
         @r###"
-        cache: $REPO/fixtures/bin/arm64-symbolized
+        cache: $REPO/fixtures/shared-cache-corpus/valid-single-arm64.cache
         cache_uuid: <cache_uuid>
         architecture: arm64
         members: 1
-        images: 1
+        images: 3
         has_local_symbols: false
         members:
-          - name=arm64-symbolized role=primary path=$REPO/fixtures/bin/arm64-symbolized
+          - name=valid-single-arm64.cache role=root path=$REPO/fixtures/shared-cache-corpus/valid-single-arm64.cache
         "###
     );
 }
 
 #[test]
 fn cache_images_snapshot() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let stdout = run_snapshot(&[
         "cache",
         "images",
@@ -494,7 +498,7 @@ fn cache_images_snapshot() {
     insta::assert_snapshot!(
         normalized,
         @r###"
-        images: returned=1 total=1 truncated=false
+        images: returned=1 total=3 truncated=true
           - id=<id> index=<index> base=<addr> install_name=<install_name> basename=<basename> member=<member>
         "###
     );
@@ -502,13 +506,8 @@ fn cache_images_snapshot() {
 
 #[test]
 fn cache_lookup_address_snapshot() {
-    let path = fixture("arm64-symbolized");
-    let image = load(&path).expect("load fixture");
-    let mapped = image
-        .sections()
-        .first()
-        .map(|section| section.address)
-        .expect("at least one section");
+    let path = cache_fixture("valid-single-arm64.cache");
+    let mapped = 0x1800_00638u64;
     let mapped_arg = format!("{mapped:#x}");
     let stdout = run_snapshot(&[
         "cache",
@@ -535,7 +534,7 @@ fn cache_lookup_address_snapshot() {
 
 #[test]
 fn cache_image_not_found_error_snapshot() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let stderr = run_snapshot_err(&[
         "cache",
         "image",

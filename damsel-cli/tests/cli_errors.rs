@@ -18,6 +18,10 @@ fn fixture(name: &str) -> PathBuf {
     repo_root().join("fixtures/bin").join(name)
 }
 
+fn cache_fixture(name: &str) -> PathBuf {
+    repo_root().join("fixtures/shared-cache-corpus").join(name)
+}
+
 fn write_temp_input(bytes: &[u8]) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -328,7 +332,7 @@ fn objc_rejects_invalid_selector_source_value() {
 
 #[test]
 fn cache_lookup_address_rejects_invalid_vmaddr_value() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     Command::cargo_bin("damsel-cli")
         .expect("binary exists")
         .args([
@@ -357,7 +361,7 @@ fn cache_info_non_macho_returns_typed_unsupported_input_error() {
 
 #[test]
 fn cache_image_unknown_selector_returns_typed_not_found_error() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     Command::cargo_bin("damsel-cli")
         .expect("binary exists")
         .args([

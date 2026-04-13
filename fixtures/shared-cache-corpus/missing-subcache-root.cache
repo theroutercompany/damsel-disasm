@@ -1,0 +1,9 @@
+SYNTHETIC_DYLD_CACHE
+scenario=missing-subcache
+arch=arm64
+uuid=0f0f0f0f-1111-2222-3333-444444444444
+subcaches=2
+required_subcache[0]=.1
+required_subcache[1]=.2
+note=fixture intentionally omits .2 member file
+

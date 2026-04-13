@@ -1,0 +1,13 @@
+SYNTHETIC_DYLD_CACHE
+scenario=valid-single-arm64
+arch=arm64
+uuid=11111111-2222-3333-4444-555555555555
+subcaches=0
+images=3
+image[0].install_name=/usr/lib/libobjc.A.dylib
+image[0].base_vmaddr=0x0000000180000000
+image[1].install_name=/usr/lib/libSystem.B.dylib
+image[1].base_vmaddr=0x0000000180100000
+image[2].install_name=/System/Library/Frameworks/Foundation.framework/Foundation
+image[2].base_vmaddr=0x0000000180200000
+

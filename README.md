@@ -3,10 +3,25 @@
 `damsel` is a static Mach-O analysis CLI focused on Apple Silicon binaries.
 
 Current analysis scope:
-- Mach-O parsing only; no ELF, PE, dyld shared-cache, or non-Mach-O formats.
+- Implemented today: standalone Mach-O parsing plus Wave 1 read-only dyld shared-cache inventory/query/symbolication.
 - Thin and universal Mach-O coverage for `arm64` and `arm64e`.
 - Structured views for binary info, sections, symbols, imports, relocations, slices, dyld metadata, Objective-C metadata, and AArch64 disassembly.
+- Shared-cache coverage is container-first and exposed through a dedicated `cache` command family:
+  - `cache info`
+  - `cache images`
+  - `cache image`
+  - `cache exports`
+  - `cache lookup-address`
+  - `cache resolve-symbol`
 - A compatibility-oriented `doctor` command that reports host/tool readiness and supports CI/operator threshold checks.
+
+Planned next:
+- projected-image and debugger-oriented shared-cache workflows beyond Wave 1
+- deeper shared-cache-native analysis and system-framework spelunking
+- Contract and architecture for those next waves are documented in:
+  - [docs/specs/dyld-shared-cache-v1.md](./docs/specs/dyld-shared-cache-v1.md)
+  - [docs/architecture/apple-runtime-analysis-architecture.md](./docs/architecture/apple-runtime-analysis-architecture.md)
+  - [docs/roadmaps/apple-runtime-analysis-roadmap.md](./docs/roadmaps/apple-runtime-analysis-roadmap.md)
 
 The project is still private and is not being released publicly yet. This repo currently ships private GitHub prereleases only.
 
@@ -53,6 +68,7 @@ cd damsel-nightly-macos-arm64
 ```sh
 ./damsel --help
 ./damsel doctor --help
+./damsel cache --help
 ```
 
 The packaged binary inside the archive is named `damsel`.
@@ -69,6 +85,8 @@ cargo bench -p damsel-macho --bench decode_bench --no-run
 ```
 
 For fixture details and host/tool parity notes, see [fixtures/README.md](./fixtures/README.md).
+
+For Apple runtime direction beyond Wave 1, see [docs/](./docs/).
 
 ## Release Operations
 

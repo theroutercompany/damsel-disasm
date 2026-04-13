@@ -119,6 +119,29 @@ jobs:
           cargo test -p damsel-macho --tests
           ./fixtures/build-fixtures.sh --check
           ./fixtures/tests/build-fixtures-parity.sh
+      - name: Shared-cache release smoke (source checkout)
+        run: |
+          set -euo pipefail
+          cargo run -q -p damsel-cli -- cache --help >/dev/null
+          cargo run -q -p damsel-cli -- --format json cache info fixtures/shared-cache-corpus/valid-single-arm64.cache > /tmp/cache-info.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("/tmp/cache-info.json").read_text())
+          assert payload["schema_version"] == 1
+          assert payload["command"] == "cache_info"
+          assert set(payload["data"].keys()) == {"header", "members"}
+          assert set(payload["data"]["header"].keys()) == {
+              "cache_path",
+              "cache_uuid",
+              "architecture",
+              "member_count",
+              "image_count",
+              "has_local_symbols",
+          }
+          assert all(set(member.keys()) == {"name", "role", "path"} for member in payload["data"]["members"])
+          PY
 
   build-macos-arm64:
     name: build macos arm64
@@ -138,6 +161,26 @@ jobs:
           set -euo pipefail
           ./target/release/damsel-cli --help >/dev/null
           ./target/release/damsel-cli doctor --help >/dev/null
+          ./target/release/damsel-cli cache --help >/dev/null
+          ./target/release/damsel-cli --format json cache info fixtures/shared-cache-corpus/valid-single-arm64.cache > /tmp/cache-info-built.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("/tmp/cache-info-built.json").read_text())
+          assert payload["schema_version"] == 1
+          assert payload["command"] == "cache_info"
+          assert set(payload["data"].keys()) == {"header", "members"}
+          assert set(payload["data"]["header"].keys()) == {
+              "cache_path",
+              "cache_uuid",
+              "architecture",
+              "member_count",
+              "image_count",
+              "has_local_symbols",
+          }
+          assert all(set(member.keys()) == {"name", "role", "path"} for member in payload["data"]["members"])
+          PY
       - name: Upload raw binary
         uses: actions/upload-artifact@v4
         with:

@@ -3,11 +3,12 @@ mod ui;
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
-    BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2,
-    DisassemblyTarget, ExportFlagName, ExportKind, ExportRecord, Import, ImportBindingKind,
-    ObjcNameSource, ObjcSelectorSource, Relocation, Section, StubKind, Symbol,
+    BinaryImage, CacheImageRecord, CacheLookupResult, DecodedInstruction, DisassemblyLimit,
+    DisassemblyOptions, DisassemblyRequestV2, DisassemblyTarget, ExportFlagName, Import,
+    ImportBindingKind, ObjcNameSource, ObjcSelectorSource, Relocation, Section, SharedCache,
+    SharedCacheMemberRole, StubKind, Symbol, SymbolicationMatch,
 };
-use damsel_macho::{disassemble_v2, load};
+use damsel_macho::{disassemble_v2, inspect_shared_cache, load};
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
@@ -861,45 +862,14 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
     Ok(CliRunOutcome::Success)
 }
 
-#[derive(Debug)]
-struct LoadedCacheProxy {
-    image: BinaryImage,
-    cache_path: String,
-    cache_uuid: String,
-    image_id: String,
-    install_name: String,
-    basename: String,
-    member_name: String,
-    image_base_vmaddr: u64,
-}
-
-#[derive(Debug, Clone)]
-struct SymbolCandidate {
-    name: String,
-    address: u64,
-}
-
 fn handle_cache_command(
     command: CacheCommand,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     match command {
         CacheCommand::Info { cache } => {
-            let loaded = load_cache_proxy(cache)?;
-            let info = output::CacheInfoView {
-                cache_path: loaded.cache_path.clone(),
-                cache_uuid: loaded.cache_uuid.clone(),
-                architecture: loaded.image.architecture().to_string(),
-                member_count: 1,
-                image_count: 1,
-                has_local_symbols: false,
-                members: vec![output::CacheMemberView {
-                    name: loaded.member_name,
-                    role: "primary".to_string(),
-                    path: loaded.install_name,
-                }],
-            };
-            output::print_cache_info(&info, output_settings);
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            output::print_cache_info(&cache_info_view(session.cache()), output_settings);
         }
         CacheCommand::Images {
             cache,
@@ -907,8 +877,13 @@ fn handle_cache_command(
             limit,
             sort,
         } => {
-            let loaded = load_cache_proxy(cache)?;
-            let mut images = vec![cache_image_view(&loaded)];
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let mut images = session
+                .cache()
+                .images()
+                .iter()
+                .map(|image| cache_image_view(session.cache(), image))
+                .collect::<Vec<_>>();
             if let Some(name_filter) = name {
                 images.retain(|image| {
                     contains_case_insensitive(&image.id, &name_filter)
@@ -925,9 +900,9 @@ fn handle_cache_command(
             output::print_cache_images(&metadata, &output_images, output_settings);
         }
         CacheCommand::Image { cache, image } => {
-            let loaded = load_cache_proxy(cache)?;
-            resolve_cache_image_selector(&loaded, &image)?;
-            output::print_cache_image(&cache_image_view(&loaded), output_settings);
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let image = session.resolve_image(&image).map_err(map_cache_error)?;
+            output::print_cache_image(&cache_image_view(session.cache(), image), output_settings);
         }
         CacheCommand::Exports {
             cache,
@@ -937,95 +912,48 @@ fn handle_cache_command(
             flag,
             sort,
         } => {
-            let loaded = load_cache_proxy(cache)?;
-            resolve_cache_image_selector(&loaded, &image)?;
-            let mut exports = loaded
-                .image
-                .dyld()
-                .exported_symbols
-                .iter()
-                .filter(|export| {
-                    name.as_ref()
-                        .is_none_or(|needle| contains_case_insensitive(&export.name, needle))
-                })
-                .filter(|export| {
-                    kind.as_ref().is_none_or(|filter| {
-                        matches_export_kind(export, output::ExportKindFilter::from(*filter))
-                    })
-                })
-                .filter(|export| {
-                    flag.as_ref().is_none_or(|required| {
-                        export
-                            .flags
-                            .flag_names()
-                            .any(|value| value == (*required).into())
-                    })
-                })
-                .map(cache_export_view)
-                .collect::<Vec<_>>();
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let cache_image = session.resolve_image(&image).map_err(map_cache_error)?;
+            let mut exports = session.exports_for_image(&image).map_err(map_cache_error)?;
+            if let Some(name_filter) = name.as_ref() {
+                exports.retain(|export| contains_case_insensitive(&export.name, name_filter));
+            }
+            if let Some(kind_filter) = kind {
+                let expected = output::ExportKindFilter::from(kind_filter);
+                exports.retain(|export| matches_cache_export_kind(&export.kind, expected));
+            }
+            if let Some(flag_filter) = flag {
+                exports.retain(|export| cache_export_matches_flag(&export.flags, flag_filter));
+            }
             match sort {
                 CacheExportSortArg::Address => exports.sort_by_key(|export| export.cache_vmaddr),
                 CacheExportSortArg::Name => exports.sort_by_key(|export| export.name.clone()),
             }
             let metadata = collection_metadata(exports.len(), None);
             output::print_cache_exports(
-                &cache_image_view(&loaded),
+                &cache_image_view(session.cache(), cache_image),
                 &metadata,
-                &exports,
+                &exports
+                    .iter()
+                    .map(|export| output::CacheExportView {
+                        name: export.name.clone(),
+                        cache_vmaddr: export.cache_vmaddr,
+                        kind: export.kind.clone(),
+                        flags: export.flags.clone(),
+                    })
+                    .collect::<Vec<_>>(),
                 output_settings,
             );
         }
         CacheCommand::LookupAddress { cache, vmaddr } => {
-            let loaded = load_cache_proxy(cache)?;
-            let section = section_for_vmaddr(&loaded.image, vmaddr).ok_or_else(|| {
-                CliRunError::command(
-                    "address_not_mapped",
-                    format!("address {vmaddr:#x} is not mapped"),
-                )
-            })?;
-            let member_file_offset = section
-                .file_offset
-                .map(|base| base.saturating_add(vmaddr.saturating_sub(section.address)));
-            let best_match = best_symbolic_match(&loaded.image, vmaddr);
-            let result = match best_match {
-                Some(candidate) if candidate.address == vmaddr => output::CacheLookupResultView {
-                    kind: output::CacheLookupKind::ExactSymbol,
-                    cache_vmaddr: vmaddr,
-                    image_id: Some(loaded.image_id.clone()),
-                    install_name: Some(loaded.install_name.clone()),
-                    image_base_vmaddr: Some(loaded.image_base_vmaddr),
-                    image_offset: Some(vmaddr.saturating_sub(loaded.image_base_vmaddr)),
-                    member_file_offset,
-                    symbol: Some(candidate.name),
-                    symbol_address: Some(candidate.address),
-                    offset_from_symbol: Some(0),
-                },
-                Some(candidate) => output::CacheLookupResultView {
-                    kind: output::CacheLookupKind::NearestSymbol,
-                    cache_vmaddr: vmaddr,
-                    image_id: Some(loaded.image_id.clone()),
-                    install_name: Some(loaded.install_name.clone()),
-                    image_base_vmaddr: Some(loaded.image_base_vmaddr),
-                    image_offset: Some(vmaddr.saturating_sub(loaded.image_base_vmaddr)),
-                    member_file_offset,
-                    symbol: Some(candidate.name),
-                    symbol_address: Some(candidate.address),
-                    offset_from_symbol: Some(vmaddr.saturating_sub(candidate.address)),
-                },
-                None => output::CacheLookupResultView {
-                    kind: output::CacheLookupKind::MappingOnly,
-                    cache_vmaddr: vmaddr,
-                    image_id: Some(loaded.image_id.clone()),
-                    install_name: Some(loaded.install_name.clone()),
-                    image_base_vmaddr: Some(loaded.image_base_vmaddr),
-                    image_offset: Some(vmaddr.saturating_sub(loaded.image_base_vmaddr)),
-                    member_file_offset,
-                    symbol: None,
-                    symbol_address: None,
-                    offset_from_symbol: None,
-                },
-            };
-            output::print_cache_lookup_address(&result, output_settings);
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let result = session
+                .lookup_cache_vmaddr(vmaddr)
+                .map_err(map_cache_error)?;
+            output::print_cache_lookup_address(
+                &cache_lookup_view(session.cache(), vmaddr, &result),
+                output_settings,
+            );
         }
         CacheCommand::ResolveSymbol {
             cache,
@@ -1033,30 +961,13 @@ fn handle_cache_command(
             image,
             limit,
         } => {
-            let loaded = load_cache_proxy(cache)?;
-            if let Some(image_filter) = image.as_ref()
-                && !matches_image_selector(&loaded, image_filter)
-            {
-                return Err(CliRunError::command(
-                    "symbol_not_found",
-                    format!("symbol not found: {symbol}"),
-                ));
-            }
-            let mut matches = symbolication_matches(&loaded, &symbol);
-            if matches.is_empty() {
-                return Err(CliRunError::command(
-                    "symbol_not_found",
-                    format!("symbol not found: {symbol}"),
-                ));
-            }
-            matches.sort_by_key(|entry| {
-                (
-                    entry.cache_vmaddr,
-                    entry.install_name.clone(),
-                    entry.name.clone(),
-                    entry.source.clone(),
-                )
-            });
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let matches = session
+                .resolve_exact_symbol(&symbol, image.as_deref(), None)
+                .map_err(map_cache_error)?
+                .into_iter()
+                .map(cache_symbolication_view)
+                .collect::<Vec<_>>();
             let metadata = collection_metadata(matches.len(), normalize_limit(limit, "--limit")?);
             let output_matches = apply_limit(matches, metadata.returned);
             output::print_cache_resolve_symbol(&metadata, &output_matches, output_settings);
@@ -1065,62 +976,103 @@ fn handle_cache_command(
     Ok(())
 }
 
-fn load_cache_proxy(path: PathBuf) -> Result<LoadedCacheProxy, CliRunError> {
-    let image = load(path.clone()).map_err(map_cache_error)?;
-    let selected = image.selected_slice();
-    let cache_uuid = format!("proxy-{:x}-{:x}", selected.offset, selected.size);
-    let image_base_vmaddr = image
-        .sections()
-        .iter()
-        .map(|section| section.address)
-        .min()
-        .or(image.entry_point())
-        .unwrap_or_default();
-    let install_name = image.path().display().to_string();
-    let basename = image
-        .path()
-        .file_name()
-        .map(|value| value.to_string_lossy().to_string())
-        .unwrap_or_else(|| install_name.clone());
-    let member_name = basename.clone();
-    Ok(LoadedCacheProxy {
-        image,
-        cache_path: path.display().to_string(),
-        image_id: format!("{cache_uuid}:0"),
-        cache_uuid,
-        install_name,
-        basename,
-        member_name,
-        image_base_vmaddr,
-    })
+fn cache_info_view(cache: &SharedCache) -> output::CacheInfoView {
+    output::CacheInfoView {
+        cache_path: cache.path().display().to_string(),
+        cache_uuid: cache.header().cache_uuid.clone(),
+        architecture: cache.header().architecture.to_string(),
+        member_count: cache.members().len(),
+        image_count: cache.images().len(),
+        has_local_symbols: cache.header().has_local_symbols,
+        members: cache
+            .members()
+            .iter()
+            .enumerate()
+            .map(|(index, member)| output::CacheMemberView {
+                name: member_name(cache, index),
+                role: match member.role {
+                    SharedCacheMemberRole::Root => "root",
+                    SharedCacheMemberRole::Subcache => "subcache",
+                    SharedCacheMemberRole::Symbols => "symbols",
+                }
+                .to_string(),
+                path: member.path.display().to_string(),
+            })
+            .collect(),
+    }
 }
 
-fn cache_image_view(loaded: &LoadedCacheProxy) -> output::CacheImageView {
+fn cache_image_view(cache: &SharedCache, image: &CacheImageRecord) -> output::CacheImageView {
     output::CacheImageView {
-        id: loaded.image_id.clone(),
-        image_index: 0,
-        install_name: loaded.install_name.clone(),
-        basename: loaded.basename.clone(),
-        image_base_vmaddr: loaded.image_base_vmaddr,
-        member_name: loaded.member_name.clone(),
+        id: image.id.to_string(),
+        image_index: image.image_index as u64,
+        install_name: image.install_name.clone(),
+        basename: image.basename.clone(),
+        image_base_vmaddr: image.image_base_vmaddr,
+        member_name: member_name(cache, image.member_index),
     }
 }
 
-fn matches_image_selector(loaded: &LoadedCacheProxy, selector: &str) -> bool {
-    selector == loaded.image_id || selector == loaded.install_name || selector == loaded.basename
+fn member_name(cache: &SharedCache, member_index: usize) -> String {
+    cache
+        .members()
+        .get(member_index)
+        .and_then(|member| member.path.file_name())
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| format!("member-{member_index}"))
 }
 
-fn resolve_cache_image_selector(
-    loaded: &LoadedCacheProxy,
-    selector: &str,
-) -> Result<(), CliRunError> {
-    if matches_image_selector(loaded, selector) {
-        return Ok(());
+fn cache_lookup_view(
+    cache: &SharedCache,
+    vmaddr: u64,
+    result: &CacheLookupResult,
+) -> output::CacheLookupResultView {
+    match result {
+        CacheLookupResult::ExactSymbol(symbol) => output::CacheLookupResultView {
+            kind: output::CacheLookupKind::ExactSymbol,
+            cache_vmaddr: symbol.cache_vmaddr,
+            image_id: Some(symbol.image_id.to_string()),
+            install_name: Some(symbol.image_install_name.clone()),
+            image_base_vmaddr: Some(symbol.image_base_vmaddr),
+            image_offset: Some(symbol.image_offset),
+            member_file_offset: symbol.member_file_offset,
+            symbol: Some(symbol.symbol_name.clone()),
+            symbol_address: Some(symbol.symbol_vmaddr),
+            offset_from_symbol: Some(0),
+        },
+        CacheLookupResult::NearestSymbol { symbol, distance } => output::CacheLookupResultView {
+            kind: output::CacheLookupKind::NearestSymbol,
+            cache_vmaddr: symbol.cache_vmaddr,
+            image_id: Some(symbol.image_id.to_string()),
+            install_name: Some(symbol.image_install_name.clone()),
+            image_base_vmaddr: Some(symbol.image_base_vmaddr),
+            image_offset: Some(symbol.image_offset),
+            member_file_offset: symbol.member_file_offset,
+            symbol: Some(symbol.symbol_name.clone()),
+            symbol_address: Some(symbol.symbol_vmaddr),
+            offset_from_symbol: Some(*distance),
+        },
+        CacheLookupResult::MappingOnly {
+            cache_vmaddr,
+            member_index: _,
+            member_file_offset,
+        } => {
+            let image = cache.image_for_vm_address(vmaddr);
+            output::CacheLookupResultView {
+                kind: output::CacheLookupKind::MappingOnly,
+                cache_vmaddr: *cache_vmaddr,
+                image_id: image.map(|image| image.id.to_string()),
+                install_name: image.map(|image| image.install_name.clone()),
+                image_base_vmaddr: image.map(|image| image.image_base_vmaddr),
+                image_offset: image
+                    .and_then(|image| cache.image_offset_for_vm_address(image, vmaddr)),
+                member_file_offset: Some(*member_file_offset),
+                symbol: None,
+                symbol_address: None,
+                offset_from_symbol: None,
+            }
+        }
     }
-    Err(CliRunError::command(
-        "cache_image_not_found",
-        format!("cache image not found: {selector}"),
-    ))
 }
 
 fn collection_metadata(total: usize, limit: Option<usize>) -> output::CacheCollectionMetadata {
@@ -1146,143 +1098,49 @@ fn normalize_limit(limit: Option<usize>, flag: &str) -> Result<Option<usize>, Cl
     Ok(limit)
 }
 
-fn matches_export_kind(export: &ExportRecord, filter: output::ExportKindFilter) -> bool {
+fn matches_cache_export_kind(kind: &str, filter: output::ExportKindFilter) -> bool {
     matches!(
-        (&export.kind, filter),
-        (ExportKind::Regular, output::ExportKindFilter::Regular)
+        (kind, filter),
+        ("regular", output::ExportKindFilter::Regular)
+            | ("reexport", output::ExportKindFilter::Reexport)
+            | ("resolver", output::ExportKindFilter::Resolver)
             | (
-                ExportKind::Reexport { .. },
-                output::ExportKindFilter::Reexport
-            )
-            | (
-                ExportKind::Resolver { .. },
-                output::ExportKindFilter::Resolver
-            )
-            | (
-                ExportKind::StubAndResolver { .. },
+                "stub-and-resolver",
                 output::ExportKindFilter::StubAndResolver
             )
-            | (
-                ExportKind::WeakDefinition,
-                output::ExportKindFilter::WeakDefinition
-            )
-            | (ExportKind::Absolute, output::ExportKindFilter::Absolute)
-            | (
-                ExportKind::ThreadLocal,
-                output::ExportKindFilter::ThreadLocal
-            )
-            | (ExportKind::Unknown(_), output::ExportKindFilter::Unknown)
+            | ("weak-definition", output::ExportKindFilter::WeakDefinition)
+            | ("absolute", output::ExportKindFilter::Absolute)
+            | ("thread-local", output::ExportKindFilter::ThreadLocal)
+            | ("unknown", output::ExportKindFilter::Unknown)
     )
 }
 
-fn cache_export_view(export: &ExportRecord) -> output::CacheExportView {
-    output::CacheExportView {
-        name: export.name.clone(),
-        cache_vmaddr: export.address,
-        kind: format!("{:?}", export.kind).to_ascii_lowercase(),
-        flags: export.raw_flags.clone(),
-    }
+fn cache_export_matches_flag(flags: &str, flag: DyldExportFlagArg) -> bool {
+    let pattern = match flag {
+        DyldExportFlagArg::WeakDefinition => "weak=true",
+        DyldExportFlagArg::Reexport => "reexport=true",
+        DyldExportFlagArg::StubAndResolver => "stub_and_resolver=true",
+        DyldExportFlagArg::ThreadLocal => "thread_local=true",
+        DyldExportFlagArg::Absolute => "absolute=true",
+    };
+    flags.contains(pattern)
 }
 
-fn section_for_vmaddr(image: &BinaryImage, vmaddr: u64) -> Option<&Section> {
-    image.sections().iter().find(|section| {
-        vmaddr >= section.address && vmaddr < section.address.saturating_add(section.size)
-    })
-}
-
-fn best_symbolic_match(image: &BinaryImage, vmaddr: u64) -> Option<SymbolCandidate> {
-    let symbol_match = image
-        .symbols()
-        .iter()
-        .filter(|symbol| symbol.address <= vmaddr)
-        .max_by_key(|symbol| symbol.address)
-        .map(|symbol| SymbolCandidate {
-            name: symbol.name.clone(),
-            address: symbol.address,
-        });
-    let export_match = image
-        .dyld()
-        .exported_symbols
-        .iter()
-        .filter_map(|export| {
-            export
-                .address
-                .filter(|address| *address <= vmaddr)
-                .map(|address| SymbolCandidate {
-                    name: export.name.clone(),
-                    address,
-                })
-        })
-        .max_by_key(|entry| entry.address);
-    match (symbol_match, export_match) {
-        (Some(symbol), Some(export)) => {
-            if export.address > symbol.address {
-                Some(export)
-            } else {
-                Some(symbol)
-            }
-        }
-        (Some(symbol), None) => Some(symbol),
-        (None, Some(export)) => Some(export),
-        (None, None) => None,
+fn cache_symbolication_view(entry: SymbolicationMatch) -> output::CacheSymbolicationMatchView {
+    output::CacheSymbolicationMatchView {
+        name: entry.symbol_name,
+        image_id: entry.image_id.to_string(),
+        install_name: entry.image_install_name,
+        cache_vmaddr: entry.cache_vmaddr,
+        image_base_vmaddr: entry.image_base_vmaddr,
+        image_offset: entry.image_offset,
+        member_file_offset: entry.member_file_offset,
+        source: if entry.exact {
+            "exact".to_string()
+        } else {
+            "nearest".to_string()
+        },
     }
-}
-
-fn symbolication_matches(
-    loaded: &LoadedCacheProxy,
-    symbol: &str,
-) -> Vec<output::CacheSymbolicationMatchView> {
-    let mut matches = Vec::new();
-    for export in loaded
-        .image
-        .dyld()
-        .exported_symbols
-        .iter()
-        .filter(|export| export.name == symbol)
-    {
-        if let Some(address) = export.address {
-            matches.push(output::CacheSymbolicationMatchView {
-                name: export.name.clone(),
-                image_id: loaded.image_id.clone(),
-                install_name: loaded.install_name.clone(),
-                cache_vmaddr: address,
-                image_base_vmaddr: loaded.image_base_vmaddr,
-                image_offset: address.saturating_sub(loaded.image_base_vmaddr),
-                member_file_offset: section_for_vmaddr(&loaded.image, address).and_then(
-                    |section| {
-                        section.file_offset.map(|base| {
-                            base.saturating_add(address.saturating_sub(section.address))
-                        })
-                    },
-                ),
-                source: "export".to_string(),
-            });
-        }
-    }
-    for sym in loaded
-        .image
-        .symbols()
-        .iter()
-        .filter(|candidate| candidate.name == symbol)
-    {
-        matches.push(output::CacheSymbolicationMatchView {
-            name: sym.name.clone(),
-            image_id: loaded.image_id.clone(),
-            install_name: loaded.install_name.clone(),
-            cache_vmaddr: sym.address,
-            image_base_vmaddr: loaded.image_base_vmaddr,
-            image_offset: sym.address.saturating_sub(loaded.image_base_vmaddr),
-            member_file_offset: section_for_vmaddr(&loaded.image, sym.address).and_then(
-                |section| {
-                    section.file_offset.map(|base| {
-                        base.saturating_add(sym.address.saturating_sub(section.address))
-                    })
-                },
-            ),
-            source: "symbol".to_string(),
-        });
-    }
-    matches
 }
 
 fn load_image(path: PathBuf) -> Result<BinaryImage, CliRunError> {
@@ -1295,10 +1153,22 @@ pub(crate) fn map_cache_error(error: damsel_macho::MachoError) -> CliRunError {
             "unsupported_input",
             format!("unsupported input kind: {kind}"),
         ),
+        damsel_macho::MachoError::UnsupportedSharedCacheArchitecture(_) => {
+            CliRunError::command("unsupported_architecture", error.to_string())
+        }
         damsel_macho::MachoError::UnsupportedThinArchitecture { .. }
         | damsel_macho::MachoError::MissingArm64SliceInUniversal
         | damsel_macho::MachoError::UnsupportedArchitecture(_) => {
             CliRunError::command("unsupported_architecture", error.to_string())
+        }
+        damsel_macho::MachoError::IncompleteSharedCacheSet(_) => {
+            CliRunError::command("cache_incomplete", error.to_string())
+        }
+        damsel_macho::MachoError::CacheImageNotFound(_) => {
+            CliRunError::command("cache_image_not_found", error.to_string())
+        }
+        damsel_macho::MachoError::CacheImageAmbiguous(_) => {
+            CliRunError::command("cache_image_ambiguous", error.to_string())
         }
         damsel_macho::MachoError::AddressNotMapped(address) => CliRunError::command(
             "address_not_mapped",
@@ -1307,33 +1177,16 @@ pub(crate) fn map_cache_error(error: damsel_macho::MachoError) -> CliRunError {
         damsel_macho::MachoError::SymbolNotFound(symbol) => {
             CliRunError::command("symbol_not_found", format!("symbol not found: {symbol}"))
         }
+        damsel_macho::MachoError::MalformedSharedCache(_) => {
+            CliRunError::command("malformed_input", error.to_string())
+        }
         damsel_macho::MachoError::MalformedFatBinary(_)
         | damsel_macho::MachoError::MalformedDyldPayload(_)
         | damsel_macho::MachoError::SliceOutOfBounds { .. }
         | damsel_macho::MachoError::LinkeditRangeOutOfBounds { .. } => {
             CliRunError::command("malformed_input", error.to_string())
         }
-        other => {
-            let message = other.to_string();
-            if message.contains("IncompleteSharedCacheSet") || message.contains("cache_incomplete")
-            {
-                CliRunError::command("cache_incomplete", message)
-            } else if message.contains("CacheImageAmbiguous")
-                || message.contains("cache image ambiguous")
-            {
-                CliRunError::command("cache_image_ambiguous", message)
-            } else if message.contains("CacheImageNotFound")
-                || message.contains("cache image not found")
-            {
-                CliRunError::command("cache_image_not_found", message)
-            } else if message.contains("UnsupportedSharedCacheArchitecture") {
-                CliRunError::command("unsupported_architecture", message)
-            } else if message.contains("MalformedSharedCache") {
-                CliRunError::command("malformed_input", message)
-            } else {
-                CliRunError::command("load_error", message)
-            }
-        }
+        other => CliRunError::command("load_error", other.to_string()),
     }
 }
 

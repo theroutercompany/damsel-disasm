@@ -1,0 +1,10 @@
+SYNTHETIC_DYLD_CACHE
+scenario=local-symbols-present
+arch=arm64
+uuid=31313131-4242-5353-6464-757575757575
+subcaches=0
+images=1
+image[0].install_name=/usr/lib/libnetwork.dylib
+image[0].base_vmaddr=0x0000000184000000
+symbols_sidecar_expected=true
+

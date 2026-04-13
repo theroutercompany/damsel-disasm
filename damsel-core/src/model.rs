@@ -2523,6 +2523,612 @@ impl From<&DisassemblyResult> for DisassemblyResultV2 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SharedCacheSource {
+    File(PathBuf),
+    Memory { label: Option<String> },
+}
+
+impl SharedCacheSource {
+    pub fn file_path(&self) -> Option<&Path> {
+        match self {
+            Self::File(path) => Some(path.as_path()),
+            Self::Memory { .. } => None,
+        }
+    }
+
+    pub fn memory_label(&self) -> Option<&str> {
+        match self {
+            Self::File(_) => None,
+            Self::Memory { label } => label.as_deref(),
+        }
+    }
+
+    pub fn default_path(&self) -> PathBuf {
+        match self {
+            Self::File(path) => path.clone(),
+            Self::Memory { label } => label
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("<shared-cache-memory>")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedCacheHeader {
+    pub cache_uuid: String,
+    pub architecture: Architecture,
+    pub mapping_count: u32,
+    pub image_count: u32,
+    pub base_address: Option<u64>,
+    pub has_local_symbols: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedCacheMemberRole {
+    Root,
+    Subcache,
+    Symbols,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedCacheMember {
+    pub role: SharedCacheMemberRole,
+    pub path: PathBuf,
+    pub file_size: u64,
+    pub suffix: Option<String>,
+    pub uuid: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedCacheMapping {
+    pub member_index: usize,
+    pub cache_vmaddr: u64,
+    pub size: u64,
+    pub member_file_offset: u64,
+}
+
+impl SharedCacheMapping {
+    pub fn cache_vmaddr_range(&self) -> Option<Range<u64>> {
+        self.cache_vmaddr
+            .checked_add(self.size)
+            .map(|end| self.cache_vmaddr..end)
+    }
+
+    pub fn contains_cache_vmaddr(&self, cache_vmaddr: u64) -> bool {
+        self.cache_vmaddr_range()
+            .map(|range| range.contains(&cache_vmaddr))
+            .unwrap_or(false)
+    }
+
+    pub fn member_file_offset_for_vmaddr(&self, cache_vmaddr: u64) -> Option<u64> {
+        if !self.contains_cache_vmaddr(cache_vmaddr) {
+            return None;
+        }
+        let delta = cache_vmaddr.checked_sub(self.cache_vmaddr)?;
+        self.member_file_offset.checked_add(delta)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CacheImageId {
+    cache_uuid: String,
+    image_index: u32,
+    value: String,
+}
+
+impl CacheImageId {
+    pub fn new(cache_uuid: impl Into<String>, image_index: u32) -> Self {
+        let cache_uuid = cache_uuid.into();
+        let value = format!("{cache_uuid}:{image_index}");
+        Self {
+            cache_uuid,
+            image_index,
+            value,
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        let (cache_uuid, image_index) = value.rsplit_once(':')?;
+        let image_index = image_index.parse::<u32>().ok()?;
+        Some(Self::new(cache_uuid.to_string(), image_index))
+    }
+
+    pub fn cache_uuid(&self) -> &str {
+        self.cache_uuid.as_str()
+    }
+
+    pub fn image_index(&self) -> u32 {
+        self.image_index
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl fmt::Display for CacheImageId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.value.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheImageRecord {
+    pub id: CacheImageId,
+    pub image_index: u32,
+    pub install_name: String,
+    pub basename: String,
+    pub image_base_vmaddr: u64,
+    pub image_size: u64,
+    pub member_index: usize,
+}
+
+impl CacheImageRecord {
+    pub fn contains_cache_vmaddr(&self, cache_vmaddr: u64) -> bool {
+        self.cache_vmaddr_range()
+            .map(|range| range.contains(&cache_vmaddr))
+            .unwrap_or(false)
+    }
+
+    pub fn cache_vmaddr_range(&self) -> Option<Range<u64>> {
+        self.image_base_vmaddr
+            .checked_add(self.image_size)
+            .map(|end| self.image_base_vmaddr..end)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolicationMatch {
+    pub image_id: CacheImageId,
+    pub image_install_name: String,
+    pub symbol_name: String,
+    pub symbol_vmaddr: u64,
+    pub cache_vmaddr: u64,
+    pub image_base_vmaddr: u64,
+    pub image_offset: u64,
+    pub member_file_offset: Option<u64>,
+    pub exact: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheLookupResult {
+    ExactSymbol(SymbolicationMatch),
+    NearestSymbol {
+        symbol: SymbolicationMatch,
+        distance: u64,
+    },
+    MappingOnly {
+        cache_vmaddr: u64,
+        member_index: usize,
+        member_file_offset: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SharedCacheValidationError {
+    MissingMembers,
+    MissingMappings,
+    MissingImages,
+    HeaderMappingCountMismatch,
+    HeaderImageCountMismatch,
+    MappingMemberOutOfRange,
+    ImageMemberOutOfRange,
+    ZeroSizedMapping,
+    ZeroSizedImage,
+    InvalidCacheImageIdFormat,
+    CacheImageIdMismatch,
+    DuplicateCacheImageId,
+    DuplicateInstallName,
+}
+
+impl fmt::Display for SharedCacheValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingMembers => f.write_str("shared cache must expose at least one member"),
+            Self::MissingMappings => f.write_str("shared cache must expose at least one mapping"),
+            Self::MissingImages => f.write_str("shared cache must expose at least one image"),
+            Self::HeaderMappingCountMismatch => {
+                f.write_str("shared cache header mapping count does not match inventory")
+            }
+            Self::HeaderImageCountMismatch => {
+                f.write_str("shared cache header image count does not match inventory")
+            }
+            Self::MappingMemberOutOfRange => {
+                f.write_str("shared cache mapping references an out-of-range member index")
+            }
+            Self::ImageMemberOutOfRange => {
+                f.write_str("shared cache image references an out-of-range member index")
+            }
+            Self::ZeroSizedMapping => f.write_str("shared cache mapping must have a non-zero size"),
+            Self::ZeroSizedImage => f.write_str("shared cache image must have a non-zero size"),
+            Self::InvalidCacheImageIdFormat => {
+                f.write_str("cache image id must follow <cache_uuid>:<image_index>")
+            }
+            Self::CacheImageIdMismatch => {
+                f.write_str("cache image id must match header cache uuid and image index")
+            }
+            Self::DuplicateCacheImageId => {
+                f.write_str("shared cache cannot expose duplicate image ids")
+            }
+            Self::DuplicateInstallName => {
+                f.write_str("shared cache cannot expose duplicate install names")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SharedCacheValidationError {}
+
+#[derive(Debug, Clone)]
+pub struct SharedCacheBuilder {
+    source: SharedCacheSource,
+    path: PathBuf,
+    header: SharedCacheHeader,
+    members: Vec<SharedCacheMember>,
+    mappings: Vec<SharedCacheMapping>,
+    images: Vec<CacheImageRecord>,
+}
+
+pub struct SharedCache {
+    source: SharedCacheSource,
+    path: PathBuf,
+    header: SharedCacheHeader,
+    members: Vec<SharedCacheMember>,
+    mappings: Vec<SharedCacheMapping>,
+    images: Vec<CacheImageRecord>,
+    image_id_index_cache: OnceLock<BTreeMap<CacheImageId, usize>>,
+    image_install_name_index_cache: OnceLock<BTreeMap<String, usize>>,
+    image_basename_index_cache: OnceLock<BTreeMap<String, Vec<usize>>>,
+    mapping_start_index_cache: OnceLock<BTreeMap<u64, usize>>,
+}
+
+impl fmt::Debug for SharedCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SharedCache")
+            .field("path", &self.path)
+            .field("source", &self.source)
+            .field("header", &self.header)
+            .field("members", &self.members)
+            .field("mappings", &self.mappings)
+            .field("images", &self.images)
+            .finish()
+    }
+}
+
+impl SharedCache {
+    pub fn new(
+        source: SharedCacheSource,
+        path: PathBuf,
+        header: SharedCacheHeader,
+        members: Vec<SharedCacheMember>,
+        mappings: Vec<SharedCacheMapping>,
+        images: Vec<CacheImageRecord>,
+    ) -> Self {
+        SharedCacheBuilder {
+            source,
+            path,
+            header,
+            members,
+            mappings,
+            images,
+        }
+        .build()
+        .expect("SharedCache::new received invalid cache inventory")
+    }
+
+    pub fn from_file_inventory(
+        path: PathBuf,
+        header: SharedCacheHeader,
+        members: Vec<SharedCacheMember>,
+        mappings: Vec<SharedCacheMapping>,
+        images: Vec<CacheImageRecord>,
+    ) -> Self {
+        Self::new(
+            SharedCacheSource::File(path.clone()),
+            path,
+            header,
+            members,
+            mappings,
+            images,
+        )
+    }
+
+    pub fn from_memory_inventory(
+        label: Option<String>,
+        header: SharedCacheHeader,
+        members: Vec<SharedCacheMember>,
+        mappings: Vec<SharedCacheMapping>,
+        images: Vec<CacheImageRecord>,
+    ) -> Self {
+        let source = SharedCacheSource::Memory {
+            label: label.clone(),
+        };
+        Self::new(
+            source,
+            SharedCacheSource::Memory { label }.default_path(),
+            header,
+            members,
+            mappings,
+            images,
+        )
+    }
+
+    pub fn builder(
+        source: SharedCacheSource,
+        path: PathBuf,
+        header: SharedCacheHeader,
+    ) -> SharedCacheBuilder {
+        SharedCacheBuilder {
+            source,
+            path,
+            header,
+            members: Vec::new(),
+            mappings: Vec::new(),
+            images: Vec::new(),
+        }
+    }
+
+    pub fn source_path(&self) -> Option<&Path> {
+        self.source.file_path()
+    }
+
+    pub fn source(&self) -> &SharedCacheSource {
+        &self.source
+    }
+
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+
+    pub fn header(&self) -> &SharedCacheHeader {
+        &self.header
+    }
+
+    pub fn members(&self) -> &[SharedCacheMember] {
+        &self.members
+    }
+
+    pub fn mappings(&self) -> &[SharedCacheMapping] {
+        &self.mappings
+    }
+
+    pub fn images(&self) -> &[CacheImageRecord] {
+        &self.images
+    }
+
+    pub fn image_id_index(&self) -> BTreeMap<CacheImageId, usize> {
+        self.image_id_index_cached().clone()
+    }
+
+    pub fn image_install_name_index(&self) -> BTreeMap<String, usize> {
+        self.image_install_name_index_cached().clone()
+    }
+
+    pub fn image_basename_index(&self) -> BTreeMap<String, Vec<usize>> {
+        self.image_basename_index_cached().clone()
+    }
+
+    pub fn mapping_start_index(&self) -> BTreeMap<u64, usize> {
+        self.mapping_start_index_cached().clone()
+    }
+
+    pub fn image_id_index_cached(&self) -> &BTreeMap<CacheImageId, usize> {
+        self.image_id_index_cache
+            .get_or_init(|| Self::build_image_id_index(&self.images))
+    }
+
+    pub fn image_install_name_index_cached(&self) -> &BTreeMap<String, usize> {
+        self.image_install_name_index_cache
+            .get_or_init(|| Self::build_image_install_name_index(&self.images))
+    }
+
+    pub fn image_basename_index_cached(&self) -> &BTreeMap<String, Vec<usize>> {
+        self.image_basename_index_cache
+            .get_or_init(|| Self::build_image_basename_index(&self.images))
+    }
+
+    pub fn mapping_start_index_cached(&self) -> &BTreeMap<u64, usize> {
+        self.mapping_start_index_cache
+            .get_or_init(|| Self::build_mapping_start_index(&self.mappings))
+    }
+
+    pub fn image_by_id(&self, id: &CacheImageId) -> Option<&CacheImageRecord> {
+        self.image_id_index_cached()
+            .get(id)
+            .and_then(|position| self.images.get(*position))
+    }
+
+    pub fn image_by_id_str(&self, id: &str) -> Option<&CacheImageRecord> {
+        let id = CacheImageId::parse(id)?;
+        self.image_by_id(&id)
+    }
+
+    pub fn image_by_install_name(&self, install_name: &str) -> Option<&CacheImageRecord> {
+        self.image_install_name_index_cached()
+            .get(install_name)
+            .and_then(|position| self.images.get(*position))
+    }
+
+    pub fn images_by_basename(&self, basename: &str) -> Vec<&CacheImageRecord> {
+        self.image_basename_index_cached()
+            .get(basename)
+            .map(|positions| {
+                positions
+                    .iter()
+                    .filter_map(|position| self.images.get(*position))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn image_by_basename_unique(&self, basename: &str) -> Option<&CacheImageRecord> {
+        let positions = self.image_basename_index_cached().get(basename)?;
+        if positions.len() == 1 {
+            return positions
+                .first()
+                .and_then(|position| self.images.get(*position));
+        }
+        None
+    }
+
+    pub fn mapping_for_vm_address(&self, cache_vmaddr: u64) -> Option<&SharedCacheMapping> {
+        let mapping_index = self
+            .mapping_start_index_cached()
+            .range(..=cache_vmaddr)
+            .next_back()
+            .map(|(_, index)| *index)?;
+        let mapping = self.mappings.get(mapping_index)?;
+        if mapping.contains_cache_vmaddr(cache_vmaddr) {
+            Some(mapping)
+        } else {
+            None
+        }
+    }
+
+    pub fn image_for_vm_address(&self, cache_vmaddr: u64) -> Option<&CacheImageRecord> {
+        self.images
+            .iter()
+            .find(|image| image.contains_cache_vmaddr(cache_vmaddr))
+    }
+
+    pub fn image_offset_for_vm_address(
+        &self,
+        image: &CacheImageRecord,
+        cache_vmaddr: u64,
+    ) -> Option<u64> {
+        if image.contains_cache_vmaddr(cache_vmaddr) {
+            cache_vmaddr.checked_sub(image.image_base_vmaddr)
+        } else {
+            None
+        }
+    }
+
+    fn build_image_id_index(images: &[CacheImageRecord]) -> BTreeMap<CacheImageId, usize> {
+        let mut index = BTreeMap::<CacheImageId, usize>::new();
+        for (position, image) in images.iter().enumerate() {
+            index.insert(image.id.clone(), position);
+        }
+        index
+    }
+
+    fn build_image_install_name_index(images: &[CacheImageRecord]) -> BTreeMap<String, usize> {
+        let mut index = BTreeMap::<String, usize>::new();
+        for (position, image) in images.iter().enumerate() {
+            index.insert(image.install_name.clone(), position);
+        }
+        index
+    }
+
+    fn build_image_basename_index(images: &[CacheImageRecord]) -> BTreeMap<String, Vec<usize>> {
+        let mut index = BTreeMap::<String, Vec<usize>>::new();
+        for (position, image) in images.iter().enumerate() {
+            index
+                .entry(image.basename.clone())
+                .or_default()
+                .push(position);
+        }
+        index
+    }
+
+    fn build_mapping_start_index(mappings: &[SharedCacheMapping]) -> BTreeMap<u64, usize> {
+        let mut index = BTreeMap::<u64, usize>::new();
+        for (position, mapping) in mappings.iter().enumerate() {
+            index.insert(mapping.cache_vmaddr, position);
+        }
+        index
+    }
+}
+
+impl SharedCacheBuilder {
+    pub fn with_members(mut self, members: Vec<SharedCacheMember>) -> Self {
+        self.members = members;
+        self
+    }
+
+    pub fn with_mappings(mut self, mappings: Vec<SharedCacheMapping>) -> Self {
+        self.mappings = mappings;
+        self
+    }
+
+    pub fn with_images(mut self, images: Vec<CacheImageRecord>) -> Self {
+        self.images = images;
+        self
+    }
+
+    pub fn build(self) -> Result<SharedCache, SharedCacheValidationError> {
+        if self.members.is_empty() {
+            return Err(SharedCacheValidationError::MissingMembers);
+        }
+        if self.mappings.is_empty() {
+            return Err(SharedCacheValidationError::MissingMappings);
+        }
+        if self.images.is_empty() {
+            return Err(SharedCacheValidationError::MissingImages);
+        }
+        if self.header.mapping_count != self.mappings.len() as u32 {
+            return Err(SharedCacheValidationError::HeaderMappingCountMismatch);
+        }
+        if self.header.image_count != self.images.len() as u32 {
+            return Err(SharedCacheValidationError::HeaderImageCountMismatch);
+        }
+
+        let member_count = self.members.len();
+        for mapping in &self.mappings {
+            if mapping.size == 0 {
+                return Err(SharedCacheValidationError::ZeroSizedMapping);
+            }
+            if mapping.member_index >= member_count {
+                return Err(SharedCacheValidationError::MappingMemberOutOfRange);
+            }
+        }
+
+        let mut id_seen = BTreeMap::<CacheImageId, usize>::new();
+        let mut install_name_seen = BTreeMap::<String, usize>::new();
+        for image in &self.images {
+            if image.image_size == 0 {
+                return Err(SharedCacheValidationError::ZeroSizedImage);
+            }
+            if image.member_index >= member_count {
+                return Err(SharedCacheValidationError::ImageMemberOutOfRange);
+            }
+            if CacheImageId::parse(image.id.as_str()).is_none() {
+                return Err(SharedCacheValidationError::InvalidCacheImageIdFormat);
+            }
+            let expected_id = CacheImageId::new(self.header.cache_uuid.clone(), image.image_index);
+            if image.id != expected_id {
+                return Err(SharedCacheValidationError::CacheImageIdMismatch);
+            }
+            if id_seen
+                .insert(image.id.clone(), image.image_index as usize)
+                .is_some()
+            {
+                return Err(SharedCacheValidationError::DuplicateCacheImageId);
+            }
+            if install_name_seen
+                .insert(image.install_name.clone(), image.image_index as usize)
+                .is_some()
+            {
+                return Err(SharedCacheValidationError::DuplicateInstallName);
+            }
+        }
+
+        Ok(SharedCache {
+            source: self.source,
+            path: self.path,
+            header: self.header,
+            members: self.members,
+            mappings: self.mappings,
+            images: self.images,
+            image_id_index_cache: OnceLock::new(),
+            image_install_name_index_cache: OnceLock::new(),
+            image_basename_index_cache: OnceLock::new(),
+            mapping_start_index_cache: OnceLock::new(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryImageValidationError {
     MissingAvailableSlices,
     MissingSelectedSlice,

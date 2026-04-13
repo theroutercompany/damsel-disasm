@@ -579,6 +579,69 @@ jobs:
       - name: Run targeted malformed/duplicate fixture tests
         run: cargo test -p damsel-macho --test load_matrix --test import_binding_matrix --test disasm_matrix --test export_matrix --test objc_matrix --test slice_inventory_matrix
 
+  targeted-shared-cache:
+    name: targeted shared-cache fixtures (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    needs: fixture-drift
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Verify shared-cache corpus inventory
+        run: |
+          set -euo pipefail
+          test -d fixtures/shared-cache-corpus
+          test -f fixtures/shared-cache-corpus/README.md
+          test -f fixtures/shared-cache-corpus/valid-single-arm64.cache
+          test -f fixtures/shared-cache-corpus/valid-split-arm64.cache
+          test -f fixtures/shared-cache-corpus/valid-split-arm64.cache.1
+          test -f fixtures/shared-cache-corpus/valid-split-arm64.cache.symbols
+          test -f fixtures/shared-cache-corpus/unsupported-arch-x86_64.cache
+          test -f fixtures/shared-cache-corpus/malformed-header.cache
+          test -f fixtures/shared-cache-corpus/malformed-mapping-table.cache
+          test -f fixtures/shared-cache-corpus/malformed-image-table.cache
+          test -f fixtures/shared-cache-corpus/missing-subcache-root.cache
+          test -f fixtures/shared-cache-corpus/ambiguous-basename.cache
+          test -f fixtures/shared-cache-corpus/local-symbols-present-arm64.cache
+          test -f fixtures/shared-cache-corpus/local-symbols-present-arm64.cache.symbols
+          test -f fixtures/shared-cache-corpus/local-symbols-absent-arm64.cache
+      - name: Run targeted shared-cache parser and CLI checks
+        run: |
+          set -euo pipefail
+          cargo test -p damsel-macho --test shared_cache_load_matrix -- --nocapture
+          cargo test -p damsel-macho --test shared_cache_query_matrix -- --nocapture
+          cargo test -p damsel-cli --test cli_errors cache_ -- --nocapture
+          cargo test -p damsel-cli --test cli_json cache_ -- --nocapture
+          cargo test -p damsel-cli --test cli_snapshots cache_ -- --nocapture
+          cargo run -q -p damsel-cli -- cache --help >/dev/null
+          cargo run -q -p damsel-cli -- --format json cache info fixtures/shared-cache-corpus/valid-single-arm64.cache > cache-info.json
+          cargo run -q -p damsel-cli -- --format json cache images fixtures/shared-cache-corpus/valid-single-arm64.cache --limit 1 > cache-images.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          info = json.loads(Path("cache-info.json").read_text())
+          assert info["schema_version"] == 1
+          assert info["command"] == "cache_info"
+          assert set(info["data"].keys()) == {"header", "members"}
+          assert set(info["data"]["header"].keys()) == {
+              "cache_path",
+              "cache_uuid",
+              "architecture",
+              "member_count",
+              "image_count",
+              "has_local_symbols",
+          }
+          assert all(set(member.keys()) == {"name", "role", "path"} for member in info["data"]["members"])
+
+          images = json.loads(Path("cache-images.json").read_text())
+          assert images["schema_version"] == 1
+          assert images["command"] == "cache_images"
+          assert set(images["data"].keys()) == {"metadata", "images"}
+          assert set(images["data"]["metadata"].keys()) == {"total", "returned", "truncated"}
+          PY
+
   decode-bench-unsupported-host-smoke:
     name: decode bench unsupported-host smoke (${{ matrix.name }})
     strategy:

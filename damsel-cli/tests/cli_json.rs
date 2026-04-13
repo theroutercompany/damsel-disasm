@@ -26,6 +26,10 @@ fn fixture(name: &str) -> PathBuf {
     repo_root().join("fixtures/bin").join(name)
 }
 
+fn cache_fixture(name: &str) -> PathBuf {
+    repo_root().join("fixtures/shared-cache-corpus").join(name)
+}
+
 fn write_temp_input(bytes: &[u8]) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2023,7 +2027,7 @@ fn cache_first_image_id(cache_path: &Path) -> String {
 
 #[test]
 fn cache_info_json_contract() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let out = run_json_ok(&[
         "--format",
         "json",
@@ -2065,7 +2069,7 @@ fn cache_info_json_contract() {
 
 #[test]
 fn cache_images_json_contract_and_order() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let out = run_json_ok(&[
         "--format",
         "json",
@@ -2106,7 +2110,7 @@ fn cache_images_json_contract_and_order() {
 
 #[test]
 fn cache_image_json_contract() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let image_id = cache_first_image_id(&path);
     let out = run_json_ok(&[
         "--format",
@@ -2135,7 +2139,7 @@ fn cache_image_json_contract() {
 
 #[test]
 fn cache_exports_json_contract() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let image_id = cache_first_image_id(&path);
     let out = run_json_ok(&[
         "--format",
@@ -2165,7 +2169,7 @@ fn cache_exports_json_contract() {
 
 #[test]
 fn cache_lookup_address_json_contract() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let images_out = run_json_ok(&[
         "--format",
         "json",
@@ -2213,7 +2217,7 @@ fn cache_lookup_address_json_contract() {
 
 #[test]
 fn cache_resolve_symbol_json_contract_and_metadata() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let out = run_json_ok(&[
         "--format",
         "json",
@@ -2261,7 +2265,7 @@ fn cache_resolve_symbol_json_contract_and_metadata() {
 
 #[test]
 fn cache_image_not_found_json_error_envelope_is_typed() {
-    let path = fixture("arm64-symbolized");
+    let path = cache_fixture("valid-single-arm64.cache");
     let err = run_json_err(&[
         "--format",
         "json",

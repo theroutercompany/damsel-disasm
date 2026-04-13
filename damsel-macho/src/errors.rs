@@ -16,6 +16,8 @@ pub enum MachoError {
     UnsupportedFileKind(String),
     #[error("unsupported architecture: {0}")]
     UnsupportedArchitecture(String),
+    #[error("unsupported shared cache architecture: {0}")]
+    UnsupportedSharedCacheArchitecture(String),
     #[error(
         "unsupported thin architecture (cputype={cputype:#x}, subtype={cpusubtype:#x}); only arm64/arm64e are supported"
     )]
@@ -32,6 +34,14 @@ pub enum MachoError {
     },
     #[error("malformed fat binary: {0}")]
     MalformedFatBinary(String),
+    #[error("malformed shared cache: {0}")]
+    MalformedSharedCache(String),
+    #[error("incomplete shared cache set: {0}")]
+    IncompleteSharedCacheSet(String),
+    #[error("cache image not found: {0}")]
+    CacheImageNotFound(String),
+    #[error("cache image is ambiguous: {0}")]
+    CacheImageAmbiguous(String),
     #[error("malformed dyld chained-fixups payload: {0}")]
     MalformedDyldPayload(String),
     #[error(

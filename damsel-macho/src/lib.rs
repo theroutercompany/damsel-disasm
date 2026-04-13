@@ -3,10 +3,20 @@ mod dyld;
 mod errors;
 mod loader;
 mod objc;
+mod shared_cache;
+mod shared_cache_query;
 
+pub use damsel_core::{
+    CacheImageId, CacheImageRecord, CacheLookupResult, SharedCache, SharedCacheHeader,
+    SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,
+    SymbolicationMatch,
+};
 pub use disasm::{disassemble, disassemble_v2};
 pub use errors::{MachoError, Result};
 pub use loader::{load, load_bytes};
+pub use shared_cache::{
+    SharedCacheExportRecord, SharedCacheSession, inspect_shared_cache, load_shared_cache,
+};
 
 #[cfg(test)]
 mod tests {

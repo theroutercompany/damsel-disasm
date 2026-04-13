@@ -1,0 +1,8 @@
+SYNTHETIC_DYLD_CACHE
+scenario=malformed-mapping-table
+arch=arm64
+uuid=12345678-1234-1234-1234-1234567890ab
+mappings_declared=3
+mappings_present=1
+mapping_error=truncated_table
+
