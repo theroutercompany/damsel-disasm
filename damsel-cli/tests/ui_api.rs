@@ -241,7 +241,11 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         .expect("fetch html")
         .text()
         .expect("html body");
-    assert!(html.contains("Damsel Disassembly"));
+    assert!(html.contains("data-page=\"damsel-workbench\""));
+    assert!(html.contains("data-theme=\"dark\""));
+    assert!(html.contains("data-component=\"floating-dock\""));
+    assert!(html.contains("data-component=\"floating-load\""));
+    assert!(html.contains("Drop Mach-O or choose file"));
 
     let js = client
         .get(format!("{}/app.js", server.base_url))
@@ -249,7 +253,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         .expect("fetch js")
         .text()
         .expect("js body");
-    assert!(js.contains("runDisasm"));
+    assert!(js.contains("syncWorkbenchState"));
 
     let upload = upload_fixture(&client, &server, "semantic-switch");
     let image_id = upload["imageId"].as_str().expect("image id");

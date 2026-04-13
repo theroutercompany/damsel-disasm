@@ -11,6 +11,7 @@ const state = {
 };
 
 const elements = {
+  body: document.body,
   dropzone: document.getElementById("dropzone"),
   fileInput: document.getElementById("file-input"),
   fileSummary: document.getElementById("file-summary"),
@@ -34,6 +35,9 @@ const elements = {
   sectionGroup: document.getElementById("section-group"),
   symbolGroup: document.getElementById("symbol-group"),
   addressGroup: document.getElementById("address-group"),
+  listingPane: document.querySelector(".canvas-pane"),
+  inspectorPane: document.querySelector(".inspector-pane"),
+  controlsPane: document.querySelector(".controls-pane"),
 };
 
 function currentTargetKind() {
@@ -47,21 +51,47 @@ function setBanner(message, tone = "error") {
     elements.banner.dataset.tone = "";
     return;
   }
+
   elements.banner.hidden = false;
   elements.banner.textContent = message;
   elements.banner.dataset.tone = tone;
 }
 
+function syncWorkbenchState() {
+  const selectedInstruction = state.disasm?.instructions?.[state.selectedInstructionIndex];
+  elements.body.dataset.hasImage = state.imageId ? "true" : "false";
+  elements.body.dataset.hasSelection = selectedInstruction ? "true" : "false";
+}
+
+function setWorkbenchPhase(phase) {
+  elements.body.dataset.phase = phase;
+}
+
+function pulseSurface(node) {
+  if (!node) {
+    return;
+  }
+
+  node.classList.remove("is-refreshing");
+  void node.offsetWidth;
+  node.classList.add("is-refreshing");
+  window.setTimeout(() => {
+    node.classList.remove("is-refreshing");
+  }, 220);
+}
+
 function updateFileSummary() {
   const label = elements.fileSummary.querySelector(".summary-label");
   const value = elements.fileSummary.querySelector(".summary-value");
+
   if (!state.imageId) {
-    label.textContent = "No file loaded";
-    value.textContent = "Upload a binary to begin";
+    label.textContent = "Idle";
+    value.textContent = "Awaiting local binary";
     return;
   }
+
   label.textContent = state.fileName;
-  value.textContent = `${state.architecture} · entry ${formatAddress(state.entryPoint)}`;
+  value.textContent = `${state.architecture} · entry ${formatAddress(state.entryPoint)} · ${state.sections.length} sections`;
 }
 
 function updateTargetControls() {
@@ -76,6 +106,7 @@ function formatAddress(value) {
   if (value === null || value === undefined) {
     return "n/a";
   }
+
   const bigint = BigInt(value);
   return `0x${bigint.toString(16)}`;
 }
@@ -84,6 +115,7 @@ function numericValue(input) {
   if (!input.value.trim()) {
     return null;
   }
+
   const value = Number(input.value);
   return Number.isFinite(value) ? value : null;
 }
@@ -96,13 +128,16 @@ function currentStartAddressHint(targetKind) {
       return null;
     }
   }
+
   if (targetKind === "section") {
     const section = state.sections.find((entry) => entry.name === elements.sectionSelect.value);
     return section ? Number(section.address) : null;
   }
+
   if (elements.fromInput.value.trim()) {
     return numericValue(elements.fromInput);
   }
+
   return null;
 }
 
@@ -111,12 +146,15 @@ function validateInputs() {
   if (!state.imageId) {
     return "Upload a Mach-O before requesting disassembly.";
   }
+
   if (targetKind === "section" && !elements.sectionSelect.value) {
     return "Choose a section target.";
   }
+
   if (targetKind === "symbol" && !elements.symbolInput.value.trim()) {
     return "Enter a symbol name.";
   }
+
   if (targetKind === "address" && !elements.addressInput.value.trim()) {
     return "Enter a decode address.";
   }
@@ -130,21 +168,27 @@ function validateInputs() {
   if (bytes !== null && bytes <= 0) {
     return "Bytes must be greater than 0.";
   }
+
   if (limit !== null && limit <= 0) {
     return "Limit must be greater than 0.";
   }
+
   if (bytes !== null && limit !== null) {
     return "Bytes cannot be combined with limit.";
   }
+
   if (to !== null && (bytes !== null || limit !== null)) {
     return "To cannot be combined with bytes or limit.";
   }
+
   if (from !== null && to !== null && to <= from) {
     return "To must be greater than from.";
   }
+
   if (startHint !== null && to !== null && to <= startHint) {
     return "To must be greater than the decode start.";
   }
+
   return null;
 }
 
@@ -162,6 +206,7 @@ function buildDisasmRequest() {
       : targetKind === "symbol"
         ? elements.symbolInput.value.trim()
         : elements.addressInput.value.trim();
+
   return {
     target: {
       kind: targetKind,
@@ -177,28 +222,42 @@ function buildDisasmRequest() {
 
 async function loadImage(file) {
   setBanner("");
+  setWorkbenchPhase("uploading");
+  pulseSurface(elements.controlsPane);
+
   const formData = new FormData();
   formData.append("file", file, file.name || "uploaded-macho");
-  const response = await fetch("/api/images", {
-    method: "POST",
-    body: formData,
-  });
-  if (!response.ok) {
-    return handleApiError(response);
+
+  try {
+    const response = await fetch("/api/images", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      return handleApiError(response);
+    }
+
+    const payload = await response.json();
+    state.imageId = payload.imageId;
+    state.fileName = payload.fileName;
+    state.architecture = payload.architecture;
+    state.entryPoint = payload.entryPoint;
+    state.sections = payload.sections || [];
+    state.defaultSection = payload.defaultSection;
+    populateSections();
+    updateFileSummary();
+    syncWorkbenchState();
+
+    if (payload.defaultSection) {
+      elements.sectionSelect.value = payload.defaultSection;
+    }
+
+    pulseSurface(elements.controlsPane);
+    await runDisasm();
+  } finally {
+    setWorkbenchPhase("idle");
   }
-  const payload = await response.json();
-  state.imageId = payload.imageId;
-  state.fileName = payload.fileName;
-  state.architecture = payload.architecture;
-  state.entryPoint = payload.entryPoint;
-  state.sections = payload.sections || [];
-  state.defaultSection = payload.defaultSection;
-  populateSections();
-  updateFileSummary();
-  if (payload.defaultSection) {
-    elements.sectionSelect.value = payload.defaultSection;
-  }
-  await runDisasm();
 }
 
 function populateSections() {
@@ -216,6 +275,7 @@ async function fetchSymbolSuggestions() {
     elements.symbolSuggestions.innerHTML = "";
     return;
   }
+
   const query = new URLSearchParams({
     q: elements.symbolInput.value.trim(),
     limit: "20",
@@ -224,6 +284,7 @@ async function fetchSymbolSuggestions() {
   if (!response.ok) {
     return;
   }
+
   const payload = await response.json();
   elements.symbolSuggestions.innerHTML = "";
   for (const symbol of payload.symbols || []) {
@@ -239,34 +300,48 @@ async function runDisasm() {
     setBanner(validation);
     return;
   }
+
   setBanner("");
-  const response = await fetch(`/api/images/${state.imageId}/disasm`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(buildDisasmRequest()),
-  });
-  if (!response.ok) {
-    return handleApiError(response);
+  setWorkbenchPhase("decoding");
+
+  try {
+    const response = await fetch(`/api/images/${state.imageId}/disasm`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(buildDisasmRequest()),
+    });
+
+    if (!response.ok) {
+      return handleApiError(response);
+    }
+
+    state.disasm = await response.json();
+    state.selectedInstructionIndex = 0;
+    renderDisasm();
+    renderInspector();
+    syncWorkbenchState();
+    pulseSurface(elements.listingPane);
+    pulseSurface(elements.inspectorPane);
+  } finally {
+    setWorkbenchPhase("idle");
   }
-  state.disasm = await response.json();
-  state.selectedInstructionIndex = 0;
-  renderDisasm();
-  renderInspector();
 }
 
 async function handleApiError(response) {
   const payload = await response.json().catch(() => null);
-  const message = payload ? `${payload.code}: ${payload.message}` : `Request failed with status ${response.status}`;
+  const message = payload
+    ? `${payload.code}: ${payload.message}`
+    : `Request failed with status ${response.status}`;
   setBanner(message);
 }
 
 function renderDisasm() {
   const data = state.disasm;
   if (!data || !Array.isArray(data.instructions) || data.instructions.length === 0) {
-    elements.resultTitle.textContent = "No instructions decoded";
-    elements.resultMeta.textContent = "";
+    elements.resultTitle.textContent = "No target";
+    elements.resultMeta.textContent = "Load a local binary to decode a target.";
     elements.instructionRows.innerHTML = `
       <tr class="empty-row">
         <td colspan="3">This target did not produce any decoded instructions.</td>
@@ -276,7 +351,7 @@ function renderDisasm() {
   }
 
   elements.resultTitle.textContent = data.target;
-  elements.resultMeta.textContent = `${data.instruction_count} instructions · ${data.stop_reason}`;
+  elements.resultMeta.textContent = `${data.instruction_count} rows · ${data.stop_reason}`;
   elements.instructionRows.innerHTML = "";
 
   data.instructions.forEach((instruction, index) => {
@@ -286,13 +361,16 @@ function renderDisasm() {
       state.selectedInstructionIndex = index;
       renderDisasm();
       renderInspector();
+      syncWorkbenchState();
     });
 
-    const targetRef = (instruction.references || []).find((reference) =>
-      (reference.type === "call" || reference.type === "branch") && reference.target !== undefined,
+    const targetRef = (instruction.references || []).find(
+      (reference) =>
+        (reference.type === "call" || reference.type === "branch") &&
+        reference.target !== undefined,
     );
     const jumpChip = targetRef
-      ? `<button class="instruction-target" type="button" data-target="${targetRef.target}">Jump to ${formatAddress(targetRef.target)}</button>`
+      ? `<button class="instruction-target" type="button" data-target="${targetRef.target}">jump ${formatAddress(targetRef.target)}</button>`
       : "";
 
     row.innerHTML = `
@@ -305,6 +383,7 @@ function renderDisasm() {
         </div>
       </td>
     `;
+
     const jumpButton = row.querySelector("[data-target]");
     if (jumpButton) {
       jumpButton.addEventListener("click", async (event) => {
@@ -312,6 +391,7 @@ function renderDisasm() {
         await jumpToAddress(Number(jumpButton.dataset.target));
       });
     }
+
     elements.instructionRows.append(row);
   });
 }
@@ -320,29 +400,36 @@ function renderInspector() {
   const data = state.disasm;
   const instruction = data?.instructions?.[state.selectedInstructionIndex];
   if (!instruction) {
-    elements.inspectorTitle.textContent = "Nothing selected";
-    elements.inspectorContent.innerHTML = `<p class="inspector-empty">Select an instruction to inspect its references, annotations, and recovered values.</p>`;
+    elements.inspectorTitle.textContent = "No selection";
+    elements.inspectorContent.innerHTML =
+      '<p class="inspector-empty">Select an instruction to inspect references and recovered values.</p>';
     return;
   }
 
-  elements.inspectorTitle.textContent = `${instruction.mnemonic} · ${formatAddress(instruction.address)}`;
+  elements.inspectorTitle.textContent = `${instruction.mnemonic} · ${formatAddress(
+    instruction.address,
+  )}`;
 
   const blocks = [];
-  blocks.push(renderDetailBlock("Instruction", [
-    ["Address", formatAddress(instruction.address)],
-    ["Opcode", formatAddress(instruction.opcode)],
-    ["Rendered", instruction.rendered],
-  ]));
+  blocks.push(
+    renderDetailBlock("Instruction", [
+      ["Address", formatAddress(instruction.address)],
+      ["Opcode", formatAddress(instruction.opcode)],
+      ["Rendered", instruction.rendered],
+    ]),
+  );
   blocks.push(renderReferenceBlock(instruction.references || []));
   blocks.push(renderObjectBlock("Annotations", instruction.annotations || []));
   blocks.push(renderObjectBlock("Recovered Values", instruction.recovered_values || []));
   elements.inspectorContent.innerHTML = blocks.join("");
 
-  elements.inspectorContent.querySelectorAll("[data-jump-target]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await jumpToAddress(Number(button.dataset.jumpTarget));
+  elements.inspectorContent
+    .querySelectorAll("[data-jump-target]")
+    .forEach((button) => {
+      button.addEventListener("click", async () => {
+        await jumpToAddress(Number(button.dataset.jumpTarget));
+      });
     });
-  });
 }
 
 function renderDetailBlock(title, rows) {
@@ -351,12 +438,14 @@ function renderDetailBlock(title, rows) {
       <h3>${title}</h3>
       <div class="detail-list">
         ${rows
-          .map(([key, value]) => `
-            <div class="detail-row">
-              <span class="detail-key">${escapeHtml(key)}</span>
-              <span class="mono">${escapeHtml(String(value))}</span>
-            </div>
-          `)
+          .map(
+            ([key, value]) => `
+              <div class="detail-row">
+                <span class="detail-key">${escapeHtml(key)}</span>
+                <span class="mono">${escapeHtml(String(value))}</span>
+              </div>
+            `,
+          )
           .join("")}
       </div>
     </section>
@@ -367,6 +456,7 @@ function renderReferenceBlock(references) {
   if (!references.length) {
     return renderEmptyBlock("References", "No references recorded for this instruction.");
   }
+
   return `
     <section class="inspector-block">
       <h3>References</h3>
@@ -386,6 +476,7 @@ function renderReferenceBlock(references) {
                     </div>
                   `;
                 }
+
                 return `
                   <div class="detail-row">
                     <span class="detail-key">${escapeHtml(key)}</span>
@@ -394,9 +485,10 @@ function renderReferenceBlock(references) {
                 `;
               })
               .join("");
+
             return `
               <div class="data-item">
-                <div class="section-kicker">${escapeHtml(reference.type || "reference")}</div>
+                <div class="item-eyebrow">${escapeHtml(reference.type || "reference")}</div>
                 <div class="detail-list">${details}</div>
               </div>
             `;
@@ -411,23 +503,28 @@ function renderObjectBlock(title, entries) {
   if (!entries.length) {
     return renderEmptyBlock(title, `No ${title.toLowerCase()} for the selected instruction.`);
   }
+
   return `
     <section class="inspector-block">
       <h3>${escapeHtml(title)}</h3>
       <div class="data-list">
         ${entries
-          .map((entry) => `
-            <div class="data-item">
-              ${Object.entries(entry)
-                .map(([key, value]) => `
-                  <div class="detail-row">
-                    <span class="detail-key">${escapeHtml(key)}</span>
-                    <span class="mono">${escapeHtml(formatValue(value))}</span>
-                  </div>
-                `)
-                .join("")}
-            </div>
-          `)
+          .map(
+            (entry) => `
+              <div class="data-item">
+                ${Object.entries(entry)
+                  .map(
+                    ([key, value]) => `
+                      <div class="detail-row">
+                        <span class="detail-key">${escapeHtml(key)}</span>
+                        <span class="mono">${escapeHtml(formatValue(value))}</span>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            `,
+          )
           .join("")}
       </div>
     </section>
@@ -459,12 +556,15 @@ function formatValue(value) {
   if (value === null || value === undefined) {
     return "null";
   }
+
   if (typeof value === "number") {
     return Number.isInteger(value) ? formatAddress(value) : String(value);
   }
+
   if (typeof value === "boolean") {
     return value ? "true" : "false";
   }
+
   return String(value);
 }
 
@@ -515,10 +615,13 @@ function installEventHandlers() {
   elements.runButton.addEventListener("click", runDisasm);
   elements.symbolInput.addEventListener("input", () => {
     clearTimeout(state.symbolLookupTimer);
-    state.symbolLookupTimer = setTimeout(fetchSymbolSuggestions, 180);
+    state.symbolLookupTimer = window.setTimeout(fetchSymbolSuggestions, 180);
   });
 }
 
 updateTargetControls();
 updateFileSummary();
+renderDisasm();
+renderInspector();
+syncWorkbenchState();
 installEventHandlers();

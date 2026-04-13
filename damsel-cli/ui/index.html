@@ -6,144 +6,151 @@
     <title>Damsel UI</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
-  <body>
-    <div class="shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Local Analysis Workbench</p>
-          <h1>Damsel Disassembly</h1>
-        </div>
-        <label class="dropzone" id="dropzone">
-          <input id="file-input" type="file" accept=".dylib,.bundle,.o,.a,*/*">
-          <span class="dropzone-title">Drop a Mach-O here</span>
-          <span class="dropzone-copy">or choose a local binary to inspect</span>
-        </label>
-        <div class="file-summary" id="file-summary">
-          <span class="summary-label">No file loaded</span>
-          <span class="summary-value">Upload a binary to begin</span>
-        </div>
-      </header>
+  <body data-theme="dark" data-phase="idle" data-has-image="false" data-has-selection="false">
+    <div class="shell" data-page="damsel-workbench">
+      <div class="shell-frame">
+        <div class="banner" id="banner" hidden role="status" aria-live="polite"></div>
 
-      <div class="banner" id="banner" hidden></div>
-
-      <main class="workspace">
-        <aside class="panel controls-panel">
-          <section class="panel-section">
-            <div class="section-head">
-              <p class="section-kicker">Target</p>
-              <h2>Decode controls</h2>
-            </div>
-
-            <div class="mode-switch" id="target-kind">
-              <label><input type="radio" name="target-kind" value="section" checked> Section</label>
-              <label><input type="radio" name="target-kind" value="symbol"> Symbol</label>
-              <label><input type="radio" name="target-kind" value="address"> Address</label>
-            </div>
-
-            <div class="field-group" id="section-group">
-              <label for="section-select">Section</label>
-              <select id="section-select"></select>
-            </div>
-
-            <div class="field-group" id="symbol-group" hidden>
-              <label for="symbol-input">Symbol</label>
-              <input id="symbol-input" list="symbol-suggestions" type="text" placeholder="_main">
-              <datalist id="symbol-suggestions"></datalist>
-            </div>
-
-            <div class="field-group" id="address-group" hidden>
-              <label for="address-input">Address</label>
-              <input id="address-input" type="text" placeholder="0x100000460">
-            </div>
-          </section>
-
-          <section class="panel-section">
-            <div class="section-head">
-              <p class="section-kicker">Window</p>
-              <h2>Advanced range</h2>
-            </div>
-
-            <div class="field-group">
-              <label for="from-input">From</label>
-              <input id="from-input" type="number" min="0" step="1" placeholder="Optional start address">
-            </div>
-
-            <div class="field-group">
-              <label for="to-input">To</label>
-              <input id="to-input" type="number" min="0" step="1" placeholder="Optional end address">
-            </div>
-
-            <div class="field-row">
-              <div class="field-group">
-                <label for="bytes-input">Bytes</label>
-                <input id="bytes-input" type="number" min="1" step="1" placeholder="Optional">
+        <main class="workspace-frame" data-component="workspace-frame">
+          <aside class="pane controls-pane" data-component="controls-pane">
+            <section class="pane-section">
+              <div class="section-head">
+                <p class="micro-label">Target</p>
+                <h2>Target</h2>
               </div>
-              <div class="field-group">
-                <label for="limit-input">Limit</label>
-                <input id="limit-input" type="number" min="1" step="1" value="200">
+
+              <div class="mode-switch" id="target-kind">
+                <label><input type="radio" name="target-kind" value="section" checked>Section</label>
+                <label><input type="radio" name="target-kind" value="symbol">Symbol</label>
+                <label><input type="radio" name="target-kind" value="address">Address</label>
               </div>
+
+              <div class="field-group" id="section-group">
+                <label for="section-select">Section</label>
+                <select id="section-select"></select>
+              </div>
+
+              <div class="field-group" id="symbol-group" hidden>
+                <label for="symbol-input">Symbol</label>
+                <input id="symbol-input" list="symbol-suggestions" type="text" placeholder="_main">
+                <datalist id="symbol-suggestions"></datalist>
+              </div>
+
+              <div class="field-group" id="address-group" hidden>
+                <label for="address-input">Address</label>
+                <input id="address-input" type="text" placeholder="0x100000460">
+              </div>
+            </section>
+
+            <section class="pane-section">
+              <div class="section-head">
+                <p class="micro-label">Window</p>
+                <h2>Range</h2>
+              </div>
+
+              <div class="field-group">
+                <label for="from-input">From</label>
+                <input id="from-input" type="number" min="0" step="1" placeholder="Optional start address">
+              </div>
+
+              <div class="field-group">
+                <label for="to-input">To</label>
+                <input id="to-input" type="number" min="0" step="1" placeholder="Optional end address">
+              </div>
+
+              <div class="field-row">
+                <div class="field-group">
+                  <label for="bytes-input">Bytes</label>
+                  <input id="bytes-input" type="number" min="1" step="1" placeholder="Optional">
+                </div>
+                <div class="field-group">
+                  <label for="limit-input">Limit</label>
+                  <input id="limit-input" type="number" min="1" step="1" value="200">
+                </div>
+              </div>
+            </section>
+
+            <section class="pane-section">
+              <div class="section-head">
+                <p class="micro-label">Analysis</p>
+                <h2>Analysis</h2>
+              </div>
+
+              <label class="checkline">
+                <input id="annotations-toggle" type="checkbox" checked>
+                <span>Annotations</span>
+              </label>
+              <label class="checkline">
+                <input id="value-flow-toggle" type="checkbox">
+                <span>Recovered values</span>
+              </label>
+
+              <button class="primary-button" id="run-button" type="button">Disassemble</button>
+            </section>
+          </aside>
+
+          <section class="pane canvas-pane" data-component="instruction-surface">
+            <header class="pane-header">
+              <div>
+                <p class="micro-label">Instruction View</p>
+                <h2 id="result-title">No target</h2>
+              </div>
+              <div class="result-meta" id="result-meta">Load a local binary to decode a target.</div>
+            </header>
+
+            <div class="table-shell">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Address</th>
+                    <th>Opcode</th>
+                    <th>Instruction</th>
+                  </tr>
+                </thead>
+                <tbody id="instruction-rows">
+                  <tr class="empty-row">
+                    <td colspan="3">Load a binary to start decoding.</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </section>
 
-          <section class="panel-section">
-            <div class="section-head">
-              <p class="section-kicker">Analysis</p>
-              <h2>Output detail</h2>
+          <aside class="pane inspector-pane" data-component="inspector-pane">
+            <header class="pane-header">
+              <div>
+                <p class="micro-label">Inspector</p>
+                <h2 id="inspector-title">No selection</h2>
+              </div>
+            </header>
+
+            <div class="inspector-content" id="inspector-content">
+              <p class="inspector-empty">
+                Select an instruction to inspect references and recovered values.
+              </p>
             </div>
+          </aside>
+        </main>
 
-            <label class="checkline">
-              <input id="annotations-toggle" type="checkbox" checked>
-              <span>Include annotations</span>
-            </label>
-            <label class="checkline">
-              <input id="value-flow-toggle" type="checkbox">
-              <span>Include recovered values</span>
-            </label>
-
-            <button class="primary-button" id="run-button" type="button">Run disassembly</button>
-          </section>
-        </aside>
-
-        <section class="panel listing-panel">
-          <header class="panel-header">
-            <div>
-              <p class="section-kicker">Instructions</p>
-              <h2 id="result-title">Awaiting a binary</h2>
-            </div>
-            <div class="result-meta" id="result-meta"></div>
-          </header>
-
-          <div class="table-shell">
-            <table>
-              <thead>
-                <tr>
-                  <th>Address</th>
-                  <th>Opcode</th>
-                  <th>Instruction</th>
-                </tr>
-              </thead>
-              <tbody id="instruction-rows">
-                <tr class="empty-row">
-                  <td colspan="3">Upload a Mach-O to see decoded instructions.</td>
-                </tr>
-              </tbody>
-            </table>
+        <div class="floating-dock" data-component="floating-dock">
+          <div
+            class="file-summary floating-widget"
+            id="file-summary"
+            data-component="status-strip"
+            aria-live="polite"
+          >
+            <span class="summary-label">Idle</span>
+            <span class="summary-value">Awaiting local binary</span>
           </div>
-        </section>
 
-        <aside class="panel inspector-panel">
-          <header class="panel-header">
-            <div>
-              <p class="section-kicker">Inspector</p>
-              <h2 id="inspector-title">Nothing selected</h2>
-            </div>
-          </header>
-
-          <div class="inspector-content" id="inspector-content">
-            <p class="inspector-empty">Select an instruction to inspect its references, annotations, and recovered values.</p>
-          </div>
-        </aside>
-      </main>
+          <label class="dropzone floating-widget" id="dropzone" data-component="floating-load">
+            <input id="file-input" type="file" accept=".dylib,.bundle,.o,.a,*/*">
+            <span class="dropzone-command">$ load binary</span>
+            <span class="dropzone-title">Drop Mach-O or choose file</span>
+            <span class="dropzone-copy">Local only. No remote upload.</span>
+          </label>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="/app.js"></script>
