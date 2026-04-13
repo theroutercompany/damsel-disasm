@@ -113,6 +113,40 @@ fn normalize_tool_line(line: &str) -> String {
     }
 }
 
+fn normalize_cache_snapshot(output: &str) -> String {
+    output
+        .lines()
+        .map(|line| {
+            if line.starts_with("cache_uuid: ") {
+                "cache_uuid: <cache_uuid>".to_string()
+            } else if line.starts_with("  - id=") {
+                "  - id=<id> index=<index> base=<addr> install_name=<install_name> basename=<basename> member=<member>".to_string()
+            } else if line.starts_with("lookup_address: kind=") {
+                "lookup_address: kind=<kind> cache_vmaddr=<addr>".to_string()
+            } else if line.starts_with("  image_id=") {
+                "  image_id=<image_id>".to_string()
+            } else if line.starts_with("  install_name=") {
+                "  install_name=<install_name>".to_string()
+            } else if line.starts_with("  image_base_vmaddr=") {
+                "  image_base_vmaddr=<addr>".to_string()
+            } else if line.starts_with("  image_offset=") {
+                "  image_offset=<offset>".to_string()
+            } else if line.starts_with("  member_file_offset=") {
+                "  member_file_offset=<offset>".to_string()
+            } else if line.starts_with("  symbol=") {
+                "  symbol=<symbol>".to_string()
+            } else if line.starts_with("  symbol_address=") {
+                "  symbol_address=<addr>".to_string()
+            } else if line.starts_with("  offset_from_symbol=") {
+                "  offset_from_symbol=<offset>".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn run_snapshot(args: &[&str]) -> String {
     let output = Command::cargo_bin("damsel-cli")
         .expect("binary exists")
@@ -142,6 +176,20 @@ fn run_snapshot_owned(args: &[String]) -> String {
         .expect("command runs");
     assert!(output.status.success(), "command failed: {:?}", output);
     normalize(&output.stdout)
+}
+
+fn run_snapshot_err(args: &[&str]) -> String {
+    let output = Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args(args)
+        .output()
+        .expect("command runs");
+    assert!(
+        !output.status.success(),
+        "command unexpectedly succeeded: {:?}",
+        output
+    );
+    normalize(&output.stderr)
 }
 
 #[cfg(unix)]
@@ -410,4 +458,92 @@ fn doctor_snapshot() {
     let stdout = run_snapshot(&["doctor"]);
     let normalized = normalize_doctor_snapshot(&stdout);
     insta::assert_snapshot!("doctor_snapshot", normalized);
+}
+
+#[test]
+fn cache_info_snapshot() {
+    let path = fixture("arm64-symbolized");
+    let stdout = run_snapshot(&["cache", "info", path.to_str().expect("utf8 path")]);
+    let normalized = normalize_cache_snapshot(&stdout);
+    insta::assert_snapshot!(
+        normalized,
+        @r###"
+        cache: $REPO/fixtures/bin/arm64-symbolized
+        cache_uuid: <cache_uuid>
+        architecture: arm64
+        members: 1
+        images: 1
+        has_local_symbols: false
+        members:
+          - name=arm64-symbolized role=primary path=$REPO/fixtures/bin/arm64-symbolized
+        "###
+    );
+}
+
+#[test]
+fn cache_images_snapshot() {
+    let path = fixture("arm64-symbolized");
+    let stdout = run_snapshot(&[
+        "cache",
+        "images",
+        path.to_str().expect("utf8 path"),
+        "--limit",
+        "1",
+    ]);
+    let normalized = normalize_cache_snapshot(&stdout);
+    insta::assert_snapshot!(
+        normalized,
+        @r###"
+        images: returned=1 total=1 truncated=false
+          - id=<id> index=<index> base=<addr> install_name=<install_name> basename=<basename> member=<member>
+        "###
+    );
+}
+
+#[test]
+fn cache_lookup_address_snapshot() {
+    let path = fixture("arm64-symbolized");
+    let image = load(&path).expect("load fixture");
+    let mapped = image
+        .sections()
+        .first()
+        .map(|section| section.address)
+        .expect("at least one section");
+    let mapped_arg = format!("{mapped:#x}");
+    let stdout = run_snapshot(&[
+        "cache",
+        "lookup-address",
+        path.to_str().expect("utf8 path"),
+        mapped_arg.as_str(),
+    ]);
+    let normalized = normalize_cache_snapshot(&stdout);
+    insta::assert_snapshot!(
+        normalized,
+        @r###"
+        lookup_address: kind=<kind> cache_vmaddr=<addr>
+          image_id=<image_id>
+          install_name=<install_name>
+          image_base_vmaddr=<addr>
+          image_offset=<offset>
+          member_file_offset=<offset>
+          symbol=<symbol>
+          symbol_address=<addr>
+          offset_from_symbol=<offset>
+        "###
+    );
+}
+
+#[test]
+fn cache_image_not_found_error_snapshot() {
+    let path = fixture("arm64-symbolized");
+    let stderr = run_snapshot_err(&[
+        "cache",
+        "image",
+        path.to_str().expect("utf8 path"),
+        "missing-image",
+    ]);
+    insta::assert_snapshot!(
+        stderr,
+        @r###"error [cache_image_not_found]: cache image not found: missing-image"###
+    );
 }

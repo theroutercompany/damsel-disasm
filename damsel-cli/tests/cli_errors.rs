@@ -325,3 +325,48 @@ fn objc_rejects_invalid_selector_source_value() {
         .failure()
         .stderr(predicate::str::contains("invalid value"));
 }
+
+#[test]
+fn cache_lookup_address_rejects_invalid_vmaddr_value() {
+    let path = fixture("arm64-symbolized");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "cache",
+            "lookup-address",
+            path.to_str().expect("utf8 path"),
+            "not-an-address",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid"));
+}
+
+#[test]
+fn cache_info_non_macho_returns_typed_unsupported_input_error() {
+    let path = write_temp_input(b"not a cache");
+    let path_string = path.to_string_lossy().to_string();
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args(["cache", "info", path_string.as_str()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [unsupported_input]"));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn cache_image_unknown_selector_returns_typed_not_found_error() {
+    let path = fixture("arm64-symbolized");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "cache",
+            "image",
+            path.to_str().expect("utf8 path"),
+            "missing-image",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [cache_image_not_found]"));
+}

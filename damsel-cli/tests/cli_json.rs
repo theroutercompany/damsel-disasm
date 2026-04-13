@@ -2000,3 +2000,279 @@ fn error_json_envelope_for_invalid_args() {
         "`--count` and `--limit` cannot differ when both are provided"
     );
 }
+
+fn cache_first_image_id(cache_path: &Path) -> String {
+    let raw = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "images",
+        cache_path.to_str().expect("utf8 path"),
+    ]);
+    let json = parse_json(&raw);
+    json["data"]["images"]
+        .as_array()
+        .expect("images array")
+        .first()
+        .expect("first image")
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("image id")
+        .to_string()
+}
+
+#[test]
+fn cache_info_json_contract() {
+    let path = fixture("arm64-symbolized");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "info",
+        path.to_str().expect("utf8 path"),
+    ]);
+    assert_raw_key_order(&out, &["schema_version", "command", "data"]);
+    assert_raw_object_key_order(&out, "data", &["header", "members"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_info");
+    assert_exact_object_keys(&json["data"], &["header", "members"]);
+    assert_exact_object_keys(
+        &json["data"]["header"],
+        &[
+            "cache_path",
+            "cache_uuid",
+            "architecture",
+            "member_count",
+            "image_count",
+            "has_local_symbols",
+        ],
+    );
+    assert!(json["data"]["header"]["cache_path"].is_string());
+    assert!(json["data"]["header"]["cache_uuid"].is_string());
+    assert!(json["data"]["header"]["architecture"].is_string());
+    assert!(json["data"]["header"]["member_count"].is_number());
+    assert!(json["data"]["header"]["image_count"].is_number());
+    assert!(json["data"]["header"]["has_local_symbols"].is_boolean());
+    let members = json["data"]["members"].as_array().expect("members array");
+    assert!(!members.is_empty());
+    for member in members {
+        assert_exact_object_keys(member, &["name", "role", "path"]);
+        assert!(member["name"].is_string());
+        assert!(member["role"].is_string());
+        assert!(member["path"].is_string());
+    }
+}
+
+#[test]
+fn cache_images_json_contract_and_order() {
+    let path = fixture("arm64-symbolized");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "images",
+        path.to_str().expect("utf8 path"),
+        "--limit",
+        "1",
+    ]);
+    assert_raw_key_order(&out, &["schema_version", "command", "data"]);
+    assert_raw_object_key_order(&out, "data", &["metadata", "images"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_images");
+    assert_exact_object_keys(&json["data"], &["metadata", "images"]);
+    assert_exact_object_keys(
+        &json["data"]["metadata"],
+        &["total", "returned", "truncated"],
+    );
+    assert!(json["data"]["metadata"]["total"].is_number());
+    assert!(json["data"]["metadata"]["returned"].is_number());
+    assert!(json["data"]["metadata"]["truncated"].is_boolean());
+    let images = json["data"]["images"].as_array().expect("images array");
+    assert_eq!(images.len(), 1);
+    for image in images {
+        assert_exact_object_keys(
+            image,
+            &[
+                "id",
+                "image_index",
+                "install_name",
+                "basename",
+                "image_base_vmaddr",
+                "member_name",
+            ],
+        );
+    }
+}
+
+#[test]
+fn cache_image_json_contract() {
+    let path = fixture("arm64-symbolized");
+    let image_id = cache_first_image_id(&path);
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "image",
+        path.to_str().expect("utf8 path"),
+        image_id.as_str(),
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_image");
+    assert_exact_object_keys(&json["data"], &["image"]);
+    assert_exact_object_keys(
+        &json["data"]["image"],
+        &[
+            "id",
+            "image_index",
+            "install_name",
+            "basename",
+            "image_base_vmaddr",
+            "member_name",
+        ],
+    );
+}
+
+#[test]
+fn cache_exports_json_contract() {
+    let path = fixture("arm64-symbolized");
+    let image_id = cache_first_image_id(&path);
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "exports",
+        path.to_str().expect("utf8 path"),
+        image_id.as_str(),
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "metadata", "exports"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_exports");
+    assert_exact_object_keys(&json["data"], &["image", "metadata", "exports"]);
+    assert_exact_object_keys(
+        &json["data"]["metadata"],
+        &["total", "returned", "truncated"],
+    );
+    let exports = json["data"]["exports"].as_array().expect("exports array");
+    for export in exports {
+        assert_exact_object_keys(export, &["name", "cache_vmaddr", "kind", "flags"]);
+        assert!(export["name"].is_string());
+        assert!(export["kind"].is_string());
+        assert!(export["flags"].is_string());
+        assert!(export["cache_vmaddr"].is_number() || export["cache_vmaddr"].is_null());
+    }
+}
+
+#[test]
+fn cache_lookup_address_json_contract() {
+    let path = fixture("arm64-symbolized");
+    let images_out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "images",
+        path.to_str().expect("utf8 path"),
+    ]);
+    let images_json = parse_json(&images_out);
+    let vmaddr = images_json["data"]["images"][0]["image_base_vmaddr"]
+        .as_u64()
+        .expect("image_base_vmaddr");
+    let vmarg = format!("{vmaddr:#x}");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "lookup-address",
+        path.to_str().expect("utf8 path"),
+        vmarg.as_str(),
+    ]);
+    assert_raw_object_key_order(&out, "data", &["result"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_lookup_address");
+    assert_exact_object_keys(&json["data"], &["result"]);
+    assert_exact_object_keys(
+        &json["data"]["result"],
+        &[
+            "kind",
+            "cache_vmaddr",
+            "image_id",
+            "install_name",
+            "image_base_vmaddr",
+            "image_offset",
+            "member_file_offset",
+            "symbol",
+            "symbol_address",
+            "offset_from_symbol",
+        ],
+    );
+    assert!(matches!(
+        json["data"]["result"]["kind"].as_str(),
+        Some("exact_symbol" | "nearest_symbol" | "mapping_only")
+    ));
+}
+
+#[test]
+fn cache_resolve_symbol_json_contract_and_metadata() {
+    let path = fixture("arm64-symbolized");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "resolve-symbol",
+        path.to_str().expect("utf8 path"),
+        "_main",
+        "--limit",
+        "1",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["metadata", "matches"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_resolve_symbol");
+    assert_exact_object_keys(&json["data"], &["metadata", "matches"]);
+    assert_exact_object_keys(
+        &json["data"]["metadata"],
+        &["total", "returned", "truncated"],
+    );
+    let matches = json["data"]["matches"].as_array().expect("matches array");
+    assert_eq!(matches.len(), 1);
+    for entry in matches {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "name",
+                "image_id",
+                "install_name",
+                "cache_vmaddr",
+                "image_base_vmaddr",
+                "image_offset",
+                "member_file_offset",
+                "source",
+            ],
+        );
+        assert!(entry["name"].is_string());
+        assert!(entry["image_id"].is_string());
+        assert!(entry["install_name"].is_string());
+        assert!(entry["cache_vmaddr"].is_number());
+        assert!(entry["image_base_vmaddr"].is_number());
+        assert!(entry["image_offset"].is_number());
+        assert!(entry["member_file_offset"].is_number() || entry["member_file_offset"].is_null());
+        assert!(entry["source"].is_string());
+    }
+}
+
+#[test]
+fn cache_image_not_found_json_error_envelope_is_typed() {
+    let path = fixture("arm64-symbolized");
+    let err = run_json_err(&[
+        "--format",
+        "json",
+        "cache",
+        "image",
+        path.to_str().expect("utf8 path"),
+        "missing-image",
+    ]);
+    let json = parse_json(&err);
+    assert_eq!(json["command"], "error");
+    assert_eq!(json["data"]["code"], "cache_image_not_found");
+    assert!(json["data"]["message"].is_string());
+    assert!(json["data"]["details"].is_null());
+}
