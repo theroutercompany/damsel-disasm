@@ -111,11 +111,12 @@ Release-time smoke checks on the built/package binary:
 ./damsel cache --help
 ```
 
-Wave 1 note:
+Shared-cache note:
 - `cache --help` and `cache info fixtures/shared-cache-corpus/valid-single-arm64.cache` are mandatory release smokes.
-- release smoke also runs one projected-image command against the synthetic corpus:
+- release smoke also runs one projected-image command and one cache-native linkage command against the synthetic corpus:
   - `cache sections fixtures/shared-cache-corpus/valid-single-arm64.cache /usr/lib/libobjc.A.dylib --exec`
-- Release verification keeps Wave 1 scope narrow:
+  - `cache image-deps fixtures/shared-cache-corpus/internal-linkage-arm64.cache /usr/lib/libdispatch.dylib`
+- Release verification keeps shared-cache scope read-only and offline:
   - read-only inspection/query only
   - Apple Silicon shared-cache sets only
   - no debugger transport

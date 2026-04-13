@@ -1,6 +1,6 @@
 # Apple Runtime Analysis Architecture
 
-Status: Current architecture plus planned Wave 2/3 extensions. Shared-cache container/query support is implemented; projected-image and deeper runtime workflows remain planned unless explicitly labeled current.
+Status: Current architecture with Wave 1, Wave 2, and Wave 3 shared-cache work implemented. Future items remain planned only where explicitly labeled as such.
 
 ## Summary
 
@@ -11,8 +11,9 @@ Status: Current architecture plus planned Wave 2/3 extensions. Shared-cache cont
 - inspect dyld shared caches as first-class containers (current)
 - resolve cache addresses and symbols for debugging/symbolication workflows (current, Wave 1)
 - project selected cache images into existing per-image analysis flows (current, Wave 2)
+- query cache-native dependencies, dependents, providers, importers, and reexports for offline debugging/spelunking (current, Wave 3)
 
-The planned future adds a sibling runtime container model and does not replace the existing image model.
+The current runtime container model sits beside the existing image model and does not replace it.
 
 ## Current Implemented Present
 
@@ -46,7 +47,7 @@ Implemented present:
 
 - standalone file path or in-memory bytes
 
-Planned addition:
+Implemented present:
 
 - `SharedCacheSource`
 
@@ -75,7 +76,7 @@ Implemented present:
 - `damsel-macho` loads one Mach-O into `BinaryImage`
 - slice selection and current dyld/ObjC extraction stay here
 
-Planned role:
+Current role:
 
 - remain implementation owner for projected per-image loading in v1
 - keep cache-aware loading in `damsel-macho` and avoid a new crate in v1
@@ -87,14 +88,14 @@ Implemented present:
 - `DyldMetadata` is attached to `BinaryImage`
 - exports, bindings, stubs, helpers, rebases, binds, and chained-fixup presence are already typed
 
-Planned role:
+Current role:
 
 - preserve the current per-image dyld model
 - reuse it for projected cache images where projection is available
 
 ### 4. Shared-Cache Container Model
 
-Planned addition:
+Implemented present:
 
 - `SharedCacheHeader`
 - `SharedCache`
@@ -112,7 +113,7 @@ Responsibilities:
 
 ### 5. Projected Image Views
 
-Planned addition:
+Implemented present:
 
 - `ProjectedImageView` or `ProjectedBinaryImage` (internal in v1)
 
@@ -128,7 +129,7 @@ Design rule:
 
 ### 6. Address and Symbol Resolution
 
-Planned addition:
+Implemented present:
 
 - `AddressResolver`
 - `SymbolicationResult`
@@ -154,7 +155,7 @@ Implemented present:
 
 - image-oriented commands such as `info`, `sections`, `symbols`, `imports`, `dyld`, `objc`, and `disasm`
 
-Planned addition:
+Implemented present:
 
 - top-level `cache` command family
 

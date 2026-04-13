@@ -1,6 +1,6 @@
 # Apple Runtime Analysis Roadmap
 
-Status: Wave 1 and Wave 2 implemented; Wave 3 planned. Shared-cache-specific items below are current only where explicitly marked as implemented.
+Status: Wave 1, Wave 2, and Wave 3 implemented. Shared-cache-specific items below are current only where explicitly marked as planned.
 
 ## Summary
 
@@ -8,7 +8,7 @@ This roadmap turns `damsel` from a Mach-O-first image analyzer into a stronger A
 
 1. shared-cache inventory/query/symbolication MVP
 2. projected-image workflows and debugger-oriented resolution
-3. deeper shared-cache-native analysis and system-framework spelunking
+3. cache-native linkage exploration and system-framework spelunking
 
 The roadmap preserves:
 
@@ -126,6 +126,8 @@ Status: Implemented.
 
 ## Wave 3: Shared-Cache-Native Analysis and System-Framework Spelunking
 
+Status: Implemented.
+
 ### Themes
 
 - make cache-native exploration first-class
@@ -141,7 +143,7 @@ Status: Implemented.
   - deeper cache-native dyld and linkage analysis
   - cross-image import/export/reexport navigation
 - `damsel-cli`
-  - richer cache-native explorer commands and filters
+  - point-query cache-native explorer commands and filters
 - UI
   - higher-value browsing/navigation surfaces if still aligned with product direction
 
@@ -163,6 +165,12 @@ Status: Implemented.
 - cache-native workflows are useful without immediate projection into standalone-image semantics
 - system-framework spelunking is meaningfully supported
 - symbolication/address-resolution quality is sufficient for low-level Apple runtime research workflows
+- point-query linkage workflows are available for:
+  - `cache image-deps`
+  - `cache dependents`
+  - `cache symbol-providers`
+  - `cache symbol-importers`
+  - `cache reexports`
 
 ## Cross-Wave Rules
 
@@ -181,10 +189,12 @@ Implemented present:
 - image-oriented CLI and UI flows
 - shared-cache inventory/query/symbolication
 - cache-scoped projected-image workflows for sections, symbols, imports, dyld, Objective-C, and disassembly
+- cache-native linkage exploration for dependencies, dependents, providers, importers, and reexports
 
 Planned future:
 
-- deeper shared-cache-native analysis and system-framework spelunking from Wave 3
+- graph/trace-oriented cache workflows layered on top of the current point-query surface
+- any future live-debugger or transport integration after a separate design pass
 
 ## Cross References
 

@@ -3,7 +3,7 @@
 `damsel` is a static Mach-O analysis CLI focused on Apple Silicon binaries.
 
 Current analysis scope:
-- Implemented today: standalone Mach-O parsing plus Wave 1 read-only dyld shared-cache inventory/query/symbolication.
+- Implemented today: standalone Mach-O parsing plus Wave 1/2/3 dyld shared-cache inventory, symbolication, projected-image analysis, and cache-native linkage exploration.
 - Thin and universal Mach-O coverage for `arm64` and `arm64e`.
 - Structured views for binary info, sections, symbols, imports, relocations, slices, dyld metadata, Objective-C metadata, and AArch64 disassembly.
 - Shared-cache coverage is container-first and exposed through a dedicated `cache` command family:
@@ -19,10 +19,17 @@ Current analysis scope:
   - `cache dyld`
   - `cache objc`
   - `cache disasm`
+  - `cache image-deps`
+  - `cache dependents`
+  - `cache symbol-providers`
+  - `cache symbol-importers`
+  - `cache reexports`
 - A compatibility-oriented `doctor` command that reports host/tool readiness and supports CI/operator threshold checks.
 
 Planned next:
-- deeper shared-cache-native analysis and system-framework spelunking
+- richer graph/trace workflows on top of the current point-query cache explorer
+- deeper system-framework spelunking and cross-image navigation
+- any future live-debugger integration remains deferred and will be documented separately
 - Contract and architecture for those next waves are documented in:
   - [docs/specs/dyld-shared-cache-v1.md](./docs/specs/dyld-shared-cache-v1.md)
   - [docs/architecture/apple-runtime-analysis-architecture.md](./docs/architecture/apple-runtime-analysis-architecture.md)
