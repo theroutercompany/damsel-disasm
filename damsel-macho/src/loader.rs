@@ -21,12 +21,28 @@ use object::{
     SymbolFlags, SymbolIndex,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
     let path = path.as_ref().to_path_buf();
+    let source = BinarySource::File(path.clone());
     let bytes_arc: Arc<[u8]> = std::fs::read(&path)?.into();
+    load_from_source(source, path, bytes_arc)
+}
+
+pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<BinaryImage> {
+    let source = BinarySource::Memory { label };
+    let path = source.default_path();
+    let bytes_arc: Arc<[u8]> = bytes.into();
+    load_from_source(source, path, bytes_arc)
+}
+
+fn load_from_source(
+    source: BinarySource,
+    path: PathBuf,
+    bytes_arc: Arc<[u8]>,
+) -> Result<BinaryImage> {
     let bytes: &[u8] = bytes_arc.as_ref();
     let (slice, available_slices) = select_slice(bytes)?;
     let slice_range = checked_range(slice.offset, slice.size, bytes.len() as u64)?;
@@ -79,7 +95,7 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
         .map(map_platform);
 
     Ok(BinaryImage::new(
-        BinarySource::File(path.clone()),
+        source,
         path,
         BinaryFormat::MachO,
         architecture,

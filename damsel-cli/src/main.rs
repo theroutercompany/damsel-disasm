@@ -1,4 +1,5 @@
 mod output;
+mod ui;
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
@@ -460,6 +461,12 @@ enum Command {
         #[arg(long)]
         show_values: bool,
     },
+    Ui {
+        #[arg(long, default_value_t = 4317)]
+        port: u16,
+        #[arg(long)]
+        no_open: bool,
+    },
 }
 
 fn main() {
@@ -487,7 +494,7 @@ fn main() {
 }
 
 #[derive(Debug)]
-struct CliRunError {
+pub(crate) struct CliRunError {
     code: &'static str,
     message: String,
     details: Option<String>,
@@ -507,6 +514,14 @@ impl CliRunError {
             code,
             message: message.into(),
             details: None,
+        }
+    }
+
+    pub(crate) fn to_error_response(&self) -> output::ErrorResponse {
+        output::ErrorResponse {
+            code: self.code,
+            message: self.message.clone(),
+            details: self.details.clone(),
         }
     }
 }
@@ -747,7 +762,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             show_values,
         } => {
             let image = load_image(path)?;
-            let disasm_plan = plan_disassembly(
+            let execution = execute_disassembly(
                 &image,
                 DisasmFlagArgs {
                     symbol,
@@ -759,61 +774,12 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
                     from,
                     to,
                 },
+                !no_annotations,
+                show_values,
             )?;
 
-            let request_limit = disasm_plan.limit.unwrap_or_else(|| {
-                disasm_plan
-                    .max_instructions
-                    .map(DisassemblyLimit::Instructions)
-                    .unwrap_or(DisassemblyLimit::Unlimited)
-            });
-            let request_range = disasm_plan
-                .window_end
-                .map(|end| disasm_plan.window_start..end);
-            let result = disassemble_v2(
-                &image,
-                &DisassemblyRequestV2 {
-                    target: disasm_plan.decode_target,
-                    range: request_range,
-                    limit: request_limit,
-                    options: DisassemblyOptions {
-                        include_annotations: !no_annotations,
-                        include_value_flow: show_values,
-                    },
-                },
-            )
-            .map_err(map_disasm_error)?;
-
-            let instructions = filter_instructions(
-                &result.instructions,
-                disasm_plan.window_start,
-                disasm_plan.window_end,
-            );
-            let bytes_len = match disasm_plan.window_end {
-                Some(end) => end.saturating_sub(disasm_plan.window_start) as usize,
-                None => infer_bytes_len(disasm_plan.window_start, None, &instructions),
-            };
-            let end_address = instructions
-                .last()
-                .map(|instruction| {
-                    instruction
-                        .address
-                        .saturating_add(u64::from(instruction.size))
-                })
-                .unwrap_or(disasm_plan.window_start);
-
             output::print_disassembly(
-                output::DisassemblyView {
-                    target: &result.target,
-                    start_address: disasm_plan.window_start,
-                    bytes_len,
-                    decoded_bytes: result.decoded_bytes,
-                    end_address,
-                    instruction_count: instructions.len(),
-                    stop_reason: format!("{:?}", result.stop_reason),
-                    window_end: disasm_plan.window_end,
-                    instructions: &instructions,
-                },
+                execution.view(),
                 output::DisassemblyRenderOptions {
                     include_annotations: !no_annotations,
                     include_references: show_references,
@@ -821,6 +787,12 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
                 },
                 &output_settings,
             );
+        }
+        Command::Ui { port, no_open } => {
+            ui::run(ui::UiConfig {
+                port,
+                open_browser: !no_open,
+            })?;
         }
     }
 
@@ -831,20 +803,20 @@ fn load_image(path: PathBuf) -> Result<BinaryImage, CliRunError> {
     load(path).map_err(map_macho_error)
 }
 
-#[derive(Debug)]
-struct DisasmFlagArgs {
-    symbol: Option<String>,
-    addr: Option<u64>,
-    section: Option<String>,
-    count: Option<usize>,
-    limit: Option<usize>,
-    bytes: Option<usize>,
-    from: Option<u64>,
-    to: Option<u64>,
+#[derive(Debug, Clone)]
+pub(crate) struct DisasmFlagArgs {
+    pub(crate) symbol: Option<String>,
+    pub(crate) addr: Option<u64>,
+    pub(crate) section: Option<String>,
+    pub(crate) count: Option<usize>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) bytes: Option<usize>,
+    pub(crate) from: Option<u64>,
+    pub(crate) to: Option<u64>,
 }
 
 #[derive(Debug)]
-struct DisasmPlan {
+pub(crate) struct DisasmPlan {
     decode_target: DisassemblyTarget,
     max_instructions: Option<usize>,
     limit: Option<DisassemblyLimit>,
@@ -852,7 +824,39 @@ struct DisasmPlan {
     window_end: Option<u64>,
 }
 
-fn plan_disassembly(image: &BinaryImage, args: DisasmFlagArgs) -> Result<DisasmPlan, CliRunError> {
+#[derive(Debug, Clone)]
+pub(crate) struct DisassemblyExecution {
+    target: String,
+    start_address: u64,
+    bytes_len: usize,
+    decoded_bytes: usize,
+    end_address: u64,
+    instruction_count: usize,
+    stop_reason: String,
+    window_end: Option<u64>,
+    instructions: Vec<DecodedInstruction>,
+}
+
+impl DisassemblyExecution {
+    pub(crate) fn view(&self) -> output::DisassemblyView<'_> {
+        output::DisassemblyView {
+            target: &self.target,
+            start_address: self.start_address,
+            bytes_len: self.bytes_len,
+            decoded_bytes: self.decoded_bytes,
+            end_address: self.end_address,
+            instruction_count: self.instruction_count,
+            stop_reason: self.stop_reason.clone(),
+            window_end: self.window_end,
+            instructions: &self.instructions,
+        }
+    }
+}
+
+pub(crate) fn plan_disassembly(
+    image: &BinaryImage,
+    args: DisasmFlagArgs,
+) -> Result<DisasmPlan, CliRunError> {
     let instruction_limit = normalize_instruction_limit(args.count, args.limit)?;
 
     if args.bytes.is_some() && instruction_limit.is_some() {
@@ -958,7 +962,7 @@ fn plan_disassembly(image: &BinaryImage, args: DisasmFlagArgs) -> Result<DisasmP
     })
 }
 
-fn normalize_instruction_limit(
+pub(crate) fn normalize_instruction_limit(
     count: Option<usize>,
     limit: Option<usize>,
 ) -> Result<Option<usize>, CliRunError> {
@@ -975,11 +979,72 @@ fn normalize_instruction_limit(
     }
 }
 
-fn map_disasm_error(error: damsel_macho::MachoError) -> CliRunError {
+pub(crate) fn map_disasm_error(error: damsel_macho::MachoError) -> CliRunError {
     map_macho_error(error)
 }
 
-fn map_macho_error(error: damsel_macho::MachoError) -> CliRunError {
+pub(crate) fn execute_disassembly(
+    image: &BinaryImage,
+    args: DisasmFlagArgs,
+    include_annotations: bool,
+    include_value_flow: bool,
+) -> Result<DisassemblyExecution, CliRunError> {
+    let disasm_plan = plan_disassembly(image, args)?;
+    let request_limit = disasm_plan.limit.unwrap_or_else(|| {
+        disasm_plan
+            .max_instructions
+            .map(DisassemblyLimit::Instructions)
+            .unwrap_or(DisassemblyLimit::Unlimited)
+    });
+    let request_range = disasm_plan
+        .window_end
+        .map(|end| disasm_plan.window_start..end);
+    let result = disassemble_v2(
+        image,
+        &DisassemblyRequestV2 {
+            target: disasm_plan.decode_target,
+            range: request_range,
+            limit: request_limit,
+            options: DisassemblyOptions {
+                include_annotations,
+                include_value_flow,
+            },
+        },
+    )
+    .map_err(map_disasm_error)?;
+
+    let instructions = filter_instructions(
+        &result.instructions,
+        disasm_plan.window_start,
+        disasm_plan.window_end,
+    );
+    let bytes_len = match disasm_plan.window_end {
+        Some(end) => end.saturating_sub(disasm_plan.window_start) as usize,
+        None => infer_bytes_len(disasm_plan.window_start, None, &instructions),
+    };
+    let end_address = instructions
+        .last()
+        .map(|instruction| {
+            instruction
+                .address
+                .saturating_add(u64::from(instruction.size))
+        })
+        .unwrap_or(disasm_plan.window_start);
+
+    Ok(DisassemblyExecution {
+        target: result.target,
+        start_address: disasm_plan.window_start,
+        bytes_len,
+        decoded_bytes: result.decoded_bytes,
+        end_address,
+        instruction_count: instructions.len(),
+        stop_reason: format!("{:?}", result.stop_reason),
+        window_end: disasm_plan.window_end,
+        instructions,
+    })
+}
+
+pub(crate) fn map_macho_error(error: damsel_macho::MachoError) -> CliRunError {
     match error {
         damsel_macho::MachoError::UnsupportedInputKind(kind) => CliRunError::command(
             "unsupported_input",
@@ -1013,7 +1078,7 @@ fn map_macho_error(error: damsel_macho::MachoError) -> CliRunError {
     }
 }
 
-fn parse_address(value: &str) -> Result<u64, String> {
+pub(crate) fn parse_address(value: &str) -> Result<u64, String> {
     let value = value.trim();
     if let Some(stripped) = value.strip_prefix("0x") {
         u64::from_str_radix(stripped, 16).map_err(|error| error.to_string())
@@ -1064,7 +1129,7 @@ fn sort_relocations(relocations: &mut [Relocation], sort: RelocationSortArg) {
     }
 }
 
-fn filter_instructions(
+pub(crate) fn filter_instructions(
     instructions: &[DecodedInstruction],
     from: u64,
     to: Option<u64>,
@@ -1078,7 +1143,7 @@ fn filter_instructions(
         .collect()
 }
 
-fn infer_bytes_len(
+pub(crate) fn infer_bytes_len(
     start: u64,
     range_end: Option<u64>,
     instructions: &[DecodedInstruction],

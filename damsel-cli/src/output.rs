@@ -273,6 +273,23 @@ pub(crate) fn print_error(error: ErrorResponse, output: &OutputSettings) {
     }
 }
 
+pub(crate) fn render_disassembly_json(
+    view: DisassemblyView<'_>,
+    render_options: DisassemblyRenderOptions,
+    pretty: bool,
+) -> String {
+    DisasmJsonDto {
+        view,
+        render_options,
+    }
+    .to_json_value()
+    .render(pretty)
+}
+
+pub(crate) fn render_error_json(error: &ErrorResponse, pretty: bool) -> String {
+    ErrorJsonDto { error }.to_json_value().render(pretty)
+}
+
 pub(crate) fn print_doctor(
     output: &OutputSettings,
     check: Option<DoctorCheckRequest>,

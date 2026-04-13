@@ -6,12 +6,15 @@ mod objc;
 
 pub use disasm::{disassemble, disassemble_v2};
 pub use errors::{MachoError, Result};
-pub use loader::load;
+pub use loader::{load, load_bytes};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use damsel_core::{Architecture, DisassemblyRequest, DisassemblyTarget};
+    use damsel_core::{
+        Architecture, DisassemblyLimit, DisassemblyOptions, DisassemblyRequest,
+        DisassemblyRequestV2, DisassemblyTarget,
+    };
     use std::path::{Path, PathBuf};
 
     fn fixture_path(name: &str) -> PathBuf {
@@ -89,5 +92,54 @@ mod tests {
     fn truncated_fixture_returns_error_without_panicking() {
         let error = load(fixture_path("malformed-truncated")).expect_err("expected parse failure");
         assert!(matches!(error, MachoError::MalformedFatBinary(_)));
+    }
+
+    #[test]
+    fn load_bytes_matches_file_load_for_inventory() {
+        let path = fixture_path("universal-hello");
+        let bytes = std::fs::read(&path).expect("read universal fixture");
+        let file_image = load(&path).expect("load universal fixture from file");
+        let memory_image = load_bytes(Some("universal-hello".to_string()), bytes)
+            .expect("load universal fixture from bytes");
+
+        assert_eq!(file_image.architecture(), memory_image.architecture());
+        assert_eq!(file_image.entry_point(), memory_image.entry_point());
+        assert_eq!(file_image.selected_slice(), memory_image.selected_slice());
+        assert_eq!(
+            file_image.available_slices(),
+            memory_image.available_slices()
+        );
+        assert_eq!(file_image.sections(), memory_image.sections());
+        assert_eq!(file_image.symbols(), memory_image.symbols());
+        assert_eq!(
+            memory_image.source().memory_label(),
+            Some("universal-hello")
+        );
+    }
+
+    #[test]
+    fn load_bytes_matches_file_load_for_disassembly() {
+        let path = fixture_path("semantic-switch");
+        let bytes = std::fs::read(&path).expect("read semantic-switch fixture");
+        let file_image = load(&path).expect("load semantic-switch fixture from file");
+        let memory_image = load_bytes(Some("semantic-switch".to_string()), bytes)
+            .expect("load semantic-switch fixture from bytes");
+
+        let request = DisassemblyRequestV2 {
+            target: DisassemblyTarget::Section("__text".to_string()),
+            range: None,
+            limit: DisassemblyLimit::Instructions(16),
+            options: DisassemblyOptions {
+                include_annotations: true,
+                include_value_flow: true,
+            },
+        };
+
+        let file_result =
+            disassemble_v2(&file_image, &request).expect("disassemble file-backed image");
+        let memory_result =
+            disassemble_v2(&memory_image, &request).expect("disassemble memory-backed image");
+
+        assert_eq!(file_result, memory_result);
     }
 }

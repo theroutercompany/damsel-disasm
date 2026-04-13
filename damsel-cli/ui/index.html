@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Damsel UI</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Local Analysis Workbench</p>
+          <h1>Damsel Disassembly</h1>
+        </div>
+        <label class="dropzone" id="dropzone">
+          <input id="file-input" type="file" accept=".dylib,.bundle,.o,.a,*/*">
+          <span class="dropzone-title">Drop a Mach-O here</span>
+          <span class="dropzone-copy">or choose a local binary to inspect</span>
+        </label>
+        <div class="file-summary" id="file-summary">
+          <span class="summary-label">No file loaded</span>
+          <span class="summary-value">Upload a binary to begin</span>
+        </div>
+      </header>
+
+      <div class="banner" id="banner" hidden></div>
+
+      <main class="workspace">
+        <aside class="panel controls-panel">
+          <section class="panel-section">
+            <div class="section-head">
+              <p class="section-kicker">Target</p>
+              <h2>Decode controls</h2>
+            </div>
+
+            <div class="mode-switch" id="target-kind">
+              <label><input type="radio" name="target-kind" value="section" checked> Section</label>
+              <label><input type="radio" name="target-kind" value="symbol"> Symbol</label>
+              <label><input type="radio" name="target-kind" value="address"> Address</label>
+            </div>
+
+            <div class="field-group" id="section-group">
+              <label for="section-select">Section</label>
+              <select id="section-select"></select>
+            </div>
+
+            <div class="field-group" id="symbol-group" hidden>
+              <label for="symbol-input">Symbol</label>
+              <input id="symbol-input" list="symbol-suggestions" type="text" placeholder="_main">
+              <datalist id="symbol-suggestions"></datalist>
+            </div>
+
+            <div class="field-group" id="address-group" hidden>
+              <label for="address-input">Address</label>
+              <input id="address-input" type="text" placeholder="0x100000460">
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-head">
+              <p class="section-kicker">Window</p>
+              <h2>Advanced range</h2>
+            </div>
+
+            <div class="field-group">
+              <label for="from-input">From</label>
+              <input id="from-input" type="number" min="0" step="1" placeholder="Optional start address">
+            </div>
+
+            <div class="field-group">
+              <label for="to-input">To</label>
+              <input id="to-input" type="number" min="0" step="1" placeholder="Optional end address">
+            </div>
+
+            <div class="field-row">
+              <div class="field-group">
+                <label for="bytes-input">Bytes</label>
+                <input id="bytes-input" type="number" min="1" step="1" placeholder="Optional">
+              </div>
+              <div class="field-group">
+                <label for="limit-input">Limit</label>
+                <input id="limit-input" type="number" min="1" step="1" value="200">
+              </div>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-head">
+              <p class="section-kicker">Analysis</p>
+              <h2>Output detail</h2>
+            </div>
+
+            <label class="checkline">
+              <input id="annotations-toggle" type="checkbox" checked>
+              <span>Include annotations</span>
+            </label>
+            <label class="checkline">
+              <input id="value-flow-toggle" type="checkbox">
+              <span>Include recovered values</span>
+            </label>
+
+            <button class="primary-button" id="run-button" type="button">Run disassembly</button>
+          </section>
+        </aside>
+
+        <section class="panel listing-panel">
+          <header class="panel-header">
+            <div>
+              <p class="section-kicker">Instructions</p>
+              <h2 id="result-title">Awaiting a binary</h2>
+            </div>
+            <div class="result-meta" id="result-meta"></div>
+          </header>
+
+          <div class="table-shell">
+            <table>
+              <thead>
+                <tr>
+                  <th>Address</th>
+                  <th>Opcode</th>
+                  <th>Instruction</th>
+                </tr>
+              </thead>
+              <tbody id="instruction-rows">
+                <tr class="empty-row">
+                  <td colspan="3">Upload a Mach-O to see decoded instructions.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="panel inspector-panel">
+          <header class="panel-header">
+            <div>
+              <p class="section-kicker">Inspector</p>
+              <h2 id="inspector-title">Nothing selected</h2>
+            </div>
+          </header>
+
+          <div class="inspector-content" id="inspector-content">
+            <p class="inspector-empty">Select an instruction to inspect its references, annotations, and recovered values.</p>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
