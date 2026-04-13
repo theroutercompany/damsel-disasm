@@ -13,7 +13,7 @@ use damsel_core::{
     SharedCacheSource, SliceInfo, SymbolicationMatch,
 };
 use object::macho::DyldCacheHeader;
-use object::read::macho::DyldCache;
+use object::read::macho::{DyldCache, MachHeader, MachOFile64};
 use object::read::{Export, Object, ObjectSegment, ObjectSymbol};
 use object::{Architecture as ObjectArchitecture, Endianness as ObjectEndianness, FileKind};
 use std::cell::RefCell;
@@ -373,6 +373,9 @@ impl SharedCacheSession {
     }
 
     pub fn image_dependencies(&self, selector: &str) -> Result<Vec<CacheImageDependencyRecord>> {
+        if let SharedCacheSessionKind::Real { root_path, .. } = &self.kind {
+            return self.real_image_dependencies(root_path, selector);
+        }
         let image = self.resolve_image(selector)?;
         let relations = self.import_relations()?;
         Ok(relations
@@ -393,6 +396,9 @@ impl SharedCacheSession {
     }
 
     pub fn symbol_providers(&self, symbol_name: &str) -> Result<Vec<CacheSymbolProviderRecord>> {
+        if let SharedCacheSessionKind::Real { root_path, .. } = &self.kind {
+            return self.real_symbol_providers(root_path, symbol_name);
+        }
         let relations = self.export_relations()?;
         let matches = relations
             .providers_by_symbol
@@ -406,6 +412,9 @@ impl SharedCacheSession {
     }
 
     pub fn symbol_importers(&self, symbol_name: &str) -> Result<Vec<CacheSymbolImporterRecord>> {
+        if matches!(&self.kind, SharedCacheSessionKind::Real { .. }) {
+            return self.real_symbol_importers(symbol_name);
+        }
         let import_relations = self.import_relations()?;
         let export_relations = self.export_relations()?;
         let edges = import_relations
@@ -456,6 +465,9 @@ impl SharedCacheSession {
     }
 
     pub fn reexports(&self, selector: &str) -> Result<Vec<CacheReexportRecord>> {
+        if matches!(&self.kind, SharedCacheSessionKind::Real { .. }) {
+            return self.real_reexports(selector);
+        }
         let image = self.resolve_image(selector)?;
         let relations = self.export_relations()?;
         Ok(relations
@@ -526,6 +538,10 @@ impl SharedCacheSession {
     }
 
     fn build_import_relations(&self) -> Result<CacheImportRelations> {
+        if let SharedCacheSessionKind::Real { root_path, .. } = &self.kind {
+            return self.build_real_import_relations(root_path);
+        }
+
         let mut dependencies_by_image = BTreeMap::new();
         let mut dependents_acc = BTreeMap::<
             CacheImageId,
@@ -670,6 +686,306 @@ impl SharedCacheSession {
         })
     }
 
+    fn build_real_import_relations(&self, root_path: &Path) -> Result<CacheImportRelations> {
+        let mut dependencies_by_image = BTreeMap::new();
+        let mut dependents_acc = BTreeMap::<
+            CacheImageId,
+            BTreeMap<CacheImageId, (ProjectedImageProvenance, usize)>,
+        >::new();
+        let mut importers_by_symbol = BTreeMap::<String, Vec<ImportEdge>>::new();
+
+        with_real_cache(root_path, |cache| {
+            for cache_image in self.cache.images() {
+                let dyld_image = dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
+                let object_file = dyld_image.parse_object().map_err(|error: object::Error| {
+                    MachoError::MalformedSharedCache(error.to_string())
+                })?;
+                let source = projected_image_provenance(
+                    &self.cache,
+                    cache_image,
+                    self.cache.header().has_local_symbols,
+                );
+                let mut dependency_counts = BTreeMap::<String, usize>::new();
+                let mut seen_edges = BTreeMap::<String, ()>::new();
+
+                for import in object_file.imports().map_err(|error: object::Error| {
+                    MachoError::MalformedSharedCache(error.to_string())
+                })? {
+                    let dylib_name = String::from_utf8_lossy(import.library()).into_owned();
+                    let symbol_name = String::from_utf8_lossy(import.name()).into_owned();
+                    *dependency_counts.entry(dylib_name.clone()).or_insert(0) += 1;
+                    let edge = ImportEdge {
+                        importer_image: source.clone(),
+                        symbol_name: symbol_name.clone(),
+                        dylib_name: dylib_name.clone(),
+                        import_binding_kind: None,
+                        import_binding_source: None,
+                    };
+                    let dedup_key = format!(
+                        "{}|{}|{}",
+                        edge.importer_image.image_id, edge.dylib_name, edge.symbol_name
+                    );
+                    if seen_edges.insert(dedup_key, ()).is_none() {
+                        importers_by_symbol
+                            .entry(symbol_name)
+                            .or_default()
+                            .push(edge);
+                    }
+                }
+
+                let mut dependencies = dependency_counts
+                    .into_iter()
+                    .map(|(target_dylib_install_name, reference_count)| {
+                        let target_image = self
+                            .cache
+                            .image_by_install_name(&target_dylib_install_name)
+                            .map(|image| {
+                                projected_image_provenance(
+                                    &self.cache,
+                                    image,
+                                    self.cache.header().has_local_symbols,
+                                )
+                            });
+                        CacheImageDependencyRecord {
+                            source_image: source.clone(),
+                            target_dylib_install_name,
+                            within_cache: target_image.is_some(),
+                            target_image,
+                            reference_count,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                dependencies.sort_by_key(|record| record.target_dylib_install_name.clone());
+
+                for dependency in &dependencies {
+                    if let Some(target_image) = &dependency.target_image {
+                        dependents_acc
+                            .entry(target_image.image_id.clone())
+                            .or_default()
+                            .entry(source.image_id.clone())
+                            .and_modify(|(_, count)| *count += dependency.reference_count)
+                            .or_insert((source.clone(), dependency.reference_count));
+                    }
+                }
+
+                dependencies_by_image.insert(source.image_id.clone(), dependencies);
+            }
+            Ok(())
+        })?;
+
+        let mut dependents_by_image = BTreeMap::new();
+        for (target_id, dependents) in dependents_acc {
+            let mut records = dependents
+                .into_values()
+                .map(|(dependent_image, dependency_count)| CacheDependentRecord {
+                    dependent_image,
+                    dependency_count,
+                })
+                .collect::<Vec<_>>();
+            records.sort_by_key(|record| record.dependent_image.install_name.clone());
+            dependents_by_image.insert(target_id, records);
+        }
+        for edges in importers_by_symbol.values_mut() {
+            edges.sort_by_key(|edge| {
+                (
+                    edge.importer_image.install_name.clone(),
+                    edge.dylib_name.clone(),
+                    edge.symbol_name.clone(),
+                )
+            });
+            edges.dedup_by(|left, right| {
+                left.importer_image.image_id == right.importer_image.image_id
+                    && left.dylib_name == right.dylib_name
+                    && left.symbol_name == right.symbol_name
+            });
+        }
+
+        Ok(CacheImportRelations {
+            dependencies_by_image,
+            dependents_by_image,
+            importers_by_symbol,
+        })
+    }
+
+    fn real_image_dependencies(
+        &self,
+        root_path: &Path,
+        selector: &str,
+    ) -> Result<Vec<CacheImageDependencyRecord>> {
+        let cache_image = self.resolve_image(selector)?;
+        with_real_cache(root_path, |cache| {
+            let dyld_image = dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
+            let object_file = dyld_image.parse_object().map_err(|error: object::Error| {
+                MachoError::MalformedSharedCache(error.to_string())
+            })?;
+            let mut dependency_counts = BTreeMap::<String, usize>::new();
+            for import in object_file.imports().map_err(|error: object::Error| {
+                MachoError::MalformedSharedCache(error.to_string())
+            })? {
+                let dylib_name = String::from_utf8_lossy(import.library()).into_owned();
+                *dependency_counts.entry(dylib_name).or_insert(0) += 1;
+            }
+            let source_image = projected_image_provenance(
+                &self.cache,
+                cache_image,
+                self.cache.header().has_local_symbols,
+            );
+            let mut dependencies = dependency_counts
+                .into_iter()
+                .map(|(target_dylib_install_name, reference_count)| {
+                    let target_image = self
+                        .cache
+                        .image_by_install_name(&target_dylib_install_name)
+                        .map(|image| {
+                            projected_image_provenance(
+                                &self.cache,
+                                image,
+                                self.cache.header().has_local_symbols,
+                            )
+                        });
+                    CacheImageDependencyRecord {
+                        source_image: source_image.clone(),
+                        target_dylib_install_name,
+                        target_image: target_image.clone(),
+                        within_cache: target_image.is_some(),
+                        reference_count,
+                    }
+                })
+                .collect::<Vec<_>>();
+            dependencies.sort_by_key(|record| record.target_dylib_install_name.clone());
+            Ok(dependencies)
+        })
+    }
+
+    fn real_symbol_providers(
+        &self,
+        root_path: &Path,
+        symbol_name: &str,
+    ) -> Result<Vec<CacheSymbolProviderRecord>> {
+        let mut providers = Vec::new();
+        with_real_cache(root_path, |cache| {
+            for cache_image in self.cache.images() {
+                let dyld_image = dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
+                let object_file = dyld_image.parse_object().map_err(|error: object::Error| {
+                    MachoError::MalformedSharedCache(error.to_string())
+                })?;
+                for export in object_file.exports().map_err(|error: object::Error| {
+                    MachoError::MalformedSharedCache(error.to_string())
+                })? {
+                    if String::from_utf8_lossy(export.name()).as_ref() != symbol_name {
+                        continue;
+                    }
+                    providers.push(CacheSymbolProviderRecord {
+                        provider_image: projected_image_provenance(
+                            &self.cache,
+                            cache_image,
+                            self.cache.header().has_local_symbols,
+                        ),
+                        symbol_name: symbol_name.to_string(),
+                        provider_kind: CacheSymbolProviderKind::Export,
+                        target_dylib: None,
+                        target_symbol: None,
+                        resolved_target_image: None,
+                    });
+                }
+            }
+            Ok(())
+        })?;
+        providers.sort_by_key(|record| record.provider_image.install_name.clone());
+        providers.dedup_by(|left, right| {
+            left.provider_image.image_id == right.provider_image.image_id
+                && left.provider_kind == right.provider_kind
+                && left.symbol_name == right.symbol_name
+        });
+        if providers.is_empty() {
+            return Err(MachoError::SymbolNotFound(symbol_name.to_string()));
+        }
+        Ok(providers)
+    }
+
+    fn real_symbol_importers(&self, symbol_name: &str) -> Result<Vec<CacheSymbolImporterRecord>> {
+        let import_relations = self.import_relations()?;
+        let edges = import_relations
+            .importers_by_symbol
+            .get(symbol_name)
+            .cloned()
+            .unwrap_or_default();
+        if edges.is_empty() {
+            return Err(MachoError::SymbolNotFound(symbol_name.to_string()));
+        }
+        let providers = self.symbol_providers(symbol_name).unwrap_or_default();
+        let mut records = edges
+            .into_iter()
+            .map(|edge| CacheSymbolImporterRecord {
+                importer_image: edge.importer_image.clone(),
+                symbol_name: edge.symbol_name.clone(),
+                dylib_name: edge.dylib_name.clone(),
+                import_binding_kind: edge.import_binding_kind,
+                import_binding_source: edge.import_binding_source,
+                resolved_provider_image: uniquely_resolved_provider_image(
+                    &providers,
+                    &edge.dylib_name,
+                ),
+            })
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| {
+            (
+                record.importer_image.install_name.clone(),
+                record.dylib_name.clone(),
+                record.symbol_name.clone(),
+            )
+        });
+        records.dedup_by(|left, right| {
+            left.importer_image.image_id == right.importer_image.image_id
+                && left.symbol_name == right.symbol_name
+                && left.dylib_name == right.dylib_name
+        });
+        Ok(records)
+    }
+
+    fn real_reexports(&self, selector: &str) -> Result<Vec<CacheReexportRecord>> {
+        let projected = self.project_image(selector)?;
+        let mut reexports = projected
+            .image
+            .dyld()
+            .exported_symbols
+            .iter()
+            .filter_map(|export| {
+                let (target_dylib, target_symbol) = export.reexport_target.as_ref()?;
+                let resolved_target_image = self
+                    .cache
+                    .image_by_install_name(target_dylib)
+                    .map(|image| {
+                        projected_image_provenance(
+                            &self.cache,
+                            image,
+                            self.cache.header().has_local_symbols,
+                        )
+                    });
+                Some(CacheReexportRecord {
+                    source_image: projected.provenance.clone(),
+                    export_name: export.name.clone(),
+                    target_dylib: target_dylib.clone(),
+                    target_symbol: target_symbol.clone(),
+                    resolved_target_image,
+                })
+            })
+            .collect::<Vec<_>>();
+        reexports.sort_by_key(|record| {
+            (
+                record.export_name.clone(),
+                record.target_dylib.clone(),
+                record.target_symbol.clone(),
+            )
+        });
+        reexports.dedup_by(|left, right| {
+            left.export_name == right.export_name
+                && left.target_dylib == right.target_dylib
+                && left.target_symbol == right.target_symbol
+        });
+        Ok(reexports)
+    }
+
     fn build_export_relations(&self) -> Result<CacheExportRelations> {
         let mut providers_by_symbol = BTreeMap::<String, Vec<CacheSymbolProviderRecord>>::new();
         let mut reexports_by_image = BTreeMap::<CacheImageId, Vec<CacheReexportRecord>>::new();
@@ -809,10 +1125,18 @@ impl SharedCacheSession {
     ) -> Result<ProjectedBinaryImage> {
         with_real_cache(root_path, |cache| {
             let dyld_image = dyld_cache_image_by_index(cache, image.image_index as usize)?;
-            let object_file = dyld_image.parse_object().map_err(|error: object::Error| {
-                MachoError::MalformedSharedCache(error.to_string())
-            })?;
-            let reconstructed = reconstruct_projected_image_bytes(&object_file)?;
+            let (image_data, header_offset) = dyld_image
+                .image_data_and_offset()
+                .map_err(|error: object::Error| {
+                    MachoError::MalformedSharedCache(error.to_string())
+                })?;
+            let object_file =
+                MachOFile64::<ObjectEndianness, &[u8]>::parse_dyld_cache_image(&dyld_image)
+                    .map_err(|error: object::Error| {
+                        MachoError::MalformedSharedCache(error.to_string())
+                    })?;
+            let reconstructed =
+                reconstruct_projected_image_bytes(&object_file, image_data, header_offset)?;
             let binary_image = load_bytes(
                 Some(format!("projected-cache:{}", image.install_name)),
                 reconstructed,
@@ -908,12 +1232,10 @@ fn discover_real_cache_set(input_path: &Path, root_candidate: &Path) -> Result<R
         let member_bytes = read_member_bytes(&canonical_member_path)?;
         ensure_real_dyld_cache_kind(member_bytes.as_ref())?;
         let member_header = parse_real_member_header(member_bytes.as_ref())?;
-        if member_header.uuid != root_header.uuid && suffix != ".symbols" {
-            return Err(MachoError::IncompleteSharedCacheSet(format!(
-                "cache member UUID mismatch: {}",
-                canonical_member_path.display()
-            )));
-        }
+        // Modern Apple cache sets can legitimately carry member-level UUIDs that differ from the
+        // root while still forming a parseable cache set. We only do cheap file-kind/arch checks
+        // here and let `DyldCache::parse` validate whether the discovered member set is actually
+        // complete and internally compatible.
         let role = if suffix == ".symbols" {
             SharedCacheMemberRole::Symbols
         } else {
@@ -1698,12 +2020,18 @@ fn with_real_cache<T>(
     f(&cache)
 }
 
-fn reconstruct_projected_image_bytes<'data, T>(file: &T) -> Result<Vec<u8>>
-where
-    T: Object<'data>,
-{
+fn reconstruct_projected_image_bytes<'data>(
+    file: &MachOFile64<'data, ObjectEndianness, &'data [u8]>,
+    image_data: &'data [u8],
+    header_offset: u64,
+) -> Result<Vec<u8>> {
     let mut segments = Vec::<(u64, Vec<u8>)>::new();
     let mut max_end = 0u64;
+    let header_size = std::mem::size_of_val(file.macho_header()) as u64;
+    let load_commands_size = u64::from(file.macho_header().sizeofcmds(file.endian()));
+    let header_span = header_size.checked_add(load_commands_size).ok_or_else(|| {
+        MachoError::MalformedSharedCache("projected image header size overflow".to_string())
+    })?;
 
     for segment in file.segments() {
         let (file_offset, file_size) = segment.file_range();
@@ -1730,7 +2058,21 @@ where
         ));
     }
 
+    max_end = max_end.max(header_span);
     let mut bytes = vec![0u8; max_end as usize];
+    let header_start = usize::try_from(header_offset).map_err(|_| {
+        MachoError::MalformedSharedCache("projected image header offset overflow".to_string())
+    })?;
+    let header_len = usize::try_from(header_span).map_err(|_| {
+        MachoError::MalformedSharedCache("projected image header span overflow".to_string())
+    })?;
+    let header_end = header_start.checked_add(header_len).ok_or_else(|| {
+        MachoError::MalformedSharedCache("projected image header range overflow".to_string())
+    })?;
+    let header_bytes = image_data.get(header_start..header_end).ok_or_else(|| {
+        MachoError::MalformedSharedCache("projected image header range out of bounds".to_string())
+    })?;
+    bytes[..header_len].copy_from_slice(header_bytes);
     for (offset, data) in segments {
         let start = offset as usize;
         let end = start + data.len();

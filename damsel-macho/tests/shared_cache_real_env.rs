@@ -45,4 +45,28 @@ fn real_shared_cache_env_projected_image_smoke() {
     .expect("disassemble projected real cache image");
 
     assert!(!result.instructions.is_empty());
+
+    let exports = session
+        .exports_for_image(first_image.id.as_str())
+        .expect("exports for projected real cache image");
+    let export = exports
+        .iter()
+        .find(|record| record.cache_vmaddr.is_some())
+        .expect("at least one export with an address");
+    let lookup = session
+        .lookup_cache_vmaddr(export.cache_vmaddr.expect("export address"))
+        .expect("lookup exported address");
+    match lookup {
+        damsel_core::CacheLookupResult::ExactSymbol { .. }
+        | damsel_core::CacheLookupResult::NearestSymbol { .. }
+        | damsel_core::CacheLookupResult::MappingOnly { .. } => {}
+    }
+
+    let _dependencies = session
+        .image_dependencies(first_image.id.as_str())
+        .expect("targeted image dependency query");
+
+    let _ = session
+        .reexports(first_image.id.as_str())
+        .expect("targeted reexports query");
 }
