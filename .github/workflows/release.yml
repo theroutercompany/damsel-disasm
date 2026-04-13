@@ -125,6 +125,7 @@ jobs:
           cargo run -q -p damsel-cli -- cache --help >/dev/null
           cargo run -q -p damsel-cli -- --format json cache info fixtures/shared-cache-corpus/valid-single-arm64.cache > /tmp/cache-info.json
           cargo run -q -p damsel-cli -- cache sections fixtures/shared-cache-corpus/valid-single-arm64.cache /usr/lib/libobjc.A.dylib --exec >/dev/null
+          cargo run -q -p damsel-cli -- cache image-deps fixtures/shared-cache-corpus/internal-linkage-arm64.cache /usr/lib/libdispatch.dylib >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -165,6 +166,7 @@ jobs:
           ./target/release/damsel-cli cache --help >/dev/null
           ./target/release/damsel-cli --format json cache info fixtures/shared-cache-corpus/valid-single-arm64.cache > /tmp/cache-info-built.json
           ./target/release/damsel-cli cache sections fixtures/shared-cache-corpus/valid-single-arm64.cache /usr/lib/libobjc.A.dylib --exec >/dev/null
+          ./target/release/damsel-cli cache image-deps fixtures/shared-cache-corpus/internal-linkage-arm64.cache /usr/lib/libdispatch.dylib >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path
