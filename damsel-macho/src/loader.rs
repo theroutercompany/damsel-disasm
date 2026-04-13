@@ -31,8 +31,24 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<BinaryImage> {
     let (slice, available_slices) = select_slice(bytes)?;
     let slice_range = checked_range(slice.offset, slice.size, bytes.len() as u64)?;
     let slice_bytes = &bytes[slice_range];
-    let object_file = object::File::parse(slice_bytes)?;
-    let goblin_mach = match Mach::parse(slice_bytes)? {
+    let object_file = object::File::parse(slice_bytes).map_err(|error| {
+        if slice.is_universal {
+            MachoError::MalformedFatBinary(format!(
+                "selected arm64 slice object parse error: {error}"
+            ))
+        } else {
+            MachoError::MalformedFatBinary(format!("thin Mach-O object parse error: {error}"))
+        }
+    })?;
+    let goblin_mach = match Mach::parse(slice_bytes).map_err(|error| {
+        if slice.is_universal {
+            MachoError::MalformedFatBinary(format!(
+                "selected arm64 slice mach-o parse error: {error}"
+            ))
+        } else {
+            MachoError::MalformedFatBinary(format!("thin Mach-O parse error: {error}"))
+        }
+    })? {
         Mach::Binary(binary) => binary,
         Mach::Fat(_) => {
             return Err(MachoError::UnsupportedFileKind(
@@ -96,11 +112,17 @@ fn select_slice(bytes: &[u8]) -> Result<(SliceInfo, Vec<SliceDescriptor>)> {
                 "fat header parse error: {error}"
             )));
         }
-        Err(error) => return Err(MachoError::Object(error)),
+        Err(error) => {
+            return Err(MachoError::MalformedFatBinary(format!(
+                "thin Mach-O header parse error: {error}"
+            )));
+        }
     };
     match kind {
         object::FileKind::MachO64 => {
-            let mach = match Mach::parse(bytes)? {
+            let mach = match Mach::parse(bytes).map_err(|error| {
+                MachoError::MalformedFatBinary(format!("thin Mach-O parse error: {error}"))
+            })? {
                 Mach::Binary(binary) => binary,
                 Mach::Fat(_) => {
                     return Err(MachoError::UnsupportedFileKind(
@@ -126,7 +148,7 @@ fn select_slice(bytes: &[u8]) -> Result<(SliceInfo, Vec<SliceDescriptor>)> {
             let fat = MachOFatFile32::parse(bytes).map_err(|error| {
                 MachoError::MalformedFatBinary(format!("fat32 header/table parse error: {error}"))
             })?;
-            let slice = choose_fat_arch(fat.arches(), bytes.len() as u64)?;
+            let slice = choose_fat_arch(fat.arches(), bytes)?;
             let available_slices =
                 collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
             Ok((slice, available_slices))
@@ -135,7 +157,7 @@ fn select_slice(bytes: &[u8]) -> Result<(SliceInfo, Vec<SliceDescriptor>)> {
             let fat = MachOFatFile64::parse(bytes).map_err(|error| {
                 MachoError::MalformedFatBinary(format!("fat64 header/table parse error: {error}"))
             })?;
-            let slice = choose_fat_arch(fat.arches(), bytes.len() as u64)?;
+            let slice = choose_fat_arch(fat.arches(), bytes)?;
             let available_slices =
                 collect_fat_slice_descriptors(fat.arches(), bytes.len() as u64, &slice);
             Ok((slice, available_slices))
@@ -174,7 +196,8 @@ fn has_fat_magic(bytes: &[u8]) -> bool {
     )
 }
 
-fn choose_fat_arch<Fat: FatArch>(arches: &[Fat], file_len: u64) -> Result<SliceInfo> {
+fn choose_fat_arch<Fat: FatArch>(arches: &[Fat], bytes: &[u8]) -> Result<SliceInfo> {
+    let file_len = bytes.len() as u64;
     if arches.is_empty() {
         return Err(MachoError::MalformedFatBinary(
             "fat binary declares zero architecture entries".to_string(),
@@ -202,14 +225,29 @@ fn choose_fat_arch<Fat: FatArch>(arches: &[Fat], file_len: u64) -> Result<SliceI
                     is_universal: true,
                     cpu_subtype: subtype,
                 };
-                let should_replace = match &best_valid {
-                    None => true,
-                    Some((best_rank, best_index, _)) => {
-                        rank > *best_rank || (rank == *best_rank && index < *best_index)
+                match validate_arm64_slice_parseability(bytes, &slice) {
+                    Ok(()) => {
+                        let should_replace = match &best_valid {
+                            None => true,
+                            Some((best_rank, best_index, _)) => {
+                                rank > *best_rank || (rank == *best_rank && index < *best_index)
+                            }
+                        };
+                        if should_replace {
+                            best_valid = Some((rank, index, slice));
+                        }
                     }
-                };
-                if should_replace {
-                    best_valid = Some((rank, index, slice));
+                    Err(error) => {
+                        let should_replace = match &best_invalid {
+                            None => true,
+                            Some((best_rank, best_index, _)) => {
+                                rank > *best_rank || (rank == *best_rank && index < *best_index)
+                            }
+                        };
+                        if should_replace {
+                            best_invalid = Some((rank, index, error));
+                        }
+                    }
                 }
             }
             Err(error) => {
@@ -239,6 +277,37 @@ fn choose_fat_arch<Fat: FatArch>(arches: &[Fat], file_len: u64) -> Result<SliceI
     Err(MachoError::MalformedFatBinary(
         "universal binary contains no usable arm64/arm64e slices".to_string(),
     ))
+}
+
+fn validate_arm64_slice_parseability(bytes: &[u8], slice: &SliceInfo) -> Result<()> {
+    let slice_range = checked_range(slice.offset, slice.size, bytes.len() as u64)?;
+    let slice_bytes = &bytes[slice_range];
+    let kind = object::FileKind::parse(slice_bytes).map_err(|error| {
+        MachoError::MalformedFatBinary(format!("arm64 slice parse error: {error}"))
+    })?;
+    if kind != object::FileKind::MachO64 {
+        return Err(MachoError::MalformedFatBinary(format!(
+            "arm64 slice has unexpected file kind: {kind:?}"
+        )));
+    }
+    let mach = Mach::parse(slice_bytes).map_err(|error| {
+        MachoError::MalformedFatBinary(format!("arm64 slice parse error: {error}"))
+    })?;
+    let header = match mach {
+        Mach::Binary(binary) => binary.header,
+        Mach::Fat(_) => {
+            return Err(MachoError::MalformedFatBinary(
+                "arm64 slice unexpectedly parsed as universal".to_string(),
+            ));
+        }
+    };
+    map_selected_architecture(header.cputype, header.cpusubtype)
+        .map(|_| ())
+        .map_err(|error| {
+            MachoError::MalformedFatBinary(format!(
+                "arm64 slice has unsupported architecture: {error}"
+            ))
+        })
 }
 
 fn validate_fat_slice_range(offset: u64, size: u64, file_len: u64) -> Result<()> {
@@ -496,7 +565,9 @@ fn collect_imports<'a>(
     let dylib_fallback = macho.libs.iter().skip(1).next().copied().unwrap_or("");
     let mut imports = BTreeMap::<(String, String, Option<u64>), Import>::new();
 
-    for import in macho.imports()? {
+    for import in macho.imports().map_err(|error| {
+        MachoError::MalformedDyldPayload(format!("import table parse error: {error}"))
+    })? {
         let key = (
             import.dylib.to_string(),
             import.name.to_string(),
@@ -516,7 +587,9 @@ fn collect_imports<'a>(
         );
     }
 
-    for import in file.imports()? {
+    for import in file.imports().map_err(|error| {
+        MachoError::MalformedDyldPayload(format!("import table parse error: {error}"))
+    })? {
         let dylib = if import.library().is_empty() {
             dylib_fallback.to_string()
         } else {
@@ -650,7 +723,10 @@ fn augment_dysymtab_bindings_and_stubs(
         },
     );
     let lazy_bindings_by_sequence = macho
-        .imports()?
+        .imports()
+        .map_err(|error| {
+            MachoError::MalformedDyldPayload(format!("import table parse error: {error}"))
+        })?
         .into_iter()
         .filter(|import| import.is_lazy)
         .map(|import| {

@@ -7,6 +7,7 @@ BIN="$ROOT/bin"
 HOST_OS="$(uname -s 2>/dev/null || echo unknown)"
 HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
 HASH_TOOL=""
+HASH_TOOL_PATH=""
 SDKROOT=""
 CLANG=""
 STRIP=""
@@ -88,26 +89,53 @@ EOF
 sha256_file() {
   file="$1"
   if [ -z "$HASH_TOOL" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      HASH_TOOL="sha256sum"
-    elif command -v shasum >/dev/null 2>&1; then
-      HASH_TOOL="shasum"
-    elif command -v openssl >/dev/null 2>&1; then
-      HASH_TOOL="openssl"
-    else
-      die "missing hash tool for drift checks (need one of: sha256sum, shasum, openssl)"
+    for candidate in sha256sum shasum openssl; do
+      if hash_tool_usable "$candidate"; then
+        HASH_TOOL="$candidate"
+        HASH_TOOL_PATH="$(command -v "$candidate")"
+        break
+      fi
+    done
+    if [ -z "$HASH_TOOL" ]; then
+      die "missing usable hash tool for drift checks (need one of: sha256sum, shasum, openssl)"
     fi
   fi
 
   if [ "$HASH_TOOL" = "sha256sum" ]; then
-    sha256sum "$file" | awk '{print $1}'
+    "$HASH_TOOL_PATH" "$file" | awk '{print $1}'
   elif [ "$HASH_TOOL" = "shasum" ]; then
-    shasum -a 256 "$file" | awk '{print $1}'
+    "$HASH_TOOL_PATH" -a 256 "$file" | awk '{print $1}'
   elif [ "$HASH_TOOL" = "openssl" ]; then
-    openssl dgst -sha256 "$file" | awk '{print $NF}'
+    "$HASH_TOOL_PATH" dgst -sha256 "$file" | awk '{print $NF}'
   else
     die "unknown hash tool selection: $HASH_TOOL"
   fi
+}
+
+hash_tool_usable() {
+  tool="$1"
+  if ! tool_path="$(command -v "$tool" 2>/dev/null)"; then
+    return 1
+  fi
+  if [ ! -x "$tool_path" ]; then
+    return 1
+  fi
+
+  null_path="/dev/null"
+  case "$tool" in
+    sha256sum)
+      "$tool_path" "$null_path" >/dev/null 2>&1
+      ;;
+    shasum)
+      "$tool_path" -a 256 "$null_path" >/dev/null 2>&1
+      ;;
+    openssl)
+      "$tool_path" dgst -sha256 "$null_path" >/dev/null 2>&1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 check_fixtures() {

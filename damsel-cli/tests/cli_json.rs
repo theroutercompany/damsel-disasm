@@ -1,7 +1,13 @@
 use assert_cmd::Command;
+use damsel_core::{
+    CompatibilityCapability, CompatibilityPolicy, CompatibilityToolRequirement,
+    CompatibilityVerificationScenario,
+};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -64,6 +70,26 @@ fn run_json_output(args: &[&str]) -> Output {
         .expect("command runs")
 }
 
+fn run_json_output_with_env(args: &[&str], envs: &[(&str, &str)]) -> Output {
+    let mut command = Command::cargo_bin("damsel-cli").expect("binary exists");
+    command.args(args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command.output().expect("command runs")
+}
+
+fn run_json_ok_with_env(args: &[&str], envs: &[(&str, &str)]) -> String {
+    let output = run_json_output_with_env(args, envs);
+    assert!(
+        output.status.success(),
+        "stdout={:?} stderr={:?}",
+        output.stdout,
+        output.stderr
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
 fn parse_json(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid json: {error}\n{text}"))
 }
@@ -104,6 +130,46 @@ fn assert_exact_object_keys(value: &Value, expected: &[&str]) {
     assert_eq!(sorted_object_keys(value), expected_keys);
 }
 
+fn assert_raw_key_order(raw: &str, keys: &[&str]) {
+    let mut offset = 0usize;
+    for key in keys {
+        let needle = format!("\"{key}\":");
+        let found = raw[offset..]
+            .find(&needle)
+            .unwrap_or_else(|| panic!("missing key token in output: {needle}"));
+        offset += found + needle.len();
+    }
+}
+
+fn raw_object_source<'a>(raw: &'a str, key: &str) -> &'a str {
+    let needle = format!("\"{key}\":");
+    let key_offset = raw
+        .find(&needle)
+        .unwrap_or_else(|| panic!("missing object key token in output: {needle}"));
+    let object_start = raw[key_offset + needle.len()..]
+        .find('{')
+        .map(|offset| key_offset + needle.len() + offset)
+        .unwrap_or_else(|| panic!("missing object body for key: {key}"));
+    let mut depth = 0usize;
+    for (relative_idx, ch) in raw[object_start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &raw[object_start..=object_start + relative_idx];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unterminated object body for key: {key}");
+}
+
+fn assert_raw_object_key_order(raw: &str, key: &str, keys: &[&str]) {
+    assert_raw_key_order(raw_object_source(raw, key), keys);
+}
+
 fn issue_set(value: &Value) -> BTreeSet<(String, String)> {
     value
         .as_array()
@@ -121,9 +187,300 @@ fn issue_set(value: &Value) -> BTreeSet<(String, String)> {
         .collect()
 }
 
+fn reason_code_set(value: &Value) -> BTreeSet<String> {
+    value
+        .as_array()
+        .expect("reasons array")
+        .iter()
+        .map(|reason| reason["code"].as_str().expect("reason code").to_string())
+        .collect()
+}
+
+#[cfg(unix)]
+fn unique_temp_dir(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let counter = TEMP_INPUT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "damsel-cli-{prefix}-{}-{nanos}-{counter}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&path).expect("create temp dir");
+    path
+}
+
+#[cfg(unix)]
+fn write_exec_script(path: &Path, body: &str) {
+    fs::write(path, body).expect("write script");
+    let mut perms = fs::metadata(path).expect("script metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod script");
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct FakeDoctorHarness {
+    root: PathBuf,
+}
+
+#[cfg(unix)]
+impl FakeDoctorHarness {
+    fn all_usable() -> Self {
+        Self::new(HarnessProfile {
+            xcrun_success: true,
+            clang_success: true,
+            strip_success: true,
+            sdk_probe_success: true,
+            sha256sum_success: true,
+            shasum_success: true,
+            openssl_success: true,
+            python3_success: true,
+            nm_success: true,
+        })
+    }
+
+    fn broken_hash_and_sdk() -> Self {
+        Self::new(HarnessProfile {
+            xcrun_success: true,
+            clang_success: true,
+            strip_success: true,
+            sdk_probe_success: false,
+            sha256sum_success: false,
+            shasum_success: false,
+            openssl_success: false,
+            python3_success: true,
+            nm_success: true,
+        })
+    }
+
+    fn python_unusable() -> Self {
+        Self::new(HarnessProfile {
+            xcrun_success: true,
+            clang_success: true,
+            strip_success: true,
+            sdk_probe_success: true,
+            sha256sum_success: true,
+            shasum_success: false,
+            openssl_success: false,
+            python3_success: false,
+            nm_success: true,
+        })
+    }
+
+    fn from_verification_scenario(scenario: &CompatibilityVerificationScenario) -> Self {
+        let profile = HarnessProfile {
+            xcrun_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Xcrun),
+            clang_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Clang),
+            strip_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Strip),
+            sdk_probe_success: scenario_tool_usable(
+                scenario,
+                CompatibilityToolRequirement::XcrunSdkPathProbe,
+            ),
+            sha256sum_success: scenario_tool_usable(
+                scenario,
+                CompatibilityToolRequirement::Sha256sum,
+            ),
+            shasum_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Shasum),
+            openssl_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Openssl),
+            python3_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Python3),
+            nm_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Nm),
+        };
+        Self::new(profile)
+    }
+
+    fn new(profile: HarnessProfile) -> Self {
+        let root = unique_temp_dir("doctor-harness");
+        let sdk_dir = root.join("sdk");
+        fs::create_dir_all(&sdk_dir).expect("create fake sdk");
+
+        let xcrun_script = format!(
+            "#!/bin/sh\ncase \"$1\" in\n  --version)\n    if [ \"{xcrun_success}\" = \"1\" ]; then exit 0; fi\n    exit 1 ;;\n  --find)\n    if [ \"{xcrun_success}\" != \"1\" ]; then exit 1; fi\n    case \"$2\" in\n      clang)\n        if [ \"{clang_success}\" = \"1\" ]; then echo \"{root}/clang\"; exit 0; fi\n        exit 1 ;;\n      strip)\n        if [ \"{strip_success}\" = \"1\" ]; then echo \"{root}/strip\"; exit 0; fi\n        exit 1 ;;\n      *) exit 1 ;;\n    esac ;;\n  --show-sdk-path)\n    if [ \"{xcrun_success}\" = \"1\" ] && [ \"{sdk_probe_success}\" = \"1\" ]; then\n      echo \"{sdk}\"; exit 0\n    fi\n    exit 1 ;;\n  *) exit 1 ;;\nesac\n",
+            root = root.display(),
+            sdk = sdk_dir.display(),
+            xcrun_success = if profile.xcrun_success { "1" } else { "0" },
+            clang_success = if profile.clang_success { "1" } else { "0" },
+            strip_success = if profile.strip_success { "1" } else { "0" },
+            sdk_probe_success = if profile.sdk_probe_success { "1" } else { "0" },
+        );
+        write_exec_script(&root.join("xcrun"), &xcrun_script);
+        write_exec_script(
+            &root.join("clang"),
+            if profile.clang_success {
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n"
+            } else {
+                "#!/bin/sh\nexit 1\n"
+            },
+        );
+        write_exec_script(
+            &root.join("strip"),
+            if profile.strip_success {
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n"
+            } else {
+                "#!/bin/sh\nexit 1\n"
+            },
+        );
+        write_exec_script(
+            &root.join("python3"),
+            if profile.python3_success {
+                "#!/bin/sh\nexit 0\n"
+            } else {
+                "#!/bin/sh\nexit 1\n"
+            },
+        );
+        write_exec_script(
+            &root.join("nm"),
+            if profile.nm_success {
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n"
+            } else {
+                "#!/bin/sh\nexit 1\n"
+            },
+        );
+        write_exec_script(
+            &root.join("sha256sum"),
+            if profile.sha256sum_success {
+                "#!/bin/sh\nexit 0\n"
+            } else {
+                "#!/bin/sh\nexit 1\n"
+            },
+        );
+        write_exec_script(
+            &root.join("shasum"),
+            if profile.shasum_success {
+                "#!/bin/sh\nexit 0\n"
+            } else {
+                "#!/bin/sh\nexit 1\n"
+            },
+        );
+        write_exec_script(
+            &root.join("openssl"),
+            if profile.openssl_success {
+                "#!/bin/sh\nexit 0\n"
+            } else {
+                "#!/bin/sh\nexit 1\n"
+            },
+        );
+
+        Self { root }
+    }
+
+    fn path(&self) -> &str {
+        self.root.to_str().expect("utf8 harness path")
+    }
+}
+
+#[cfg(unix)]
+impl Drop for FakeDoctorHarness {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy)]
+struct HarnessProfile {
+    xcrun_success: bool,
+    clang_success: bool,
+    strip_success: bool,
+    sdk_probe_success: bool,
+    sha256sum_success: bool,
+    shasum_success: bool,
+    openssl_success: bool,
+    python3_success: bool,
+    nm_success: bool,
+}
+
+#[cfg(unix)]
+fn doctor_harness_env<'a>(
+    harness: &'a FakeDoctorHarness,
+    scenario: &'a str,
+    target_triple: &'a str,
+) -> [(&'a str, &'a str); 3] {
+    [
+        ("PATH", harness.path()),
+        ("DAMSEL_DOCTOR_TEST_SCENARIO", scenario),
+        ("DAMSEL_DOCTOR_TEST_TARGET_TRIPLE", target_triple),
+    ]
+}
+
+#[cfg(unix)]
+fn scenario_tool_usable(
+    scenario: &CompatibilityVerificationScenario,
+    requirement: CompatibilityToolRequirement,
+) -> bool {
+    scenario
+        .tools_usable
+        .iter()
+        .find_map(|(tool, usable)| (*tool == requirement).then_some(*usable))
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn scenario_selected_hash_tool(
+    scenario: &CompatibilityVerificationScenario,
+) -> Option<&'static str> {
+    for requirement in [
+        CompatibilityToolRequirement::Sha256sum,
+        CompatibilityToolRequirement::Shasum,
+        CompatibilityToolRequirement::Openssl,
+    ] {
+        if scenario_tool_usable(scenario, requirement) {
+            return Some(requirement.key());
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn doctor_test_scenario_for_verification_case(
+    scenario: &CompatibilityVerificationScenario,
+) -> String {
+    match (scenario.host_platform, scenario.host_architecture) {
+        ("linux", "arm64" | "aarch64") => "linux-arm64".to_string(),
+        ("linux", "x86_64") => "linux-x86_64".to_string(),
+        ("macos", "arm64") => "macos-arm64".to_string(),
+        ("macos", "x86_64") => "macos-x86_64".to_string(),
+        ("windows", "x86_64") => "windows-x86_64".to_string(),
+        (platform, architecture) => format!("unknown:{platform}:{architecture}"),
+    }
+}
+
 #[test]
 fn doctor_json_contract_exposes_host_capabilities_and_tools() {
     let out = run_json_ok(&["--format", "json", "doctor"]);
+    assert_raw_key_order(&out, &["schema_version", "command", "data"]);
+    assert_raw_object_key_order(
+        &out,
+        "data",
+        &["host", "overall_status", "capabilities", "tools", "issues"],
+    );
+    assert_raw_object_key_order(
+        &out,
+        "capabilities",
+        &[
+            "macho_analysis",
+            "fixture_rebuild",
+            "fixture_drift_check",
+            "bench_compile",
+            "bench_runtime",
+            "benchmark",
+        ],
+    );
+    assert_raw_object_key_order(
+        &out,
+        "tools",
+        &[
+            "xcrun",
+            "strip",
+            "clang",
+            "python3",
+            "nm",
+            "sdk_path_probe",
+            "hash_tools",
+            "selected_hash_tool",
+        ],
+    );
     let json = parse_json(&out);
     assert_eq!(json["schema_version"], 1);
     assert_eq!(json["command"], "doctor");
@@ -468,40 +825,244 @@ fn doctor_json_semantic_invariants_hold() {
     assert_eq!(selected_hash_tool, expected_selected);
 }
 
+#[cfg(unix)]
 #[test]
-fn doctor_check_supported_threshold_matches_reported_capabilities() {
-    let baseline = parse_json(&run_json_ok(&["--format", "json", "doctor"]));
-    let all_supported = [
-        "macho_analysis",
-        "fixture_rebuild",
-        "fixture_drift_check",
-        "bench_compile",
-        "bench_runtime",
-    ]
-    .iter()
-    .all(|key| baseline["data"]["capabilities"][key]["status"] == "supported");
-
-    let output = run_json_output(&[
-        "--format",
-        "json",
-        "doctor",
-        "--check",
-        "all",
-        "--require-status",
-        "supported",
-    ]);
-    let expected_code = if all_supported { 0 } else { 2 };
-    assert_eq!(output.status.code(), Some(expected_code));
-    assert!(
-        output.stderr.is_empty(),
-        "unexpected stderr: {:?}",
-        output.stderr
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let json = parse_json(&stdout);
-    assert_eq!(json["schema_version"], 1);
+fn doctor_json_harness_macos_usable_tools_has_deterministic_statuses() {
+    let harness = FakeDoctorHarness::all_usable();
+    let envs = doctor_harness_env(&harness, "macos-arm64", "aarch64-apple-darwin");
+    let out = run_json_ok_with_env(&["--format", "json", "doctor"], &envs);
+    let json = parse_json(&out);
     assert_eq!(json["command"], "doctor");
-    assert!(json["data"].is_object());
+    assert_eq!(json["data"]["host"]["os"], "macos");
+    assert_eq!(json["data"]["host"]["architecture"], "arm64");
+    assert_eq!(
+        json["data"]["host"]["target_triple"],
+        "aarch64-apple-darwin"
+    );
+    assert_eq!(
+        json["data"]["capabilities"]["macho_analysis"]["status"],
+        "supported"
+    );
+    assert_eq!(
+        json["data"]["capabilities"]["fixture_rebuild"]["status"],
+        "supported"
+    );
+    assert_eq!(
+        json["data"]["capabilities"]["fixture_drift_check"]["status"],
+        "supported"
+    );
+    assert_eq!(
+        json["data"]["capabilities"]["bench_runtime"]["status"],
+        "supported-with-degraded-features"
+    );
+    assert_eq!(
+        json["data"]["capabilities"]["benchmark"]["status"],
+        "supported-with-degraded-features"
+    );
+    assert_eq!(
+        json["data"]["overall_status"],
+        "supported-with-degraded-features"
+    );
+    assert_eq!(json["data"]["tools"]["selected_hash_tool"], "sha256sum");
+    assert_eq!(
+        json["data"]["tools"]["xcrun"]["path"],
+        format!("{}/xcrun", harness.path())
+    );
+    assert_eq!(
+        json["data"]["tools"]["clang"]["path"],
+        format!("{}/clang", harness.path())
+    );
+    assert_eq!(
+        json["data"]["tools"]["strip"]["path"],
+        format!("{}/strip", harness.path())
+    );
+    assert_eq!(
+        reason_code_set(&json["data"]["issues"]),
+        BTreeSet::from([String::from("throughput_smoke_linux_arm64_only")])
+    );
+    assert!(
+        json["data"]["capabilities"]["bench_runtime"]["reasons"]
+            .as_array()
+            .expect("bench_runtime reasons")
+            .iter()
+            .any(|reason| reason["code"] == "throughput_smoke_linux_arm64_only")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_json_harness_broken_hash_and_sdk_reports_detected_unusable_tools() {
+    let harness = FakeDoctorHarness::broken_hash_and_sdk();
+    let envs = doctor_harness_env(&harness, "macos-arm64", "aarch64-apple-darwin");
+    let out = run_json_ok_with_env(&["--format", "json", "doctor"], &envs);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "doctor");
+    assert_eq!(json["data"]["overall_status"], "unsupported");
+    assert_eq!(
+        json["data"]["capabilities"]["fixture_rebuild"]["status"],
+        "unsupported"
+    );
+    assert_eq!(
+        json["data"]["capabilities"]["fixture_drift_check"]["status"],
+        "unsupported"
+    );
+    assert!(json["data"]["tools"]["sdk_path_probe"]["detected"] == true);
+    assert!(json["data"]["tools"]["sdk_path_probe"]["usable"] == false);
+    assert!(json["data"]["tools"]["hash_tools"]["sha256sum"]["detected"] == true);
+    assert!(json["data"]["tools"]["hash_tools"]["sha256sum"]["usable"] == false);
+    assert!(json["data"]["tools"]["hash_tools"]["shasum"]["detected"] == true);
+    assert!(json["data"]["tools"]["hash_tools"]["shasum"]["usable"] == false);
+    assert!(json["data"]["tools"]["hash_tools"]["openssl"]["detected"] == true);
+    assert!(json["data"]["tools"]["hash_tools"]["openssl"]["usable"] == false);
+    assert!(json["data"]["tools"]["selected_hash_tool"].is_null());
+
+    let fixture_rebuild_codes =
+        reason_code_set(&json["data"]["capabilities"]["fixture_rebuild"]["reasons"]);
+    assert!(fixture_rebuild_codes.contains("xcrun_sdk_path_probe_failed"));
+    let fixture_drift_codes =
+        reason_code_set(&json["data"]["capabilities"]["fixture_drift_check"]["reasons"]);
+    assert!(fixture_drift_codes.contains("missing_usable_hash_tool"));
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_check_fixture_rebuild_uses_controlled_harness_and_default_strict_threshold() {
+    let harness = FakeDoctorHarness::python_unusable();
+    let envs = doctor_harness_env(&harness, "macos-arm64", "aarch64-apple-darwin");
+    let strict_output = run_json_output_with_env(
+        &[
+            "--format",
+            "json",
+            "doctor",
+            "--check",
+            "fixture-rebuild",
+            "--require-status",
+            "supported",
+        ],
+        &envs,
+    );
+    assert_eq!(strict_output.status.code(), Some(2));
+    assert!(
+        strict_output.stderr.is_empty(),
+        "unexpected stderr: {:?}",
+        strict_output.stderr
+    );
+    let strict_stdout = String::from_utf8_lossy(&strict_output.stdout)
+        .trim()
+        .to_string();
+    let strict_json = parse_json(&strict_stdout);
+    assert_eq!(strict_json["schema_version"], 1);
+    assert_eq!(strict_json["command"], "doctor");
+    assert_eq!(
+        strict_json["data"]["capabilities"]["fixture_rebuild"]["status"],
+        "unsupported"
+    );
+    assert!(
+        strict_json["data"]["capabilities"]["fixture_rebuild"]["reasons"]
+            .as_array()
+            .expect("fixture_rebuild reasons")
+            .iter()
+            .any(|reason| reason["code"] == "unusable_python3")
+    );
+
+    let default_output = run_json_output_with_env(
+        &["--format", "json", "doctor", "--check", "fixture-rebuild"],
+        &envs,
+    );
+    assert_eq!(
+        default_output.status.code(),
+        Some(2),
+        "default check threshold should be strict supported"
+    );
+    assert!(default_output.stderr.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_json_verification_corpus_is_enforced_under_controlled_harnesses() {
+    for scenario in CompatibilityPolicy::verification_corpus() {
+        let harness = FakeDoctorHarness::from_verification_scenario(scenario);
+        let doctor_scenario = doctor_test_scenario_for_verification_case(scenario);
+        let envs = doctor_harness_env(&harness, &doctor_scenario, "oracle-target");
+        let out = run_json_ok_with_env(&["--format", "json", "doctor"], &envs);
+        let json = parse_json(&out);
+
+        assert_eq!(json["data"]["host"]["os"], scenario.host_platform);
+        assert_eq!(
+            json["data"]["host"]["architecture"],
+            scenario.host_architecture
+        );
+        assert_eq!(json["data"]["host"]["target_triple"], "oracle-target");
+        assert_eq!(
+            json["data"]["overall_status"],
+            scenario.expected_overall_status.to_string()
+        );
+        assert_eq!(
+            json["data"]["tools"]["selected_hash_tool"].as_str(),
+            scenario_selected_hash_tool(scenario)
+        );
+
+        for expectation in scenario.expected_capabilities {
+            let capability = &json["data"]["capabilities"][expectation.capability.key()];
+            assert_eq!(capability["status"], expectation.status.to_string());
+            let actual_reason_codes = capability["reasons"]
+                .as_array()
+                .expect("capability reasons")
+                .iter()
+                .map(|reason| reason["code"].as_str().expect("reason code"))
+                .collect::<Vec<_>>();
+            assert_eq!(actual_reason_codes, expectation.reason_codes);
+        }
+
+        let actual_issue_codes = json["data"]["issues"]
+            .as_array()
+            .expect("issues array")
+            .iter()
+            .map(|issue| issue["code"].as_str().expect("issue code"))
+            .collect::<Vec<_>>();
+        assert_eq!(actual_issue_codes, scenario.expected_issue_codes);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_check_strict_threshold_follows_verification_corpus() {
+    for scenario in CompatibilityPolicy::verification_corpus() {
+        let harness = FakeDoctorHarness::from_verification_scenario(scenario);
+        let doctor_scenario = doctor_test_scenario_for_verification_case(scenario);
+        let envs = doctor_harness_env(&harness, &doctor_scenario, "oracle-target");
+        let output = run_json_output_with_env(
+            &[
+                "--format",
+                "json",
+                "doctor",
+                "--check",
+                "all",
+                "--require-status",
+                "supported",
+            ],
+            &envs,
+        );
+        let strict_success = CompatibilityCapability::DOCTOR_CHECK_ALL
+            .iter()
+            .all(|capability| {
+                scenario
+                    .capability_expectation(*capability)
+                    .is_some_and(|expectation| expectation.status.to_string() == "supported")
+            });
+        assert_eq!(
+            output.status.code(),
+            Some(if strict_success { 0 } else { 2 })
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "unexpected stderr for scenario {}: {:?}",
+            scenario.id,
+            output.stderr
+        );
+        let json = parse_json(&String::from_utf8_lossy(&output.stdout));
+        assert_eq!(json["command"], "doctor");
+    }
 }
 
 #[test]

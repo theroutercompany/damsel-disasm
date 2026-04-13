@@ -27,6 +27,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Verify fixture hashes
         run: ./fixtures/build-fixtures.sh --check
+      - name: Run fixture parity probes
+        run: ./fixtures/tests/build-fixtures-parity.sh
 
   test-workspace:
     name: test workspace (${{ matrix.os }})
@@ -57,14 +59,17 @@ jobs:
             expected_host_os: macos
             expected_bench_runtime_status: supported-with-degraded-features
             check_fixture_rebuild: "true"
+            expect_strict_bench_runtime_failure: "true"
           - os: ubuntu-24.04
             expected_host_os: linux
             expected_bench_runtime_status: supported-with-degraded-features
             check_fixture_rebuild: "false"
+            expect_strict_bench_runtime_failure: "true"
           - os: ubuntu-24.04-arm
             expected_host_os: linux
             expected_bench_runtime_status: supported
             check_fixture_rebuild: "false"
+            expect_strict_bench_runtime_failure: "false"
     runs-on: ${{ matrix.os }}
     needs: fixture-drift
     steps:
@@ -77,8 +82,39 @@ jobs:
           EXPECTED_HOST_OS: ${{ matrix.expected_host_os }}
           EXPECTED_BENCH_RUNTIME_STATUS: ${{ matrix.expected_bench_runtime_status }}
           CHECK_FIXTURE_REBUILD: ${{ matrix.check_fixture_rebuild }}
+          EXPECT_STRICT_BENCH_RUNTIME_FAILURE: ${{ matrix.expect_strict_bench_runtime_failure }}
         run: |
           set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "${tmpdir}"' EXIT
+
+          expect_threshold_failure() {
+            local label="$1"
+            shift
+            local stdout_file="${tmpdir}/${label}.stdout"
+            local stderr_file="${tmpdir}/${label}.stderr"
+            set +e
+            "$@" >"${stdout_file}" 2>"${stderr_file}"
+            local status=$?
+            set -e
+            if [[ "${status}" -ne 2 ]]; then
+              echo "expected exit code 2 for ${label}, got ${status}" >&2
+              cat "${stdout_file}" >&2 || true
+              cat "${stderr_file}" >&2 || true
+              exit 1
+            fi
+            grep -q "Host:" "${stdout_file}" || {
+              echo "expected doctor report on stdout for ${label}" >&2
+              cat "${stdout_file}" >&2 || true
+              exit 1
+            }
+            if [[ -s "${stderr_file}" ]]; then
+              echo "expected empty stderr for ${label} threshold failure" >&2
+              cat "${stderr_file}" >&2 || true
+              exit 1
+            fi
+          }
+
           help_text="$(cargo run -q -p damsel-cli -- doctor --help)"
           grep -q -- "--check" <<<"${help_text}"
           grep -q -- "macho-analysis" <<<"${help_text}"
@@ -92,8 +128,15 @@ jobs:
           cargo run -q -p damsel-cli -- doctor --check "bench-compile" --require-status "supported"
           if [[ "${CHECK_FIXTURE_REBUILD}" == "true" ]]; then
             cargo run -q -p damsel-cli -- doctor --check "fixture-rebuild" --require-status "supported"
+          else
+            expect_threshold_failure "fixture_rebuild_strict" \
+              cargo run -q -p damsel-cli -- doctor --check "fixture-rebuild" --require-status "supported"
           fi
           cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "${EXPECTED_BENCH_RUNTIME_STATUS}"
+          if [[ "${EXPECT_STRICT_BENCH_RUNTIME_FAILURE}" == "true" ]]; then
+            expect_threshold_failure "bench_runtime_strict" \
+              cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "supported"
+          fi
       - name: Validate doctor JSON contract and statuses
         env:
           EXPECTED_HOST_OS: ${{ matrix.expected_host_os }}
@@ -112,6 +155,158 @@ jobs:
               exit 1
               ;;
           esac
+
+          status_rank() {
+            case "$1" in
+              supported)
+                echo 0
+                ;;
+              supported-with-degraded-features)
+                echo 1
+                ;;
+              unsupported)
+                echo 2
+                ;;
+              *)
+                echo "unexpected status: $1" >&2
+                exit 1
+                ;;
+            esac
+          }
+
+          max_status() {
+            local left="$1"
+            local right="$2"
+            if [[ "$(status_rank "${left}")" -ge "$(status_rank "${right}")" ]]; then
+              echo "${left}"
+            else
+              echo "${right}"
+            fi
+          }
+
+          hash_tool_usable() {
+            local tool="$1"
+            local path
+            path="$(command -v "${tool}" 2>/dev/null || true)"
+            if [[ -z "${path}" || ! -x "${path}" ]]; then
+              return 1
+            fi
+            case "${tool}" in
+              sha256sum)
+                "${path}" /dev/null >/dev/null 2>&1
+                ;;
+              shasum)
+                "${path}" -a 256 /dev/null >/dev/null 2>&1
+                ;;
+              openssl)
+                "${path}" dgst -sha256 /dev/null >/dev/null 2>&1
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+          }
+
+          select_hash_tool() {
+            local tool
+            for tool in sha256sum shasum openssl; do
+              if hash_tool_usable "${tool}"; then
+                echo "${tool}"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          resolve_xcrun_or_path_tool() {
+            local tool="$1"
+            local candidate=""
+            if command -v xcrun >/dev/null 2>&1; then
+              candidate="$(xcrun --find "${tool}" 2>/dev/null || true)"
+              if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+                echo "${candidate}"
+                return 0
+              fi
+            fi
+            candidate="$(command -v "${tool}" 2>/dev/null || true)"
+            if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+              echo "${candidate}"
+              return 0
+            fi
+            return 1
+          }
+
+          oracle_fixture_rebuild_status() {
+            if [[ "${EXPECTED_HOST_OS}" != "macos" ]]; then
+              echo "unsupported"
+              return 0
+            fi
+
+            if ! command -v xcrun >/dev/null 2>&1; then
+              echo "unsupported"
+              return 0
+            fi
+
+            local sdkroot
+            if ! sdkroot="$(xcrun --show-sdk-path 2>/dev/null)"; then
+              echo "unsupported"
+              return 0
+            fi
+            if [[ -z "${sdkroot}" ]]; then
+              echo "unsupported"
+              return 0
+            fi
+
+            if ! resolve_xcrun_or_path_tool clang >/dev/null; then
+              echo "unsupported"
+              return 0
+            fi
+            if ! resolve_xcrun_or_path_tool strip >/dev/null; then
+              echo "unsupported"
+              return 0
+            fi
+
+            if ! command -v python3 >/dev/null 2>&1; then
+              echo "unsupported"
+              return 0
+            fi
+            if ! python3 -c 'import sys; sys.exit(0)' >/dev/null 2>&1; then
+              echo "unsupported"
+              return 0
+            fi
+
+            local nm_path
+            nm_path="$(command -v nm 2>/dev/null || true)"
+            if [[ -z "${nm_path}" || ! -x "${nm_path}" ]]; then
+              echo "unsupported"
+              return 0
+            fi
+
+            echo "supported"
+          }
+
+          if [[ "${EXPECTED_HOST_OS}" == "macos" ]] || [[ "${EXPECTED_HOST_OS}" == "linux" && "${EXPECTED_HOST_ARCH}" =~ ^(x86_64|arm64)$ ]]; then
+            export ORACLE_MACHO_ANALYSIS_STATUS="supported"
+            export ORACLE_BENCH_COMPILE_STATUS="supported"
+          else
+            export ORACLE_MACHO_ANALYSIS_STATUS="supported-with-degraded-features"
+            export ORACLE_BENCH_COMPILE_STATUS="supported-with-degraded-features"
+          fi
+
+          export ORACLE_BENCH_RUNTIME_STATUS="${EXPECTED_BENCH_RUNTIME_STATUS}"
+          export ORACLE_BENCHMARK_STATUS="$(max_status "${ORACLE_BENCH_COMPILE_STATUS}" "${ORACLE_BENCH_RUNTIME_STATUS}")"
+
+          if ORACLE_SELECTED_HASH_TOOL="$(select_hash_tool 2>/dev/null)"; then
+            export ORACLE_SELECTED_HASH_TOOL
+            export ORACLE_FIXTURE_DRIFT_STATUS="supported"
+          else
+            export ORACLE_SELECTED_HASH_TOOL=""
+            export ORACLE_FIXTURE_DRIFT_STATUS="unsupported"
+          fi
+
+          export ORACLE_FIXTURE_REBUILD_STATUS="$(oracle_fixture_rebuild_status)"
+          export ORACLE_POLICY_CHECK_ALL="macho_analysis,fixture_rebuild,fixture_drift_check,bench_compile,bench_runtime"
+
           cargo run -q -p damsel-cli -- --format json doctor > doctor.json
           python3 - <<'PY'
           import json
@@ -169,15 +364,12 @@ jobs:
               assert isinstance(capability["reasons"], list)
               if capability["status"] != "supported":
                   assert capability["reasons"], f"{key} should include reasons when status={capability['status']}"
-          host_os = data["host"]["os"]
-          host_arch = data["host"]["architecture"]
+
           tools = data["tools"]
           capabilities = data["capabilities"]
 
-          priority = ["sha256sum", "shasum", "openssl"]
-          usable_hash_tools = [tool for tool in priority if tools["hash_tools"][tool]["usable"]]
           selected_hash_tool = tools["selected_hash_tool"]
-          expected_selected_hash_tool = usable_hash_tools[0] if usable_hash_tools else None
+          expected_selected_hash_tool = os.environ.get("ORACLE_SELECTED_HASH_TOOL") or None
           assert selected_hash_tool == expected_selected_hash_tool
 
           def severity(status: str) -> int:
@@ -186,29 +378,24 @@ jobs:
           def max_status(*statuses: str) -> str:
               return max(statuses, key=severity)
 
-          host_is_primary_supported = (
-              host_os == "macos"
-              or (host_os == "linux" and host_arch in {"x86_64", "arm64"})
-          )
-          expected_macho_analysis = (
-              "supported" if host_is_primary_supported else "supported-with-degraded-features"
-          )
+          expected_policy_check_set = [
+              key.strip()
+              for key in os.environ["ORACLE_POLICY_CHECK_ALL"].split(",")
+              if key.strip()
+          ]
 
-          required_fixture_tools = ["xcrun", "clang", "strip", "python3", "nm"]
-          fixture_tools_usable = all(
-              tools[tool]["detected"] and tools[tool]["usable"] for tool in required_fixture_tools
-          )
-          expected_fixture_rebuild = (
-              "supported"
-              if host_os == "macos" and fixture_tools_usable and tools["sdk_path_probe"]["usable"]
-              else "unsupported"
-          )
-          expected_fixture_drift_check = "supported" if expected_selected_hash_tool else "unsupported"
-          expected_bench_compile = (
-              "supported" if host_is_primary_supported else "supported-with-degraded-features"
-          )
-          expected_bench_runtime = os.environ["EXPECTED_BENCH_RUNTIME_STATUS"]
-          expected_benchmark = max_status(expected_bench_compile, expected_bench_runtime)
+          policy = payload.get("policy") if isinstance(payload, dict) else None
+          if isinstance(policy, dict):
+              check_all = policy.get("doctor_check_all")
+              if isinstance(check_all, list):
+                  assert check_all == expected_policy_check_set
+
+          expected_macho_analysis = os.environ["ORACLE_MACHO_ANALYSIS_STATUS"]
+          expected_fixture_rebuild = os.environ["ORACLE_FIXTURE_REBUILD_STATUS"]
+          expected_fixture_drift_check = os.environ["ORACLE_FIXTURE_DRIFT_STATUS"]
+          expected_bench_compile = os.environ["ORACLE_BENCH_COMPILE_STATUS"]
+          expected_bench_runtime = os.environ["ORACLE_BENCH_RUNTIME_STATUS"]
+          expected_benchmark = os.environ["ORACLE_BENCHMARK_STATUS"]
 
           expected_by_key = {
               "macho_analysis": expected_macho_analysis,
@@ -227,11 +414,7 @@ jobs:
           )
 
           expected_overall = max_status(
-              capabilities["macho_analysis"]["status"],
-              capabilities["fixture_rebuild"]["status"],
-              capabilities["fixture_drift_check"]["status"],
-              capabilities["bench_compile"]["status"],
-              capabilities["bench_runtime"]["status"],
+              *(capabilities[key]["status"] for key in expected_policy_check_set),
           )
           assert data["overall_status"] == expected_overall
 
@@ -247,13 +430,7 @@ jobs:
 
           issues_union = []
           issues_seen = set()
-          for key in [
-              "macho_analysis",
-              "fixture_rebuild",
-              "fixture_drift_check",
-              "bench_compile",
-              "bench_runtime",
-          ]:
+          for key in expected_policy_check_set:
               for reason in capabilities[key]["reasons"]:
                   reason_key = (reason["code"], reason["message"])
                   if reason_key not in issues_seen:
@@ -318,8 +495,10 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux x86_64
+            expected_bench_runtime_status: supported-with-degraded-features
           - os: macos-14
             name: macos arm64
+            expected_bench_runtime_status: supported-with-degraded-features
     runs-on: ${{ matrix.os }}
     needs: fixture-drift
     steps:
@@ -329,10 +508,38 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Decode bench unsupported-host runtime path
         shell: bash
+        env:
+          EXPECTED_BENCH_RUNTIME_STATUS: ${{ matrix.expected_bench_runtime_status }}
         run: |
           set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "${tmpdir}"' EXIT
+
+          set +e
+          cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "supported" >"${tmpdir}/strict.stdout" 2>"${tmpdir}/strict.stderr"
+          strict_status=$?
+          set -e
+          if [[ "${strict_status}" -ne 2 ]]; then
+            echo "expected strict bench-runtime check to fail with exit 2 on unsupported-host smoke lane" >&2
+            cat "${tmpdir}/strict.stdout" >&2 || true
+            cat "${tmpdir}/strict.stderr" >&2 || true
+            exit 1
+          fi
+          grep -q "Host:" "${tmpdir}/strict.stdout"
+          [[ ! -s "${tmpdir}/strict.stderr" ]]
+
+          cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "${EXPECTED_BENCH_RUNTIME_STATUS}"
+
           cargo bench -p damsel-macho --bench decode_bench -- compatibility::unsupported_host_runtime_skip --warm-up-time 0.01 --measurement-time 0.02 --sample-size 10 | tee bench.log
-          grep -q "compatibility::unsupported_host_runtime_skip" bench.log
+          grep -Fq "compatibility::unsupported_host_runtime_skip" bench.log
+          if grep -Fq "arm64_symbolized::__text" bench.log; then
+            echo "unexpected runtime throughput benchmark on unsupported-host smoke lane" >&2
+            exit 1
+          fi
+          if grep -Fq "import_lazy::__text:value_flow_on" bench.log; then
+            echo "unexpected value-flow throughput benchmark on unsupported-host smoke lane" >&2
+            exit 1
+          fi
 
   decode-throughput-smoke:
     name: decode throughput smoke (linux arm64)
@@ -347,9 +554,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo bench -p damsel-macho --bench decode_bench -- arm64_symbolized::__text --warm-up-time 0.01 --measurement-time 0.02 --sample-size 10 | tee bench.log
-          grep -q "arm64_symbolized::__text" bench.log
-          if grep -q "compatibility::unsupported_host_runtime_skip" bench.log; then
+          cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "supported"
+          : > bench.log
+          cargo bench -p damsel-macho --bench decode_bench -- arm64_symbolized::__text --warm-up-time 0.01 --measurement-time 0.02 --sample-size 10 | tee -a bench.log
+          cargo bench -p damsel-macho --bench decode_bench -- import_lazy::__text:value_flow_on --warm-up-time 0.01 --measurement-time 0.02 --sample-size 10 | tee -a bench.log
+          grep -Fq "arm64_symbolized::__text" bench.log
+          grep -Fq "import_lazy::__text:value_flow_on" bench.log
+          if grep -Fq "compatibility::unsupported_host_runtime_skip" bench.log; then
             echo "unexpected unsupported-host runtime skip in linux arm64 throughput smoke" >&2
             exit 1
           fi

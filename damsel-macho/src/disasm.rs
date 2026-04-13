@@ -1365,16 +1365,12 @@ fn synthesize_simple_register_value(
                     read_known_value(known_values, register)?.value,
                     RecoveredValueSource::Other,
                 )),
-                Operand::ImmediateUnsigned(value) => Some((
-                    destination,
-                    *value,
-                    RecoveredValueSource::MoveWide,
-                )),
-                Operand::ImmediateSigned(value) if *value >= 0 => Some((
-                    destination,
-                    *value as u64,
-                    RecoveredValueSource::MoveWide,
-                )),
+                Operand::ImmediateUnsigned(value) => {
+                    Some((destination, *value, RecoveredValueSource::MoveWide))
+                }
+                Operand::ImmediateSigned(value) if *value >= 0 => {
+                    Some((destination, *value as u64, RecoveredValueSource::MoveWide))
+                }
                 _ => None,
             }
         }

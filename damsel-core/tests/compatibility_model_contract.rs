@@ -1,7 +1,9 @@
 use damsel_core::{
-    CapabilityStatus, CompatibilityCapability, CompatibilityCapabilityRole, CompatibilityIssue,
+    CapabilityStatus, CompatibilityCapability, CompatibilityCapabilityRole, CompatibilityHostClass,
+    CompatibilityHostRule, CompatibilityIssue, CompatibilityPolicy, CompatibilityToolRequirement,
     HostArchitecture, HostPlatform,
 };
+use std::collections::BTreeSet;
 
 #[test]
 fn host_platform_parsing_and_display_is_stable() {
@@ -175,6 +177,30 @@ fn compatibility_capability_doctor_check_all_is_stable() {
 }
 
 #[test]
+fn compatibility_capability_doctor_check_portable_is_stable() {
+    assert_eq!(
+        CompatibilityCapability::DOCTOR_CHECK_PORTABLE,
+        [
+            CompatibilityCapability::MachoAnalysis,
+            CompatibilityCapability::FixtureDriftCheck,
+            CompatibilityCapability::BenchCompile,
+        ]
+    );
+    assert!(
+        !CompatibilityCapability::DOCTOR_CHECK_PORTABLE
+            .contains(&CompatibilityCapability::FixtureRebuild)
+    );
+    assert!(
+        !CompatibilityCapability::DOCTOR_CHECK_PORTABLE
+            .contains(&CompatibilityCapability::BenchRuntime)
+    );
+    assert!(
+        !CompatibilityCapability::DOCTOR_CHECK_PORTABLE
+            .contains(&CompatibilityCapability::Benchmark)
+    );
+}
+
+#[test]
 fn compatibility_capability_roles_distinguish_primary_and_derived() {
     assert_eq!(
         CompatibilityCapability::Benchmark.role(),
@@ -194,6 +220,120 @@ fn compatibility_capability_roles_distinguish_primary_and_derived() {
         assert!(capability.is_primary_input());
         assert!(!capability.is_derived_summary());
     }
+}
+
+#[test]
+fn compatibility_policy_target_sets_are_stable() {
+    assert_eq!(
+        CompatibilityPolicy::DOCTOR_CHECK_ALL,
+        CompatibilityCapability::DOCTOR_CHECK_ALL
+    );
+    assert_eq!(
+        CompatibilityPolicy::DOCTOR_CHECK_PORTABLE,
+        CompatibilityCapability::DOCTOR_CHECK_PORTABLE
+    );
+}
+
+#[test]
+fn compatibility_policy_primary_supported_hosts_are_stable() {
+    assert_eq!(
+        CompatibilityPolicy::PRIMARY_SUPPORTED_HOSTS,
+        [
+            (HostPlatform::MacOS, HostArchitecture::Arm64),
+            (HostPlatform::Linux, HostArchitecture::X86_64),
+            (HostPlatform::Linux, HostArchitecture::Arm64),
+        ]
+    );
+    assert!(CompatibilityPolicy::is_primary_supported_host(
+        &HostPlatform::MacOS,
+        &HostArchitecture::X86_64
+    ));
+    assert!(CompatibilityPolicy::is_primary_supported_host(
+        &HostPlatform::Linux,
+        &HostArchitecture::X86_64
+    ));
+    assert!(CompatibilityPolicy::is_primary_supported_host(
+        &HostPlatform::Linux,
+        &HostArchitecture::Arm64
+    ));
+    assert!(!CompatibilityPolicy::is_primary_supported_host(
+        &HostPlatform::Windows,
+        &HostArchitecture::X86_64
+    ));
+}
+
+#[test]
+fn compatibility_policy_matches_capability_role_and_summary_contracts() {
+    for capability in CompatibilityCapability::ALL {
+        let policy = CompatibilityPolicy::capability(capability);
+        assert_eq!(policy.capability, capability);
+        assert_eq!(policy.role, capability.role());
+        assert_eq!(policy.summary_inputs, capability.summary_inputs());
+    }
+}
+
+#[test]
+fn compatibility_policy_host_rules_are_stable() {
+    assert_eq!(
+        CompatibilityPolicy::capability(CompatibilityCapability::MachoAnalysis).host_rule,
+        CompatibilityHostRule::PrimarySupportedHosts
+    );
+    assert_eq!(
+        CompatibilityPolicy::capability(CompatibilityCapability::FixtureRebuild).host_rule,
+        CompatibilityHostRule::MacOSOnly
+    );
+    assert_eq!(
+        CompatibilityPolicy::capability(CompatibilityCapability::FixtureDriftCheck).host_rule,
+        CompatibilityHostRule::AnyHost
+    );
+    assert_eq!(
+        CompatibilityPolicy::capability(CompatibilityCapability::Benchmark).host_rule,
+        CompatibilityHostRule::DerivedFromInputs
+    );
+    assert_eq!(
+        CompatibilityPolicy::capability(CompatibilityCapability::BenchCompile).host_rule,
+        CompatibilityHostRule::PrimarySupportedHosts
+    );
+    assert_eq!(
+        CompatibilityPolicy::capability(CompatibilityCapability::BenchRuntime).host_rule,
+        CompatibilityHostRule::LinuxArm64Only
+    );
+}
+
+#[test]
+fn compatibility_policy_tool_requirements_are_stable() {
+    let rebuild = CompatibilityPolicy::capability(CompatibilityCapability::FixtureRebuild);
+    assert_eq!(rebuild.required_tools_any, &[]);
+    assert_eq!(
+        rebuild.required_tools_all,
+        &[
+            CompatibilityToolRequirement::Xcrun,
+            CompatibilityToolRequirement::XcrunSdkPathProbe,
+            CompatibilityToolRequirement::Clang,
+            CompatibilityToolRequirement::Strip,
+            CompatibilityToolRequirement::Python3,
+            CompatibilityToolRequirement::Nm,
+        ]
+    );
+
+    let drift = CompatibilityPolicy::capability(CompatibilityCapability::FixtureDriftCheck);
+    assert_eq!(drift.required_tools_all, &[]);
+    assert_eq!(
+        drift.required_tools_any,
+        &[
+            CompatibilityToolRequirement::Sha256sum,
+            CompatibilityToolRequirement::Shasum,
+            CompatibilityToolRequirement::Openssl,
+        ]
+    );
+}
+
+#[test]
+fn compatibility_policy_is_exhaustive_and_ordered() {
+    let policies = CompatibilityPolicy::policies();
+    assert_eq!(policies.len(), CompatibilityCapability::ALL.len());
+    let listed: Vec<_> = policies.iter().map(|policy| policy.capability).collect();
+    assert_eq!(listed.as_slice(), &CompatibilityCapability::ALL);
 }
 
 #[test]
@@ -230,4 +370,227 @@ fn compatibility_capability_benchmark_summary_inputs_are_stable() {
             .summary_inputs()
             .is_empty()
     );
+}
+
+#[test]
+fn compatibility_policy_host_classification_is_stable() {
+    assert_eq!(
+        CompatibilityPolicy::host_class(&HostPlatform::MacOS, &HostArchitecture::Arm64),
+        CompatibilityHostClass::PrimarySupported
+    );
+    assert_eq!(
+        CompatibilityPolicy::host_class(&HostPlatform::MacOS, &HostArchitecture::X86_64),
+        CompatibilityHostClass::PrimarySupported
+    );
+    assert_eq!(
+        CompatibilityPolicy::host_class(&HostPlatform::Linux, &HostArchitecture::X86_64),
+        CompatibilityHostClass::PrimarySupported
+    );
+    assert_eq!(
+        CompatibilityPolicy::host_class(&HostPlatform::Linux, &HostArchitecture::Arm64),
+        CompatibilityHostClass::PrimarySupported
+    );
+    assert_eq!(
+        CompatibilityPolicy::host_class(&HostPlatform::Windows, &HostArchitecture::X86_64),
+        CompatibilityHostClass::OutsidePrimaryMatrix
+    );
+    assert_eq!(
+        CompatibilityPolicy::host_class(
+            &HostPlatform::Unknown("solaris".to_string()),
+            &HostArchitecture::Unknown("sparc64".to_string()),
+        ),
+        CompatibilityHostClass::OutsidePrimaryMatrix
+    );
+}
+
+#[test]
+fn compatibility_policy_expected_host_rule_statuses_are_stable() {
+    assert_eq!(
+        CompatibilityPolicy::expected_status_for_host_rule(
+            CompatibilityHostRule::PrimarySupportedHosts,
+            &HostPlatform::Linux,
+            &HostArchitecture::Arm64,
+        ),
+        CapabilityStatus::Supported
+    );
+    assert_eq!(
+        CompatibilityPolicy::expected_status_for_host_rule(
+            CompatibilityHostRule::PrimarySupportedHosts,
+            &HostPlatform::Windows,
+            &HostArchitecture::X86_64,
+        ),
+        CapabilityStatus::SupportedWithDegradedFeatures
+    );
+    assert_eq!(
+        CompatibilityPolicy::expected_status_for_host_rule(
+            CompatibilityHostRule::MacOSOnly,
+            &HostPlatform::Linux,
+            &HostArchitecture::Arm64,
+        ),
+        CapabilityStatus::Unsupported
+    );
+    assert_eq!(
+        CompatibilityPolicy::expected_status_for_host_rule(
+            CompatibilityHostRule::MacOSOnly,
+            &HostPlatform::MacOS,
+            &HostArchitecture::X86_64,
+        ),
+        CapabilityStatus::Supported
+    );
+    assert_eq!(
+        CompatibilityPolicy::expected_status_for_host_rule(
+            CompatibilityHostRule::LinuxArm64Only,
+            &HostPlatform::Linux,
+            &HostArchitecture::X86_64,
+        ),
+        CapabilityStatus::SupportedWithDegradedFeatures
+    );
+    assert_eq!(
+        CompatibilityPolicy::expected_status_for_host_rule(
+            CompatibilityHostRule::LinuxArm64Only,
+            &HostPlatform::Linux,
+            &HostArchitecture::Arm64,
+        ),
+        CapabilityStatus::Supported
+    );
+    assert_eq!(
+        CompatibilityPolicy::expected_status_for_host_rule(
+            CompatibilityHostRule::AnyHost,
+            &HostPlatform::Windows,
+            &HostArchitecture::X86_64,
+        ),
+        CapabilityStatus::Supported
+    );
+    assert_eq!(
+        CompatibilityPolicy::expected_status_for_host_rule(
+            CompatibilityHostRule::DerivedFromInputs,
+            &HostPlatform::Windows,
+            &HostArchitecture::X86_64,
+        ),
+        CapabilityStatus::Supported
+    );
+}
+
+#[test]
+fn compatibility_verification_corpus_is_stable_and_complete() {
+    let corpus = CompatibilityPolicy::verification_corpus();
+    assert_eq!(corpus.len(), 7);
+
+    let ids: BTreeSet<_> = corpus.iter().map(|scenario| scenario.id).collect();
+    assert_eq!(ids.len(), corpus.len(), "scenario ids must be unique");
+
+    for scenario in corpus {
+        assert_eq!(
+            CompatibilityPolicy::verification_scenario(scenario.id),
+            Some(scenario),
+            "scenario lookup should be stable for {}",
+            scenario.id
+        );
+        assert_eq!(
+            CompatibilityPolicy::host_class(
+                &scenario.parsed_host_platform(),
+                &scenario.parsed_host_architecture(),
+            ),
+            scenario.expected_host_class,
+            "scenario {} host class drift",
+            scenario.id
+        );
+
+        let capability_set: BTreeSet<_> = scenario
+            .expected_capabilities
+            .iter()
+            .map(|expectation| expectation.capability)
+            .collect();
+        assert_eq!(
+            capability_set,
+            CompatibilityCapability::ALL.into_iter().collect(),
+            "scenario {} must provide expectations for every capability",
+            scenario.id
+        );
+    }
+}
+
+fn severity(status: CapabilityStatus) -> u8 {
+    match status {
+        CapabilityStatus::Supported => 0,
+        CapabilityStatus::SupportedWithDegradedFeatures => 1,
+        CapabilityStatus::Unsupported => 2,
+    }
+}
+
+#[test]
+fn compatibility_verification_corpus_semantics_are_stable() {
+    for scenario in CompatibilityPolicy::verification_corpus() {
+        let benchmark = scenario
+            .capability_expectation(CompatibilityCapability::Benchmark)
+            .expect("benchmark expectation missing");
+        let bench_compile = scenario
+            .capability_expectation(CompatibilityCapability::BenchCompile)
+            .expect("bench_compile expectation missing");
+        let bench_runtime = scenario
+            .capability_expectation(CompatibilityCapability::BenchRuntime)
+            .expect("bench_runtime expectation missing");
+
+        let split_max = if severity(bench_compile.status) >= severity(bench_runtime.status) {
+            bench_compile.status
+        } else {
+            bench_runtime.status
+        };
+        assert_eq!(
+            benchmark.status, split_max,
+            "scenario {} benchmark summary drift",
+            scenario.id
+        );
+
+        let non_summary_max = scenario
+            .expected_capabilities
+            .iter()
+            .filter(|expectation| expectation.capability.is_primary_input())
+            .map(|expectation| expectation.status)
+            .max_by_key(|status| severity(*status))
+            .expect("non-summary capability status expected");
+        assert_eq!(
+            scenario.expected_overall_status, non_summary_max,
+            "scenario {} overall status drift",
+            scenario.id
+        );
+
+        let issue_codes: BTreeSet<_> = scenario.expected_issue_codes.iter().copied().collect();
+        let deduped_reason_union: BTreeSet<_> = scenario
+            .expected_capabilities
+            .iter()
+            .filter(|expectation| expectation.status != CapabilityStatus::Supported)
+            .flat_map(|expectation| expectation.reason_codes.iter().copied())
+            .collect();
+        assert_eq!(
+            issue_codes, deduped_reason_union,
+            "scenario {} issue-code union drift",
+            scenario.id
+        );
+
+        for expectation in scenario
+            .expected_capabilities
+            .iter()
+            .filter(|expectation| expectation.status != CapabilityStatus::Supported)
+        {
+            assert!(
+                !expectation.reason_codes.is_empty(),
+                "scenario {} capability {} needs at least one reason code",
+                scenario.id,
+                expectation.capability
+            );
+        }
+
+        assert_eq!(
+            scenario
+                .tools_usable
+                .iter()
+                .map(|(requirement, _)| requirement)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            scenario.tools_usable.len(),
+            "scenario {} tool requirements should not duplicate keys",
+            scenario.id
+        );
+    }
 }

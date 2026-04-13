@@ -180,6 +180,588 @@ pub enum CompatibilityCapabilityRole {
     DerivedSummary,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CompatibilityHostRule {
+    PrimarySupportedHosts,
+    MacOSOnly,
+    LinuxArm64Only,
+    AnyHost,
+    DerivedFromInputs,
+}
+
+impl CompatibilityHostRule {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::PrimarySupportedHosts => "primary_supported_hosts",
+            Self::MacOSOnly => "macos_only",
+            Self::LinuxArm64Only => "linux_arm64_only",
+            Self::AnyHost => "any_host",
+            Self::DerivedFromInputs => "derived_from_inputs",
+        }
+    }
+}
+
+impl fmt::Display for CompatibilityHostRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.key())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CompatibilityHostClass {
+    PrimarySupported,
+    OutsidePrimaryMatrix,
+}
+
+impl CompatibilityHostClass {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::PrimarySupported => "primary_supported",
+            Self::OutsidePrimaryMatrix => "outside_primary_matrix",
+        }
+    }
+}
+
+impl fmt::Display for CompatibilityHostClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.key())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CompatibilityToolRequirement {
+    Xcrun,
+    XcrunSdkPathProbe,
+    Clang,
+    Strip,
+    Python3,
+    Nm,
+    Sha256sum,
+    Shasum,
+    Openssl,
+}
+
+impl CompatibilityToolRequirement {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Xcrun => "xcrun",
+            Self::XcrunSdkPathProbe => "xcrun_sdk_path_probe",
+            Self::Clang => "clang",
+            Self::Strip => "strip",
+            Self::Python3 => "python3",
+            Self::Nm => "nm",
+            Self::Sha256sum => "sha256sum",
+            Self::Shasum => "shasum",
+            Self::Openssl => "openssl",
+        }
+    }
+}
+
+impl fmt::Display for CompatibilityToolRequirement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.key())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompatibilityCapabilityPolicy {
+    pub capability: CompatibilityCapability,
+    pub role: CompatibilityCapabilityRole,
+    pub host_rule: CompatibilityHostRule,
+    pub required_tools_all: &'static [CompatibilityToolRequirement],
+    pub required_tools_any: &'static [CompatibilityToolRequirement],
+    pub summary_inputs: &'static [CompatibilityCapability],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompatibilityCapabilityExpectation {
+    pub capability: CompatibilityCapability,
+    pub status: CapabilityStatus,
+    pub reason_codes: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompatibilityVerificationScenario {
+    pub id: &'static str,
+    pub host_platform: &'static str,
+    pub host_architecture: &'static str,
+    pub expected_host_class: CompatibilityHostClass,
+    pub tools_usable: &'static [(CompatibilityToolRequirement, bool)],
+    pub expected_capabilities: &'static [CompatibilityCapabilityExpectation],
+    pub expected_overall_status: CapabilityStatus,
+    pub expected_issue_codes: &'static [&'static str],
+}
+
+impl CompatibilityVerificationScenario {
+    pub fn parsed_host_platform(&self) -> HostPlatform {
+        HostPlatform::parse(self.host_platform)
+    }
+
+    pub fn parsed_host_architecture(&self) -> HostArchitecture {
+        HostArchitecture::parse(self.host_architecture)
+    }
+
+    pub fn capability_expectation(
+        &self,
+        capability: CompatibilityCapability,
+    ) -> Option<&CompatibilityCapabilityExpectation> {
+        self.expected_capabilities
+            .iter()
+            .find(|expectation| expectation.capability == capability)
+    }
+}
+
+const NO_TOOL_REQUIREMENTS: &[CompatibilityToolRequirement] = &[];
+const REBUILD_REQUIRED_TOOLS_ALL: &[CompatibilityToolRequirement] = &[
+    CompatibilityToolRequirement::Xcrun,
+    CompatibilityToolRequirement::XcrunSdkPathProbe,
+    CompatibilityToolRequirement::Clang,
+    CompatibilityToolRequirement::Strip,
+    CompatibilityToolRequirement::Python3,
+    CompatibilityToolRequirement::Nm,
+];
+const DRIFT_REQUIRED_TOOLS_ANY: &[CompatibilityToolRequirement] = &[
+    CompatibilityToolRequirement::Sha256sum,
+    CompatibilityToolRequirement::Shasum,
+    CompatibilityToolRequirement::Openssl,
+];
+const NO_SUMMARY_INPUTS: &[CompatibilityCapability] = &[];
+const BENCHMARK_SUMMARY_INPUTS: &[CompatibilityCapability] = &[
+    CompatibilityCapability::BenchCompile,
+    CompatibilityCapability::BenchRuntime,
+];
+const COMPATIBILITY_CAPABILITY_POLICIES: [CompatibilityCapabilityPolicy; 6] = [
+    CompatibilityCapabilityPolicy {
+        capability: CompatibilityCapability::MachoAnalysis,
+        role: CompatibilityCapabilityRole::PrimaryInput,
+        host_rule: CompatibilityHostRule::PrimarySupportedHosts,
+        required_tools_all: NO_TOOL_REQUIREMENTS,
+        required_tools_any: NO_TOOL_REQUIREMENTS,
+        summary_inputs: NO_SUMMARY_INPUTS,
+    },
+    CompatibilityCapabilityPolicy {
+        capability: CompatibilityCapability::FixtureRebuild,
+        role: CompatibilityCapabilityRole::PrimaryInput,
+        host_rule: CompatibilityHostRule::MacOSOnly,
+        required_tools_all: REBUILD_REQUIRED_TOOLS_ALL,
+        required_tools_any: NO_TOOL_REQUIREMENTS,
+        summary_inputs: NO_SUMMARY_INPUTS,
+    },
+    CompatibilityCapabilityPolicy {
+        capability: CompatibilityCapability::FixtureDriftCheck,
+        role: CompatibilityCapabilityRole::PrimaryInput,
+        host_rule: CompatibilityHostRule::AnyHost,
+        required_tools_all: NO_TOOL_REQUIREMENTS,
+        required_tools_any: DRIFT_REQUIRED_TOOLS_ANY,
+        summary_inputs: NO_SUMMARY_INPUTS,
+    },
+    CompatibilityCapabilityPolicy {
+        capability: CompatibilityCapability::Benchmark,
+        role: CompatibilityCapabilityRole::DerivedSummary,
+        host_rule: CompatibilityHostRule::DerivedFromInputs,
+        required_tools_all: NO_TOOL_REQUIREMENTS,
+        required_tools_any: NO_TOOL_REQUIREMENTS,
+        summary_inputs: BENCHMARK_SUMMARY_INPUTS,
+    },
+    CompatibilityCapabilityPolicy {
+        capability: CompatibilityCapability::BenchCompile,
+        role: CompatibilityCapabilityRole::PrimaryInput,
+        host_rule: CompatibilityHostRule::PrimarySupportedHosts,
+        required_tools_all: NO_TOOL_REQUIREMENTS,
+        required_tools_any: NO_TOOL_REQUIREMENTS,
+        summary_inputs: NO_SUMMARY_INPUTS,
+    },
+    CompatibilityCapabilityPolicy {
+        capability: CompatibilityCapability::BenchRuntime,
+        role: CompatibilityCapabilityRole::PrimaryInput,
+        host_rule: CompatibilityHostRule::LinuxArm64Only,
+        required_tools_all: NO_TOOL_REQUIREMENTS,
+        required_tools_any: NO_TOOL_REQUIREMENTS,
+        summary_inputs: NO_SUMMARY_INPUTS,
+    },
+];
+const NO_REASON_CODES: &[&str] = &[];
+const REASON_FIXTURE_REBUILD_MACOS_ONLY: &[&str] = &["fixture_rebuild_macos_only"];
+const REASON_HOST_NOT_CI_VERIFIED: &[&str] = &["host_not_ci_verified"];
+const REASON_HOST_NOT_CI_VERIFIED_FOR_BENCH_COMPILE: &[&str] =
+    &["host_not_ci_verified_for_bench_compile"];
+const REASON_THROUGHPUT_SMOKE_LINUX_ARM64_ONLY: &[&str] = &["throughput_smoke_linux_arm64_only"];
+const REASON_MISSING_USABLE_HASH_TOOL: &[&str] = &["missing_usable_hash_tool"];
+const REASON_XCRUN_SDK_PATH_PROBE_FAILED: &[&str] = &["xcrun_sdk_path_probe_failed"];
+
+const TOOLS_ALL_USABLE: &[(CompatibilityToolRequirement, bool)] = &[
+    (CompatibilityToolRequirement::Xcrun, true),
+    (CompatibilityToolRequirement::XcrunSdkPathProbe, true),
+    (CompatibilityToolRequirement::Clang, true),
+    (CompatibilityToolRequirement::Strip, true),
+    (CompatibilityToolRequirement::Python3, true),
+    (CompatibilityToolRequirement::Nm, true),
+    (CompatibilityToolRequirement::Sha256sum, true),
+    (CompatibilityToolRequirement::Shasum, true),
+    (CompatibilityToolRequirement::Openssl, true),
+];
+const TOOLS_OPENSSL_ONLY: &[(CompatibilityToolRequirement, bool)] = &[
+    (CompatibilityToolRequirement::Xcrun, false),
+    (CompatibilityToolRequirement::XcrunSdkPathProbe, false),
+    (CompatibilityToolRequirement::Clang, false),
+    (CompatibilityToolRequirement::Strip, false),
+    (CompatibilityToolRequirement::Python3, false),
+    (CompatibilityToolRequirement::Nm, false),
+    (CompatibilityToolRequirement::Sha256sum, false),
+    (CompatibilityToolRequirement::Shasum, false),
+    (CompatibilityToolRequirement::Openssl, true),
+];
+const TOOLS_NO_HASH_BACKEND: &[(CompatibilityToolRequirement, bool)] = &[
+    (CompatibilityToolRequirement::Xcrun, true),
+    (CompatibilityToolRequirement::XcrunSdkPathProbe, true),
+    (CompatibilityToolRequirement::Clang, true),
+    (CompatibilityToolRequirement::Strip, true),
+    (CompatibilityToolRequirement::Python3, true),
+    (CompatibilityToolRequirement::Nm, true),
+    (CompatibilityToolRequirement::Sha256sum, false),
+    (CompatibilityToolRequirement::Shasum, false),
+    (CompatibilityToolRequirement::Openssl, false),
+];
+const TOOLS_MISSING_SDK_PROBE: &[(CompatibilityToolRequirement, bool)] = &[
+    (CompatibilityToolRequirement::Xcrun, true),
+    (CompatibilityToolRequirement::XcrunSdkPathProbe, false),
+    (CompatibilityToolRequirement::Clang, true),
+    (CompatibilityToolRequirement::Strip, true),
+    (CompatibilityToolRequirement::Python3, true),
+    (CompatibilityToolRequirement::Nm, true),
+    (CompatibilityToolRequirement::Sha256sum, true),
+    (CompatibilityToolRequirement::Shasum, true),
+    (CompatibilityToolRequirement::Openssl, true),
+];
+
+const EXPECT_LINUX_ARM64_FULL: &[CompatibilityCapabilityExpectation] = &[
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::MachoAnalysis,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureRebuild,
+        status: CapabilityStatus::Unsupported,
+        reason_codes: REASON_FIXTURE_REBUILD_MACOS_ONLY,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureDriftCheck,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::Benchmark,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchCompile,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchRuntime,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+];
+const EXPECT_MACOS_ARM64_FULL: &[CompatibilityCapabilityExpectation] = &[
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::MachoAnalysis,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureRebuild,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureDriftCheck,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::Benchmark,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_THROUGHPUT_SMOKE_LINUX_ARM64_ONLY,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchCompile,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchRuntime,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_THROUGHPUT_SMOKE_LINUX_ARM64_ONLY,
+    },
+];
+const EXPECT_LINUX_X86_64_COMPILE_ONLY: &[CompatibilityCapabilityExpectation] = &[
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::MachoAnalysis,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureRebuild,
+        status: CapabilityStatus::Unsupported,
+        reason_codes: REASON_FIXTURE_REBUILD_MACOS_ONLY,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureDriftCheck,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::Benchmark,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_THROUGHPUT_SMOKE_LINUX_ARM64_ONLY,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchCompile,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchRuntime,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_THROUGHPUT_SMOKE_LINUX_ARM64_ONLY,
+    },
+];
+const EXPECT_WINDOWS_X86_64_DEGRADED: &[CompatibilityCapabilityExpectation] = &[
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::MachoAnalysis,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_HOST_NOT_CI_VERIFIED,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureRebuild,
+        status: CapabilityStatus::Unsupported,
+        reason_codes: REASON_FIXTURE_REBUILD_MACOS_ONLY,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureDriftCheck,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::Benchmark,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: &[
+            "host_not_ci_verified_for_bench_compile",
+            "throughput_smoke_linux_arm64_only",
+        ],
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchCompile,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_HOST_NOT_CI_VERIFIED_FOR_BENCH_COMPILE,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchRuntime,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_THROUGHPUT_SMOKE_LINUX_ARM64_ONLY,
+    },
+];
+const EXPECT_LINUX_ARM64_NO_HASH_BACKEND: &[CompatibilityCapabilityExpectation] = &[
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::MachoAnalysis,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureRebuild,
+        status: CapabilityStatus::Unsupported,
+        reason_codes: REASON_FIXTURE_REBUILD_MACOS_ONLY,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureDriftCheck,
+        status: CapabilityStatus::Unsupported,
+        reason_codes: REASON_MISSING_USABLE_HASH_TOOL,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::Benchmark,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchCompile,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchRuntime,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+];
+const EXPECT_MACOS_ARM64_MISSING_SDK_PROBE: &[CompatibilityCapabilityExpectation] = &[
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::MachoAnalysis,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureRebuild,
+        status: CapabilityStatus::Unsupported,
+        reason_codes: REASON_XCRUN_SDK_PATH_PROBE_FAILED,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureDriftCheck,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::Benchmark,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_THROUGHPUT_SMOKE_LINUX_ARM64_ONLY,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchCompile,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchRuntime,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_THROUGHPUT_SMOKE_LINUX_ARM64_ONLY,
+    },
+];
+const EXPECT_UNKNOWN_SOLARIS_SPARC64_OPENSSL: &[CompatibilityCapabilityExpectation] = &[
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::MachoAnalysis,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_HOST_NOT_CI_VERIFIED,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureRebuild,
+        status: CapabilityStatus::Unsupported,
+        reason_codes: REASON_FIXTURE_REBUILD_MACOS_ONLY,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::FixtureDriftCheck,
+        status: CapabilityStatus::Supported,
+        reason_codes: NO_REASON_CODES,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::Benchmark,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: &[
+            "host_not_ci_verified_for_bench_compile",
+            "throughput_smoke_linux_arm64_only",
+        ],
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchCompile,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_HOST_NOT_CI_VERIFIED_FOR_BENCH_COMPILE,
+    },
+    CompatibilityCapabilityExpectation {
+        capability: CompatibilityCapability::BenchRuntime,
+        status: CapabilityStatus::SupportedWithDegradedFeatures,
+        reason_codes: REASON_THROUGHPUT_SMOKE_LINUX_ARM64_ONLY,
+    },
+];
+
+const ISSUE_FIXTURE_ONLY: &[&str] = &["fixture_rebuild_macos_only"];
+const ISSUE_THROUGHPUT_ONLY: &[&str] = &["throughput_smoke_linux_arm64_only"];
+const ISSUE_FIXTURE_AND_THROUGHPUT: &[&str] = &[
+    "fixture_rebuild_macos_only",
+    "throughput_smoke_linux_arm64_only",
+];
+const ISSUE_WINDOWS_DEGRADED: &[&str] = &[
+    "host_not_ci_verified",
+    "fixture_rebuild_macos_only",
+    "host_not_ci_verified_for_bench_compile",
+    "throughput_smoke_linux_arm64_only",
+];
+const ISSUE_FIXTURE_AND_HASH: &[&str] = &["fixture_rebuild_macos_only", "missing_usable_hash_tool"];
+const ISSUE_SDK_AND_THROUGHPUT: &[&str] = &[
+    "xcrun_sdk_path_probe_failed",
+    "throughput_smoke_linux_arm64_only",
+];
+const ISSUE_UNKNOWN_HOST: &[&str] = &[
+    "host_not_ci_verified",
+    "fixture_rebuild_macos_only",
+    "host_not_ci_verified_for_bench_compile",
+    "throughput_smoke_linux_arm64_only",
+];
+
+const COMPATIBILITY_VERIFICATION_CORPUS: [CompatibilityVerificationScenario; 7] = [
+    CompatibilityVerificationScenario {
+        id: "linux-arm64-full",
+        host_platform: "linux",
+        host_architecture: "arm64",
+        expected_host_class: CompatibilityHostClass::PrimarySupported,
+        tools_usable: TOOLS_ALL_USABLE,
+        expected_capabilities: EXPECT_LINUX_ARM64_FULL,
+        expected_overall_status: CapabilityStatus::Unsupported,
+        expected_issue_codes: ISSUE_FIXTURE_ONLY,
+    },
+    CompatibilityVerificationScenario {
+        id: "macos-arm64-full",
+        host_platform: "macos",
+        host_architecture: "arm64",
+        expected_host_class: CompatibilityHostClass::PrimarySupported,
+        tools_usable: TOOLS_ALL_USABLE,
+        expected_capabilities: EXPECT_MACOS_ARM64_FULL,
+        expected_overall_status: CapabilityStatus::SupportedWithDegradedFeatures,
+        expected_issue_codes: ISSUE_THROUGHPUT_ONLY,
+    },
+    CompatibilityVerificationScenario {
+        id: "linux-x86_64-compile-only",
+        host_platform: "linux",
+        host_architecture: "x86_64",
+        expected_host_class: CompatibilityHostClass::PrimarySupported,
+        tools_usable: TOOLS_ALL_USABLE,
+        expected_capabilities: EXPECT_LINUX_X86_64_COMPILE_ONLY,
+        expected_overall_status: CapabilityStatus::Unsupported,
+        expected_issue_codes: ISSUE_FIXTURE_AND_THROUGHPUT,
+    },
+    CompatibilityVerificationScenario {
+        id: "windows-x86_64-degraded",
+        host_platform: "windows",
+        host_architecture: "x86_64",
+        expected_host_class: CompatibilityHostClass::OutsidePrimaryMatrix,
+        tools_usable: TOOLS_OPENSSL_ONLY,
+        expected_capabilities: EXPECT_WINDOWS_X86_64_DEGRADED,
+        expected_overall_status: CapabilityStatus::Unsupported,
+        expected_issue_codes: ISSUE_WINDOWS_DEGRADED,
+    },
+    CompatibilityVerificationScenario {
+        id: "linux-arm64-no-hash-backend",
+        host_platform: "linux",
+        host_architecture: "arm64",
+        expected_host_class: CompatibilityHostClass::PrimarySupported,
+        tools_usable: TOOLS_NO_HASH_BACKEND,
+        expected_capabilities: EXPECT_LINUX_ARM64_NO_HASH_BACKEND,
+        expected_overall_status: CapabilityStatus::Unsupported,
+        expected_issue_codes: ISSUE_FIXTURE_AND_HASH,
+    },
+    CompatibilityVerificationScenario {
+        id: "macos-arm64-missing-sdk-probe",
+        host_platform: "macos",
+        host_architecture: "arm64",
+        expected_host_class: CompatibilityHostClass::PrimarySupported,
+        tools_usable: TOOLS_MISSING_SDK_PROBE,
+        expected_capabilities: EXPECT_MACOS_ARM64_MISSING_SDK_PROBE,
+        expected_overall_status: CapabilityStatus::Unsupported,
+        expected_issue_codes: ISSUE_SDK_AND_THROUGHPUT,
+    },
+    CompatibilityVerificationScenario {
+        id: "unknown-solaris-sparc64-openssl",
+        host_platform: "solaris",
+        host_architecture: "sparc64",
+        expected_host_class: CompatibilityHostClass::OutsidePrimaryMatrix,
+        tools_usable: TOOLS_OPENSSL_ONLY,
+        expected_capabilities: EXPECT_UNKNOWN_SOLARIS_SPARC64_OPENSSL,
+        expected_overall_status: CapabilityStatus::Unsupported,
+        expected_issue_codes: ISSUE_UNKNOWN_HOST,
+    },
+];
+
 impl CompatibilityCapability {
     pub const ALL: [Self; 6] = [
         Self::MachoAnalysis,
@@ -196,8 +778,11 @@ impl CompatibilityCapability {
         Self::BenchCompile,
         Self::BenchRuntime,
     ];
-    const BENCHMARK_SUMMARY_INPUTS: [Self; 2] = [Self::BenchCompile, Self::BenchRuntime];
-    const NO_SUMMARY_INPUTS: [Self; 0] = [];
+    pub const DOCTOR_CHECK_PORTABLE: [Self; 3] = [
+        Self::MachoAnalysis,
+        Self::FixtureDriftCheck,
+        Self::BenchCompile,
+    ];
 
     pub fn key(self) -> &'static str {
         match self {
@@ -254,12 +839,12 @@ impl CompatibilityCapability {
 
     pub fn summary_inputs(self) -> &'static [Self] {
         match self {
-            Self::Benchmark => &Self::BENCHMARK_SUMMARY_INPUTS,
+            Self::Benchmark => BENCHMARK_SUMMARY_INPUTS,
             Self::MachoAnalysis
             | Self::FixtureRebuild
             | Self::FixtureDriftCheck
             | Self::BenchCompile
-            | Self::BenchRuntime => &Self::NO_SUMMARY_INPUTS,
+            | Self::BenchRuntime => NO_SUMMARY_INPUTS,
         }
     }
 }
@@ -267,6 +852,100 @@ impl CompatibilityCapability {
 impl fmt::Display for CompatibilityCapability {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.key())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompatibilityPolicy;
+
+impl CompatibilityPolicy {
+    pub const PRIMARY_SUPPORTED_HOSTS: [(HostPlatform, HostArchitecture); 3] = [
+        (HostPlatform::MacOS, HostArchitecture::Arm64),
+        (HostPlatform::Linux, HostArchitecture::X86_64),
+        (HostPlatform::Linux, HostArchitecture::Arm64),
+    ];
+    pub const DOCTOR_CHECK_ALL: [CompatibilityCapability; 5] =
+        CompatibilityCapability::DOCTOR_CHECK_ALL;
+    pub const DOCTOR_CHECK_PORTABLE: [CompatibilityCapability; 3] =
+        CompatibilityCapability::DOCTOR_CHECK_PORTABLE;
+
+    pub fn policies() -> &'static [CompatibilityCapabilityPolicy] {
+        &COMPATIBILITY_CAPABILITY_POLICIES
+    }
+
+    pub fn capability(
+        capability: CompatibilityCapability,
+    ) -> &'static CompatibilityCapabilityPolicy {
+        COMPATIBILITY_CAPABILITY_POLICIES
+            .iter()
+            .find(|policy| policy.capability == capability)
+            .expect("compatibility capability policy missing")
+    }
+
+    pub fn is_primary_supported_host(
+        platform: &HostPlatform,
+        architecture: &HostArchitecture,
+    ) -> bool {
+        matches!(
+            (platform, architecture),
+            (HostPlatform::MacOS, _)
+                | (HostPlatform::Linux, HostArchitecture::X86_64)
+                | (HostPlatform::Linux, HostArchitecture::Arm64)
+        )
+    }
+
+    pub fn host_class(
+        platform: &HostPlatform,
+        architecture: &HostArchitecture,
+    ) -> CompatibilityHostClass {
+        if Self::is_primary_supported_host(platform, architecture) {
+            CompatibilityHostClass::PrimarySupported
+        } else {
+            CompatibilityHostClass::OutsidePrimaryMatrix
+        }
+    }
+
+    pub fn expected_status_for_host_rule(
+        rule: CompatibilityHostRule,
+        platform: &HostPlatform,
+        architecture: &HostArchitecture,
+    ) -> CapabilityStatus {
+        match rule {
+            CompatibilityHostRule::PrimarySupportedHosts => {
+                if Self::is_primary_supported_host(platform, architecture) {
+                    CapabilityStatus::Supported
+                } else {
+                    CapabilityStatus::SupportedWithDegradedFeatures
+                }
+            }
+            CompatibilityHostRule::MacOSOnly => {
+                if *platform == HostPlatform::MacOS {
+                    CapabilityStatus::Supported
+                } else {
+                    CapabilityStatus::Unsupported
+                }
+            }
+            CompatibilityHostRule::LinuxArm64Only => {
+                if *platform == HostPlatform::Linux && *architecture == HostArchitecture::Arm64 {
+                    CapabilityStatus::Supported
+                } else {
+                    CapabilityStatus::SupportedWithDegradedFeatures
+                }
+            }
+            CompatibilityHostRule::AnyHost | CompatibilityHostRule::DerivedFromInputs => {
+                CapabilityStatus::Supported
+            }
+        }
+    }
+
+    pub fn verification_corpus() -> &'static [CompatibilityVerificationScenario] {
+        &COMPATIBILITY_VERIFICATION_CORPUS
+    }
+
+    pub fn verification_scenario(id: &str) -> Option<&'static CompatibilityVerificationScenario> {
+        COMPATIBILITY_VERIFICATION_CORPUS
+            .iter()
+            .find(|scenario| scenario.id == id)
     }
 }
 

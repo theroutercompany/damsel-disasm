@@ -164,6 +164,38 @@ fn corrupt_export_offsets(bytes: &mut [u8]) -> bool {
     patched
 }
 
+fn corrupt_bind_offsets(bytes: &mut [u8]) -> bool {
+    if read_u32_le(bytes, 0) != Some(MH_MAGIC_64) {
+        return false;
+    }
+    let Some(ncmds) = read_u32_le(bytes, 16).map(|value| value as usize) else {
+        return false;
+    };
+    let mut offset = 32usize;
+    for _ in 0..ncmds {
+        let Some(cmd) = read_u32_le(bytes, offset) else {
+            return false;
+        };
+        let Some(cmdsize) = read_u32_le(bytes, offset + 4).map(|value| value as usize) else {
+            return false;
+        };
+        if cmdsize < 48 {
+            return false;
+        }
+        if cmd == LC_DYLD_INFO || cmd == LC_DYLD_INFO_ONLY {
+            let bad_offset = (bytes.len() as u32).saturating_add(0x2000);
+            let patched_offset = write_u32_le(bytes, offset + 16, bad_offset);
+            let patched_size = write_u32_le(bytes, offset + 20, 0x100);
+            return patched_offset && patched_size;
+        }
+        let Some(next_offset) = offset.checked_add(cmdsize) else {
+            return false;
+        };
+        offset = next_offset;
+    }
+    false
+}
+
 fn patch_build_version_platform(bytes: &mut [u8], platform: u32) -> bool {
     if read_u32_le(bytes, 0) != Some(MH_MAGIC_64) {
         return false;
@@ -293,6 +325,14 @@ fn rejects_non_macho_fixture_without_panicking() {
 }
 
 #[test]
+fn rejects_thin_macho_magic_without_complete_header_as_malformed() {
+    let path = write_temp_fixture(&[0xcf, 0xfa, 0xed, 0xfe]);
+    let error = load(&path).expect_err("truncated thin Mach-O header must be malformed");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
+}
+
+#[test]
 fn rejects_universal_without_arm64_slice_with_typed_error() {
     let bytes = make_fat32_fixture(&[(CPU_TYPE_X86_64, 3, 0x1000, 0x200, 0)]);
     let path = write_temp_fixture(&bytes);
@@ -322,13 +362,7 @@ fn rejects_zero_size_fat_arm64_slice_with_typed_error() {
 #[test]
 fn rejects_truncated_fixture_without_panicking() {
     let error = load(fixture("malformed-truncated")).expect_err("expected parse failure");
-    assert!(matches!(
-        error,
-        MachoError::Object(_)
-            | MachoError::Goblin(_)
-            | MachoError::UnsupportedFileKind(_)
-            | MachoError::UnsupportedInputKind(_)
-    ));
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
 }
 
 #[test]
@@ -470,6 +504,140 @@ fn falls_back_to_valid_arm64_when_preferred_arm64e_is_invalid_fat64() {
     assert_eq!(image.architecture(), Architecture::Arm64);
     assert_eq!(image.selected_slice().offset, arm64_offset);
     assert_eq!(image.selected_slice().cpu_subtype, CPU_SUBTYPE_ARM64_ALL);
+}
+
+#[test]
+fn falls_back_to_parseable_arm64_when_preferred_arm64e_is_non_parseable_fat32() {
+    let arm64_payload = fs::read(fixture("arm64-symbolized")).expect("read arm64 payload");
+    let arm64e_payload = vec![0u8; arm64_payload.len().max(64)];
+    let arm64_offset = 0x200_u32;
+    let arm64e_offset = arm64_offset + arm64_payload.len() as u32 + 0x200;
+    let arm64_size = arm64_payload.len() as u32;
+    let mut bytes = make_fat32_fixture(&[
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64E,
+            arm64e_offset,
+            arm64e_payload.len() as u32,
+            0,
+        ),
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            arm64_offset,
+            arm64_size,
+            0,
+        ),
+    ]);
+    embed_payload(&mut bytes, arm64e_offset as usize, &arm64e_payload);
+    embed_payload(&mut bytes, arm64_offset as usize, &arm64_payload);
+    let path = write_temp_fixture(&bytes);
+    let image =
+        load(&path).expect("parseable arm64 should be selected when arm64e is non-parseable");
+    let _ = fs::remove_file(path);
+    assert_eq!(image.architecture(), Architecture::Arm64);
+    assert_eq!(image.selected_slice().offset, arm64_offset as u64);
+    assert_eq!(image.selected_slice().cpu_subtype, CPU_SUBTYPE_ARM64_ALL);
+}
+
+#[test]
+fn falls_back_to_parseable_arm64_when_preferred_arm64e_is_non_parseable_fat64() {
+    let arm64_payload = fs::read(fixture("arm64-symbolized")).expect("read arm64 payload");
+    let arm64e_payload = vec![0u8; arm64_payload.len().max(64)];
+    let arm64_offset = 0x200_u64;
+    let arm64e_offset = arm64_offset + arm64_payload.len() as u64 + 0x200;
+    let arm64_size = arm64_payload.len() as u64;
+    let mut bytes = make_fat64_fixture(&[
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64E,
+            arm64e_offset,
+            arm64e_payload.len() as u64,
+            0,
+            0,
+        ),
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            arm64_offset,
+            arm64_size,
+            0,
+            0,
+        ),
+    ]);
+    embed_payload(&mut bytes, arm64e_offset as usize, &arm64e_payload);
+    embed_payload(&mut bytes, arm64_offset as usize, &arm64_payload);
+    let path = write_temp_fixture(&bytes);
+    let image =
+        load(&path).expect("parseable arm64 should be selected when arm64e is non-parseable");
+    let _ = fs::remove_file(path);
+    assert_eq!(image.architecture(), Architecture::Arm64);
+    assert_eq!(image.selected_slice().offset, arm64_offset);
+    assert_eq!(image.selected_slice().cpu_subtype, CPU_SUBTYPE_ARM64_ALL);
+}
+
+#[test]
+fn rejects_fat32_universal_when_all_arm64_family_slices_are_non_parseable() {
+    let garbage_one = vec![0x41_u8; 128];
+    let garbage_two = vec![0x42_u8; 128];
+    let first_offset = 0x200_u32;
+    let second_offset = first_offset + garbage_one.len() as u32 + 0x200;
+    let mut bytes = make_fat32_fixture(&[
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64E,
+            first_offset,
+            garbage_one.len() as u32,
+            0,
+        ),
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            second_offset,
+            garbage_two.len() as u32,
+            0,
+        ),
+    ]);
+    embed_payload(&mut bytes, first_offset as usize, &garbage_one);
+    embed_payload(&mut bytes, second_offset as usize, &garbage_two);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path)
+        .expect_err("non-parseable arm64-family slices must produce malformed universal");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
+}
+
+#[test]
+fn rejects_fat64_universal_when_all_arm64_family_slices_are_non_parseable() {
+    let garbage_one = vec![0x51_u8; 128];
+    let garbage_two = vec![0x61_u8; 128];
+    let first_offset = 0x200_u64;
+    let second_offset = first_offset + garbage_one.len() as u64 + 0x200;
+    let mut bytes = make_fat64_fixture(&[
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64E,
+            first_offset,
+            garbage_one.len() as u64,
+            0,
+            0,
+        ),
+        (
+            CPU_TYPE_ARM64,
+            CPU_SUBTYPE_ARM64_ALL,
+            second_offset,
+            garbage_two.len() as u64,
+            0,
+            0,
+        ),
+    ]);
+    embed_payload(&mut bytes, first_offset as usize, &garbage_one);
+    embed_payload(&mut bytes, second_offset as usize, &garbage_two);
+    let path = write_temp_fixture(&bytes);
+    let error = load(&path)
+        .expect_err("non-parseable arm64-family slices must produce malformed universal");
+    let _ = fs::remove_file(path);
+    assert!(matches!(error, MachoError::MalformedFatBinary(_)));
 }
 
 #[test]
@@ -753,6 +921,29 @@ fn rejects_malformed_export_trie_without_panicking() {
     match error {
         MachoError::MalformedDyldPayload(message) => {
             assert!(message.contains("export trie"));
+        }
+        other => panic!("unexpected error kind: {other}"),
+    }
+}
+
+#[test]
+fn rejects_malformed_bind_offsets_without_leaking_raw_parse_errors() {
+    let path = fixture("import-lazy");
+    if !path.exists() {
+        eprintln!("import-lazy fixture not present; skipping");
+        return;
+    }
+    let mut bytes = fs::read(&path).expect("read fixture");
+    if !corrupt_bind_offsets(&mut bytes) {
+        eprintln!("dyld info load command not present in fixture; skipping");
+        return;
+    }
+    let malformed = write_temp_fixture(&bytes);
+    let error = load(&malformed).expect_err("expected malformed bind offsets to fail");
+    let _ = fs::remove_file(malformed);
+    match error {
+        MachoError::MalformedDyldPayload(message) => {
+            assert!(message.contains("import table parse error"));
         }
         other => panic!("unexpected error kind: {other}"),
     }

@@ -1,11 +1,11 @@
 use damsel_core::{
     Annotation, BinaryImage, CapabilityStatus, CompatibilityCapability, CompatibilityIssue,
-    DecodedInstruction, ExportFlagName, ExportKind, HostArchitecture, HostPlatform, Import,
-    ImportBindingKind, ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord,
-    ObjcCategoryRecordSource, ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind,
-    ObjcMethodRecord, ObjcNameSource, ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord,
-    ObjcProtocolRecord, ObjcSelectorSource, RecoveredValue, Reference, Relocation, Section,
-    SliceDescriptor, StubEntry, StubHelperEntry, StubKind, Symbol,
+    CompatibilityPolicy, CompatibilityToolRequirement, DecodedInstruction, ExportFlagName,
+    ExportKind, HostArchitecture, HostPlatform, Import, ImportBindingKind, ImportBindingRecord,
+    ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource, ObjcClassRecord,
+    ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource, ObjcPointerKind,
+    ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource, RecoveredValue,
+    Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry, StubKind, Symbol,
 };
 use std::env;
 use std::fmt::Write as _;
@@ -214,6 +214,9 @@ struct DoctorContext {
     tools: DoctorTools,
 }
 
+const DOCTOR_TEST_SCENARIO_ENV: &str = "DAMSEL_DOCTOR_TEST_SCENARIO";
+const DOCTOR_TEST_TARGET_TRIPLE_ENV: &str = "DAMSEL_DOCTOR_TEST_TARGET_TRIPLE";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DoctorReport {
     host_platform: HostPlatform,
@@ -239,6 +242,17 @@ impl DoctorReport {
             CompatibilityCapability::Benchmark => &self.benchmark,
             CompatibilityCapability::BenchCompile => &self.bench_compile,
             CompatibilityCapability::BenchRuntime => &self.bench_runtime,
+        }
+    }
+
+    fn capability_mut(&mut self, capability: CompatibilityCapability) -> &mut CapabilityReport {
+        match capability {
+            CompatibilityCapability::MachoAnalysis => &mut self.macho_analysis,
+            CompatibilityCapability::FixtureRebuild => &mut self.fixture_rebuild,
+            CompatibilityCapability::FixtureDriftCheck => &mut self.fixture_drift_check,
+            CompatibilityCapability::Benchmark => &mut self.benchmark,
+            CompatibilityCapability::BenchCompile => &mut self.bench_compile,
+            CompatibilityCapability::BenchRuntime => &mut self.bench_runtime,
         }
     }
 }
@@ -3921,7 +3935,7 @@ fn print_doctor_text(report: &DoctorReport) {
 }
 
 fn doctor_non_summary_capabilities() -> impl Iterator<Item = CompatibilityCapability> {
-    CompatibilityCapability::DOCTOR_CHECK_ALL.into_iter()
+    CompatibilityPolicy::DOCTOR_CHECK_ALL.into_iter()
 }
 
 fn doctor_non_summary_reports<'a>(report: &'a DoctorReport) -> Vec<&'a CapabilityReport> {
@@ -3934,8 +3948,8 @@ fn doctor_summary_reports<'a>(
     report: &'a DoctorReport,
     capability: CompatibilityCapability,
 ) -> Vec<&'a CapabilityReport> {
-    capability
-        .summary_inputs()
+    CompatibilityPolicy::capability(capability)
+        .summary_inputs
         .iter()
         .map(|input| report.capability(*input))
         .collect()
@@ -3956,152 +3970,76 @@ fn print_tool_line(name: &str, status: &ToolStatus) {
 }
 
 fn collect_doctor_report() -> DoctorReport {
-    let context = DoctorContext {
+    let context = doctor_context_override_from_env().unwrap_or_else(default_doctor_context);
+    evaluate_doctor_report(&context)
+}
+
+fn default_doctor_context() -> DoctorContext {
+    DoctorContext {
         host_platform: HostPlatform::current(),
         host_architecture: HostArchitecture::current(),
         target_triple: option_env!("DAMSEL_TARGET_TRIPLE").map(ToString::to_string),
         tools: detect_doctor_tools(),
-    };
-    evaluate_doctor_report(&context)
+    }
+}
+
+fn doctor_context_override_from_env() -> Option<DoctorContext> {
+    let scenario = env::var(DOCTOR_TEST_SCENARIO_ENV).ok()?;
+    let (host_platform, host_architecture) = parse_doctor_test_scenario(&scenario)?;
+    let target_triple = env::var(DOCTOR_TEST_TARGET_TRIPLE_ENV)
+        .ok()
+        .or_else(|| option_env!("DAMSEL_TARGET_TRIPLE").map(ToString::to_string));
+    Some(DoctorContext {
+        host_platform,
+        host_architecture,
+        target_triple,
+        tools: detect_doctor_tools(),
+    })
+}
+
+fn parse_doctor_test_scenario(value: &str) -> Option<(HostPlatform, HostArchitecture)> {
+    match value {
+        "linux-arm64" => Some((HostPlatform::Linux, HostArchitecture::Arm64)),
+        "linux-x86_64" => Some((HostPlatform::Linux, HostArchitecture::X86_64)),
+        "macos-arm64" => Some((HostPlatform::MacOS, HostArchitecture::Arm64)),
+        "macos-x86_64" => Some((HostPlatform::MacOS, HostArchitecture::X86_64)),
+        "windows-x86_64" => Some((HostPlatform::Windows, HostArchitecture::X86_64)),
+        _ => {
+            let (platform, architecture) = value.strip_prefix("unknown:")?.split_once(':')?;
+            Some((
+                HostPlatform::Unknown(platform.to_string()),
+                HostArchitecture::Unknown(architecture.to_string()),
+            ))
+        }
+    }
 }
 
 fn evaluate_doctor_report(context: &DoctorContext) -> DoctorReport {
-    let host_is_primary_supported = matches!(
-        (&context.host_platform, &context.host_architecture),
-        (HostPlatform::MacOS, _)
-            | (HostPlatform::Linux, HostArchitecture::X86_64)
-            | (HostPlatform::Linux, HostArchitecture::Arm64)
-    );
-
-    let macho_analysis = if host_is_primary_supported {
-        CapabilityReport {
-            status: CapabilityStatus::Supported,
-            reasons: Vec::new(),
-        }
-    } else {
-        CapabilityReport {
-            status: CapabilityStatus::SupportedWithDegradedFeatures,
-            reasons: vec![compatibility_issue(
-                "host_not_ci_verified",
-                "Mach-O analysis should still work, but this host pair is outside the current CI matrix.",
-            )],
-        }
-    };
-
-    let fixture_rebuild = {
-        let mut reasons = Vec::new();
-        let status = if context.host_platform != HostPlatform::MacOS {
-            reasons.push(compatibility_issue(
-                "fixture_rebuild_macos_only",
-                "Fixture rebuild requires macOS and Xcode tooling.",
-            ));
-            CapabilityStatus::Unsupported
-        } else {
-            push_tool_requirement(
-                &mut reasons,
-                &context.tools.xcrun,
-                "xcrun",
-                "missing_xcrun",
-                "unusable_xcrun",
-            );
-            push_tool_requirement(
-                &mut reasons,
-                &context.tools.clang,
-                "clang",
-                "missing_clang",
-                "unusable_clang",
-            );
-            push_tool_requirement(
-                &mut reasons,
-                &context.tools.strip,
-                "strip",
-                "missing_strip",
-                "unusable_strip",
-            );
-            push_tool_requirement(
-                &mut reasons,
-                &context.tools.python3,
-                "python3",
-                "missing_python3",
-                "unusable_python3",
-            );
-            push_tool_requirement(
-                &mut reasons,
-                &context.tools.nm,
-                "nm",
-                "missing_nm",
-                "unusable_nm",
-            );
-            if !context.tools.sdk_path_probe.usable {
-                reasons.push(compatibility_issue(
-                    "xcrun_sdk_path_probe_failed",
-                    "xcrun --show-sdk-path failed.",
-                ));
-            }
-            if reasons.is_empty() {
-                CapabilityStatus::Supported
-            } else {
-                CapabilityStatus::Unsupported
-            }
-        };
-        CapabilityReport { status, reasons }
-    };
-
-    let fixture_drift_check = {
-        let mut reasons = Vec::new();
-        let status = if context.tools.selected_hash_tool.is_some() {
-            CapabilityStatus::Supported
-        } else {
-            reasons.push(compatibility_issue(
-                "missing_usable_hash_tool",
-                "No usable hash tool detected; fixture drift check expects sha256sum, shasum, or openssl.",
-            ));
-            CapabilityStatus::Unsupported
-        };
-        CapabilityReport { status, reasons }
-    };
-
-    let bench_compile = if host_is_primary_supported {
-        CapabilityReport {
-            status: CapabilityStatus::Supported,
-            reasons: Vec::new(),
-        }
-    } else {
-        CapabilityReport {
-            status: CapabilityStatus::SupportedWithDegradedFeatures,
-            reasons: vec![compatibility_issue(
-                "host_not_ci_verified_for_bench_compile",
-                "Bench compile smoke is not CI-verified for this host pair.",
-            )],
-        }
-    };
-
-    let bench_runtime = {
-        let mut reasons = Vec::new();
-        let status = if context.host_platform == HostPlatform::Linux
-            && context.host_architecture == HostArchitecture::Arm64
-        {
-            CapabilityStatus::Supported
-        } else {
-            reasons.push(compatibility_issue(
-                "throughput_smoke_linux_arm64_only",
-                "Throughput smoke runs only on linux arm64; other hosts support benchmark compile smoke.",
-            ));
-            CapabilityStatus::SupportedWithDegradedFeatures
-        };
-        CapabilityReport { status, reasons }
-    };
-
     let mut report = DoctorReport {
         host_platform: context.host_platform.clone(),
         host_architecture: context.host_architecture.clone(),
         target_triple: context.target_triple.clone(),
         overall_status: CapabilityStatus::Supported,
-        macho_analysis,
-        fixture_rebuild,
-        fixture_drift_check,
-        bench_compile,
-        bench_runtime,
+        macho_analysis: CapabilityReport {
+            status: CapabilityStatus::Supported,
+            reasons: Vec::new(),
+        },
+        fixture_rebuild: CapabilityReport {
+            status: CapabilityStatus::Supported,
+            reasons: Vec::new(),
+        },
+        fixture_drift_check: CapabilityReport {
+            status: CapabilityStatus::Supported,
+            reasons: Vec::new(),
+        },
+        bench_compile: CapabilityReport {
+            status: CapabilityStatus::Supported,
+            reasons: Vec::new(),
+        },
+        bench_runtime: CapabilityReport {
+            status: CapabilityStatus::Supported,
+            reasons: Vec::new(),
+        },
         benchmark: CapabilityReport {
             status: CapabilityStatus::Supported,
             reasons: Vec::new(),
@@ -4109,6 +4047,9 @@ fn evaluate_doctor_report(context: &DoctorContext) -> DoctorReport {
         tools: context.tools.clone(),
         issues: Vec::new(),
     };
+    for capability in doctor_non_summary_capabilities() {
+        *report.capability_mut(capability) = evaluate_primary_capability(context, capability);
+    }
     report.benchmark = summarize_capability_reports(&doctor_summary_reports(
         &report,
         CompatibilityCapability::Benchmark,
@@ -4123,6 +4064,108 @@ fn evaluate_doctor_report(context: &DoctorContext) -> DoctorReport {
     report.issues = issues;
     report.overall_status = overall_status;
     report
+}
+
+fn evaluate_primary_capability(
+    context: &DoctorContext,
+    capability: CompatibilityCapability,
+) -> CapabilityReport {
+    let policy = CompatibilityPolicy::capability(capability);
+    let host_status = CompatibilityPolicy::expected_status_for_host_rule(
+        policy.host_rule,
+        &context.host_platform,
+        &context.host_architecture,
+    );
+    match capability {
+        CompatibilityCapability::MachoAnalysis => report_for_host_rule(
+            host_status,
+            "host_not_ci_verified",
+            "Mach-O analysis should still work, but this host pair is outside the current CI matrix.",
+        ),
+        CompatibilityCapability::FixtureRebuild => evaluate_fixture_rebuild_capability(context),
+        CompatibilityCapability::FixtureDriftCheck => {
+            evaluate_fixture_drift_check_capability(context, policy.required_tools_any)
+        }
+        CompatibilityCapability::BenchCompile => report_for_host_rule(
+            host_status,
+            "host_not_ci_verified_for_bench_compile",
+            "Bench compile smoke is not CI-verified for this host pair.",
+        ),
+        CompatibilityCapability::BenchRuntime => report_for_host_rule(
+            host_status,
+            "throughput_smoke_linux_arm64_only",
+            "Throughput smoke runs only on linux arm64; other hosts support benchmark compile smoke.",
+        ),
+        CompatibilityCapability::Benchmark => CapabilityReport {
+            status: CapabilityStatus::Supported,
+            reasons: Vec::new(),
+        },
+    }
+}
+
+fn report_for_host_rule(
+    status: CapabilityStatus,
+    degraded_code: &'static str,
+    degraded_message: &'static str,
+) -> CapabilityReport {
+    let reasons = if status == CapabilityStatus::SupportedWithDegradedFeatures {
+        vec![compatibility_issue(degraded_code, degraded_message)]
+    } else {
+        Vec::new()
+    };
+    CapabilityReport { status, reasons }
+}
+
+fn evaluate_fixture_rebuild_capability(context: &DoctorContext) -> CapabilityReport {
+    let policy = CompatibilityPolicy::capability(CompatibilityCapability::FixtureRebuild);
+    let host_status = CompatibilityPolicy::expected_status_for_host_rule(
+        policy.host_rule,
+        &context.host_platform,
+        &context.host_architecture,
+    );
+    if host_status == CapabilityStatus::Unsupported {
+        return CapabilityReport {
+            status: CapabilityStatus::Unsupported,
+            reasons: vec![compatibility_issue(
+                "fixture_rebuild_macos_only",
+                "Fixture rebuild requires macOS and Xcode tooling.",
+            )],
+        };
+    }
+
+    let mut reasons = Vec::new();
+    for requirement in policy.required_tools_all {
+        push_tool_requirement_from_policy(&mut reasons, context, *requirement);
+    }
+    let status = if reasons.is_empty() {
+        CapabilityStatus::Supported
+    } else {
+        CapabilityStatus::Unsupported
+    };
+    CapabilityReport { status, reasons }
+}
+
+fn evaluate_fixture_drift_check_capability(
+    context: &DoctorContext,
+    required_tools_any: &[CompatibilityToolRequirement],
+) -> CapabilityReport {
+    let any_usable = required_tools_any
+        .iter()
+        .any(|requirement| tool_requirement_usable(context, *requirement));
+    if any_usable {
+        CapabilityReport {
+            status: CapabilityStatus::Supported,
+            reasons: Vec::new(),
+        }
+    } else {
+        CapabilityReport {
+            status: CapabilityStatus::Unsupported,
+            reasons: vec![compatibility_issue(
+                "missing_usable_hash_tool",
+                "No usable hash tool detected; fixture drift check expects sha256sum, shasum, or openssl.",
+            )],
+        }
+    }
 }
 
 fn push_tool_requirement(
@@ -4142,6 +4185,78 @@ fn push_tool_requirement(
             unusable_code,
             format!("{tool_name} was detected but did not pass usability probe."),
         ));
+    }
+}
+
+fn push_tool_requirement_from_policy(
+    reasons: &mut Vec<CompatibilityIssue>,
+    context: &DoctorContext,
+    requirement: CompatibilityToolRequirement,
+) {
+    match requirement {
+        CompatibilityToolRequirement::Xcrun => push_tool_requirement(
+            reasons,
+            &context.tools.xcrun,
+            "xcrun",
+            "missing_xcrun",
+            "unusable_xcrun",
+        ),
+        CompatibilityToolRequirement::XcrunSdkPathProbe => {
+            if !context.tools.sdk_path_probe.usable {
+                reasons.push(compatibility_issue(
+                    "xcrun_sdk_path_probe_failed",
+                    "xcrun --show-sdk-path failed.",
+                ));
+            }
+        }
+        CompatibilityToolRequirement::Clang => push_tool_requirement(
+            reasons,
+            &context.tools.clang,
+            "clang",
+            "missing_clang",
+            "unusable_clang",
+        ),
+        CompatibilityToolRequirement::Strip => push_tool_requirement(
+            reasons,
+            &context.tools.strip,
+            "strip",
+            "missing_strip",
+            "unusable_strip",
+        ),
+        CompatibilityToolRequirement::Python3 => push_tool_requirement(
+            reasons,
+            &context.tools.python3,
+            "python3",
+            "missing_python3",
+            "unusable_python3",
+        ),
+        CompatibilityToolRequirement::Nm => push_tool_requirement(
+            reasons,
+            &context.tools.nm,
+            "nm",
+            "missing_nm",
+            "unusable_nm",
+        ),
+        CompatibilityToolRequirement::Sha256sum
+        | CompatibilityToolRequirement::Shasum
+        | CompatibilityToolRequirement::Openssl => {}
+    }
+}
+
+fn tool_requirement_usable(
+    context: &DoctorContext,
+    requirement: CompatibilityToolRequirement,
+) -> bool {
+    match requirement {
+        CompatibilityToolRequirement::Xcrun => context.tools.xcrun.usable,
+        CompatibilityToolRequirement::XcrunSdkPathProbe => context.tools.sdk_path_probe.usable,
+        CompatibilityToolRequirement::Clang => context.tools.clang.usable,
+        CompatibilityToolRequirement::Strip => context.tools.strip.usable,
+        CompatibilityToolRequirement::Python3 => context.tools.python3.usable,
+        CompatibilityToolRequirement::Nm => context.tools.nm.usable,
+        CompatibilityToolRequirement::Sha256sum => context.tools.hash_tools.sha256sum.usable,
+        CompatibilityToolRequirement::Shasum => context.tools.hash_tools.shasum.usable,
+        CompatibilityToolRequirement::Openssl => context.tools.hash_tools.openssl.usable,
     }
 }
 
@@ -4197,16 +4312,12 @@ fn detect_doctor_tools() -> DoctorTools {
     }
 }
 
-fn probe_executable_tool(name: &str) -> ToolStatus {
-    probe_executable_tool_with_probe(name, &["--version"])
-}
-
 fn probe_executable_tool_with_probe(name: &str, probe_args: &[&str]) -> ToolStatus {
     let path = find_command_path(name).map(|value| value.to_string_lossy().to_string());
     let detected = path.is_some();
-    let usable = path.as_deref().is_some_and(|path| {
-        is_executable_path(Path::new(path)) && command_is_invocable(path, probe_args)
-    });
+    let usable = path
+        .as_deref()
+        .is_some_and(|path| tool_probe_usable(name, path, probe_args));
     ToolStatus {
         detected,
         usable,
@@ -4233,8 +4344,7 @@ fn probe_tool_via_xcrun_or_path(xcrun: &ToolStatus, name: &str) -> ToolStatus {
             if let Some(path) = probe_xcrun_find(xcrun_path, name) {
                 return ToolStatus {
                     detected: true,
-                    usable: is_executable_path(Path::new(&path))
-                        && command_is_invocable(&path, &["--version"]),
+                    usable: tool_probe_usable(name, &path, &["--version"]),
                     path: Some(path),
                 };
             }
@@ -4304,12 +4414,39 @@ fn probe_xcrun_sdk_path(xcrun: &ToolStatus) -> ToolStatus {
 }
 
 fn probe_hash_tool(name: &str) -> ToolStatus {
-    let mut status = probe_executable_tool(name);
-    status.usable = status.detected && run_hash_probe(name);
-    status
+    let path = find_command_path(name).map(|value| value.to_string_lossy().to_string());
+    let detected = path.is_some();
+    let usable = path
+        .as_deref()
+        .is_some_and(|path| is_executable_path(Path::new(path)) && run_hash_probe(path, name));
+    ToolStatus {
+        detected,
+        usable,
+        path,
+    }
+}
+
+fn tool_probe_usable(name: &str, command: &str, probe_args: &[&str]) -> bool {
+    if !is_executable_path(Path::new(command)) {
+        return false;
+    }
+    if command_is_invocable(command, probe_args) {
+        return true;
+    }
+    name == "strip" && command_can_start(command, probe_args)
 }
 
 fn command_is_invocable(command: &str, args: &[&str]) -> bool {
+    std::process::Command::new(command)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn command_can_start(command: &str, args: &[&str]) -> bool {
     std::process::Command::new(command)
         .args(args)
         .stdin(Stdio::null())
@@ -4336,22 +4473,22 @@ fn is_executable_path(path: &Path) -> bool {
     }
 }
 
-fn run_hash_probe(name: &str) -> bool {
+fn run_hash_probe(command: &str, name: &str) -> bool {
     let null_path = if cfg!(windows) { "NUL" } else { "/dev/null" };
-    let mut command = std::process::Command::new(name);
+    let mut process = std::process::Command::new(command);
     match name {
         "sha256sum" => {
-            command.arg(null_path);
+            process.arg(null_path);
         }
         "shasum" => {
-            command.args(["-a", "256", null_path]);
+            process.args(["-a", "256", null_path]);
         }
         "openssl" => {
-            command.args(["dgst", "-sha256", null_path]);
+            process.args(["dgst", "-sha256", null_path]);
         }
         _ => return false,
     }
-    match command.output() {
+    match process.output() {
         Ok(output) => output.status.success(),
         Err(_) => false,
     }
@@ -4665,6 +4802,44 @@ mod tests {
             ),
             DoctorCheckOutcome::Passed
         );
+    }
+
+    #[test]
+    fn parse_doctor_test_scenario_supports_known_values() {
+        assert_eq!(
+            parse_doctor_test_scenario("linux-arm64"),
+            Some((HostPlatform::Linux, HostArchitecture::Arm64))
+        );
+        assert_eq!(
+            parse_doctor_test_scenario("linux-x86_64"),
+            Some((HostPlatform::Linux, HostArchitecture::X86_64))
+        );
+        assert_eq!(
+            parse_doctor_test_scenario("macos-arm64"),
+            Some((HostPlatform::MacOS, HostArchitecture::Arm64))
+        );
+        assert_eq!(
+            parse_doctor_test_scenario("windows-x86_64"),
+            Some((HostPlatform::Windows, HostArchitecture::X86_64))
+        );
+    }
+
+    #[test]
+    fn parse_doctor_test_scenario_supports_unknown_tuple() {
+        assert_eq!(
+            parse_doctor_test_scenario("unknown:solaris:sparc64"),
+            Some((
+                HostPlatform::Unknown("solaris".to_string()),
+                HostArchitecture::Unknown("sparc64".to_string()),
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_doctor_test_scenario_rejects_invalid_values() {
+        assert_eq!(parse_doctor_test_scenario("unknown"), None);
+        assert_eq!(parse_doctor_test_scenario("unknown:solaris"), None);
+        assert_eq!(parse_doctor_test_scenario("linux"), None);
     }
 
     #[test]

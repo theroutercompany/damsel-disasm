@@ -10,6 +10,15 @@ fn run_output(args: &[&str]) -> Output {
         .expect("command runs")
 }
 
+fn run_output_with_env(args: &[&str], envs: &[(&str, &str)]) -> Output {
+    let mut command = Command::cargo_bin("damsel-cli").expect("binary exists");
+    command.args(args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command.output().expect("command runs")
+}
+
 fn parse_json_output(output: &Output) -> Value {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     serde_json::from_str(&stdout).unwrap_or_else(|error| {
@@ -20,105 +29,137 @@ fn parse_json_output(output: &Output) -> Value {
     })
 }
 
-fn status_severity(status: &str) -> u8 {
-    match status {
-        "supported" => 0,
-        "supported-with-degraded-features" => 1,
-        "unsupported" => 2,
-        other => panic!("unexpected status: {other}"),
-    }
-}
+#[test]
+fn doctor_check_windows_macho_analysis_requires_degraded_threshold() {
+    let strict = run_output_with_env(
+        &[
+            "--format",
+            "json",
+            "doctor",
+            "--check",
+            "macho-analysis",
+            "--require-status",
+            "supported",
+        ],
+        &[("DAMSEL_DOCTOR_TEST_SCENARIO", "windows-x86_64")],
+    );
+    assert_eq!(strict.status.code(), Some(2));
+    assert!(
+        strict.stderr.is_empty(),
+        "unexpected stderr for threshold failure: {:?}",
+        strict.stderr
+    );
+    let strict_json = parse_json_output(&strict);
+    assert_eq!(
+        strict_json["data"]["capabilities"]["macho_analysis"]["status"],
+        "supported-with-degraded-features"
+    );
 
-fn capability_severity(json: &Value, key: &str) -> u8 {
-    let status = json["data"]["capabilities"][key]["status"]
-        .as_str()
-        .unwrap_or_else(|| panic!("missing capability status for key {key}"));
-    status_severity(status)
+    let degraded = run_output_with_env(
+        &[
+            "--format",
+            "json",
+            "doctor",
+            "--check",
+            "macho-analysis",
+            "--require-status",
+            "supported-with-degraded-features",
+        ],
+        &[("DAMSEL_DOCTOR_TEST_SCENARIO", "windows-x86_64")],
+    );
+    assert_eq!(degraded.status.code(), Some(0));
+    assert!(
+        degraded.stderr.is_empty(),
+        "unexpected stderr for degraded threshold pass: {:?}",
+        degraded.stderr
+    );
 }
 
 #[test]
-fn doctor_check_thresholds_match_reported_capability_statuses() {
-    let baseline_output = run_output(&["--format", "json", "doctor"]);
-    assert!(
-        baseline_output.status.success(),
-        "baseline doctor failed: stdout={:?} stderr={:?}",
-        baseline_output.stdout,
-        baseline_output.stderr
-    );
-    let baseline = parse_json_output(&baseline_output);
-    assert_eq!(baseline["schema_version"], 1);
-    assert_eq!(baseline["command"], "doctor");
-
-    let all_severity = [
-        capability_severity(&baseline, "macho_analysis"),
-        capability_severity(&baseline, "fixture_rebuild"),
-        capability_severity(&baseline, "fixture_drift_check"),
-        capability_severity(&baseline, "bench_compile"),
-        capability_severity(&baseline, "bench_runtime"),
-    ]
-    .into_iter()
-    .max()
-    .expect("at least one capability");
-
-    let targets = [
-        ("all", all_severity),
-        (
-            "macho-analysis",
-            capability_severity(&baseline, "macho_analysis"),
-        ),
-        (
-            "fixture-rebuild",
-            capability_severity(&baseline, "fixture_rebuild"),
-        ),
-        (
-            "fixture-drift-check",
-            capability_severity(&baseline, "fixture_drift_check"),
-        ),
-        (
-            "bench-compile",
-            capability_severity(&baseline, "bench_compile"),
-        ),
-        (
+fn doctor_check_linux_x86_runtime_requires_degraded_threshold() {
+    let strict = run_output_with_env(
+        &[
+            "--format",
+            "json",
+            "doctor",
+            "--check",
             "bench-runtime",
-            capability_severity(&baseline, "bench_runtime"),
-        ),
-    ];
+            "--require-status",
+            "supported",
+        ],
+        &[("DAMSEL_DOCTOR_TEST_SCENARIO", "linux-x86_64")],
+    );
+    assert_eq!(strict.status.code(), Some(2));
+    assert!(
+        strict.stderr.is_empty(),
+        "unexpected stderr for threshold failure: {:?}",
+        strict.stderr
+    );
+    let strict_json = parse_json_output(&strict);
+    assert_eq!(
+        strict_json["data"]["capabilities"]["bench_runtime"]["status"],
+        "supported-with-degraded-features"
+    );
+    assert!(
+        strict_json["data"]["capabilities"]["bench_runtime"]["reasons"]
+            .as_array()
+            .expect("bench_runtime reasons")
+            .iter()
+            .any(|reason| reason["code"] == "throughput_smoke_linux_arm64_only")
+    );
 
-    for (target, severity) in targets {
-        for (required_label, required_severity) in [
-            ("supported", 0_u8),
-            ("supported-with-degraded-features", 1_u8),
-        ] {
-            let output = run_output(&[
-                "--format",
-                "json",
-                "doctor",
-                "--check",
-                target,
-                "--require-status",
-                required_label,
-            ]);
-            let expected_code = if severity <= required_severity { 0 } else { 2 };
-            assert_eq!(
-                output.status.code(),
-                Some(expected_code),
-                "unexpected exit code for target={target}, require={required_label}"
-            );
-            assert!(
-                output.stderr.is_empty(),
-                "unexpected stderr for target={target}, require={required_label}: {:?}",
-                output.stderr
-            );
+    let degraded = run_output_with_env(
+        &[
+            "--format",
+            "json",
+            "doctor",
+            "--check",
+            "bench-runtime",
+            "--require-status",
+            "supported-with-degraded-features",
+        ],
+        &[("DAMSEL_DOCTOR_TEST_SCENARIO", "linux-x86_64")],
+    );
+    assert_eq!(degraded.status.code(), Some(0));
+    assert!(
+        degraded.stderr.is_empty(),
+        "unexpected stderr for degraded threshold pass: {:?}",
+        degraded.stderr
+    );
+}
 
-            let json = parse_json_output(&output);
-            assert_eq!(json["schema_version"], 1);
-            assert_eq!(json["command"], "doctor");
-            assert!(json["data"]["host"].is_object());
-            assert!(json["data"]["capabilities"].is_object());
-            assert!(json["data"]["tools"].is_object());
-            assert!(json["data"]["issues"].is_array());
-        }
-    }
+#[test]
+fn doctor_check_all_on_non_macos_strict_fails_without_self_derived_baseline() {
+    let output = run_output_with_env(
+        &[
+            "--format",
+            "json",
+            "doctor",
+            "--check",
+            "all",
+            "--require-status",
+            "supported",
+        ],
+        &[("DAMSEL_DOCTOR_TEST_SCENARIO", "linux-arm64")],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected stderr for threshold failure: {:?}",
+        output.stderr
+    );
+    let json = parse_json_output(&output);
+    assert_eq!(
+        json["data"]["capabilities"]["fixture_rebuild"]["status"],
+        "unsupported"
+    );
+    assert!(
+        json["data"]["capabilities"]["fixture_rebuild"]["reasons"]
+            .as_array()
+            .expect("fixture rebuild reasons")
+            .iter()
+            .any(|reason| reason["code"] == "fixture_rebuild_macos_only")
+    );
 }
 
 #[test]

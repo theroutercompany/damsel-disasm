@@ -43,8 +43,9 @@ Script usage:
 - `fixtures/build-fixtures.sh --manifest-all`: print both manifests with
   section headers.
 - `sh fixtures/tests/build-fixtures-parity.sh`: read-only parity probes for
-  `--help`, `--manifest`, `--manifest-corpus`, `--manifest-all`, and the
-  non-macOS rebuild failure message.
+  `--help`, `--manifest`, `--manifest-corpus`, `--manifest-all`, `--check`,
+  no-usable-hash failure, SDK probe failure, missing `clang`/`strip`,
+  missing/invocation-broken `python3`, and missing `nm`.
 - `arm64e-sample` is rebuilt on a best-effort basis; if the local toolchain does
   not support `-arch arm64e`, the script preserves the checked-in binary.
 
@@ -52,7 +53,8 @@ Host/tool portability notes:
 - Rebuild mode is intentionally macOS-only and now errors early on non-Darwin
   hosts with a clear fallback message (`--check` / manifest modes).
 - Drift-check mode is host-portable and selects a SHA-256 backend from:
-  `sha256sum`, `shasum`, then `openssl` (in that order).
+  `sha256sum`, `shasum`, then `openssl` (in that order), based on backend
+  usability (not only command detection).
 - Rebuild mode validates required tooling with a canonical probe contract:
   `xcrun` must be present, SDK resolution must succeed via
   `xcrun --show-sdk-path`, `clang`/`strip` are resolved via `xcrun --find`

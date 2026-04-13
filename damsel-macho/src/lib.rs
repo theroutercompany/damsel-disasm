@@ -88,12 +88,6 @@ mod tests {
     #[test]
     fn truncated_fixture_returns_error_without_panicking() {
         let error = load(fixture_path("malformed-truncated")).expect_err("expected parse failure");
-        assert!(matches!(
-            error,
-            MachoError::Object(_)
-                | MachoError::Goblin(_)
-                | MachoError::UnsupportedFileKind(_)
-                | MachoError::UnsupportedInputKind(_)
-        ));
+        assert!(matches!(error, MachoError::MalformedFatBinary(_)));
     }
 }
