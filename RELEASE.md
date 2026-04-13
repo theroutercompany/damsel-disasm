@@ -16,7 +16,7 @@ What is intentionally not enabled yet:
 - Windows or Linux binary release targets
 - Homebrew, installers, or package-manager integrations
 - notarization/signing enforcement as a hard requirement
-- public licensing and public support commitments
+- a public license and public support commitments
 
 ## Channel Behavior
 
@@ -118,4 +118,4 @@ These are intentionally deferred:
 - additional binary targets (Linux / Windows)
 - crates.io publish metadata and publish workflow
 - package-manager and installer distribution
-- final public licensing decision
+- final public license decision
