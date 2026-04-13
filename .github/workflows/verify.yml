@@ -10,6 +10,97 @@ permissions:
   contents: read
 
 jobs:
+  release-readiness:
+    name: release readiness
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check release docs and scripts
+        run: |
+          set -euo pipefail
+          test -f README.md
+          test -f CHANGELOG.md
+          test -f RELEASE.md
+          test -f .github/workflows/release.yml
+          test -f .github/release-notes/nightly.md.tmpl
+          test -f .github/release-notes/beta.md.tmpl
+          test -f bin/release-validate.sh
+          test -f bin/release-package.sh
+          test -f bin/render-release-notes.sh
+          bash -n bin/release-validate.sh
+          bash -n bin/release-package.sh
+          bash -n bin/render-release-notes.sh
+      - name: Check release workflow contract
+        run: |
+          set -euo pipefail
+          ruby - <<'RUBY'
+          require "yaml"
+          release = YAML.load_file(".github/workflows/release.yml")
+          verify = YAML.load_file(".github/workflows/verify.yml")
+          abort("release workflow missing workflow_dispatch trigger") unless release["on"].key?("workflow_dispatch")
+          abort("release workflow missing schedule trigger") unless release["on"].key?("schedule")
+          push = release["on"]["push"] || {}
+          tags = push["tags"] || []
+          abort("release workflow missing beta tag pattern") unless tags.include?("v*-beta.*")
+          jobs = release["jobs"] || {}
+          %w[resolve-channel verify-release-inputs build-macos-arm64 package-artifact sign-and-notarize publish-release].each do |job|
+            abort("missing release job #{job}") unless jobs.key?(job)
+          end
+          permissions = release["permissions"] || {}
+          abort("release workflow should not use top-level contents: write") if permissions["contents"] == "write"
+          publish_permissions = jobs.fetch("publish-release").fetch("permissions", {})
+          abort("publish-release must request contents: write") unless publish_permissions["contents"] == "write"
+          abort("verify workflow lost release-readiness job") unless (verify["jobs"] || {}).key?("release-readiness")
+          puts "workflow-contract-ok"
+          RUBY
+      - name: Check licensing deferral policy
+        run: |
+          set -euo pipefail
+          if [[ ! -f LICENSE ]]; then
+            grep -qi "license" RELEASE.md
+            grep -qi "deferred" RELEASE.md
+            grep -qi "private" RELEASE.md
+          fi
+      - name: Validate nightly and beta metadata
+        run: |
+          set -euo pipefail
+          nightly_env="$(mktemp)"
+          beta_env="$(mktemp)"
+          trap 'rm -f "${nightly_env}" "${beta_env}"' EXIT
+          bin/release-validate.sh --channel nightly >"${nightly_env}"
+          workspace_version="$(awk '/^\[workspace\.package\]/{flag=1;next}/^\[/{flag=0} flag && $1 == "version" {gsub(/"/, "", $3); print $3; exit}' Cargo.toml)"
+          bin/release-validate.sh --channel beta --tag "v${workspace_version}-beta.1" >"${beta_env}"
+          grep -q "^channel=nightly$" "${nightly_env}"
+          grep -q "^release_tag=nightly$" "${nightly_env}"
+          grep -q "^artifact_name=damsel-nightly-macos-arm64.tar.gz$" "${nightly_env}"
+          grep -q "^channel=beta$" "${beta_env}"
+          grep -q "^release_tag=v${workspace_version}-beta.1$" "${beta_env}"
+          grep -q "^artifact_name=damsel-v${workspace_version}-beta.1-macos-arm64.tar.gz$" "${beta_env}"
+          if bin/release-validate.sh --channel beta --tag "v${workspace_version}" >/dev/null 2>&1; then
+            echo "expected invalid beta tag format to fail" >&2
+            exit 1
+          fi
+          if bin/release-validate.sh --channel beta --tag "v9.9.9-beta.1" >/dev/null 2>&1; then
+            echo "expected mismatched workspace version to fail" >&2
+            exit 1
+          fi
+      - name: Smoke render release notes
+        run: |
+          set -euo pipefail
+          bin/render-release-notes.sh \
+            --template .github/release-notes/nightly.md.tmpl \
+            --output /tmp/nightly-notes.md \
+            --channel nightly \
+            --display-version nightly \
+            --release-tag nightly \
+            --artifact-name damsel-nightly-macos-arm64.tar.gz \
+            --archive-root damsel-nightly-macos-arm64 \
+            --commit-sha deadbeefdead \
+            --run-date-utc 2026-04-13T00:00:00Z \
+            --signing-state unsigned
+          test -s /tmp/nightly-notes.md
+
   fixture-drift:
     name: fixture drift (${{ matrix.os }})
     strategy:

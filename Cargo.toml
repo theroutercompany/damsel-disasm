@@ -5,6 +5,9 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
+license = "UNLICENSED"
+repository = "https://github.com/theroutercompany/damsel-disasm"
+homepage = "https://github.com/theroutercompany/damsel-disasm"
 
 [workspace.dependencies]
 assert_cmd = "2.0.17"

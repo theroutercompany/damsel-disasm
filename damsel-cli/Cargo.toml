@@ -2,6 +2,11 @@
 name = "damsel-cli"
 version.workspace = true
 edition.workspace = true
+description = "Private CLI for Damsel Mach-O arm64/arm64e analysis workflows."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
 
 [dependencies]
 clap.workspace = true

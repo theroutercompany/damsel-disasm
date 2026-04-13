@@ -1,0 +1,32 @@
+# damsel __DISPLAY_VERSION__
+
+- Channel: `__CHANNEL__`
+- Release tag: `__RELEASE_TAG__`
+- Commit: `__COMMIT_SHA__`
+- Built at (UTC): `__RUN_DATE_UTC__`
+- Artifact: `__ARTIFACT_NAME__`
+- Signing: __SIGNING_LABEL__
+
+This is a **private beta prerelease**. It is intentionally not a public/stable release.
+
+## Install
+
+1. Download `__ARTIFACT_NAME__` and its matching `.sha256` file from this private GitHub Release.
+2. Extract it:
+
+```sh
+shasum -a 256 -c __ARTIFACT_NAME__.sha256
+tar -xzf __ARTIFACT_NAME__
+cd __ARCHIVE_ROOT__
+./damsel --help
+./damsel doctor --help
+```
+
+## Release Scope Reminder
+
+- Binary artifact target in this pass: macOS arm64 only
+- Fixture rebuild: macOS only
+- Bench runtime throughput proof: Linux `arm64` only
+- Windows and unknown hosts remain degraded, non-primary hosts
+
+See `README.md` and `RELEASE.md` for the current private release posture and future public-release toggle points.

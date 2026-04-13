@@ -2,6 +2,11 @@
 name = "damsel-core"
 version.workspace = true
 edition.workspace = true
+description = "Core compatibility contracts and error models for Damsel."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
 
 [dependencies]
 capstone.workspace = true

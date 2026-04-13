@@ -1,0 +1,32 @@
+# damsel nightly
+
+- Channel: `__CHANNEL__`
+- Release tag: `__RELEASE_TAG__`
+- Commit: `__COMMIT_SHA__`
+- Built at (UTC): `__RUN_DATE_UTC__`
+- Artifact: `__ARTIFACT_NAME__`
+- Signing: __SIGNING_LABEL__
+
+This is a **private mutable nightly prerelease** for internal validation and recovery use.
+
+## Install
+
+1. Download `__ARTIFACT_NAME__` and its matching `.sha256` file from this private GitHub Release.
+2. Extract it:
+
+```sh
+shasum -a 256 -c __ARTIFACT_NAME__.sha256
+tar -xzf __ARTIFACT_NAME__
+cd __ARCHIVE_ROOT__
+./damsel --help
+./damsel doctor --help
+```
+
+## Current Support Matrix Reminder
+
+- Mach-O analysis: macOS any arch, Linux `x86_64`, Linux `arm64` are primary supported hosts
+- Fixture rebuild: macOS only
+- Bench runtime throughput proof: Linux `arm64` only
+- Windows and unknown hosts: degraded support
+
+See `README.md` and `RELEASE.md` in the archive/repo for the current private release policy.

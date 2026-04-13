@@ -2,6 +2,11 @@
 name = "damsel-macho"
 version.workspace = true
 edition.workspace = true
+description = "Mach-O arm64/arm64e loading and analysis library for Damsel."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
 
 [dependencies]
 damsel-core = { path = "../damsel-core" }

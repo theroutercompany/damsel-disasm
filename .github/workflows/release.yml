@@ -1,0 +1,381 @@
+name: release
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit to package for nightly recovery"
+        required: false
+        default: "main"
+  push:
+    tags:
+      - "v*-beta.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'nightly' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  resolve-channel:
+    name: resolve channel
+    runs-on: ubuntu-24.04
+    outputs:
+      channel: ${{ steps.meta.outputs.channel }}
+      workspace_version: ${{ steps.meta.outputs.workspace_version }}
+      display_version: ${{ steps.meta.outputs.display_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+      checksum_name: ${{ steps.meta.outputs.checksum_name }}
+      archive_root: ${{ steps.meta.outputs.archive_root }}
+      template_path: ${{ steps.meta.outputs.template_path }}
+      binary_source: ${{ steps.meta.outputs.binary_source }}
+      binary_name: ${{ steps.meta.outputs.binary_name }}
+      artifact_platform: ${{ steps.meta.outputs.artifact_platform }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      mutable_release: ${{ steps.meta.outputs.mutable_release }}
+      checkout_ref: ${{ steps.checkout-ref.outputs.value }}
+      run_date_utc: ${{ steps.run-date.outputs.value }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Resolve checkout ref
+        id: checkout-ref
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "value=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            echo "value=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=main" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Resolve run date
+        id: run-date
+        run: echo "value=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "$GITHUB_OUTPUT"
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          chmod +x bin/release-validate.sh
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            bin/release-validate.sh --channel beta --tag "${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            bin/release-validate.sh --channel nightly >> "$GITHUB_OUTPUT"
+          fi
+
+  verify-release-inputs:
+    name: verify release inputs
+    runs-on: ubuntu-24.04
+    needs: resolve-channel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-channel.outputs.checkout_ref }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Validate release scripts and workflow syntax
+        run: |
+          set -euo pipefail
+          bash -n bin/release-validate.sh
+          bash -n bin/release-package.sh
+          bash -n bin/render-release-notes.sh
+          ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/verify.yml"); puts "yaml-ok"'
+      - name: Re-run channel validation
+        run: |
+          set -euo pipefail
+          if [[ "${{ needs.resolve-channel.outputs.channel }}" == "beta" ]]; then
+            bin/release-validate.sh --channel beta --tag "${{ needs.resolve-channel.outputs.release_tag }}" >/tmp/release.env
+          else
+            bin/release-validate.sh --channel nightly >/tmp/release.env
+          fi
+          grep -q "^artifact_name=${{ needs.resolve-channel.outputs.artifact_name }}$" /tmp/release.env
+      - name: Smoke render release notes
+        run: |
+          set -euo pipefail
+          bin/render-release-notes.sh \
+            --template "${{ needs.resolve-channel.outputs.template_path }}" \
+            --output /tmp/release-notes.md \
+            --channel "${{ needs.resolve-channel.outputs.channel }}" \
+            --display-version "${{ needs.resolve-channel.outputs.display_version }}" \
+            --release-tag "${{ needs.resolve-channel.outputs.release_tag }}" \
+            --artifact-name "${{ needs.resolve-channel.outputs.artifact_name }}" \
+            --archive-root "${{ needs.resolve-channel.outputs.archive_root }}" \
+            --commit-sha "deadbeefdead" \
+            --run-date-utc "${{ needs.resolve-channel.outputs.run_date_utc }}" \
+            --signing-state "unsigned"
+          test -s /tmp/release-notes.md
+      - name: Focused release verification
+        run: |
+          set -euo pipefail
+          cargo test -p damsel-cli
+          cargo test -p damsel-core
+          cargo test -p damsel-macho --tests
+          ./fixtures/build-fixtures.sh --check
+          ./fixtures/tests/build-fixtures-parity.sh
+
+  build-macos-arm64:
+    name: build macos arm64
+    runs-on: macos-14
+    needs: [resolve-channel, verify-release-inputs]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-channel.outputs.checkout_ref }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build release binary
+        run: cargo build -p damsel-cli --release
+      - name: Smoke test built binary
+        run: |
+          set -euo pipefail
+          ./target/release/damsel-cli --help >/dev/null
+          ./target/release/damsel-cli doctor --help >/dev/null
+      - name: Upload raw binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-macos-arm64-binary
+          path: target/release/damsel-cli
+          if-no-files-found: error
+
+  package-artifact:
+    name: package artifact
+    runs-on: macos-14
+    needs: [resolve-channel, build-macos-arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-channel.outputs.checkout_ref }}
+      - name: Download raw binary
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-macos-arm64-binary
+          path: dist/raw
+      - name: Package unsigned archive
+        run: |
+          set -euo pipefail
+          chmod +x bin/release-package.sh
+          commit_sha="$(git rev-parse --short=12 HEAD)"
+          bin/release-package.sh \
+            --binary dist/raw/damsel-cli \
+            --artifact-name "${{ needs.resolve-channel.outputs.artifact_name }}" \
+            --archive-root "${{ needs.resolve-channel.outputs.archive_root }}" \
+            --output-dir dist/unsigned \
+            --channel "${{ needs.resolve-channel.outputs.channel }}" \
+            --release-tag "${{ needs.resolve-channel.outputs.release_tag }}" \
+            --display-version "${{ needs.resolve-channel.outputs.display_version }}" \
+            --signing-state "unsigned" \
+            --commit-sha "$commit_sha"
+          test -f "dist/unsigned/${{ needs.resolve-channel.outputs.artifact_name }}"
+          test -f "dist/unsigned/${{ needs.resolve-channel.outputs.checksum_name }}"
+      - name: Upload unsigned archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-release
+          path: |
+            dist/unsigned/${{ needs.resolve-channel.outputs.artifact_name }}
+            dist/unsigned/${{ needs.resolve-channel.outputs.checksum_name }}
+          if-no-files-found: error
+
+  sign-and-notarize:
+    name: sign and notarize
+    runs-on: macos-14
+    needs: [resolve-channel, package-artifact]
+    outputs:
+      signing_state: ${{ steps.finalize.outputs.signing_state }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-channel.outputs.checkout_ref }}
+      - name: Download raw binary
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-macos-arm64-binary
+          path: dist/raw
+      - name: Download unsigned archive
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-release
+          path: dist/unsigned
+      - name: Detect Apple signing secrets
+        id: detect-secrets
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${APPLE_CERTIFICATE_P12_BASE64}" && -n "${APPLE_CERTIFICATE_PASSWORD}" && -n "${APPLE_SIGNING_IDENTITY}" && -n "${APPLE_ID}" && -n "${APPLE_APP_SPECIFIC_PASSWORD}" && -n "${APPLE_TEAM_ID}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Prepare unsigned final release
+        if: ${{ steps.detect-secrets.outputs.enabled != 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/final
+          cp "dist/unsigned/${{ needs.resolve-channel.outputs.artifact_name }}" dist/final/
+          cp "dist/unsigned/${{ needs.resolve-channel.outputs.checksum_name }}" dist/final/
+      - name: Import Apple signing certificate
+        if: ${{ steps.detect-secrets.outputs.enabled == 'true' }}
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os, pathlib
+          pathlib.Path("dist/signing").mkdir(parents=True, exist_ok=True)
+          pathlib.Path("dist/signing/cert.p12").write_bytes(
+              base64.b64decode(os.environ["APPLE_CERTIFICATE_P12_BASE64"])
+          )
+          PY
+          security create-keychain -p temporary-build-keychain dist/signing/release.keychain
+          security set-keychain-settings -lut 21600 dist/signing/release.keychain
+          security unlock-keychain -p temporary-build-keychain dist/signing/release.keychain
+          security import dist/signing/cert.p12 -k dist/signing/release.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k temporary-build-keychain dist/signing/release.keychain
+          security list-keychains -d user -s dist/signing/release.keychain login.keychain-db
+      - name: Sign binary and submit notarization
+        if: ${{ steps.detect-secrets.outputs.enabled == 'true' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/signed dist/notary
+          cp dist/raw/damsel-cli dist/signed/damsel
+          chmod 755 dist/signed/damsel
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" dist/signed/damsel
+          mkdir -p "dist/notary/${{ needs.resolve-channel.outputs.archive_root }}"
+          cp dist/signed/damsel "dist/notary/${{ needs.resolve-channel.outputs.archive_root }}/damsel"
+          ditto -c -k --keepParent "dist/notary/${{ needs.resolve-channel.outputs.archive_root }}" dist/notary/notary-input.zip
+          xcrun notarytool submit dist/notary/notary-input.zip --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+      - name: Package signed archive
+        if: ${{ steps.detect-secrets.outputs.enabled == 'true' }}
+        run: |
+          set -euo pipefail
+          chmod +x bin/release-package.sh
+          commit_sha="$(git rev-parse --short=12 HEAD)"
+          bin/release-package.sh \
+            --binary dist/signed/damsel \
+            --artifact-name "${{ needs.resolve-channel.outputs.artifact_name }}" \
+            --archive-root "${{ needs.resolve-channel.outputs.archive_root }}" \
+            --output-dir dist/final \
+            --channel "${{ needs.resolve-channel.outputs.channel }}" \
+            --release-tag "${{ needs.resolve-channel.outputs.release_tag }}" \
+            --display-version "${{ needs.resolve-channel.outputs.display_version }}" \
+            --signing-state "signed-notarized" \
+            --commit-sha "$commit_sha"
+      - name: Finalize signing state
+        id: finalize
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.detect-secrets.outputs.enabled }}" == "true" ]]; then
+            echo "signing_state=signed-notarized" >> "$GITHUB_OUTPUT"
+          else
+            echo "signing_state=unsigned" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload final release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-release
+          path: |
+            dist/final/${{ needs.resolve-channel.outputs.artifact_name }}
+            dist/final/${{ needs.resolve-channel.outputs.checksum_name }}
+          if-no-files-found: error
+
+  publish-release:
+    name: publish release
+    runs-on: ubuntu-24.04
+    needs: [resolve-channel, sign-and-notarize]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-channel.outputs.checkout_ref }}
+          fetch-depth: 0
+      - name: Download final release files
+        uses: actions/download-artifact@v4
+        with:
+          name: final-release
+          path: dist/final
+      - name: Render release notes
+        run: |
+          set -euo pipefail
+          chmod +x bin/render-release-notes.sh
+          commit_sha="$(git rev-parse --short=12 HEAD)"
+          bin/render-release-notes.sh \
+            --template "${{ needs.resolve-channel.outputs.template_path }}" \
+            --output dist/release-notes.md \
+            --channel "${{ needs.resolve-channel.outputs.channel }}" \
+            --display-version "${{ needs.resolve-channel.outputs.display_version }}" \
+            --release-tag "${{ needs.resolve-channel.outputs.release_tag }}" \
+            --artifact-name "${{ needs.resolve-channel.outputs.artifact_name }}" \
+            --archive-root "${{ needs.resolve-channel.outputs.archive_root }}" \
+            --commit-sha "$commit_sha" \
+            --run-date-utc "${{ needs.resolve-channel.outputs.run_date_utc }}" \
+            --signing-state "${{ needs.sign-and-notarize.outputs.signing_state }}"
+      - name: Publish nightly prerelease
+        if: ${{ needs.resolve-channel.outputs.channel == 'nightly' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git tag -f nightly "$(git rev-parse HEAD)"
+          git push origin refs/tags/nightly --force
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release upload nightly \
+              "dist/final/${{ needs.resolve-channel.outputs.artifact_name }}" \
+              "dist/final/${{ needs.resolve-channel.outputs.checksum_name }}" \
+              --clobber
+            gh release edit nightly \
+              --title "${{ needs.resolve-channel.outputs.release_name }}" \
+              --notes-file dist/release-notes.md \
+              --target "$(git rev-parse HEAD)" \
+              --prerelease
+          else
+            gh release create nightly \
+              "dist/final/${{ needs.resolve-channel.outputs.artifact_name }}" \
+              "dist/final/${{ needs.resolve-channel.outputs.checksum_name }}" \
+              --title "${{ needs.resolve-channel.outputs.release_name }}" \
+              --notes-file dist/release-notes.md \
+              --target "$(git rev-parse HEAD)" \
+              --latest=false \
+              --prerelease
+          fi
+      - name: Publish beta prerelease
+        if: ${{ needs.resolve-channel.outputs.channel == 'beta' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${{ needs.resolve-channel.outputs.release_tag }}" >/dev/null 2>&1; then
+            echo "beta release already exists for tag ${{ needs.resolve-channel.outputs.release_tag }}" >&2
+            exit 1
+          fi
+          gh release create "${{ needs.resolve-channel.outputs.release_tag }}" \
+            "dist/final/${{ needs.resolve-channel.outputs.artifact_name }}" \
+            "dist/final/${{ needs.resolve-channel.outputs.checksum_name }}" \
+            --title "${{ needs.resolve-channel.outputs.release_name }}" \
+            --notes-file dist/release-notes.md \
+            --verify-tag \
+            --latest=false \
+            --prerelease
