@@ -55,10 +55,16 @@ jobs:
         include:
           - os: macos-14
             expected_host_os: macos
+            expected_bench_runtime_status: supported-with-degraded-features
+            check_fixture_rebuild: "true"
           - os: ubuntu-24.04
             expected_host_os: linux
+            expected_bench_runtime_status: supported-with-degraded-features
+            check_fixture_rebuild: "false"
           - os: ubuntu-24.04-arm
             expected_host_os: linux
+            expected_bench_runtime_status: supported
+            check_fixture_rebuild: "false"
     runs-on: ${{ matrix.os }}
     needs: fixture-drift
     steps:
@@ -66,28 +72,14 @@ jobs:
         uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Probe doctor command availability
-        id: doctor_probe
-        shell: bash
-        run: |
-          set +e
-          cargo run -q -p damsel-cli -- doctor --help > doctor_help.txt 2> doctor_help.err
-          status=$?
-          set -e
-          if [[ ${status} -ne 0 ]]; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Skipping doctor compatibility gates because damsel-cli doctor is not buildable in this revision."
-            cat doctor_help.err
-            exit 0
-          fi
-          echo "available=true" >> "$GITHUB_OUTPUT"
-      - name: Gate doctor capabilities via --check when available
-        if: steps.doctor_probe.outputs.available == 'true'
+      - name: Gate doctor capabilities via --check
         env:
           EXPECTED_HOST_OS: ${{ matrix.expected_host_os }}
+          EXPECTED_BENCH_RUNTIME_STATUS: ${{ matrix.expected_bench_runtime_status }}
+          CHECK_FIXTURE_REBUILD: ${{ matrix.check_fixture_rebuild }}
         run: |
           set -euo pipefail
-          help_text="$(cat doctor_help.txt)"
+          help_text="$(cargo run -q -p damsel-cli -- doctor --help)"
           grep -q -- "--check" <<<"${help_text}"
           grep -q -- "macho-analysis" <<<"${help_text}"
           grep -q -- "fixture-rebuild" <<<"${help_text}"
@@ -98,22 +90,14 @@ jobs:
           cargo run -q -p damsel-cli -- doctor --check "macho-analysis" --require-status "supported"
           cargo run -q -p damsel-cli -- doctor --check "fixture-drift-check" --require-status "supported"
           cargo run -q -p damsel-cli -- doctor --check "bench-compile" --require-status "supported"
-          if [[ "${EXPECTED_HOST_OS}" == "macos" ]]; then
+          if [[ "${CHECK_FIXTURE_REBUILD}" == "true" ]]; then
             cargo run -q -p damsel-cli -- doctor --check "fixture-rebuild" --require-status "supported"
           fi
-          if [[ "${EXPECTED_HOST_OS}" == "linux" && "$(uname -m)" == "aarch64" ]]; then
-            cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "supported"
-          else
-            cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "supported-with-degraded-features"
-          fi
-      - name: Note deferred doctor gating
-        if: steps.doctor_probe.outputs.available != 'true'
-        run: |
-          echo "Doctor compatibility checks are deferred until the CLI/output lane compiles."
+          cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "${EXPECTED_BENCH_RUNTIME_STATUS}"
       - name: Validate doctor JSON contract and statuses
-        if: steps.doctor_probe.outputs.available == 'true'
         env:
           EXPECTED_HOST_OS: ${{ matrix.expected_host_os }}
+          EXPECTED_BENCH_RUNTIME_STATUS: ${{ matrix.expected_bench_runtime_status }}
         run: |
           set -euo pipefail
           case "$(uname -m)" in
@@ -142,8 +126,7 @@ jobs:
           required_top = {"host", "overall_status", "capabilities", "tools", "issues"}
           assert set(data.keys()) == required_top
           assert set(data["host"].keys()) == {"os", "architecture", "target_triple"}
-          capability_keys = set(data["capabilities"].keys())
-          assert capability_keys == {
+          assert set(data["capabilities"].keys()) == {
               "macho_analysis",
               "fixture_rebuild",
               "fixture_drift_check",
@@ -151,7 +134,7 @@ jobs:
               "bench_runtime",
               "benchmark",
           }
-          assert {
+          assert set(data["tools"].keys()) == {
               "xcrun",
               "strip",
               "clang",
@@ -160,7 +143,7 @@ jobs:
               "sdk_path_probe",
               "hash_tools",
               "selected_hash_tool",
-          } <= set(data["tools"].keys())
+          }
           assert set(data["tools"]["hash_tools"].keys()) == {"sha256sum", "shasum", "openssl"}
 
           valid = {"supported", "supported-with-degraded-features", "unsupported"}
@@ -188,44 +171,95 @@ jobs:
                   assert capability["reasons"], f"{key} should include reasons when status={capability['status']}"
           host_os = data["host"]["os"]
           host_arch = data["host"]["architecture"]
+          tools = data["tools"]
+          capabilities = data["capabilities"]
+
+          priority = ["sha256sum", "shasum", "openssl"]
+          usable_hash_tools = [tool for tool in priority if tools["hash_tools"][tool]["usable"]]
+          selected_hash_tool = tools["selected_hash_tool"]
+          expected_selected_hash_tool = usable_hash_tools[0] if usable_hash_tools else None
+          assert selected_hash_tool == expected_selected_hash_tool
+
+          def severity(status: str) -> int:
+              return {"supported": 0, "supported-with-degraded-features": 1, "unsupported": 2}[status]
+
+          def max_status(*statuses: str) -> str:
+              return max(statuses, key=severity)
+
+          host_is_primary_supported = (
+              host_os == "macos"
+              or (host_os == "linux" and host_arch in {"x86_64", "arm64"})
+          )
+          expected_macho_analysis = (
+              "supported" if host_is_primary_supported else "supported-with-degraded-features"
+          )
+
+          required_fixture_tools = ["xcrun", "clang", "strip", "python3", "nm"]
+          fixture_tools_usable = all(
+              tools[tool]["detected"] and tools[tool]["usable"] for tool in required_fixture_tools
+          )
+          expected_fixture_rebuild = (
+              "supported"
+              if host_os == "macos" and fixture_tools_usable and tools["sdk_path_probe"]["usable"]
+              else "unsupported"
+          )
+          expected_fixture_drift_check = "supported" if expected_selected_hash_tool else "unsupported"
+          expected_bench_compile = (
+              "supported" if host_is_primary_supported else "supported-with-degraded-features"
+          )
+          expected_bench_runtime = os.environ["EXPECTED_BENCH_RUNTIME_STATUS"]
+          expected_benchmark = max_status(expected_bench_compile, expected_bench_runtime)
 
           expected_by_key = {
-              "macho_analysis": "supported",
-              "fixture_rebuild": "supported" if host_os == "macos" else "unsupported",
-              "fixture_drift_check": "supported",
-              "bench_compile": "supported",
-              "bench_runtime": (
-                  "supported"
-                  if host_os == "linux" and host_arch == "arm64"
-                  else "supported-with-degraded-features"
-              ),
-              "benchmark": (
-                  "supported"
-                  if host_os == "linux" and host_arch == "arm64"
-                  else "supported-with-degraded-features"
-              ),
+              "macho_analysis": expected_macho_analysis,
+              "fixture_rebuild": expected_fixture_rebuild,
+              "fixture_drift_check": expected_fixture_drift_check,
+              "bench_compile": expected_bench_compile,
+              "bench_runtime": expected_bench_runtime,
+              "benchmark": expected_benchmark,
           }
-
           for key, expected in expected_by_key.items():
-              assert data["capabilities"][key]["status"] == expected
+              assert capabilities[key]["status"] == expected, (key, capabilities[key]["status"], expected)
 
-          selected_hash_tool = data["tools"]["selected_hash_tool"]
-          if selected_hash_tool is None:
-              assert all(
-                  not data["tools"]["hash_tools"][tool]["usable"]
-                  for tool in ["sha256sum", "shasum", "openssl"]
-              )
-          else:
-              assert selected_hash_tool in {"sha256sum", "shasum", "openssl"}
-              assert data["tools"]["hash_tools"][selected_hash_tool]["usable"] is True
+          assert capabilities["benchmark"]["status"] == max_status(
+              capabilities["bench_compile"]["status"],
+              capabilities["bench_runtime"]["status"],
+          )
 
-          statuses = [value["status"] for value in data["capabilities"].values()]
-          if any(status == "unsupported" for status in statuses):
-              assert data["overall_status"] == "unsupported"
-          elif any(status == "supported-with-degraded-features" for status in statuses):
-              assert data["overall_status"] == "supported-with-degraded-features"
-          else:
-              assert data["overall_status"] == "supported"
+          expected_overall = max_status(
+              capabilities["macho_analysis"]["status"],
+              capabilities["fixture_rebuild"]["status"],
+              capabilities["fixture_drift_check"]["status"],
+              capabilities["bench_compile"]["status"],
+              capabilities["bench_runtime"]["status"],
+          )
+          assert data["overall_status"] == expected_overall
+
+          benchmark_reason_union = []
+          seen = set()
+          for key in ["bench_compile", "bench_runtime"]:
+              for reason in capabilities[key]["reasons"]:
+                  reason_key = (reason["code"], reason["message"])
+                  if reason_key not in seen:
+                      benchmark_reason_union.append(reason)
+                      seen.add(reason_key)
+          assert capabilities["benchmark"]["reasons"] == benchmark_reason_union
+
+          issues_union = []
+          issues_seen = set()
+          for key in [
+              "macho_analysis",
+              "fixture_rebuild",
+              "fixture_drift_check",
+              "bench_compile",
+              "bench_runtime",
+          ]:
+              for reason in capabilities[key]["reasons"]:
+                  reason_key = (reason["code"], reason["message"])
+                  if reason_key not in issues_seen:
+                      issues_union.append(reason)
+                      issues_seen.add(reason_key)
+          assert data["issues"] == issues_union
           PY
 
   bench-compile:
@@ -277,8 +311,16 @@ jobs:
         run: cargo test -p damsel-macho --test load_matrix --test import_binding_matrix --test disasm_matrix --test export_matrix --test objc_matrix --test slice_inventory_matrix
 
   decode-bench-unsupported-host-smoke:
-    name: decode bench unsupported-host smoke (linux x86_64)
-    runs-on: ubuntu-24.04
+    name: decode bench unsupported-host smoke (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux x86_64
+          - os: macos-14
+            name: macos arm64
+    runs-on: ${{ matrix.os }}
     needs: fixture-drift
     steps:
       - name: Checkout
@@ -302,4 +344,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Decode throughput smoke
-        run: cargo bench -p damsel-macho --bench decode_bench -- --warm-up-time 0.01 --measurement-time 0.02 --sample-size 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo bench -p damsel-macho --bench decode_bench -- arm64_symbolized::__text --warm-up-time 0.01 --measurement-time 0.02 --sample-size 10 | tee bench.log
+          grep -q "arm64_symbolized::__text" bench.log
+          if grep -q "compatibility::unsupported_host_runtime_skip" bench.log; then
+            echo "unexpected unsupported-host runtime skip in linux arm64 throughput smoke" >&2
+            exit 1
+          fi
