@@ -113,6 +113,8 @@ Release-time smoke checks on the built/package binary:
 
 Wave 1 note:
 - `cache --help` and `cache info fixtures/shared-cache-corpus/valid-single-arm64.cache` are mandatory release smokes.
+- release smoke also runs one projected-image command against the synthetic corpus:
+  - `cache sections fixtures/shared-cache-corpus/valid-single-arm64.cache /usr/lib/libobjc.A.dylib --exec`
 - Release verification keeps Wave 1 scope narrow:
   - read-only inspection/query only
   - Apple Silicon shared-cache sets only

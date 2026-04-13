@@ -248,7 +248,12 @@ fn lookup_cache_vmaddr_returns_exact_nearest_and_mapping_only() {
         .expect("mapped but outside image inventory");
     assert_eq!(mapping_only.kind(), "mapping_only");
     match mapping_only {
-        CacheLookupResult::MappingOnly { image, .. } => {
+        CacheLookupResult::MappingOnly {
+            cache_vmaddr,
+            image,
+            ..
+        } => {
+            assert_eq!(cache_vmaddr, 0x1000_8000);
             assert!(image.is_none());
         }
         other => panic!("expected mapping-only result, got {other:?}"),

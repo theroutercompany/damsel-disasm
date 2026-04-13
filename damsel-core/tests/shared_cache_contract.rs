@@ -1,10 +1,13 @@
 use damsel_core::{
-    Architecture, CacheImageId, CacheImageRecord, SharedCache, SharedCacheHeader,
-    SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,
-    SharedCacheValidationError,
+    Architecture, BinaryFormat, CacheImageId, CacheImageRecord, CacheLookupResult,
+    CacheMappingContext, CacheSymbolSource, Endianness, ProjectedBinaryImage,
+    ProjectedImageProvenance, SharedCache, SharedCacheHeader, SharedCacheMapping,
+    SharedCacheMember, SharedCacheMemberRole, SharedCacheSource, SharedCacheValidationError,
+    SliceInfo, SymbolicationMatch,
 };
 use std::path::PathBuf;
 use std::ptr;
+use std::sync::Arc;
 
 fn sample_header() -> SharedCacheHeader {
     SharedCacheHeader {
@@ -289,4 +292,84 @@ fn mapping_and_image_lookup_helpers_are_correct() {
 
     assert!(cache.mapping_for_vm_address(0x1900_0000_0).is_none());
     assert!(cache.image_for_vm_address(0x1800_0000_8).is_none());
+}
+
+#[test]
+fn projected_image_and_lookup_types_are_constructible() {
+    let cache = sample_cache();
+    let image = cache.image_by_id_str("CACHE-UUID-1234:7").expect("image");
+    let provenance = ProjectedImageProvenance {
+        cache_uuid: cache.header().cache_uuid.clone(),
+        image_id: image.id.clone(),
+        install_name: image.install_name.clone(),
+        basename: image.basename.clone(),
+        image_base_vmaddr: image.image_base_vmaddr,
+        member_name: "dyld_shared_cache_arm64".to_string(),
+        local_symbols_available: false,
+    };
+    let projected = ProjectedBinaryImage {
+        provenance: provenance.clone(),
+        image: damsel_core::BinaryImage::from_memory_bytes(
+            Some("projected".to_string()),
+            BinaryFormat::MachO,
+            Architecture::Arm64,
+            Endianness::Little,
+            Some(image.image_base_vmaddr),
+            None,
+            SliceInfo {
+                offset: 0,
+                size: 4,
+                is_universal: false,
+                cpu_subtype: 0,
+            },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            damsel_core::ObjcMetadata::default(),
+            damsel_core::DyldMetadata::default(),
+            Arc::<[u8]>::from(vec![0u8; 4]),
+        ),
+    };
+    assert_eq!(projected.provenance.image_id.as_str(), "CACHE-UUID-1234:7");
+
+    let mapping = CacheMappingContext {
+        member_name: "dyld_shared_cache_arm64".to_string(),
+        mapping_base_vmaddr: 0x1800_0000_0,
+        mapping_size: 0x4000,
+        member_file_offset: 0x120,
+    };
+    let symbol = SymbolicationMatch {
+        image_id: image.id.clone(),
+        image_install_name: image.install_name.clone(),
+        symbol_name: "_demo".to_string(),
+        symbol_vmaddr: image.image_base_vmaddr + 0x10,
+        cache_vmaddr: image.image_base_vmaddr + 0x10,
+        image_base_vmaddr: image.image_base_vmaddr,
+        image_offset: 0x10,
+        member_name: "dyld_shared_cache_arm64".to_string(),
+        member_file_offset: Some(0x120),
+        symbol_source: CacheSymbolSource::Export,
+        exact: true,
+    };
+    let result = CacheLookupResult::ExactSymbol {
+        cache_vmaddr: image.image_base_vmaddr + 0x10,
+        mapping,
+        image: provenance,
+        symbol,
+    };
+    match result {
+        CacheLookupResult::ExactSymbol {
+            cache_vmaddr,
+            image,
+            symbol,
+            ..
+        } => {
+            assert_eq!(cache_vmaddr, 0x1800_0011_0);
+            assert_eq!(image.image_id.as_str(), "CACHE-UUID-1234:7");
+            assert_eq!(symbol.symbol_source, CacheSymbolSource::Export);
+        }
+        other => panic!("unexpected result variant: {other:?}"),
+    }
 }

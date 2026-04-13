@@ -228,12 +228,16 @@ pub(crate) enum CacheLookupKind {
 pub(crate) struct CacheLookupResultView {
     pub kind: CacheLookupKind,
     pub cache_vmaddr: u64,
+    pub member_name: String,
+    pub mapping_base_vmaddr: u64,
+    pub mapping_size: u64,
+    pub member_file_offset: u64,
     pub image_id: Option<String>,
     pub install_name: Option<String>,
     pub image_base_vmaddr: Option<u64>,
     pub image_offset: Option<u64>,
-    pub member_file_offset: Option<u64>,
     pub symbol: Option<String>,
+    pub symbol_source: Option<String>,
     pub symbol_address: Option<u64>,
     pub offset_from_symbol: Option<u64>,
 }
@@ -243,6 +247,7 @@ pub(crate) struct CacheSymbolicationMatchView {
     pub name: String,
     pub image_id: String,
     pub install_name: String,
+    pub member_name: String,
     pub cache_vmaddr: u64,
     pub image_base_vmaddr: u64,
     pub image_offset: u64,
@@ -438,13 +443,7 @@ pub(crate) fn print_cache_images(
 pub(crate) fn print_cache_image(image: &CacheImageView, output: &OutputSettings) {
     match output.format {
         OutputFormat::Text => {
-            println!("image:");
-            println!("  id={}", image.id);
-            println!("  index={}", image.image_index);
-            println!("  install_name={}", image.install_name);
-            println!("  basename={}", image.basename);
-            println!("  image_base_vmaddr={:#x}", image.image_base_vmaddr);
-            println!("  member={}", image.member_name);
+            print_cache_image_text(image);
         }
         OutputFormat::Json => {
             emit_json_response("cache_image", &CacheImageJsonDto { image }, output)
@@ -497,6 +496,10 @@ pub(crate) fn print_cache_lookup_address(result: &CacheLookupResultView, output:
                 cache_lookup_kind_text(result.kind),
                 result.cache_vmaddr
             );
+            println!("  member_name={}", result.member_name);
+            println!("  mapping_base_vmaddr={:#x}", result.mapping_base_vmaddr);
+            println!("  mapping_size={:#x}", result.mapping_size);
+            println!("  member_file_offset={:#x}", result.member_file_offset);
             if let Some(image_id) = &result.image_id {
                 println!("  image_id={image_id}");
             }
@@ -509,11 +512,11 @@ pub(crate) fn print_cache_lookup_address(result: &CacheLookupResultView, output:
             if let Some(image_offset) = result.image_offset {
                 println!("  image_offset={image_offset:#x}");
             }
-            if let Some(file_offset) = result.member_file_offset {
-                println!("  member_file_offset={file_offset:#x}");
-            }
             if let Some(symbol) = &result.symbol {
                 println!("  symbol={symbol}");
+            }
+            if let Some(symbol_source) = &result.symbol_source {
+                println!("  symbol_source={symbol_source}");
             }
             if let Some(symbol_address) = result.symbol_address {
                 println!("  symbol_address={symbol_address:#x}");
@@ -543,11 +546,12 @@ pub(crate) fn print_cache_resolve_symbol(
             );
             for entry in matches {
                 println!(
-                    "  - {} cache_vmaddr={:#x} image_id={} install_name={} source={} image_base_vmaddr={:#x} image_offset={:#x} member_file_offset={}",
+                    "  - {} cache_vmaddr={:#x} image_id={} install_name={} member_name={} source={} image_base_vmaddr={:#x} image_offset={:#x} member_file_offset={}",
                     entry.name,
                     entry.cache_vmaddr,
                     entry.image_id,
                     entry.install_name,
+                    entry.member_name,
                     entry.source,
                     entry.image_base_vmaddr,
                     entry.image_offset,
@@ -561,6 +565,153 @@ pub(crate) fn print_cache_resolve_symbol(
         OutputFormat::Json => emit_json_response(
             "cache_resolve_symbol",
             &CacheResolveSymbolJsonDto { metadata, matches },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_sections(
+    image: &CacheImageView,
+    sections: &[Section],
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            print_cache_image_text(image);
+            print_sections(sections, output);
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_sections",
+            &CacheProjectedJsonDto {
+                image,
+                payload_key: "sections",
+                payload: SectionsJsonDto { sections }.to_json_value(),
+            },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_symbols(
+    image: &CacheImageView,
+    symbols: &[Symbol],
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            print_cache_image_text(image);
+            print_symbols(symbols, output);
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_symbols",
+            &CacheProjectedJsonDto {
+                image,
+                payload_key: "symbols",
+                payload: SymbolsJsonDto { symbols }.to_json_value(),
+            },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_imports(
+    image: &CacheImageView,
+    imports: &[Import],
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            print_cache_image_text(image);
+            print_imports(imports, output);
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_imports",
+            &CacheProjectedJsonDto {
+                image,
+                payload_key: "imports",
+                payload: ImportsJsonDto { imports }.to_json_value(),
+            },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_dyld(
+    image: &CacheImageView,
+    binary_image: &BinaryImage,
+    view: &DyldViewOptions,
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            print_cache_image_text(image);
+            print_dyld(binary_image, view, output);
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_dyld",
+            &CacheProjectedJsonDto {
+                image,
+                payload_key: "dyld",
+                payload: DyldJsonDto {
+                    image: binary_image,
+                    view: view.clone(),
+                }
+                .to_json_value(),
+            },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_objc(
+    image: &CacheImageView,
+    binary_image: &BinaryImage,
+    view: &ObjcViewOptions,
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            print_cache_image_text(image);
+            print_objc(binary_image, view, output);
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_objc",
+            &CacheProjectedJsonDto {
+                image,
+                payload_key: "objc",
+                payload: ObjcJsonDto {
+                    image: binary_image,
+                    view: view.clone(),
+                }
+                .to_json_value(),
+            },
+            output,
+        ),
+    }
+}
+
+pub(crate) fn print_cache_disassembly(
+    image: &CacheImageView,
+    view: DisassemblyView<'_>,
+    render_options: DisassemblyRenderOptions,
+    output: &OutputSettings,
+) {
+    match output.format {
+        OutputFormat::Text => {
+            print_cache_image_text(image);
+            print_disassembly(view, render_options, output);
+        }
+        OutputFormat::Json => emit_json_response(
+            "cache_disasm",
+            &CacheProjectedJsonDto {
+                image,
+                payload_key: "disassembly",
+                payload: DisasmJsonDto {
+                    view,
+                    render_options,
+                }
+                .to_json_value(),
+            },
             output,
         ),
     }
@@ -2691,6 +2842,22 @@ impl JsonDto for CacheLookupAddressJsonDto<'_> {
                     u64_num(self.result.cache_vmaddr),
                 ),
                 (
+                    "member_name".to_string(),
+                    JsonValue::String(self.result.member_name.clone()),
+                ),
+                (
+                    "mapping_base_vmaddr".to_string(),
+                    u64_num(self.result.mapping_base_vmaddr),
+                ),
+                (
+                    "mapping_size".to_string(),
+                    u64_num(self.result.mapping_size),
+                ),
+                (
+                    "member_file_offset".to_string(),
+                    u64_num(self.result.member_file_offset),
+                ),
+                (
                     "image_id".to_string(),
                     self.result
                         .image_id
@@ -2721,16 +2888,17 @@ impl JsonDto for CacheLookupAddressJsonDto<'_> {
                         .unwrap_or(JsonValue::Null),
                 ),
                 (
-                    "member_file_offset".to_string(),
-                    self.result
-                        .member_file_offset
-                        .map(u64_num)
-                        .unwrap_or(JsonValue::Null),
-                ),
-                (
                     "symbol".to_string(),
                     self.result
                         .symbol
+                        .as_ref()
+                        .map(|value| JsonValue::String(value.clone()))
+                        .unwrap_or(JsonValue::Null),
+                ),
+                (
+                    "symbol_source".to_string(),
+                    self.result
+                        .symbol_source
                         .as_ref()
                         .map(|value| JsonValue::String(value.clone()))
                         .unwrap_or(JsonValue::Null),
@@ -2782,6 +2950,10 @@ impl JsonDto for CacheResolveSymbolJsonDto<'_> {
                                     "install_name".to_string(),
                                     JsonValue::String(entry.install_name.clone()),
                                 ),
+                                (
+                                    "member_name".to_string(),
+                                    JsonValue::String(entry.member_name.clone()),
+                                ),
                                 ("cache_vmaddr".to_string(), u64_num(entry.cache_vmaddr)),
                                 (
                                     "image_base_vmaddr".to_string(),
@@ -2804,6 +2976,21 @@ impl JsonDto for CacheResolveSymbolJsonDto<'_> {
                         .collect(),
                 ),
             ),
+        ])
+    }
+}
+
+struct CacheProjectedJsonDto<'a> {
+    image: &'a CacheImageView,
+    payload_key: &'static str,
+    payload: JsonValue,
+}
+
+impl JsonDto for CacheProjectedJsonDto<'_> {
+    fn to_json_value(&self) -> JsonValue {
+        JsonValue::Object(vec![
+            ("image".to_string(), cache_image_json(self.image)),
+            (self.payload_key.to_string(), self.payload.clone()),
         ])
     }
 }
@@ -2849,6 +3036,16 @@ fn collection_metadata_json(metadata: &CacheCollectionMetadata) -> JsonValue {
         ("returned".to_string(), usize_num(metadata.returned)),
         ("truncated".to_string(), JsonValue::Bool(metadata.truncated)),
     ])
+}
+
+fn print_cache_image_text(image: &CacheImageView) {
+    println!("image:");
+    println!("  id={}", image.id);
+    println!("  index={}", image.image_index);
+    println!("  install_name={}", image.install_name);
+    println!("  basename={}", image.basename);
+    println!("  image_base_vmaddr={:#x}", image.image_base_vmaddr);
+    println!("  member={}", image.member_name);
 }
 
 fn slice_descriptor_json(descriptor: &SliceDescriptor) -> JsonValue {

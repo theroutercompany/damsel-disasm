@@ -2687,21 +2687,71 @@ pub struct SymbolicationMatch {
     pub cache_vmaddr: u64,
     pub image_base_vmaddr: u64,
     pub image_offset: u64,
+    pub member_name: String,
     pub member_file_offset: Option<u64>,
+    pub symbol_source: CacheSymbolSource,
     pub exact: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheSymbolSource {
+    Export,
+    Local,
+}
+
+impl fmt::Display for CacheSymbolSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Export => f.write_str("export"),
+            Self::Local => f.write_str("local"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectedImageProvenance {
+    pub cache_uuid: String,
+    pub image_id: CacheImageId,
+    pub install_name: String,
+    pub basename: String,
+    pub image_base_vmaddr: u64,
+    pub member_name: String,
+    pub local_symbols_available: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectedBinaryImage {
+    pub provenance: ProjectedImageProvenance,
+    pub image: BinaryImage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheMappingContext {
+    pub member_name: String,
+    pub mapping_base_vmaddr: u64,
+    pub mapping_size: u64,
+    pub member_file_offset: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheLookupResult {
-    ExactSymbol(SymbolicationMatch),
+    ExactSymbol {
+        cache_vmaddr: u64,
+        mapping: CacheMappingContext,
+        image: ProjectedImageProvenance,
+        symbol: SymbolicationMatch,
+    },
     NearestSymbol {
+        cache_vmaddr: u64,
+        mapping: CacheMappingContext,
+        image: ProjectedImageProvenance,
         symbol: SymbolicationMatch,
         distance: u64,
     },
     MappingOnly {
         cache_vmaddr: u64,
-        member_index: usize,
-        member_file_offset: u64,
+        mapping: CacheMappingContext,
+        image: Option<ProjectedImageProvenance>,
     },
 }
 
@@ -3200,6 +3250,34 @@ pub struct BinaryImage {
     symbol_name_index_cache: OnceLock<BTreeMap<String, Vec<usize>>>,
     import_name_index_cache: OnceLock<BTreeMap<String, Vec<usize>>>,
     relocation_address_index_cache: OnceLock<BTreeMap<u64, Vec<usize>>>,
+}
+
+impl Clone for BinaryImage {
+    fn clone(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            path: self.path.clone(),
+            format: self.format,
+            architecture: self.architecture,
+            endianness: self.endianness,
+            entry_point: self.entry_point,
+            platform: self.platform.clone(),
+            slice: self.slice.clone(),
+            available_slices: self.available_slices.clone(),
+            segments: self.segments.clone(),
+            sections: self.sections.clone(),
+            symbols: self.symbols.clone(),
+            imports: self.imports.clone(),
+            relocations: self.relocations.clone(),
+            objc: self.objc.clone(),
+            dyld: self.dyld.clone(),
+            data: self.data.clone(),
+            section_name_index_cache: OnceLock::new(),
+            symbol_name_index_cache: OnceLock::new(),
+            import_name_index_cache: OnceLock::new(),
+            relocation_address_index_cache: OnceLock::new(),
+        }
+    }
 }
 
 impl fmt::Debug for BinaryImage {

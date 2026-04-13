@@ -127,6 +127,12 @@ fn normalize_cache_snapshot(output: &str) -> String {
                 "  - id=<id> index=<index> base=<addr> install_name=<install_name> basename=<basename> member=<member>".to_string()
             } else if line.starts_with("lookup_address: kind=") {
                 "lookup_address: kind=<kind> cache_vmaddr=<addr>".to_string()
+            } else if line.starts_with("  member_name=") {
+                "  member_name=<member_name>".to_string()
+            } else if line.starts_with("  mapping_base_vmaddr=") {
+                "  mapping_base_vmaddr=<addr>".to_string()
+            } else if line.starts_with("  mapping_size=") {
+                "  mapping_size=<size>".to_string()
             } else if line.starts_with("  image_id=") {
                 "  image_id=<image_id>".to_string()
             } else if line.starts_with("  install_name=") {
@@ -139,6 +145,8 @@ fn normalize_cache_snapshot(output: &str) -> String {
                 "  member_file_offset=<offset>".to_string()
             } else if line.starts_with("  symbol=") {
                 "  symbol=<symbol>".to_string()
+            } else if line.starts_with("  symbol_source=") {
+                "  symbol_source=<source>".to_string()
             } else if line.starts_with("  symbol_address=") {
                 "  symbol_address=<addr>".to_string()
             } else if line.starts_with("  offset_from_symbol=") {
@@ -520,12 +528,16 @@ fn cache_lookup_address_snapshot() {
         normalized,
         @r###"
         lookup_address: kind=<kind> cache_vmaddr=<addr>
+          member_name=<member_name>
+          mapping_base_vmaddr=<addr>
+          mapping_size=<size>
+          member_file_offset=<offset>
           image_id=<image_id>
           install_name=<install_name>
           image_base_vmaddr=<addr>
           image_offset=<offset>
-          member_file_offset=<offset>
           symbol=<symbol>
+          symbol_source=<source>
           symbol_address=<addr>
           offset_from_symbol=<offset>
         "###
@@ -544,5 +556,64 @@ fn cache_image_not_found_error_snapshot() {
     insta::assert_snapshot!(
         stderr,
         @r###"error [cache_image_not_found]: cache image not found: missing-image"###
+    );
+}
+
+#[test]
+fn cache_sections_snapshot() {
+    let path = cache_fixture("valid-single-arm64.cache");
+    let stdout = run_snapshot(&[
+        "cache",
+        "sections",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libobjc.A.dylib",
+        "--exec",
+    ]);
+    insta::assert_snapshot!(
+        stdout,
+        @r###"
+        image:
+          id=11111111-2222-3333-4444-555555555555:0
+          index=0
+          install_name=/usr/lib/libobjc.A.dylib
+          basename=libobjc.A.dylib
+          image_base_vmaddr=0x180000000
+          member=valid-single-arm64.cache
+               0x180000000    0x704 exec     __TEXT             __text
+               0x180000704     0x48 exec     __TEXT             __stubs
+               0x180000768    0x1a0 exec     __TEXT             __objc_stubs
+        "###
+    );
+}
+
+#[test]
+fn cache_disasm_snapshot() {
+    let path = cache_fixture("valid-single-arm64.cache");
+    let stdout = run_snapshot(&[
+        "cache",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libobjc.A.dylib",
+        "--symbol",
+        "_main",
+        "--limit",
+        "4",
+    ]);
+    insta::assert_snapshot!(
+        stdout,
+        @r###"
+        image:
+          id=11111111-2222-3333-4444-555555555555:0
+          index=0
+          install_name=/usr/lib/libobjc.A.dylib
+          basename=libobjc.A.dylib
+          image_base_vmaddr=0x180000000
+          member=valid-single-arm64.cache
+        target: _main start=0x180000638 end=0x180000648 bytes=0x10 decoded=0x10 instructions=4 stop=InstructionLimitReached
+               0x180000638  d10143ff  sub sp, sp, #0x50 ; range start | symbol _main
+               0x18000063c  a9047bfd  stp fp, lr, [sp, #0x40]
+               0x180000640  910103fd  add fp, sp, #0x40
+               0x180000644  52800008  mov w8, #0x0
+        "###
     );
 }

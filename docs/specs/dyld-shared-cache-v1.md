@@ -1,6 +1,6 @@
 # dyld Shared Cache v1 Engineering Spec
 
-Status: Planned. This is a decision-complete spec for the first shared-cache implementation wave. None of the cache-specific surfaces in this document are implemented yet.
+Status: Implemented contract. This spec records the shipped Wave 1 shared-cache behavior and its boundaries, and remains the reference point for Wave 2 compatibility.
 
 ## Summary
 
@@ -25,11 +25,11 @@ Already implemented today:
 - typed dyld metadata on `BinaryImage`
 - image-oriented CLI commands
 
-Not implemented today:
+Implemented today:
 
-- any shared-cache loader
+- shared-cache loader and deterministic cache-set discovery
 - cache container model
-- cache image inventory or lookup
+- cache image inventory and lookup
 - cache VM address resolution
 - cache symbolication CLI
 
@@ -204,7 +204,7 @@ v1 discovery algorithm:
 
 ## CLI Contract
 
-All cache commands are **planned**, not implemented yet.
+All cache commands in this section are implemented in Wave 1 unless otherwise marked as deferred.
 
 ### `damsel cache info <cache>`
 

@@ -374,3 +374,39 @@ fn cache_image_unknown_selector_returns_typed_not_found_error() {
         .failure()
         .stderr(predicate::str::contains("error [cache_image_not_found]"));
 }
+
+#[test]
+fn cache_disasm_unknown_symbol_returns_typed_symbol_not_found_error() {
+    let path = cache_fixture("valid-single-arm64.cache");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "cache",
+            "disasm",
+            path.to_str().expect("utf8 path"),
+            "/usr/lib/libobjc.A.dylib",
+            "--symbol",
+            "__missing_symbol__",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [symbol_not_found]"));
+}
+
+#[test]
+fn cache_disasm_unmapped_address_returns_typed_address_not_mapped_error() {
+    let path = cache_fixture("valid-single-arm64.cache");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "cache",
+            "disasm",
+            path.to_str().expect("utf8 path"),
+            "/usr/lib/libobjc.A.dylib",
+            "--addr",
+            "0x181000000",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [address_not_mapped]"));
+}

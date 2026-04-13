@@ -2199,12 +2199,16 @@ fn cache_lookup_address_json_contract() {
         &[
             "kind",
             "cache_vmaddr",
+            "member_name",
+            "mapping_base_vmaddr",
+            "mapping_size",
+            "member_file_offset",
             "image_id",
             "install_name",
             "image_base_vmaddr",
             "image_offset",
-            "member_file_offset",
             "symbol",
+            "symbol_source",
             "symbol_address",
             "offset_from_symbol",
         ],
@@ -2245,6 +2249,7 @@ fn cache_resolve_symbol_json_contract_and_metadata() {
                 "name",
                 "image_id",
                 "install_name",
+                "member_name",
                 "cache_vmaddr",
                 "image_base_vmaddr",
                 "image_offset",
@@ -2279,4 +2284,121 @@ fn cache_image_not_found_json_error_envelope_is_typed() {
     assert_eq!(json["data"]["code"], "cache_image_not_found");
     assert!(json["data"]["message"].is_string());
     assert!(json["data"]["details"].is_null());
+}
+
+#[test]
+fn cache_sections_json_contract() {
+    let path = cache_fixture("valid-single-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "sections",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libobjc.A.dylib",
+        "--exec",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "sections"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_sections");
+    assert_exact_object_keys(&json["data"], &["image", "sections"]);
+    assert!(json["data"]["sections"].is_array());
+}
+
+#[test]
+fn cache_symbols_json_contract() {
+    let path = cache_fixture("valid-single-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "symbols",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libobjc.A.dylib",
+        "--global",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "symbols"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_symbols");
+    assert_exact_object_keys(&json["data"], &["image", "symbols"]);
+    assert!(json["data"]["symbols"].is_array());
+}
+
+#[test]
+fn cache_imports_json_contract() {
+    let path = cache_fixture("valid-split-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "imports",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libdispatch.dylib",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "imports"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_imports");
+    assert_exact_object_keys(&json["data"], &["image", "imports"]);
+    assert!(json["data"]["imports"].is_array());
+}
+
+#[test]
+fn cache_dyld_json_contract() {
+    let path = cache_fixture("valid-split-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "dyld",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libdispatch.dylib",
+        "--exports",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "dyld"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_dyld");
+    assert_exact_object_keys(&json["data"], &["image", "dyld"]);
+    assert!(json["data"]["dyld"].is_object());
+}
+
+#[test]
+fn cache_objc_json_contract() {
+    let path = cache_fixture("valid-single-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "objc",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libobjc.A.dylib",
+        "--detail",
+        "summary",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "objc"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_objc");
+    assert_exact_object_keys(&json["data"], &["image", "objc"]);
+    assert!(json["data"]["objc"].is_object());
+}
+
+#[test]
+fn cache_disasm_json_contract() {
+    let path = cache_fixture("valid-single-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libobjc.A.dylib",
+        "--symbol",
+        "_main",
+        "--limit",
+        "4",
+    ]);
+    assert_raw_object_key_order(&out, "data", &["image", "disassembly"]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_disasm");
+    assert_exact_object_keys(&json["data"], &["image", "disassembly"]);
+    assert!(json["data"]["disassembly"].is_object());
 }

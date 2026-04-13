@@ -1,6 +1,6 @@
 # Apple Runtime Analysis Roadmap
 
-Status: Planned. This roadmap describes intended implementation waves. Shared-cache-specific items below are planned unless explicitly marked as current.
+Status: Wave 1 and Wave 2 implemented; Wave 3 planned. Shared-cache-specific items below are current only where explicitly marked as implemented.
 
 ## Summary
 
@@ -18,6 +18,8 @@ The roadmap preserves:
 - current standalone Mach-O behavior as the compatibility baseline
 
 ## Wave 1: Shared-Cache Inventory, Query, and Symbolication MVP
+
+Status: Implemented.
 
 ### Themes
 
@@ -79,6 +81,8 @@ The roadmap preserves:
 - root docs are truthful about implemented versus planned shared-cache surfaces
 
 ## Wave 2: Projected-Image Workflows and Debugger-Oriented Resolution
+
+Status: Implemented.
 
 ### Themes
 
@@ -175,10 +179,12 @@ Implemented present:
 - standalone Mach-O analysis
 - dyld metadata extraction for standalone images
 - image-oriented CLI and UI flows
+- shared-cache inventory/query/symbolication
+- cache-scoped projected-image workflows for sections, symbols, imports, dyld, Objective-C, and disassembly
 
 Planned future:
 
-- all shared-cache-specific surfaces in this roadmap
+- deeper shared-cache-native analysis and system-framework spelunking from Wave 3
 
 ## Cross References
 

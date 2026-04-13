@@ -152,6 +152,7 @@ pub(crate) enum CacheLookupResult {
         distance: u64,
     },
     MappingOnly {
+        cache_vmaddr: u64,
         mapping: CacheMappingContext,
         image: Option<CacheImageContext>,
     },
@@ -271,6 +272,7 @@ impl SharedCacheQueryEngine {
         let image = self.find_image_for_address(cache_vmaddr);
         let Some(image) = image else {
             return Ok(CacheLookupResult::MappingOnly {
+                cache_vmaddr,
                 mapping: mapping_context,
                 image: None,
             });
@@ -295,6 +297,7 @@ impl SharedCacheQueryEngine {
         }
 
         Ok(CacheLookupResult::MappingOnly {
+            cache_vmaddr,
             mapping: mapping_context,
             image: Some(image_context),
         })

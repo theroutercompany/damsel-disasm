@@ -1,6 +1,6 @@
 # Apple Runtime Analysis Architecture
 
-Status: Planned architecture. This document describes target structure and interfaces that are **not yet implemented** unless explicitly labeled as current.
+Status: Current architecture plus planned Wave 2/3 extensions. Shared-cache container/query support is implemented; projected-image and deeper runtime workflows remain planned unless explicitly labeled current.
 
 ## Summary
 
@@ -8,9 +8,9 @@ Status: Planned architecture. This document describes target structure and inter
 
 - inspect standalone Mach-O images (current)
 - understand dyld metadata in those images (current)
-- inspect dyld shared caches as first-class containers (planned)
-- resolve cache addresses and symbols for debugging/symbolication workflows (planned)
-- project selected cache images into existing per-image analysis flows internally (planned)
+- inspect dyld shared caches as first-class containers (current)
+- resolve cache addresses and symbols for debugging/symbolication workflows (current, Wave 1)
+- project selected cache images into existing per-image analysis flows (current, Wave 2)
 
 The planned future adds a sibling runtime container model and does not replace the existing image model.
 
@@ -34,11 +34,9 @@ Current implemented dyld coverage includes:
 
 Current implemented exclusions:
 
-- no shared-cache loader
-- no cache-wide image inventory
-- no cache-wide address lookup
-- no cache symbolication surface
-- no cache-backed projection into image commands
+- no top-level bridge from standalone image commands into cache-backed images
+- no live debugger integration
+- no cache mutation or rebuilding
 
 ## Target Layered Architecture
 
@@ -174,15 +172,15 @@ Design rules:
 ```mermaid
 flowchart TD
   A["File or memory input"] --> B["Mach-O loader (implemented)"]
-  A --> C["SharedCacheSource (planned)"]
+  A --> C["SharedCacheSource (current)"]
   B --> D["BinaryImage (implemented)"]
   D --> E["CLI/UI image commands (implemented)"]
-  C --> F["SharedCache container (planned)"]
-  F --> G["Cache inventory and mappings (planned)"]
-  F --> H["AddressResolver / SymbolicationResult (planned)"]
-  F --> I["ProjectedImageView (planned, internal for v1)"]
+  C --> F["SharedCache container (current)"]
+  F --> G["Cache inventory and mappings (current)"]
+  F --> H["AddressResolver / SymbolicationResult (current)"]
+  F --> I["ProjectedImageView (current, internal)"]
   I --> D
-  H --> J["cache CLI family (planned)"]
+  H --> J["cache CLI family (current)"]
 ```
 
 ## Query Flow Diagram

@@ -13,10 +13,15 @@ Current analysis scope:
   - `cache exports`
   - `cache lookup-address`
   - `cache resolve-symbol`
+  - `cache sections`
+  - `cache symbols`
+  - `cache imports`
+  - `cache dyld`
+  - `cache objc`
+  - `cache disasm`
 - A compatibility-oriented `doctor` command that reports host/tool readiness and supports CI/operator threshold checks.
 
 Planned next:
-- projected-image and debugger-oriented shared-cache workflows beyond Wave 1
 - deeper shared-cache-native analysis and system-framework spelunking
 - Contract and architecture for those next waves are documented in:
   - [docs/specs/dyld-shared-cache-v1.md](./docs/specs/dyld-shared-cache-v1.md)
@@ -82,6 +87,13 @@ cargo test --workspace
 ./fixtures/build-fixtures.sh --check
 ./fixtures/tests/build-fixtures-parity.sh
 cargo bench -p damsel-macho --bench decode_bench --no-run
+```
+
+Optional local real-cache validation:
+
+```sh
+DAMSEL_REAL_DYLD_SHARED_CACHE_ROOT=/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e \
+  cargo test -p damsel-macho --test shared_cache_real_env -- --nocapture
 ```
 
 For fixture details and host/tool parity notes, see [fixtures/README.md](./fixtures/README.md).

@@ -617,6 +617,7 @@ jobs:
           cargo run -q -p damsel-cli -- cache --help >/dev/null
           cargo run -q -p damsel-cli -- --format json cache info fixtures/shared-cache-corpus/valid-single-arm64.cache > cache-info.json
           cargo run -q -p damsel-cli -- --format json cache images fixtures/shared-cache-corpus/valid-single-arm64.cache --limit 1 > cache-images.json
+          cargo run -q -p damsel-cli -- cache sections fixtures/shared-cache-corpus/valid-single-arm64.cache /usr/lib/libobjc.A.dylib --exec >/dev/null
           python3 - <<'PY'
           import json
           from pathlib import Path

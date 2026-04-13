@@ -1,18 +1,20 @@
 use crate::errors::{MachoError, Result};
-use crate::loader::load;
+use crate::loader::{load, load_bytes};
 use crate::shared_cache_query::{
     CacheLookupResult as QueryLookupResult, ProjectedCacheImage, SharedCacheQueryEngine,
     SharedCacheQueryError,
 };
 use damsel_core::{
     Architecture, BinaryFormat, BinaryImage, CacheImageId, CacheImageRecord, CacheLookupResult,
-    ExportFlags, ObjcMetadata, SharedCache, SharedCacheHeader, SharedCacheMapping,
+    CacheMappingContext, CacheSymbolSource, ExportFlags, ObjcMetadata, ProjectedBinaryImage,
+    ProjectedImageProvenance, SharedCache, SharedCacheHeader, SharedCacheMapping,
     SharedCacheMember, SharedCacheMemberRole, SharedCacheSource, SliceInfo, SymbolicationMatch,
 };
 use object::macho::DyldCacheHeader;
 use object::read::macho::DyldCache;
-use object::read::{Export, Object, ObjectSymbol};
+use object::read::{Export, Object, ObjectSegment, ObjectSymbol};
 use object::{Architecture as ObjectArchitecture, Endianness as ObjectEndianness, FileKind};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -42,8 +44,14 @@ pub struct SharedCacheSession {
 
 #[derive(Debug)]
 enum SharedCacheSessionKind {
-    Synthetic { engine: SharedCacheQueryEngine },
-    Real { root_path: PathBuf },
+    Synthetic {
+        engine: SharedCacheQueryEngine,
+        projections: RefCell<BTreeMap<CacheImageId, ProjectedBinaryImage>>,
+    },
+    Real {
+        root_path: PathBuf,
+        projections: RefCell<BTreeMap<CacheImageId, ProjectedBinaryImage>>,
+    },
 }
 
 #[derive(Debug)]
@@ -92,7 +100,10 @@ pub fn inspect_shared_cache<P: AsRef<Path>>(path: P) -> Result<SharedCacheSessio
     let (cache, root_path) = load_real_shared_cache_inventory(input_path, &root_candidate)?;
     Ok(SharedCacheSession {
         cache,
-        kind: SharedCacheSessionKind::Real { root_path },
+        kind: SharedCacheSessionKind::Real {
+            root_path,
+            projections: RefCell::new(BTreeMap::new()),
+        },
     })
 }
 
@@ -103,6 +114,36 @@ impl SharedCacheSession {
 
     pub fn into_cache(self) -> SharedCache {
         self.cache
+    }
+
+    pub fn project_image(&self, selector: &str) -> Result<ProjectedBinaryImage> {
+        let image = self.resolve_image(selector)?;
+        let image_id = image.id.clone();
+        if let Some(projected) = self.cached_projection(&image_id) {
+            return Ok(projected);
+        }
+
+        let projected = match &self.kind {
+            SharedCacheSessionKind::Synthetic { engine, .. } => {
+                let projected = engine
+                    .project_image(selector)
+                    .map_err(map_query_error_to_macho_error)?;
+                ProjectedBinaryImage {
+                    provenance: projected_image_provenance(
+                        &self.cache,
+                        image,
+                        projected.local_symbols_available,
+                    ),
+                    image: projected.binary_image.clone(),
+                }
+            }
+            SharedCacheSessionKind::Real { root_path, .. } => {
+                self.project_real_image(root_path, image)?
+            }
+        };
+
+        self.store_projection(image_id, projected.clone());
+        Ok(projected)
     }
 
     pub fn resolve_image(&self, selector: &str) -> Result<&CacheImageRecord> {
@@ -132,7 +173,7 @@ impl SharedCacheSession {
 
     pub fn exports_for_image(&self, selector: &str) -> Result<Vec<SharedCacheExportRecord>> {
         match &self.kind {
-            SharedCacheSessionKind::Synthetic { engine } => {
+            SharedCacheSessionKind::Synthetic { engine, .. } => {
                 let projected = engine
                     .project_image(selector)
                     .map_err(map_query_error_to_macho_error)?;
@@ -151,7 +192,7 @@ impl SharedCacheSession {
                 exports.sort_by_key(|record| (record.cache_vmaddr, record.name.clone()));
                 Ok(exports)
             }
-            SharedCacheSessionKind::Real { root_path } => {
+            SharedCacheSessionKind::Real { root_path, .. } => {
                 let image = self.resolve_image(selector)?;
                 with_real_cache(root_path, |cache| {
                     let dyld_image = dyld_cache_image_by_index(cache, image.image_index as usize)?;
@@ -181,13 +222,13 @@ impl SharedCacheSession {
 
     pub fn lookup_cache_vmaddr(&self, cache_vmaddr: u64) -> Result<CacheLookupResult> {
         match &self.kind {
-            SharedCacheSessionKind::Synthetic { engine } => {
+            SharedCacheSessionKind::Synthetic { engine, .. } => {
                 let result = engine
                     .lookup_cache_vmaddr(cache_vmaddr)
                     .map_err(map_query_error_to_macho_error)?;
                 Ok(convert_query_lookup_result(&self.cache, result))
             }
-            SharedCacheSessionKind::Real { root_path } => {
+            SharedCacheSessionKind::Real { root_path, .. } => {
                 let mapping = self
                     .cache
                     .mapping_for_vm_address(cache_vmaddr)
@@ -202,8 +243,8 @@ impl SharedCacheSession {
                 let Some(image) = self.cache.image_for_vm_address(cache_vmaddr) else {
                     return Ok(CacheLookupResult::MappingOnly {
                         cache_vmaddr,
-                        member_index: mapping.member_index,
-                        member_file_offset,
+                        mapping: cache_mapping_context(&self.cache, mapping, member_file_offset),
+                        image: None,
                     });
                 };
                 let mut candidates = self.real_symbol_candidates(root_path, image, true)?;
@@ -219,9 +260,33 @@ impl SharedCacheSession {
                     let symbol =
                         symbolication_match_from_candidate(&self.cache, image, best, exact);
                     if exact {
-                        Ok(CacheLookupResult::ExactSymbol(symbol))
+                        Ok(CacheLookupResult::ExactSymbol {
+                            cache_vmaddr,
+                            mapping: cache_mapping_context(
+                                &self.cache,
+                                mapping,
+                                member_file_offset,
+                            ),
+                            image: projected_image_provenance(
+                                &self.cache,
+                                image,
+                                self.cache.header().has_local_symbols,
+                            ),
+                            symbol,
+                        })
                     } else {
                         Ok(CacheLookupResult::NearestSymbol {
+                            cache_vmaddr,
+                            mapping: cache_mapping_context(
+                                &self.cache,
+                                mapping,
+                                member_file_offset,
+                            ),
+                            image: projected_image_provenance(
+                                &self.cache,
+                                image,
+                                self.cache.header().has_local_symbols,
+                            ),
                             distance: cache_vmaddr.saturating_sub(best.cache_vmaddr),
                             symbol,
                         })
@@ -229,8 +294,12 @@ impl SharedCacheSession {
                 } else {
                     Ok(CacheLookupResult::MappingOnly {
                         cache_vmaddr,
-                        member_index: mapping.member_index,
-                        member_file_offset,
+                        mapping: cache_mapping_context(&self.cache, mapping, member_file_offset),
+                        image: Some(projected_image_provenance(
+                            &self.cache,
+                            image,
+                            self.cache.header().has_local_symbols,
+                        )),
                     })
                 }
             }
@@ -244,7 +313,7 @@ impl SharedCacheSession {
         limit: Option<usize>,
     ) -> Result<Vec<SymbolicationMatch>> {
         match &self.kind {
-            SharedCacheSessionKind::Synthetic { engine } => {
+            SharedCacheSessionKind::Synthetic { engine, .. } => {
                 let results = engine
                     .resolve_exact_symbol(symbol_name, image_filter, limit)
                     .map_err(map_query_error_to_macho_error)?;
@@ -253,7 +322,7 @@ impl SharedCacheSession {
                     .map(|entry| convert_query_match(&self.cache, entry, true, None))
                     .collect())
             }
-            SharedCacheSessionKind::Real { root_path } => {
+            SharedCacheSessionKind::Real { root_path, .. } => {
                 let limit = limit.unwrap_or(usize::MAX);
                 let mut matches = Vec::new();
                 for image in self.cache.images() {
@@ -317,6 +386,7 @@ impl SharedCacheSession {
                 .map(|export: Export<'_>| RealSymbolCandidate {
                     name: String::from_utf8_lossy(export.name()).into_owned(),
                     cache_vmaddr: export.address(),
+                    source: CacheSymbolSource::Export,
                 })
                 .collect::<Vec<_>>();
             if self.cache.header().has_local_symbols || include_nearest_candidates {
@@ -330,10 +400,55 @@ impl SharedCacheSession {
                     candidates.push(RealSymbolCandidate {
                         name: name.to_string(),
                         cache_vmaddr: symbol.address(),
+                        source: CacheSymbolSource::Local,
                     });
                 }
             }
             Ok(candidates)
+        })
+    }
+
+    fn cached_projection(&self, image_id: &CacheImageId) -> Option<ProjectedBinaryImage> {
+        match &self.kind {
+            SharedCacheSessionKind::Synthetic { projections, .. }
+            | SharedCacheSessionKind::Real { projections, .. } => {
+                projections.borrow().get(image_id).cloned()
+            }
+        }
+    }
+
+    fn store_projection(&self, image_id: CacheImageId, projected: ProjectedBinaryImage) {
+        match &self.kind {
+            SharedCacheSessionKind::Synthetic { projections, .. }
+            | SharedCacheSessionKind::Real { projections, .. } => {
+                projections.borrow_mut().insert(image_id, projected);
+            }
+        }
+    }
+
+    fn project_real_image(
+        &self,
+        root_path: &Path,
+        image: &CacheImageRecord,
+    ) -> Result<ProjectedBinaryImage> {
+        with_real_cache(root_path, |cache| {
+            let dyld_image = dyld_cache_image_by_index(cache, image.image_index as usize)?;
+            let object_file = dyld_image.parse_object().map_err(|error: object::Error| {
+                MachoError::MalformedSharedCache(error.to_string())
+            })?;
+            let reconstructed = reconstruct_projected_image_bytes(&object_file)?;
+            let binary_image = load_bytes(
+                Some(format!("projected-cache:{}", image.install_name)),
+                reconstructed,
+            )?;
+            Ok(ProjectedBinaryImage {
+                provenance: projected_image_provenance(
+                    &self.cache,
+                    image,
+                    self.cache.header().has_local_symbols,
+                ),
+                image: binary_image,
+            })
         })
     }
 }
@@ -342,6 +457,7 @@ impl SharedCacheSession {
 struct RealSymbolCandidate {
     name: String,
     cache_vmaddr: u64,
+    source: CacheSymbolSource,
 }
 
 fn load_real_shared_cache_inventory(
@@ -728,7 +844,10 @@ fn build_synthetic_session(
     let engine = SharedCacheQueryEngine::new(cache_uuid, mapping_records, projected_images);
     Ok(SharedCacheSession {
         cache,
-        kind: SharedCacheSessionKind::Synthetic { engine },
+        kind: SharedCacheSessionKind::Synthetic {
+            engine,
+            projections: RefCell::new(BTreeMap::new()),
+        },
     })
 }
 
@@ -1148,6 +1267,76 @@ fn with_real_cache<T>(
     f(&cache)
 }
 
+fn reconstruct_projected_image_bytes<'data, T>(file: &T) -> Result<Vec<u8>>
+where
+    T: Object<'data>,
+{
+    let mut segments = Vec::<(u64, Vec<u8>)>::new();
+    let mut max_end = 0u64;
+
+    for segment in file.segments() {
+        let (file_offset, file_size) = segment.file_range();
+        if file_size == 0 {
+            continue;
+        }
+        let data = segment
+            .data()
+            .map_err(|error| MachoError::MalformedSharedCache(error.to_string()))?;
+        if data.is_empty() {
+            continue;
+        }
+        let copy_len = usize::min(data.len(), file_size as usize);
+        let end = file_offset.checked_add(copy_len as u64).ok_or_else(|| {
+            MachoError::MalformedSharedCache("projected image size overflow".to_string())
+        })?;
+        max_end = max_end.max(end);
+        segments.push((file_offset, data[..copy_len].to_vec()));
+    }
+
+    if max_end == 0 {
+        return Err(MachoError::MalformedSharedCache(
+            "projected image has no file-backed segments".to_string(),
+        ));
+    }
+
+    let mut bytes = vec![0u8; max_end as usize];
+    for (offset, data) in segments {
+        let start = offset as usize;
+        let end = start + data.len();
+        bytes[start..end].copy_from_slice(&data);
+    }
+    Ok(bytes)
+}
+
+fn projected_image_provenance(
+    cache: &SharedCache,
+    image: &CacheImageRecord,
+    local_symbols_available: bool,
+) -> ProjectedImageProvenance {
+    ProjectedImageProvenance {
+        cache_uuid: cache.header().cache_uuid.clone(),
+        image_id: image.id.clone(),
+        install_name: image.install_name.clone(),
+        basename: image.basename.clone(),
+        image_base_vmaddr: image.image_base_vmaddr,
+        member_name: member_name(cache, image.member_index),
+        local_symbols_available,
+    }
+}
+
+fn cache_mapping_context(
+    cache: &SharedCache,
+    mapping: &SharedCacheMapping,
+    member_file_offset: u64,
+) -> CacheMappingContext {
+    CacheMappingContext {
+        member_name: member_name(cache, mapping.member_index),
+        mapping_base_vmaddr: mapping.cache_vmaddr,
+        mapping_size: mapping.size,
+        member_file_offset,
+    }
+}
+
 fn dyld_cache_image_by_index<'data, 'cache>(
     cache: &'cache DyldCache<'data, ObjectEndianness, &'data [u8]>,
     image_index: usize,
@@ -1182,34 +1371,79 @@ fn convert_query_lookup_result(
     match result {
         QueryLookupResult::ExactSymbol {
             mapping,
-            image: _,
+            image,
             symbol,
-        } => CacheLookupResult::ExactSymbol(convert_query_match(
-            cache,
-            symbol,
-            true,
-            Some(mapping.member_file_offset),
-        )),
+        } => CacheLookupResult::ExactSymbol {
+            cache_vmaddr: symbol.cache_vmaddr,
+            mapping: CacheMappingContext {
+                member_name: mapping.member_label.clone(),
+                mapping_base_vmaddr: mapping.mapping_base_vmaddr,
+                mapping_size: mapping.mapping_size,
+                member_file_offset: mapping.member_file_offset,
+            },
+            image: ProjectedImageProvenance {
+                cache_uuid: cache.header().cache_uuid.clone(),
+                image_id: CacheImageId::parse(&image.image_id).unwrap_or_else(|| {
+                    CacheImageId::new(cache.header().cache_uuid.clone(), image.image_index as u32)
+                }),
+                install_name: image.install_name.clone(),
+                basename: install_name_basename(&image.install_name).to_string(),
+                image_base_vmaddr: image.image_base_vmaddr,
+                member_name: mapping.member_label.clone(),
+                local_symbols_available: true,
+            },
+            symbol: convert_query_match(cache, symbol, true, Some(mapping.member_file_offset)),
+        },
         QueryLookupResult::NearestSymbol {
             mapping,
-            image: _,
+            image,
             symbol,
             distance,
         } => CacheLookupResult::NearestSymbol {
+            cache_vmaddr: symbol.cache_vmaddr,
+            mapping: CacheMappingContext {
+                member_name: mapping.member_label.clone(),
+                mapping_base_vmaddr: mapping.mapping_base_vmaddr,
+                mapping_size: mapping.mapping_size,
+                member_file_offset: mapping.member_file_offset,
+            },
+            image: ProjectedImageProvenance {
+                cache_uuid: cache.header().cache_uuid.clone(),
+                image_id: CacheImageId::parse(&image.image_id).unwrap_or_else(|| {
+                    CacheImageId::new(cache.header().cache_uuid.clone(), image.image_index as u32)
+                }),
+                install_name: image.install_name.clone(),
+                basename: install_name_basename(&image.install_name).to_string(),
+                image_base_vmaddr: image.image_base_vmaddr,
+                member_name: mapping.member_label.clone(),
+                local_symbols_available: true,
+            },
             distance,
             symbol: convert_query_match(cache, symbol, false, Some(mapping.member_file_offset)),
         },
-        QueryLookupResult::MappingOnly { mapping, image: _ } => CacheLookupResult::MappingOnly {
-            cache_vmaddr: mapping.mapping_base_vmaddr,
-            member_index: cache
-                .members()
-                .iter()
-                .enumerate()
-                .find_map(|(index, _)| {
-                    (member_name(cache, index) == mapping.member_label).then_some(index)
-                })
-                .unwrap_or_default(),
-            member_file_offset: mapping.member_file_offset,
+        QueryLookupResult::MappingOnly {
+            cache_vmaddr,
+            mapping,
+            image,
+        } => CacheLookupResult::MappingOnly {
+            cache_vmaddr,
+            mapping: CacheMappingContext {
+                member_name: mapping.member_label.clone(),
+                mapping_base_vmaddr: mapping.mapping_base_vmaddr,
+                mapping_size: mapping.mapping_size,
+                member_file_offset: mapping.member_file_offset,
+            },
+            image: image.map(|image| ProjectedImageProvenance {
+                cache_uuid: cache.header().cache_uuid.clone(),
+                image_id: CacheImageId::parse(&image.image_id).unwrap_or_else(|| {
+                    CacheImageId::new(cache.header().cache_uuid.clone(), image.image_index as u32)
+                }),
+                install_name: image.install_name.clone(),
+                basename: install_name_basename(&image.install_name).to_string(),
+                image_base_vmaddr: image.image_base_vmaddr,
+                member_name: mapping.member_label.clone(),
+                local_symbols_available: true,
+            }),
         },
     }
 }
@@ -1231,11 +1465,19 @@ fn convert_query_match(
         cache_vmaddr: entry.cache_vmaddr,
         image_base_vmaddr: entry.image_base_vmaddr,
         image_offset: entry.image_offset,
+        member_name: cache
+            .mapping_for_vm_address(entry.cache_vmaddr)
+            .map(|mapping| member_name(cache, mapping.member_index))
+            .unwrap_or_else(|| format!("member-{}", entry.image_index)),
         member_file_offset: member_file_offset.or_else(|| {
             cache
                 .mapping_for_vm_address(entry.cache_vmaddr)
                 .and_then(|mapping| mapping.member_file_offset_for_vmaddr(entry.cache_vmaddr))
         }),
+        symbol_source: match entry.source {
+            crate::shared_cache_query::CacheSymbolSource::Export => CacheSymbolSource::Export,
+            crate::shared_cache_query::CacheSymbolSource::Local => CacheSymbolSource::Local,
+        },
         exact,
     }
 }
@@ -1256,9 +1498,11 @@ fn symbolication_match_from_candidate(
         image_offset: candidate
             .cache_vmaddr
             .saturating_sub(image.image_base_vmaddr),
+        member_name: member_name(cache, image.member_index),
         member_file_offset: cache
             .mapping_for_vm_address(candidate.cache_vmaddr)
             .and_then(|mapping| mapping.member_file_offset_for_vmaddr(candidate.cache_vmaddr)),
+        symbol_source: candidate.source,
         exact,
     }
 }
