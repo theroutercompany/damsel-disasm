@@ -5,23 +5,26 @@ expression: normalized
 host_os: <host_os>
 host_architecture: <host_architecture>
 target_triple: <target_triple>
-overall_status: <status>
+overall_status: supported-with-degraded-features
 capabilities:
-  macho_analysis: <status>
-  fixture_rebuild: <status>
-  fixture_drift_check: <status>
-  bench_compile: <status>
-  bench_runtime: <status>
-  benchmark: <status>
+  macho_analysis: supported
+  fixture_rebuild: supported
+  fixture_drift_check: supported
+  bench_compile: supported
+  bench_runtime: supported-with-degraded-features
+    - throughput_smoke_linux_arm64_only: <message>
+  benchmark: supported-with-degraded-features
+    - throughput_smoke_linux_arm64_only: <message>
 tools:
-  xcrun: <tool_status>
-  strip: <tool_status>
-  clang: <tool_status>
-  python3: <tool_status>
-  nm: <tool_status>
-  sdk_path_probe: <tool_status>
-  sha256sum: <tool_status>
-  shasum: <tool_status>
-  openssl: <tool_status>
-  selected_hash_tool: <tool>
-issues: <summary>
+  xcrun: detected=yes usable=yes path=<path>
+  strip: detected=yes usable=yes path=<path>
+  clang: detected=yes usable=yes path=<path>
+  python3: detected=yes usable=yes path=<path>
+  nm: detected=yes usable=yes path=<path>
+  sdk_path_probe: detected=yes usable=yes path=<path>
+  sha256sum: detected=yes usable=yes path=<path>
+  shasum: detected=yes usable=yes path=<path>
+  openssl: detected=yes usable=yes path=<path>
+  selected_hash_tool: sha256sum
+issues:
+  - throughput_smoke_linux_arm64_only: <message>

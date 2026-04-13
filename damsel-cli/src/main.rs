@@ -311,10 +311,23 @@ impl From<ObjcSelectorSourceArg> for ObjcSelectorSource {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(
+        about = "Report host compatibility and optionally enforce capability thresholds",
+        long_about = "Report host compatibility and optionally enforce capability thresholds.\n\n`--check all` validates the CI capability set (`macho-analysis`, `fixture-rebuild`, `fixture-drift-check`, `bench-compile`, `bench-runtime`). Because `fixture-rebuild` is macOS-only, `--check all` is intentionally non-portable across hosts.\n\nExit codes:\n  0 => success\n  1 => typed command error\n  2 => doctor threshold failure or argument parsing failure"
+    )]
     Doctor {
-        #[arg(long, value_enum)]
+        #[arg(
+            long,
+            value_enum,
+            help = "Capability target to enforce; `all` includes macOS-only fixture-rebuild"
+        )]
         check: Option<DoctorCheckArg>,
-        #[arg(long, value_enum, requires = "check")]
+        #[arg(
+            long,
+            value_enum,
+            requires = "check",
+            help = "Minimum required capability status (defaults to `supported` when omitted)"
+        )]
         require_status: Option<DoctorRequireStatusArg>,
     },
     Info {

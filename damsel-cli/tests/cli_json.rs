@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -78,6 +79,22 @@ fn sorted_object_keys(value: &Value) -> Vec<String> {
     keys
 }
 
+fn status_severity(status: &str) -> u8 {
+    match status {
+        "supported" => 0,
+        "supported-with-degraded-features" => 1,
+        "unsupported" => 2,
+        other => panic!("unexpected status: {other}"),
+    }
+}
+
+fn max_status<'a>(statuses: impl IntoIterator<Item = &'a str>) -> &'a str {
+    statuses
+        .into_iter()
+        .max_by_key(|status| status_severity(status))
+        .expect("at least one status")
+}
+
 fn assert_exact_object_keys(value: &Value, expected: &[&str]) {
     let mut expected_keys = expected
         .iter()
@@ -85,6 +102,23 @@ fn assert_exact_object_keys(value: &Value, expected: &[&str]) {
         .collect::<Vec<_>>();
     expected_keys.sort();
     assert_eq!(sorted_object_keys(value), expected_keys);
+}
+
+fn issue_set(value: &Value) -> BTreeSet<(String, String)> {
+    value
+        .as_array()
+        .expect("issues array")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().expect("issue code").to_string(),
+                issue["message"]
+                    .as_str()
+                    .expect("issue message")
+                    .to_string(),
+            )
+        })
+        .collect()
 }
 
 #[test]
@@ -259,6 +293,78 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
         assert!(issue["code"].is_string());
         assert!(issue["message"].is_string());
     }
+    let bench_compile_status = json["data"]["capabilities"]["bench_compile"]["status"]
+        .as_str()
+        .expect("bench_compile status");
+    let bench_runtime_status = json["data"]["capabilities"]["bench_runtime"]["status"]
+        .as_str()
+        .expect("bench_runtime status");
+    let benchmark_status = json["data"]["capabilities"]["benchmark"]["status"]
+        .as_str()
+        .expect("benchmark status");
+    assert_eq!(
+        benchmark_status,
+        max_status([bench_compile_status, bench_runtime_status]),
+        "benchmark should summarize split bench capabilities"
+    );
+    let overall_expected = max_status([
+        json["data"]["capabilities"]["macho_analysis"]["status"]
+            .as_str()
+            .expect("macho status"),
+        json["data"]["capabilities"]["fixture_rebuild"]["status"]
+            .as_str()
+            .expect("fixture rebuild status"),
+        json["data"]["capabilities"]["fixture_drift_check"]["status"]
+            .as_str()
+            .expect("fixture drift status"),
+        bench_compile_status,
+        bench_runtime_status,
+    ]);
+    assert_eq!(
+        status, overall_expected,
+        "overall_status should summarize the non-summary capability set"
+    );
+
+    let benchmark_reasons = json["data"]["capabilities"]["benchmark"]["reasons"]
+        .as_array()
+        .expect("benchmark reasons");
+    let mut expected_benchmark_reasons = Vec::new();
+    for key in ["bench_compile", "bench_runtime"] {
+        for reason in json["data"]["capabilities"][key]["reasons"]
+            .as_array()
+            .expect("summary input reasons")
+        {
+            if !expected_benchmark_reasons.contains(reason) {
+                expected_benchmark_reasons.push(reason.clone());
+            }
+        }
+    }
+    assert_eq!(
+        benchmark_reasons, &expected_benchmark_reasons,
+        "benchmark reasons should be the deduped union of split bench reasons"
+    );
+
+    let mut expected_issue_union = Vec::new();
+    for key in [
+        "macho_analysis",
+        "fixture_rebuild",
+        "fixture_drift_check",
+        "bench_compile",
+        "bench_runtime",
+    ] {
+        for reason in json["data"]["capabilities"][key]["reasons"]
+            .as_array()
+            .expect("capability reasons")
+        {
+            if !expected_issue_union.contains(reason) {
+                expected_issue_union.push(reason.clone());
+            }
+        }
+    }
+    assert_eq!(
+        issues, &expected_issue_union,
+        "issues should be the deduped union of non-summary capability reasons"
+    );
     for key in [
         "macho_analysis",
         "fixture_rebuild",
@@ -279,6 +385,87 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
             );
         }
     }
+}
+
+#[test]
+fn doctor_json_semantic_invariants_hold() {
+    let out = run_json_ok(&["--format", "json", "doctor"]);
+    let json = parse_json(&out);
+    let capabilities = &json["data"]["capabilities"];
+    let bench_compile = capabilities["bench_compile"]["status"]
+        .as_str()
+        .expect("bench_compile status");
+    let bench_runtime = capabilities["bench_runtime"]["status"]
+        .as_str()
+        .expect("bench_runtime status");
+    let benchmark = capabilities["benchmark"]["status"]
+        .as_str()
+        .expect("benchmark status");
+    let split_max = if status_severity(bench_compile) >= status_severity(bench_runtime) {
+        bench_compile
+    } else {
+        bench_runtime
+    };
+    assert_eq!(benchmark, split_max);
+
+    let non_summary_statuses = [
+        capabilities["macho_analysis"]["status"]
+            .as_str()
+            .expect("macho_analysis status"),
+        capabilities["fixture_rebuild"]["status"]
+            .as_str()
+            .expect("fixture_rebuild status"),
+        capabilities["fixture_drift_check"]["status"]
+            .as_str()
+            .expect("fixture_drift_check status"),
+        bench_compile,
+        bench_runtime,
+    ];
+    let expected_overall = non_summary_statuses
+        .iter()
+        .copied()
+        .max_by_key(|status| status_severity(status))
+        .expect("non-summary statuses");
+    let overall = json["data"]["overall_status"]
+        .as_str()
+        .expect("overall_status string");
+    assert_eq!(overall, expected_overall);
+
+    let expected_issues = issue_set(&Value::Array(
+        [
+            "macho_analysis",
+            "fixture_rebuild",
+            "fixture_drift_check",
+            "bench_compile",
+            "bench_runtime",
+        ]
+        .iter()
+        .flat_map(|key| {
+            capabilities[*key]["reasons"]
+                .as_array()
+                .expect("reasons array")
+                .iter()
+                .cloned()
+        })
+        .collect(),
+    ));
+    assert_eq!(issue_set(&json["data"]["issues"]), expected_issues);
+
+    let tools = &json["data"]["tools"]["hash_tools"];
+    let selected_hash_tool = json["data"]["tools"]["selected_hash_tool"].as_str();
+    let usable_sha256 = tools["sha256sum"]["usable"] == true;
+    let usable_shasum = tools["shasum"]["usable"] == true;
+    let usable_openssl = tools["openssl"]["usable"] == true;
+    let expected_selected = if usable_sha256 {
+        Some("sha256sum")
+    } else if usable_shasum {
+        Some("shasum")
+    } else if usable_openssl {
+        Some("openssl")
+    } else {
+        None
+    };
+    assert_eq!(selected_hash_tool, expected_selected);
 }
 
 #[test]

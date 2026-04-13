@@ -33,51 +33,73 @@ fn normalize_doctor_snapshot(output: &str) -> String {
             } else if line.starts_with("target_triple: ") {
                 Some("target_triple: <target_triple>".to_string())
             } else if line.starts_with("overall_status: ") {
-                Some("overall_status: <status>".to_string())
+                Some(line.to_string())
             } else if line == "capabilities:" {
                 Some("capabilities:".to_string())
             } else if trimmed.starts_with("macho_analysis: ") {
-                Some("  macho_analysis: <status>".to_string())
+                Some(line.to_string())
             } else if trimmed.starts_with("fixture_rebuild: ") {
-                Some("  fixture_rebuild: <status>".to_string())
+                Some(line.to_string())
             } else if trimmed.starts_with("fixture_drift_check: ") {
-                Some("  fixture_drift_check: <status>".to_string())
+                Some(line.to_string())
             } else if trimmed.starts_with("bench_compile: ") {
-                Some("  bench_compile: <status>".to_string())
+                Some(line.to_string())
             } else if trimmed.starts_with("bench_runtime: ") {
-                Some("  bench_runtime: <status>".to_string())
+                Some(line.to_string())
             } else if trimmed.starts_with("benchmark: ") {
-                Some("  benchmark: <status>".to_string())
+                Some(line.to_string())
+            } else if line.starts_with("    - ") {
+                let code = trimmed
+                    .trim_start_matches("- ")
+                    .split(':')
+                    .next()
+                    .unwrap_or("<code>");
+                Some(format!("    - {}: <message>", code))
             } else if line == "tools:" {
                 Some("tools:".to_string())
             } else if trimmed.starts_with("xcrun: ") {
-                Some("  xcrun: <tool_status>".to_string())
+                Some(normalize_tool_line(line))
             } else if trimmed.starts_with("strip: ") {
-                Some("  strip: <tool_status>".to_string())
+                Some(normalize_tool_line(line))
             } else if trimmed.starts_with("clang: ") {
-                Some("  clang: <tool_status>".to_string())
+                Some(normalize_tool_line(line))
             } else if trimmed.starts_with("python3: ") {
-                Some("  python3: <tool_status>".to_string())
+                Some(normalize_tool_line(line))
             } else if trimmed.starts_with("nm: ") {
-                Some("  nm: <tool_status>".to_string())
+                Some(normalize_tool_line(line))
             } else if trimmed.starts_with("sdk_path_probe: ") {
-                Some("  sdk_path_probe: <tool_status>".to_string())
+                Some(normalize_tool_line(line))
             } else if trimmed.starts_with("selected_hash_tool: ") {
-                Some("  selected_hash_tool: <tool>".to_string())
+                Some(line.to_string())
             } else if trimmed.starts_with("sha256sum: ") {
-                Some("  sha256sum: <tool_status>".to_string())
+                Some(normalize_tool_line(line))
             } else if trimmed.starts_with("shasum: ") {
-                Some("  shasum: <tool_status>".to_string())
+                Some(normalize_tool_line(line))
             } else if trimmed.starts_with("openssl: ") {
-                Some("  openssl: <tool_status>".to_string())
+                Some(normalize_tool_line(line))
             } else if line.starts_with("issues:") {
-                Some("issues: <summary>".to_string())
+                Some(line.to_string())
+            } else if line.starts_with("  - ") {
+                let code = trimmed
+                    .trim_start_matches("- ")
+                    .split(':')
+                    .next()
+                    .unwrap_or("<code>");
+                Some(format!("  - {}: <message>", code))
             } else {
                 None
             }
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn normalize_tool_line(line: &str) -> String {
+    if let Some((prefix, _)) = line.split_once(" path=") {
+        format!("{prefix} path=<path>")
+    } else {
+        line.to_string()
+    }
 }
 
 fn run_snapshot(args: &[&str]) -> String {
