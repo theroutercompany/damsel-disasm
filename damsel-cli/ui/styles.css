@@ -504,6 +504,31 @@ code,
   gap: 10px;
 }
 
+.analysis-block {
+  display: grid;
+  gap: 16px;
+}
+
+.analysis-list {
+  display: grid;
+  gap: 8px;
+}
+
+.analysis-row {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, auto) minmax(7rem, auto) auto minmax(7rem, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid hsla(0, 4%, 23%, 0.8);
+}
+
+.analysis-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
 .data-item {
   display: grid;
   gap: 8px;

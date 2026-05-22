@@ -23,20 +23,43 @@ jobs:
           test -f CHANGELOG.md
           test -f RELEASE.md
           test -f .github/workflows/release.yml
+          test -f .github/workflows/real-cache-evidence.yml
+          test -f .github/workflows/blacksmith-real-cache-evidence.yml
           test -f .github/release-notes/nightly.md.tmpl
           test -f .github/release-notes/beta.md.tmpl
           test -f bin/release-validate.sh
+          test -f bin/disasm-external-compare.sh
+          test -f bin/disassembler-v2-alpha-validate.sh
+          test -f bin/disassembler-v2-alpha-validate-test.sh
           test -f bin/release-package.sh
           test -f bin/render-release-notes.sh
+          test -f bin/shared-cache-evidence-audit.sh
+          test -f bin/shared-cache-evidence-audit-test.sh
+          test -f bin/shared-cache-evidence-package.sh
+          test -f bin/shared-cache-evidence-package-test.sh
+          test -f bin/shared-cache-real-smoke.sh
           bash -n bin/release-validate.sh
+          bash -n bin/disasm-external-compare.sh
+          bash -n bin/disassembler-v2-alpha-validate.sh
+          bash -n bin/disassembler-v2-alpha-validate-test.sh
           bash -n bin/release-package.sh
           bash -n bin/render-release-notes.sh
+          bash -n bin/shared-cache-evidence-audit.sh
+          bash -n bin/shared-cache-evidence-audit-test.sh
+          bash -n bin/shared-cache-evidence-package.sh
+          bash -n bin/shared-cache-evidence-package-test.sh
+          bash -n bin/shared-cache-real-smoke.sh
+          bin/disassembler-v2-alpha-validate-test.sh
+          bin/shared-cache-evidence-audit-test.sh
+          bin/shared-cache-evidence-package-test.sh
       - name: Check release workflow contract
         run: |
           set -euo pipefail
           ruby - <<'RUBY'
           require "yaml"
           release = YAML.load_file(".github/workflows/release.yml")
+          evidence = YAML.load_file(".github/workflows/real-cache-evidence.yml")
+          blacksmith = YAML.load_file(".github/workflows/blacksmith-real-cache-evidence.yml")
           verify = YAML.load_file(".github/workflows/verify.yml")
           triggers = release["on"] || release[true] || {}
           abort("release workflow missing workflow_dispatch trigger") unless triggers.key?("workflow_dispatch")
@@ -52,6 +75,40 @@ jobs:
           abort("release workflow should not use top-level contents: write") if permissions["contents"] == "write"
           publish_permissions = jobs.fetch("publish-release").fetch("permissions", {})
           abort("publish-release must request contents: write") unless publish_permissions["contents"] == "write"
+          evidence_triggers = evidence["on"] || evidence[true] || {}
+          abort("real-cache evidence workflow missing workflow_dispatch trigger") unless evidence_triggers.key?("workflow_dispatch")
+          evidence_jobs = evidence["jobs"] || {}
+          collect = evidence_jobs["collect"] || abort("real-cache evidence workflow missing collect job")
+          abort("real-cache evidence workflow must run on selected runner input") unless collect["runs-on"] == "${{ inputs.runner }}"
+          evidence_permissions = evidence["permissions"] || {}
+          abort("real-cache evidence workflow should use contents: read") unless evidence_permissions["contents"] == "read"
+          inputs = evidence_triggers.fetch("workflow_dispatch").fetch("inputs")
+          runners = inputs.fetch("runner").fetch("options")
+          %w[macos-15 macos-14].each do |runner|
+            abort("real-cache evidence workflow missing runner #{runner}") unless runners.include?(runner)
+          end
+          collect_steps = collect.fetch("steps")
+          upload = collect_steps.find { |step| step["uses"] == "actions/upload-artifact@v4" }
+          abort("real-cache evidence workflow must upload archive artifact") unless upload
+          upload_path = upload.fetch("with").fetch("path")
+          abort("real-cache evidence upload must include tar.gz archives") unless upload_path.include?("*.tar.gz")
+          blacksmith_triggers = blacksmith["on"] || blacksmith[true] || {}
+          abort("blacksmith evidence workflow missing workflow_dispatch trigger") unless blacksmith_triggers.key?("workflow_dispatch")
+          blacksmith_jobs = blacksmith["jobs"] || {}
+          blacksmith_collect = blacksmith_jobs["collect"] || abort("blacksmith evidence workflow missing collect job")
+          abort("blacksmith evidence workflow must run on selected runner input") unless blacksmith_collect["runs-on"] == "${{ inputs.runner }}"
+          blacksmith_permissions = blacksmith["permissions"] || {}
+          abort("blacksmith evidence workflow should use contents: read") unless blacksmith_permissions["contents"] == "read"
+          blacksmith_inputs = blacksmith_triggers.fetch("workflow_dispatch").fetch("inputs")
+          blacksmith_runners = blacksmith_inputs.fetch("runner").fetch("options")
+          %w[blacksmith-6vcpu-macos-15 blacksmith-6vcpu-macos-26].each do |runner|
+            abort("blacksmith evidence workflow missing runner #{runner}") unless blacksmith_runners.include?(runner)
+          end
+          blacksmith_steps = blacksmith_collect.fetch("steps")
+          blacksmith_upload = blacksmith_steps.find { |step| step["uses"] == "actions/upload-artifact@v4" }
+          abort("blacksmith evidence workflow must upload archive artifact") unless blacksmith_upload
+          blacksmith_path = blacksmith_upload.fetch("with").fetch("path")
+          abort("blacksmith evidence upload must include tar.gz archives") unless blacksmith_path.include?("*.tar.gz")
           abort("verify workflow lost release-readiness job") unless (verify["jobs"] || {}).key?("release-readiness")
           puts "workflow-contract-ok"
           RUBY
@@ -140,6 +197,18 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Run workspace tests
         run: cargo test --workspace
+
+  disasm-external-comparison:
+    name: disasm external comparison
+    runs-on: macos-14
+    needs: fixture-drift
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Compare Damsel against LLVM tools
+        run: bin/disasm-external-compare.sh
 
   doctor-compatibility:
     name: doctor compatibility (${{ matrix.os }})

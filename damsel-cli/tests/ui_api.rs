@@ -128,7 +128,7 @@ fn ui_disasm_supports_section_symbol_and_address_targets() {
         .json(&serde_json::json!({
             "target": { "kind": "section", "value": upload["defaultSection"] },
             "window": { "limit": 8 },
-            "options": { "includeAnnotations": true, "includeValueFlow": true },
+            "options": { "includeAnnotations": true, "includeValueFlow": true, "includeAnalysis": true },
         }))
         .send()
         .expect("section request");
@@ -137,6 +137,11 @@ fn ui_disasm_supports_section_symbol_and_address_targets() {
     let first_address = section_json["instructions"][0]["address"]
         .as_u64()
         .expect("section address");
+    assert!(
+        section_json["analysis"]["summary"]["basic_block_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
 
     let symbol_response = client
         .post(format!("{}/api/images/{image_id}/disasm", server.base_url))
@@ -254,6 +259,9 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         .text()
         .expect("js body");
     assert!(js.contains("syncWorkbenchState"));
+    assert!(js.contains("includeAnalysis"));
+    assert!(js.contains("renderAnalysisEdges"));
+    assert!(js.contains("Basic Blocks"));
 
     let upload = upload_fixture(&client, &server, "semantic-switch");
     let image_id = upload["imageId"].as_str().expect("image id");
@@ -262,7 +270,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         .json(&serde_json::json!({
             "target": { "kind": "section", "value": upload["defaultSection"] },
             "window": { "limit": 12 },
-            "options": { "includeAnnotations": true, "includeValueFlow": true },
+            "options": { "includeAnnotations": true, "includeValueFlow": true, "includeAnalysis": true },
         }))
         .send()
         .expect("smoke disasm request");
@@ -272,5 +280,10 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         disasm_json["instructions"]
             .as_array()
             .is_some_and(|rows| !rows.is_empty())
+    );
+    assert!(
+        disasm_json["analysis"]["edges"]
+            .as_array()
+            .is_some_and(|edges| !edges.is_empty())
     );
 }

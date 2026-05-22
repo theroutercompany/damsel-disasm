@@ -13,6 +13,7 @@ CLANG=""
 STRIP=""
 PYTHON3_BIN=""
 NM_BIN=""
+SWIFTC=""
 
 warn() {
   echo "warning: $*" >&2
@@ -70,6 +71,7 @@ fd33e4f22bf94f6f75b9bb33e2b99d5c3888a1a7fdc907dd13638f2aba816b66 malformed-trunc
 61ac976ddaf21d6d427c202dfab484a9557ebe7fbb04509443726abc9e95de8d malformed-stub-helper-size
 18ccbc63820072b0572926d566e99a375f2671685f2a7bfcaedf2457c8d42952 malformed-stub-reserved2
 39449cc22b5b090af7abd3b0b811e299827bc36bf4267ca8f32472616291d6a4 duplicate-symbol-ordinal
+30f9ba60c8f2cc7730d7ed6c2f919eca0496a06f052f305cb314a6effbfb5f46 swift-sample
 EOF
 }
 
@@ -304,6 +306,19 @@ detect_macos_build_tools() {
   if [ ! -x "$NM_BIN" ]; then
     die "resolved nm is not executable: $NM_BIN"
   fi
+
+  if ! SWIFTC="$(xcrun --find swiftc 2>/dev/null)"; then
+    if command -v swiftc >/dev/null 2>&1; then
+      SWIFTC="$(command -v swiftc)"
+      warn "xcrun could not locate swiftc; falling back to PATH swiftc: $SWIFTC"
+    else
+      die "unable to locate swiftc via xcrun or PATH"
+    fi
+  fi
+
+  if [ ! -x "$SWIFTC" ]; then
+    die "resolved swiftc is not executable: $SWIFTC"
+  fi
 }
 
 build_fixtures() {
@@ -419,6 +434,13 @@ build_fixtures() {
     -framework Foundation \
     "$SRC/objc-sample.m" \
     -o "$BIN/objc-sample"
+
+  "$SWIFTC" \
+    -target arm64-apple-macosx13.0 \
+    -sdk "$SDKROOT" \
+    -module-name DamselSwiftSample \
+    "$SRC/swift-sample.swift" \
+    -o "$BIN/swift-sample"
 
   ROOT_BIN="$BIN" NM_BIN="$NM_BIN" "$PYTHON3_BIN" - <<'PY'
 from pathlib import Path

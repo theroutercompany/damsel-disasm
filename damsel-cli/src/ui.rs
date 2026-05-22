@@ -7,7 +7,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use damsel_core::{BinaryImage, Section};
-use damsel_macho::load_bytes;
+use damsel_macho::{analyze_disassembly, load_bytes};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -98,6 +98,8 @@ struct DisasmOptions {
     include_annotations: bool,
     #[serde(default)]
     include_value_flow: bool,
+    #[serde(default)]
+    include_analysis: bool,
 }
 
 impl Default for DisasmOptions {
@@ -105,6 +107,7 @@ impl Default for DisasmOptions {
         Self {
             include_annotations: true,
             include_value_flow: false,
+            include_analysis: false,
         }
     }
 }
@@ -353,8 +356,12 @@ async fn disassemble_image(
     let args = match request.target.kind {
         TargetKind::Section => DisasmFlagArgs {
             symbol: None,
+            swift_symbol: None,
             addr: None,
             section: Some(request.target.value),
+            objc_owner: None,
+            objc_selector: None,
+            objc_method_kind: None,
             count: None,
             limit: request.window.limit,
             bytes: request.window.bytes,
@@ -363,8 +370,12 @@ async fn disassemble_image(
         },
         TargetKind::Symbol => DisasmFlagArgs {
             symbol: Some(request.target.value),
+            swift_symbol: None,
             addr: None,
             section: None,
+            objc_owner: None,
+            objc_selector: None,
+            objc_method_kind: None,
             count: None,
             limit: request.window.limit,
             bytes: request.window.bytes,
@@ -373,8 +384,12 @@ async fn disassemble_image(
         },
         TargetKind::Address => DisasmFlagArgs {
             symbol: None,
+            swift_symbol: None,
             addr: address,
             section: None,
+            objc_owner: None,
+            objc_selector: None,
+            objc_method_kind: None,
             count: None,
             limit: request.window.limit,
             bytes: request.window.bytes,
@@ -387,10 +402,23 @@ async fn disassemble_image(
         &stored.image,
         args,
         request.options.include_annotations,
-        request.options.include_value_flow,
+        request.options.include_value_flow || request.options.include_analysis,
     )?;
+    let base_view = execution.view();
+    let analysis = request.options.include_analysis.then(|| {
+        analyze_disassembly(
+            base_view.target.to_string(),
+            base_view.start_address,
+            base_view.end_address,
+            base_view.instructions,
+        )
+    });
+    let view = analysis
+        .as_ref()
+        .map(|analysis| execution.view_with_analysis(analysis))
+        .unwrap_or_else(|| execution.view());
     let body = output::render_disassembly_json(
-        execution.view(),
+        view,
         output::DisassemblyRenderOptions {
             include_annotations: request.options.include_annotations,
             include_references: true,

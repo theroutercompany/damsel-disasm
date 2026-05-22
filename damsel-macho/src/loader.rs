@@ -1403,6 +1403,222 @@ fn read_u32_le(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{
+        normalize_import_name, resolve_dylib_name_from_ordinal, resolve_import_for_indirect_symbol,
+    };
+    use damsel_core::Import;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn dylib_ordinals_are_one_based_and_skip_special_ordinals() {
+        let libs = ["/usr/lib/libA.dylib", "/usr/lib/libB.dylib"];
+
+        assert_eq!(resolve_dylib_name_from_ordinal(&libs, 0x00), None);
+        assert_eq!(
+            resolve_dylib_name_from_ordinal(&libs, 0x01).as_deref(),
+            Some("/usr/lib/libA.dylib")
+        );
+        assert_eq!(
+            resolve_dylib_name_from_ordinal(&libs, 0x02).as_deref(),
+            Some("/usr/lib/libB.dylib")
+        );
+        assert_eq!(resolve_dylib_name_from_ordinal(&libs, 0x03), None);
+        assert_eq!(resolve_dylib_name_from_ordinal(&libs, 0xfe), None);
+        assert_eq!(resolve_dylib_name_from_ordinal(&libs, 0xff), None);
+    }
+
+    #[test]
+    fn dylib_ordinals_tolerate_goblin_self_prefixed_lib_lists() {
+        let libs = [
+            "self",
+            "@rpath/libdupalpha.dylib",
+            "@rpath/libdupbeta.dylib",
+            "/usr/lib/libSystem.B.dylib",
+        ];
+
+        assert_eq!(resolve_dylib_name_from_ordinal(&libs, 0x00), None);
+        assert_eq!(
+            resolve_dylib_name_from_ordinal(&libs, 0x01).as_deref(),
+            Some("@rpath/libdupalpha.dylib")
+        );
+        assert_eq!(
+            resolve_dylib_name_from_ordinal(&libs, 0x02).as_deref(),
+            Some("@rpath/libdupbeta.dylib")
+        );
+        assert_eq!(
+            resolve_dylib_name_from_ordinal(&libs, 0x03).as_deref(),
+            Some("/usr/lib/libSystem.B.dylib")
+        );
+        assert_eq!(resolve_dylib_name_from_ordinal(&libs, 0xff), None);
+    }
+
+    #[test]
+    fn dynamic_lookup_ordinal_can_still_name_legacy_254th_library() {
+        let libs = (1..=254)
+            .map(|index| format!("/usr/lib/lib{index}.dylib"))
+            .collect::<Vec<_>>();
+        let refs = libs.iter().map(String::as_str).collect::<Vec<_>>();
+
+        assert_eq!(
+            resolve_dylib_name_from_ordinal(&refs, 0xfe).as_deref(),
+            Some("/usr/lib/lib254.dylib")
+        );
+        assert_eq!(resolve_dylib_name_from_ordinal(&refs, 0xff), None);
+
+        let mut self_prefixed = Vec::with_capacity(255);
+        self_prefixed.push("self".to_string());
+        self_prefixed.extend(libs);
+        let self_prefixed_refs = self_prefixed.iter().map(String::as_str).collect::<Vec<_>>();
+        assert_eq!(
+            resolve_dylib_name_from_ordinal(&self_prefixed_refs, 0xfe).as_deref(),
+            Some("/usr/lib/lib254.dylib")
+        );
+    }
+
+    #[test]
+    fn indirect_symbol_resolution_prefers_exact_ordinal_dylib_match() {
+        let imports = vec![
+            import("_shared", "/usr/lib/libA.dylib", Some(0x1000)),
+            import("_shared", "/usr/lib/libB.dylib", Some(0x2000)),
+        ];
+        let (by_name, by_dylib_and_name) = import_indexes(&imports);
+
+        let resolved = resolve_import_for_indirect_symbol(
+            7,
+            "shared",
+            Some(2),
+            Some("/usr/lib/libB.dylib"),
+            &by_name,
+            &by_dylib_and_name,
+        )
+        .expect("resolve exact ordinal dylib match")
+        .expect("matched import");
+
+        assert_eq!(resolved.dylib, "/usr/lib/libB.dylib");
+        assert_eq!(resolved.address, Some(0x2000));
+    }
+
+    #[test]
+    fn indirect_symbol_resolution_falls_back_to_unique_name_on_stale_cache_ordinal() {
+        let imports = vec![import(
+            "_block_copy",
+            "/usr/lib/libSystem.B.dylib",
+            Some(0x3000),
+        )];
+        let (by_name, by_dylib_and_name) = import_indexes(&imports);
+
+        let resolved = resolve_import_for_indirect_symbol(
+            1348,
+            "block_copy",
+            Some(6),
+            Some("/usr/lib/libc++.1.dylib"),
+            &by_name,
+            &by_dylib_and_name,
+        )
+        .expect("resolve unique import name despite stale ordinal dylib")
+        .expect("matched import");
+
+        assert_eq!(resolved.dylib, "/usr/lib/libSystem.B.dylib");
+        assert_eq!(resolved.name, "_block_copy");
+    }
+
+    #[test]
+    fn indirect_symbol_resolution_collapses_duplicate_same_dylib_rows() {
+        let swift_symbol = "$s19collectionsinternal9bigstringvyacsscfc";
+        let imports = vec![
+            import(
+                swift_symbol,
+                "/System/Library/PrivateFrameworks/CollectionsInternal.framework/Versions/A/CollectionsInternal",
+                Some(0x4000),
+            ),
+            import(
+                swift_symbol,
+                "/System/Library/PrivateFrameworks/CollectionsInternal.framework/Versions/A/CollectionsInternal",
+                Some(0x4010),
+            ),
+        ];
+        let (by_name, by_dylib_and_name) = import_indexes(&imports);
+
+        let resolved = resolve_import_for_indirect_symbol(
+            100306,
+            &normalize_import_name(swift_symbol),
+            Some(20),
+            Some("/System/Library/Frameworks/Combine.framework/Versions/A/Combine"),
+            &by_name,
+            &by_dylib_and_name,
+        )
+        .expect("resolve duplicate same-dylib rows deterministically")
+        .expect("matched import");
+
+        assert_eq!(
+            resolved.dylib,
+            "/System/Library/PrivateFrameworks/CollectionsInternal.framework/Versions/A/CollectionsInternal"
+        );
+        assert_eq!(resolved.address, Some(0x4000));
+    }
+
+    #[test]
+    fn indirect_symbol_resolution_rejects_true_cross_dylib_ambiguity() {
+        let imports = vec![
+            import("_shared", "/usr/lib/libA.dylib", Some(0x1000)),
+            import("_shared", "/usr/lib/libB.dylib", Some(0x2000)),
+        ];
+        let (by_name, by_dylib_and_name) = import_indexes(&imports);
+
+        let error = resolve_import_for_indirect_symbol(
+            42,
+            "shared",
+            Some(3),
+            Some("/usr/lib/libC.dylib"),
+            &by_name,
+            &by_dylib_and_name,
+        )
+        .expect_err("true cross-dylib ambiguity should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("ambiguous across 2 imports for ordinal Some(3)"),
+            "{error}"
+        );
+    }
+
+    fn import(name: &str, dylib: &str, address: Option<u64>) -> Import {
+        Import {
+            name: name.to_string(),
+            dylib: dylib.to_string(),
+            address,
+            offset: None,
+            addend: 0,
+            is_lazy: false,
+            is_weak: false,
+        }
+    }
+
+    fn import_indexes<'a>(
+        imports: &'a [Import],
+    ) -> (
+        BTreeMap<String, Vec<&'a Import>>,
+        BTreeMap<(String, String), &'a Import>,
+    ) {
+        let mut by_name = BTreeMap::<String, Vec<&Import>>::new();
+        let mut by_dylib_and_name = BTreeMap::<(String, String), &Import>::new();
+        for import in imports {
+            let normalized_name = normalize_import_name(&import.name);
+            by_name
+                .entry(normalized_name.clone())
+                .or_default()
+                .push(import);
+            by_dylib_and_name
+                .entry((normalized_name, import.dylib.clone()))
+                .or_insert(import);
+        }
+        (by_name, by_dylib_and_name)
+    }
+}
+
 fn build_indirect_symbol_metadata(
     macho: &goblin::mach::MachO<'_>,
 ) -> BTreeMap<usize, IndirectSymbolMetadata> {
@@ -1442,7 +1658,27 @@ fn build_indirect_symbol_metadata(
 }
 
 fn resolve_dylib_name_from_ordinal(libs: &[&str], ordinal: u32) -> Option<String> {
-    libs.get(ordinal as usize)
+    const SELF_LIBRARY_ORDINAL: u32 = 0x00;
+    const DYNAMIC_LOOKUP_ORDINAL: u32 = 0xfe;
+    const EXECUTABLE_ORDINAL: u32 = 0xff;
+
+    if ordinal == SELF_LIBRARY_ORDINAL || ordinal == EXECUTABLE_ORDINAL {
+        return None;
+    }
+    let has_self_prefix = libs
+        .first()
+        .is_some_and(|name| name.is_empty() || *name == "self");
+    let loaded_library_count = libs.len().saturating_sub(usize::from(has_self_prefix));
+    if ordinal == DYNAMIC_LOOKUP_ORDINAL && loaded_library_count < ordinal as usize {
+        return None;
+    }
+
+    let library_index = if has_self_prefix {
+        ordinal as usize
+    } else {
+        ordinal.checked_sub(1)? as usize
+    };
+    libs.get(library_index)
         .copied()
         .filter(|name| !name.is_empty() && *name != "self")
         .map(ToString::to_string)
@@ -1479,49 +1715,78 @@ fn resolve_indirect_symbol<'a>(
         (normalize_import_name(&raw_name), None, None)
     };
 
-    let import = if let Some(dylib) = dylib_name.as_ref() {
+    let import = resolve_import_for_indirect_symbol(
+        symbol_index.0,
+        &normalized_name,
+        ordinal,
+        dylib_name.as_deref(),
+        imports_by_name,
+        imports_by_dylib_and_name,
+    )?;
+    Ok(import.map(|import| ResolvedIndirectSymbol { ordinal, import }))
+}
+
+fn resolve_import_for_indirect_symbol<'a>(
+    symbol_index: usize,
+    normalized_name: &str,
+    ordinal: Option<u32>,
+    dylib_name: Option<&str>,
+    imports_by_name: &BTreeMap<String, Vec<&'a Import>>,
+    imports_by_dylib_and_name: &BTreeMap<(String, String), &'a Import>,
+) -> Result<Option<&'a Import>> {
+    if let Some(dylib) = dylib_name {
         if let Some(import) = imports_by_dylib_and_name
-            .get(&(normalized_name.clone(), dylib.clone()))
+            .get(&(normalized_name.to_string(), dylib.to_string()))
             .copied()
         {
-            Some(import)
-        } else {
-            let name_matches = imports_by_name.get(&normalized_name);
-            match name_matches.map_or(0, Vec::len) {
-                0 => {
-                    return Err(MachoError::MalformedDyldPayload(format!(
-                        "indirect symbol {} ({normalized_name}) did not resolve to import {}",
-                        symbol_index.0, dylib
-                    )));
+            return Ok(Some(import));
+        }
+
+        let name_matches = imports_by_name.get(normalized_name);
+        match name_matches.map_or(0, Vec::len) {
+            0 => Err(MachoError::MalformedDyldPayload(format!(
+                "indirect symbol {symbol_index} ({normalized_name}) did not resolve to import {dylib}"
+            ))),
+            1 => {
+                // Some projected dyld-cache images preserve nlist ordinals that
+                // disagree with the import table. A unique import-name match is
+                // still deterministic; ambiguous names remain rejected below.
+                Ok(name_matches.and_then(|matches| matches.first()).copied())
+            }
+            count => {
+                if let Some(matches) = name_matches {
+                    let distinct_dylibs = matches
+                        .iter()
+                        .map(|import| import.dylib.as_str())
+                        .collect::<BTreeSet<_>>();
+                    if distinct_dylibs.len() == 1 {
+                        return Ok(matches.first().copied());
+                    }
                 }
-                1 => {
-                    return Err(MachoError::MalformedDyldPayload(format!(
-                        "indirect symbol {} ({normalized_name}) resolved to mismatched dylib for ordinal {:?}",
-                        symbol_index.0, ordinal
-                    )));
-                }
-                count => {
-                    return Err(MachoError::MalformedDyldPayload(format!(
-                        "indirect symbol {} ({normalized_name}) is ambiguous across {count} imports for ordinal {:?}",
-                        symbol_index.0, ordinal
-                    )));
-                }
+                let candidates = name_matches
+                    .map(|matches| {
+                        matches
+                            .iter()
+                            .map(|import| import.dylib.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                Err(MachoError::MalformedDyldPayload(format!(
+                    "indirect symbol {symbol_index} ({normalized_name}) is ambiguous across {count} imports for ordinal {ordinal:?}: ordinal dylib={dylib} candidates=[{candidates}]"
+                )))
             }
         }
     } else {
-        match imports_by_name.get(&normalized_name) {
-            None => None,
-            Some(matches) if matches.len() == 1 => Some(matches[0]),
-            Some(matches) => {
-                return Err(MachoError::MalformedDyldPayload(format!(
-                    "indirect symbol {} ({normalized_name}) is ambiguous across {} imports",
-                    symbol_index.0,
-                    matches.len()
-                )));
-            }
+        match imports_by_name.get(normalized_name) {
+            None => Ok(None),
+            Some(matches) if matches.len() == 1 => Ok(Some(matches[0])),
+            Some(matches) => Err(MachoError::MalformedDyldPayload(format!(
+                "indirect symbol {symbol_index} ({normalized_name}) is ambiguous across {} imports",
+                matches.len()
+            ))),
         }
-    };
-    Ok(import.map(|import| ResolvedIndirectSymbol { ordinal, import }))
+    }
 }
 
 fn collect_relocations<'a>(file: &object::File<'a, &'a [u8]>) -> Result<Vec<Relocation>> {

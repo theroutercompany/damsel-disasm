@@ -242,6 +242,7 @@ impl FakeDoctorHarness {
             openssl_success: true,
             python3_success: true,
             nm_success: true,
+            swiftc_success: true,
         })
     }
 
@@ -256,6 +257,7 @@ impl FakeDoctorHarness {
             openssl_success: false,
             python3_success: true,
             nm_success: true,
+            swiftc_success: true,
         })
     }
 
@@ -270,6 +272,7 @@ impl FakeDoctorHarness {
             openssl_success: false,
             python3_success: false,
             nm_success: true,
+            swiftc_success: true,
         })
     }
 
@@ -290,6 +293,7 @@ impl FakeDoctorHarness {
             openssl_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Openssl),
             python3_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Python3),
             nm_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Nm),
+            swiftc_success: scenario_tool_usable(scenario, CompatibilityToolRequirement::Swiftc),
         };
         Self::new(profile)
     }
@@ -300,12 +304,13 @@ impl FakeDoctorHarness {
         fs::create_dir_all(&sdk_dir).expect("create fake sdk");
 
         let xcrun_script = format!(
-            "#!/bin/sh\ncase \"$1\" in\n  --version)\n    if [ \"{xcrun_success}\" = \"1\" ]; then exit 0; fi\n    exit 1 ;;\n  --find)\n    if [ \"{xcrun_success}\" != \"1\" ]; then exit 1; fi\n    case \"$2\" in\n      clang)\n        if [ \"{clang_success}\" = \"1\" ]; then echo \"{root}/clang\"; exit 0; fi\n        exit 1 ;;\n      strip)\n        if [ \"{strip_success}\" = \"1\" ]; then echo \"{root}/strip\"; exit 0; fi\n        exit 1 ;;\n      *) exit 1 ;;\n    esac ;;\n  --show-sdk-path)\n    if [ \"{xcrun_success}\" = \"1\" ] && [ \"{sdk_probe_success}\" = \"1\" ]; then\n      echo \"{sdk}\"; exit 0\n    fi\n    exit 1 ;;\n  *) exit 1 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n  --version)\n    if [ \"{xcrun_success}\" = \"1\" ]; then exit 0; fi\n    exit 1 ;;\n  --find)\n    if [ \"{xcrun_success}\" != \"1\" ]; then exit 1; fi\n    case \"$2\" in\n      clang)\n        if [ \"{clang_success}\" = \"1\" ]; then echo \"{root}/clang\"; exit 0; fi\n        exit 1 ;;\n      strip)\n        if [ \"{strip_success}\" = \"1\" ]; then echo \"{root}/strip\"; exit 0; fi\n        exit 1 ;;\n      swiftc)\n        if [ \"{swiftc_success}\" = \"1\" ]; then echo \"{root}/swiftc\"; exit 0; fi\n        exit 1 ;;\n      *) exit 1 ;;\n    esac ;;\n  --show-sdk-path)\n    if [ \"{xcrun_success}\" = \"1\" ] && [ \"{sdk_probe_success}\" = \"1\" ]; then\n      echo \"{sdk}\"; exit 0\n    fi\n    exit 1 ;;\n  *) exit 1 ;;\nesac\n",
             root = root.display(),
             sdk = sdk_dir.display(),
             xcrun_success = if profile.xcrun_success { "1" } else { "0" },
             clang_success = if profile.clang_success { "1" } else { "0" },
             strip_success = if profile.strip_success { "1" } else { "0" },
+            swiftc_success = if profile.swiftc_success { "1" } else { "0" },
             sdk_probe_success = if profile.sdk_probe_success { "1" } else { "0" },
         );
         write_exec_script(&root.join("xcrun"), &xcrun_script);
@@ -336,6 +341,14 @@ impl FakeDoctorHarness {
         write_exec_script(
             &root.join("nm"),
             if profile.nm_success {
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n"
+            } else {
+                "#!/bin/sh\nexit 1\n"
+            },
+        );
+        write_exec_script(
+            &root.join("swiftc"),
+            if profile.swiftc_success {
                 "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n"
             } else {
                 "#!/bin/sh\nexit 1\n"
@@ -393,6 +406,7 @@ struct HarnessProfile {
     openssl_success: bool,
     python3_success: bool,
     nm_success: bool,
+    swiftc_success: bool,
 }
 
 #[cfg(unix)]
@@ -480,6 +494,7 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
             "clang",
             "python3",
             "nm",
+            "swiftc",
             "sdk_path_probe",
             "hash_tools",
             "selected_hash_tool",
@@ -547,6 +562,7 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
             "clang",
             "python3",
             "nm",
+            "swiftc",
             "sdk_path_probe",
             "hash_tools",
             "selected_hash_tool",
@@ -570,6 +586,10 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
     );
     assert_exact_object_keys(
         &json["data"]["tools"]["nm"],
+        &["detected", "usable", "path"],
+    );
+    assert_exact_object_keys(
+        &json["data"]["tools"]["swiftc"],
         &["detected", "usable", "path"],
     );
     assert_exact_object_keys(
@@ -615,6 +635,12 @@ fn doctor_json_contract_exposes_host_capabilities_and_tools() {
     assert!(
         json["data"]["tools"]["nm"]["path"].is_string()
             || json["data"]["tools"]["nm"]["path"].is_null()
+    );
+    assert!(json["data"]["tools"]["swiftc"]["detected"].is_boolean());
+    assert!(json["data"]["tools"]["swiftc"]["usable"].is_boolean());
+    assert!(
+        json["data"]["tools"]["swiftc"]["path"].is_string()
+            || json["data"]["tools"]["swiftc"]["path"].is_null()
     );
     assert!(json["data"]["tools"]["sdk_path_probe"]["detected"].is_boolean());
     assert!(json["data"]["tools"]["sdk_path_probe"]["usable"].is_boolean());
@@ -879,6 +905,10 @@ fn doctor_json_harness_macos_usable_tools_has_deterministic_statuses() {
     assert_eq!(
         json["data"]["tools"]["strip"]["path"],
         format!("{}/strip", harness.path())
+    );
+    assert_eq!(
+        json["data"]["tools"]["swiftc"]["path"],
+        format!("{}/swiftc", harness.path())
     );
     assert_eq!(
         reason_code_set(&json["data"]["issues"]),
@@ -1830,6 +1860,241 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
             "recovered_values",
         ],
     );
+}
+
+#[test]
+fn disasm_json_analysis_contract_is_opt_in() {
+    let path = fixture("semantic-switch");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--section",
+        "__text",
+        "--show-references",
+        "--show-values",
+        "--analysis",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "disasm");
+    assert_exact_object_keys(
+        &json["data"],
+        &[
+            "target",
+            "start_address",
+            "end_address",
+            "window_end",
+            "bytes_len",
+            "decoded_bytes",
+            "instruction_count",
+            "stop_reason",
+            "instructions",
+            "analysis",
+        ],
+    );
+    let analysis = &json["data"]["analysis"];
+    assert_exact_object_keys(
+        analysis,
+        &[
+            "target",
+            "start_address",
+            "end_address",
+            "instruction_count",
+            "summary",
+            "basic_blocks",
+            "edges",
+            "direct_calls",
+            "branch_targets",
+            "data_references",
+            "indirect_controls",
+            "imports",
+            "cache_links",
+            "recovered_values",
+            "jump_tables",
+        ],
+    );
+    assert_exact_object_keys(
+        &analysis["summary"],
+        &[
+            "basic_block_count",
+            "edge_count",
+            "direct_call_count",
+            "indirect_call_count",
+            "branch_count",
+            "return_count",
+            "data_reference_count",
+            "import_count",
+            "cache_link_count",
+            "recovered_value_count",
+            "jump_table_count",
+            "unresolved_indirect_count",
+        ],
+    );
+    assert!(analysis["summary"]["basic_block_count"].as_u64().unwrap() > 1);
+    assert!(analysis["summary"]["edge_count"].as_u64().unwrap() > 0);
+    assert!(
+        analysis["summary"]["data_reference_count"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(analysis["basic_blocks"].as_array().is_some_and(|blocks| {
+        blocks.iter().all(|block| {
+            block["id"].is_number()
+                && block["start_address"].is_number()
+                && block["end_address"].is_number()
+                && block["instruction_count"].is_number()
+        })
+    }));
+    assert!(analysis["edges"].as_array().is_some_and(|edges| {
+        edges
+            .iter()
+            .any(|edge| edge["kind"] == "conditional-branch" || edge["kind"] == "branch")
+    }));
+    assert!(
+        analysis["jump_tables"]
+            .as_array()
+            .is_some_and(|tables| !tables.is_empty())
+    );
+}
+
+#[test]
+fn disasm_json_objc_method_target_resolves_implementation() {
+    let path = fixture("objc-sample");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--objc-owner",
+        "Greeter",
+        "--objc-selector",
+        "greeting",
+        "--objc-method-kind",
+        "instance",
+        "--limit",
+        "8",
+        "--analysis",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "disasm");
+    assert_eq!(json["data"]["target"], "objc:-[Greeter greeting]");
+    assert_eq!(
+        json["data"]["analysis"]["target"],
+        "objc:-[Greeter greeting]"
+    );
+    assert!(json["data"]["start_address"].as_u64().unwrap() > 0);
+    let instructions = json["data"]["instructions"]
+        .as_array()
+        .expect("instruction array");
+    assert!(!instructions.is_empty(), "{out}");
+    assert!(
+        instructions[0]["annotations"]
+            .as_array()
+            .expect("annotations")
+            .iter()
+            .any(|annotation| annotation["type"] == "symbol"
+                && annotation["name"] == "-[Greeter greeting]")
+    );
+}
+
+#[test]
+fn disasm_json_swift_symbol_target_resolves_checked_in_fixture() {
+    let path = fixture("swift-sample");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--swift-symbol",
+        "_$s17DamselSwiftSample9publicAddyS2iF",
+        "--limit",
+        "4",
+        "--analysis",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "disasm");
+    assert_eq!(
+        json["data"]["target"],
+        "swift:_$s17DamselSwiftSample9publicAddyS2iF"
+    );
+    assert_eq!(
+        json["data"]["analysis"]["target"],
+        "swift:_$s17DamselSwiftSample9publicAddyS2iF"
+    );
+    assert!(json["data"]["start_address"].as_u64().unwrap() > 0);
+    assert_eq!(json["data"]["instruction_count"], 4);
+    assert!(
+        json["data"]["instructions"]
+            .as_array()
+            .expect("instructions")
+            .iter()
+            .flat_map(|instruction| instruction["annotations"].as_array().into_iter().flatten())
+            .any(|annotation| annotation["type"] == "symbol"
+                && annotation["name"] == "_$s17DamselSwiftSample9publicAddyS2iF")
+    );
+    assert_eq!(json["data"]["analysis"]["summary"]["basic_block_count"], 1);
+}
+
+#[test]
+fn cache_disasm_json_analysis_links_imports_to_cache_providers() {
+    let path = cache_fixture("internal-linkage-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libdispatch.dylib",
+        "--section",
+        "__text",
+        "--show-references",
+        "--show-values",
+        "--analysis",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_disasm");
+    let analysis = &json["data"]["disassembly"]["analysis"];
+    assert!(analysis["summary"]["import_count"].as_u64().unwrap() > 0);
+    assert!(analysis["summary"]["cache_link_count"].as_u64().unwrap() > 0);
+    assert_eq!(
+        analysis["summary"]["cache_link_count"].as_u64(),
+        analysis["cache_links"]
+            .as_array()
+            .map(|links| links.len() as u64)
+    );
+    assert!(
+        analysis["cache_links"]
+            .as_array()
+            .expect("cache links")
+            .iter()
+            .any(|link| {
+                link["symbol_name"] == "_puts"
+                    && link["dylib"] == "/usr/lib/libSystem.B.dylib"
+                    && link["provider_install_name"] == "/usr/lib/libSystem.B.dylib"
+                    && link["provider_kind"] == "export"
+            })
+    );
+    for entry in analysis["cache_links"].as_array().expect("cache links") {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "instruction_address",
+                "symbol_name",
+                "dylib",
+                "provider_image_id",
+                "provider_install_name",
+                "provider_member_name",
+                "provider_kind",
+                "target_dylib",
+                "target_symbol",
+                "resolved_target_image_id",
+                "resolved_target_install_name",
+                "resolved_target_member_name",
+            ],
+        );
+    }
 }
 
 #[test]

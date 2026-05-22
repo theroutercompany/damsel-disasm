@@ -90,17 +90,74 @@ The packaged binary inside the archive is named `damsel`.
 Useful verification commands:
 
 ```sh
+bin/disassembler-v2-alpha-validate.sh --require-external
+```
+
+When public-beta evidence packages are available, feed them to the same
+validator:
+
+```sh
+bin/disassembler-v2-alpha-validate.sh --require-external \
+  --beta-evidence /tmp/damsel-real-cache-evidence \
+  --beta-evidence /path/to/other-host-evidence
+```
+
+The alpha validator wraps the core local checks. The underlying commands are:
+
+```sh
+bin/disassembler-v2-alpha-validate-test.sh
 cargo test --workspace
 ./fixtures/build-fixtures.sh --check
 ./fixtures/tests/build-fixtures-parity.sh
 cargo bench -p damsel-macho --bench decode_bench --no-run
 ```
 
+Optional LLVM comparison on macOS hosts with `llvm-objdump` and `llvm-otool`:
+
+```sh
+bin/disasm-external-compare.sh
+```
+
 Optional local real-cache validation:
 
 ```sh
-DAMSEL_REAL_DYLD_SHARED_CACHE_ROOT=/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e \
-  cargo test -p damsel-macho --test shared_cache_real_env -- --nocapture
+bin/shared-cache-real-smoke.sh
+```
+
+For public-beta evidence collection on another Mac or macOS release, write a
+self-verified portable evidence package and optional transfer archive:
+
+```sh
+bin/disassembler-v2-alpha-validate.sh \
+  --require-external \
+  --real-cache-archive /tmp/damsel-real-cache-evidence.tar.gz
+
+# The archive can be verified directly after copying:
+bin/shared-cache-evidence-package.sh --verify /tmp/damsel-real-cache-evidence.tar.gz
+```
+
+Audit reports, package directories, package archives, or downloaded GitHub
+artifact zips before claiming public-beta real-cache breadth:
+
+```sh
+bin/shared-cache-evidence-audit.sh /tmp/damsel-real-cache-evidence.tar.gz /path/to/other-host-evidence.tar.gz
+```
+
+To collect independent hosted-runner evidence, run the manual
+`real-cache evidence` GitHub Actions workflow on `macos-15` or `macos-14`,
+download its `damsel-real-cache-evidence-*` artifact zip, and audit that zip
+directly next to the local archive.
+
+If the repository has the Blacksmith GitHub App enabled, run the manual
+`blacksmith real-cache evidence` workflow with `blacksmith-6vcpu-macos-15`
+for an independent Apple Silicon macOS 15 run. The workflow also supports
+Blacksmith macOS 26 labels for same-release hosted confirmation.
+
+The evidence packaging and audit gates have portable self-tests:
+
+```sh
+bin/shared-cache-evidence-package-test.sh
+bin/shared-cache-evidence-audit-test.sh
 ```
 
 For fixture details and host/tool parity notes, see [fixtures/README.md](./fixtures/README.md).

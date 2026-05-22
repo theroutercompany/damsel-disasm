@@ -1,0 +1,37 @@
+---
+source: damsel-cli/tests/cli_snapshots.rs
+expression: stdout
+---
+target: __TEXT:__text start=0x1000004b0 end=0x1000004f0 bytes=0x40 decoded=0x40 instructions=16 stop=InstructionLimitReached
+       0x1000004b0  d10103ff  sub sp, sp, #0x40 ; range start | symbol _main | ref data 0x40
+       0x1000004b4  a9024ff4  stp x20, x19, [sp, #0x20]
+       0x1000004b8  a9037bfd  stp fp, lr, [sp, #0x30]
+       0x1000004bc  9100c3fd  add fp, sp, #0x30 ; ref data 0x30
+       0x1000004c0  7100081f  cmp w0, #0x2 ; ref data 0x2
+       0x1000004c4  5400008b  b.lt 0x1000004d4 ; ref branch 0x1000004d4
+       0x1000004c8  f9400420  ldr x0, [x1, #0x8]
+       0x1000004cc  94000031  bl #0x100000590 ; binding-evidence /usr/lib/libSystem.B.dylib:_atoi addr=0x100004008 off=- addend=0 kind=NonLazy source=Stub | ref call 0x100000590 | ref stub 0x100000590 ptr=0x100004008 kind=NonLazy /usr/lib/libSystem.B.dylib:_atoi source=Stub | ref import /usr/lib/libSystem.B.dylib:_atoi (0x100004008)
+       0x1000004d0  14000002  b 0x1000004d8 ; ref branch 0x1000004d8
+       0x1000004d4  528000a0  mov w0, #0x5 ; ref data 0x5
+       0x1000004d8  b81ec3a0  stur w0, [fp, #0xffffffffffffffec]
+       0x1000004dc  b85ec3a8  ldur w8, [fp, #0xffffffffffffffec]
+       0x1000004e0  92400908  and x8, x8, #0x7 ; ref data 0x7
+       0x1000004e4  90000029  adrp x9, 0x100004000 ; page base x9 -> 0x100004000 | import /usr/lib/libSystem.B.dylib:___stderrp | binding-evidence /usr/lib/libSystem.B.dylib:___stderrp addr=0x100004000 off=0x4000 addend=0 kind=ChainedFixup source=ChainedFixup | binding-evidence /usr/lib/libSystem.B.dylib:___stderrp addr=0x100004000 off=0x4000 addend=0 kind=NonLazy source=IndirectSymbol | ref page 0x100004000 | ref import-binding /usr/lib/libSystem.B.dylib:___stderrp addr=0x100004000 off=0x4000 addend=0 kind=ChainedFixup source=ChainedFixup weak=false | ref import /usr/lib/libSystem.B.dylib:___stderrp (0x100004000) | ref import-binding /usr/lib/libSystem.B.dylib:___stderrp addr=0x100004000 off=0x4000 addend=0 kind=NonLazy source=IndirectSymbol weak=false
+       0x1000004e8  91012129  add x9, x9, #0x48 ; add synthesis x9 + 0x48 -> 0x100004048 | ref data 0x48 | ref data 0x100004048
+       0x1000004ec  f8687933  ldr x19, [x9, x8] ; memory synthesis x9 + 0x0 -> 0x100004048 | ref data 0x100004048
+analysis:
+  summary: blocks=4 edges=5 calls=1 indirect_calls=0 branches=2 returns=0 data_refs=9 imports=2 cache_links=0 recovered_values=4 jump_tables=0 unresolved_indirect=0
+  blocks:
+    - id=0 range=0x1000004b0..0x1000004c8 instructions=6
+    - id=1 range=0x1000004c8..0x1000004d4 instructions=3
+    - id=2 range=0x1000004d4..0x1000004d8 instructions=1
+    - id=3 range=0x1000004d8..0x1000004f0 instructions=6
+  edges:
+    - block=0 source=0x1000004c4 kind=conditional-branch target=0x1000004d4 via=-
+    - block=1 source=0x1000004cc kind=call target=0x100000590 via=-
+    - block=1 source=0x1000004d0 kind=branch target=0x1000004d8 via=-
+    - block=0 source=0x1000004c4 kind=fallthrough target=0x1000004c8 via=-
+    - block=2 source=0x1000004d4 kind=fallthrough target=0x1000004d8 via=-
+  imports:
+    - at=0x1000004cc /usr/lib/libSystem.B.dylib:_atoi address=0x100004008
+    - at=0x1000004e4 /usr/lib/libSystem.B.dylib:___stderrp address=0x100004000

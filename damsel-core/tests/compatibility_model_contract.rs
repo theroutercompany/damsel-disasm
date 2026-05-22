@@ -313,6 +313,7 @@ fn compatibility_policy_tool_requirements_are_stable() {
             CompatibilityToolRequirement::Strip,
             CompatibilityToolRequirement::Python3,
             CompatibilityToolRequirement::Nm,
+            CompatibilityToolRequirement::Swiftc,
         ]
     );
 

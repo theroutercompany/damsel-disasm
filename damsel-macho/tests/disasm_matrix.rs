@@ -1,9 +1,9 @@
 use damsel_core::{
-    Annotation, DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
-    DisassemblyStopReason, DisassemblyTarget, RecoveredValueKind, RecoveredValueSource, Reference,
-    TableSlotEncoding,
+    Annotation, ControlFlowEdgeKind, DisassemblyLimit, DisassemblyOptions, DisassemblyRequest,
+    DisassemblyRequestV2, DisassemblyStopReason, DisassemblyTarget, RecoveredValueKind,
+    RecoveredValueSource, Reference, TableSlotEncoding,
 };
-use damsel_macho::{MachoError, disassemble, disassemble_v2, load};
+use damsel_macho::{MachoError, analyze_disassembly, disassemble, disassemble_v2, load};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -358,6 +358,49 @@ fn disasm_emits_jump_table_candidate_for_semantic_fixture_when_present() {
             .iter()
             .any(|annotation| matches!(annotation, Annotation::JumpTableCandidate { .. }))
     }));
+}
+
+#[test]
+fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
+    let path = fixture("semantic-switch");
+    if !path.exists() {
+        eprintln!("semantic-switch fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load semantic fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Instructions(256),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble semantic fixture");
+    let analysis = analyze_disassembly(
+        result.target.clone(),
+        result.start_address,
+        result.end_address,
+        &result.instructions,
+    );
+
+    assert_eq!(analysis.instruction_count, result.instructions.len());
+    assert!(analysis.summary.basic_block_count > 1);
+    assert_eq!(
+        analysis.summary.basic_block_count,
+        analysis.basic_blocks.len()
+    );
+    assert_eq!(analysis.summary.edge_count, analysis.edges.len());
+    assert!(analysis.edges.iter().any(|edge| {
+        matches!(
+            edge.kind,
+            ControlFlowEdgeKind::ConditionalBranch | ControlFlowEdgeKind::Branch
+        )
+    }));
+    assert!(analysis.summary.data_reference_count > 0);
+    assert!(analysis.summary.recovered_value_count > 0);
+    assert!(analysis.summary.jump_table_count > 0);
 }
 
 #[test]

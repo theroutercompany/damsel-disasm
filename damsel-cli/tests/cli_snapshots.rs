@@ -82,6 +82,8 @@ fn normalize_doctor_snapshot(output: &str) -> String {
                 Some(normalize_tool_line(line))
             } else if trimmed.starts_with("nm: ") {
                 Some(normalize_tool_line(line))
+            } else if trimmed.starts_with("swiftc: ") {
+                Some(normalize_tool_line(line))
             } else if trimmed.starts_with("sdk_path_probe: ") {
                 Some(normalize_tool_line(line))
             } else if trimmed.starts_with("selected_hash_tool: ") {
@@ -240,7 +242,7 @@ impl DoctorSnapshotHarness {
         let sdk_dir = root.join("sdk");
         fs::create_dir_all(&sdk_dir).expect("create fake sdk");
         let xcrun_script = format!(
-            "#!/bin/sh\ncase \"$1\" in\n  --version) exit 0 ;;\n  --find)\n    case \"$2\" in\n      clang) echo \"{root}/clang\"; exit 0 ;;\n      strip) echo \"{root}/strip\"; exit 0 ;;\n      *) exit 1 ;;\n    esac ;;\n  --show-sdk-path)\n    echo \"{sdk}\"; exit 0 ;;\n  *) exit 1 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n  --version) exit 0 ;;\n  --find)\n    case \"$2\" in\n      clang) echo \"{root}/clang\"; exit 0 ;;\n      strip) echo \"{root}/strip\"; exit 0 ;;\n      swiftc) echo \"{root}/swiftc\"; exit 0 ;;\n      *) exit 1 ;;\n    esac ;;\n  --show-sdk-path)\n    echo \"{sdk}\"; exit 0 ;;\n  *) exit 1 ;;\nesac\n",
             root = root.display(),
             sdk = sdk_dir.display(),
         );
@@ -256,6 +258,10 @@ impl DoctorSnapshotHarness {
         write_exec_script(&root.join("python3"), "#!/bin/sh\nexit 0\n");
         write_exec_script(
             &root.join("nm"),
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n",
+        );
+        write_exec_script(
+            &root.join("swiftc"),
             "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n",
         );
         write_exec_script(&root.join("sha256sum"), "#!/bin/sh\nexit 0\n");
@@ -450,6 +456,22 @@ fn disasm_show_values_snapshot() {
         "--show-values",
     ]);
     insta::assert_snapshot!("disasm_show_values_snapshot", stdout);
+}
+
+#[test]
+fn disasm_analysis_snapshot() {
+    let path = fixture("semantic-switch");
+    let stdout = run_snapshot(&[
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--section",
+        "__text",
+        "--limit",
+        "16",
+        "--show-references",
+        "--analysis",
+    ]);
+    insta::assert_snapshot!("disasm_analysis_snapshot", stdout);
 }
 
 #[test]
