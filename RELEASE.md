@@ -96,12 +96,57 @@ Current limitation:
 The release workflow must run this verification subset before publishing:
 
 ```sh
+bin/disassembler-v2-alpha-validate.sh --require-external
+```
+
+With public-beta evidence packages, use the same validator to enforce the
+real-cache breadth gate:
+
+```sh
+bin/disassembler-v2-alpha-validate.sh --require-external \
+  --beta-evidence /tmp/damsel-real-cache-evidence \
+  --beta-evidence /path/to/other-host-evidence
+```
+
+The underlying release subset is:
+
+```sh
+bin/disassembler-v2-alpha-validate-test.sh
 cargo test -p damsel-cli
 cargo test -p damsel-core
 cargo test -p damsel-macho --tests
 ./fixtures/build-fixtures.sh --check
 ./fixtures/tests/build-fixtures-parity.sh
 ```
+
+macOS verification also compares representative fixture disassembly against
+LLVM's Mach-O tools:
+
+```sh
+bin/disasm-external-compare.sh
+```
+
+Local operator validation for public-beta readiness should also run the
+real-cache smoke harness and record the unique cache UUIDs and sampled projected
+images it validates:
+
+```sh
+bin/disassembler-v2-alpha-validate.sh --require-external --real-cache-archive /tmp/damsel-real-cache-evidence.tar.gz
+bin/shared-cache-evidence-package.sh --verify /tmp/damsel-real-cache-evidence.tar.gz
+bin/disassembler-v2-alpha-validate.sh --require-external --beta-evidence /tmp/damsel-real-cache-evidence.tar.gz --beta-evidence /path/to/other-host-evidence.tar.gz
+bin/shared-cache-evidence-audit.sh /tmp/damsel-real-cache-evidence.tar.gz /path/to/other-host-evidence.tar.gz
+bin/shared-cache-evidence-package-test.sh
+bin/shared-cache-evidence-audit-test.sh
+```
+
+For hosted independent evidence, manually run the `real-cache evidence`
+workflow on `macos-15` or `macos-14`, download the uploaded
+`damsel-real-cache-evidence-*` artifact zip, verify it directly with
+`bin/shared-cache-evidence-package.sh --verify`, and include that downloaded
+zip in the same `--beta-evidence`/audit commands above.
+When Blacksmith is enabled for the repo, prefer the manual `blacksmith real-cache
+evidence` workflow on `blacksmith-6vcpu-macos-15` for the second independent
+macOS release evidence package.
 
 Release-time smoke checks on the built/package binary:
 

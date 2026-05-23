@@ -26,6 +26,7 @@ const elements = {
   limitInput: document.getElementById("limit-input"),
   annotationsToggle: document.getElementById("annotations-toggle"),
   valueFlowToggle: document.getElementById("value-flow-toggle"),
+  analysisToggle: document.getElementById("analysis-toggle"),
   runButton: document.getElementById("run-button"),
   resultTitle: document.getElementById("result-title"),
   resultMeta: document.getElementById("result-meta"),
@@ -216,6 +217,7 @@ function buildDisasmRequest() {
     options: {
       includeAnnotations: elements.annotationsToggle.checked,
       includeValueFlow: elements.valueFlowToggle.checked,
+      includeAnalysis: elements.analysisToggle.checked,
     },
   };
 }
@@ -351,7 +353,10 @@ function renderDisasm() {
   }
 
   elements.resultTitle.textContent = data.target;
-  elements.resultMeta.textContent = `${data.instruction_count} rows · ${data.stop_reason}`;
+  const analysisMeta = data.analysis
+    ? ` · ${data.analysis.summary.basic_block_count} blocks · ${data.analysis.summary.edge_count} edges · ${data.analysis.summary.import_count} imports`
+    : "";
+  elements.resultMeta.textContent = `${data.instruction_count} rows · ${data.stop_reason}${analysisMeta}`;
   elements.instructionRows.innerHTML = "";
 
   data.instructions.forEach((instruction, index) => {
@@ -421,6 +426,9 @@ function renderInspector() {
   blocks.push(renderReferenceBlock(instruction.references || []));
   blocks.push(renderObjectBlock("Annotations", instruction.annotations || []));
   blocks.push(renderObjectBlock("Recovered Values", instruction.recovered_values || []));
+  if (data.analysis) {
+    blocks.push(renderAnalysisBlock(data.analysis));
+  }
   elements.inspectorContent.innerHTML = blocks.join("");
 
   elements.inspectorContent
@@ -432,23 +440,146 @@ function renderInspector() {
     });
 }
 
+function renderAnalysisBlock(analysis) {
+  return `
+    <section class="inspector-block analysis-block">
+      <h3>Summary Graph</h3>
+      <div class="detail-list">
+        ${renderDetailRows([
+          ["Blocks", analysis.summary.basic_block_count],
+          ["Edges", analysis.summary.edge_count],
+          ["Calls", analysis.summary.direct_call_count],
+          ["Indirect Calls", analysis.summary.indirect_call_count],
+          ["Branches", analysis.summary.branch_count],
+          ["Returns", analysis.summary.return_count],
+          ["Imports", analysis.summary.import_count],
+          ["Cache Links", analysis.summary.cache_link_count],
+          ["Recovered Values", analysis.summary.recovered_value_count],
+          ["Jump Tables", analysis.summary.jump_table_count],
+        ])}
+      </div>
+      ${renderAnalysisBlocks(analysis.basic_blocks || [])}
+      ${renderAnalysisEdges(analysis.edges || [])}
+      ${renderAnalysisImports(analysis.imports || [], analysis.cache_links || [])}
+    </section>
+  `;
+}
+
 function renderDetailBlock(title, rows) {
   return `
     <section class="inspector-block">
       <h3>${title}</h3>
       <div class="detail-list">
-        ${rows
-          .map(
-            ([key, value]) => `
-              <div class="detail-row">
-                <span class="detail-key">${escapeHtml(key)}</span>
-                <span class="mono">${escapeHtml(String(value))}</span>
-              </div>
-            `,
-          )
-          .join("")}
+        ${renderDetailRows(rows)}
       </div>
     </section>
+  `;
+}
+
+function renderDetailRows(rows) {
+  return rows
+    .map(
+      ([key, value]) => `
+        <div class="detail-row">
+          <span class="detail-key">${escapeHtml(key)}</span>
+          <span class="mono">${escapeHtml(String(value))}</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderAnalysisBlocks(blocks) {
+  if (!blocks.length) {
+    return "";
+  }
+
+  return `
+    <div class="analysis-list">
+      <div class="item-eyebrow">Basic Blocks</div>
+      ${blocks
+        .map(
+          (block) => `
+            <div class="analysis-row">
+              <span class="mono">#${escapeHtml(block.id)}</span>
+              ${renderJumpButton(block.start_address)}
+              <span class="mono">${escapeHtml(formatAddress(block.end_address))}</span>
+              <span class="mono">${escapeHtml(String(block.instruction_count))} insn</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderAnalysisEdges(edges) {
+  if (!edges.length) {
+    return "";
+  }
+
+  return `
+    <div class="analysis-list">
+      <div class="item-eyebrow">Analysis Edges</div>
+      ${edges
+        .map(
+          (edge) => `
+            <div class="analysis-row">
+              <span class="mono">${escapeHtml(edge.kind)}</span>
+              ${renderJumpButton(edge.source_address)}
+              <span class="detail-key">to</span>
+              ${
+                edge.target_address === null
+                  ? '<span class="mono">return</span>'
+                  : renderJumpButton(edge.target_address)
+              }
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderAnalysisImports(imports, cacheLinks) {
+  if (!imports.length && !cacheLinks.length) {
+    return "";
+  }
+
+  return `
+    <div class="analysis-list">
+      <div class="item-eyebrow">Imports</div>
+      ${imports
+        .map(
+          (entry) => `
+            <div class="analysis-row">
+              ${renderJumpButton(entry.instruction_address)}
+              <span class="mono">${escapeHtml(entry.dylib)}</span>
+              <span class="mono">${escapeHtml(entry.name)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+      ${cacheLinks
+        .map(
+          (entry) => `
+            <div class="analysis-row">
+              ${renderJumpButton(entry.instruction_address)}
+              <span class="mono">${escapeHtml(entry.provider_kind)}</span>
+              <span class="mono">${escapeHtml(entry.provider_install_name)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderJumpButton(value) {
+  return `
+    <button class="jump-button mono" type="button" data-jump-target="${value}">
+      ${escapeHtml(formatAddress(value))}
+    </button>
   `;
 }
 

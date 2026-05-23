@@ -5,15 +5,20 @@ use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
     BinaryImage, CacheDependentRecord, CacheImageDependencyRecord, CacheImageRecord,
     CacheLookupResult, CacheReexportRecord, CacheSymbolImporterRecord, CacheSymbolProviderRecord,
-    DecodedInstruction, DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2,
-    DisassemblyTarget, ExportFlagName, Import, ImportBindingKind, ObjcNameSource,
-    ObjcSelectorSource, ProjectedBinaryImage, Relocation, Section, SharedCache,
-    SharedCacheMemberRole, StubKind, Symbol, SymbolicationMatch,
+    DecodedInstruction, DisassemblyAnalysis, DisassemblyCacheLinkUse, DisassemblyLimit,
+    DisassemblyOptions, DisassemblyRequestV2, DisassemblyTarget, ExportFlagName, Import,
+    ImportBindingKind, ObjcMethodRecord, ObjcNameSource, ObjcSelectorSource, ProjectedBinaryImage,
+    Relocation, Section, SharedCache, SharedCacheMemberRole, StubKind, Symbol, SymbolKind,
+    SymbolicationMatch,
 };
-use damsel_macho::{disassemble_v2, inspect_shared_cache, load};
+use damsel_macho::{
+    SharedCacheSession, analyze_disassembly, disassemble_v2, inspect_shared_cache, load,
+};
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
+use std::process::Command as ProcessCommand;
 
 #[derive(Debug, Parser)]
 #[command(name = "damsel", about = "Static Mach-O arm64 disassembler")]
@@ -332,6 +337,18 @@ impl From<ObjcSelectorSourceArg> for ObjcSelectorSource {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum ObjcMethodKindArg {
+    Instance,
+    Class,
+}
+
+impl ObjcMethodKindArg {
+    fn is_class_method(self) -> bool {
+        matches!(self, Self::Class)
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     #[command(
@@ -455,17 +472,25 @@ enum Command {
     },
     #[command(group(
         ArgGroup::new("target")
-            .args(["symbol", "addr", "section"])
+            .args(["symbol", "swift_symbol", "addr", "section", "objc_selector"])
             .required(true)
     ))]
     Disasm {
         path: PathBuf,
         #[arg(long)]
         symbol: Option<String>,
+        #[arg(long = "swift-symbol")]
+        swift_symbol: Option<String>,
         #[arg(long, value_parser = parse_address)]
         addr: Option<u64>,
         #[arg(long)]
         section: Option<String>,
+        #[arg(long = "objc-owner", requires = "objc_selector")]
+        objc_owner: Option<String>,
+        #[arg(long = "objc-selector", requires = "objc_owner")]
+        objc_selector: Option<String>,
+        #[arg(long = "objc-method-kind", value_enum, requires = "objc_selector")]
+        objc_method_kind: Option<ObjcMethodKindArg>,
         #[arg(long)]
         count: Option<usize>,
         #[arg(long)]
@@ -482,6 +507,8 @@ enum Command {
         show_references: bool,
         #[arg(long)]
         show_values: bool,
+        #[arg(long, alias = "summary")]
+        analysis: bool,
     },
     Ui {
         #[arg(long, default_value_t = 4317)]
@@ -670,7 +697,7 @@ enum CacheCommand {
     },
     #[command(group(
         ArgGroup::new("target")
-            .args(["symbol", "addr", "section"])
+            .args(["symbol", "swift_symbol", "addr", "section", "objc_selector"])
             .required(true)
     ))]
     Disasm {
@@ -678,10 +705,18 @@ enum CacheCommand {
         image: String,
         #[arg(long)]
         symbol: Option<String>,
+        #[arg(long = "swift-symbol")]
+        swift_symbol: Option<String>,
         #[arg(long, value_parser = parse_address)]
         addr: Option<u64>,
         #[arg(long)]
         section: Option<String>,
+        #[arg(long = "objc-owner", requires = "objc_selector")]
+        objc_owner: Option<String>,
+        #[arg(long = "objc-selector", requires = "objc_owner")]
+        objc_selector: Option<String>,
+        #[arg(long = "objc-method-kind", value_enum, requires = "objc_selector")]
+        objc_method_kind: Option<ObjcMethodKindArg>,
         #[arg(long)]
         count: Option<usize>,
         #[arg(long)]
@@ -698,6 +733,8 @@ enum CacheCommand {
         show_references: bool,
         #[arg(long)]
         show_values: bool,
+        #[arg(long, alias = "summary")]
+        analysis: bool,
     },
 }
 
@@ -982,8 +1019,12 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Disasm {
             path,
             symbol,
+            swift_symbol,
             addr,
             section,
+            objc_owner,
+            objc_selector,
+            objc_method_kind,
             count,
             limit,
             bytes,
@@ -992,14 +1033,19 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             no_annotations,
             show_references,
             show_values,
+            analysis,
         } => {
             let image = load_image(path)?;
             let execution = execute_disassembly(
                 &image,
                 DisasmFlagArgs {
                     symbol,
+                    swift_symbol,
                     addr,
                     section,
+                    objc_owner,
+                    objc_selector,
+                    objc_method_kind,
                     count,
                     limit,
                     bytes,
@@ -1007,11 +1053,23 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
                     to,
                 },
                 !no_annotations,
-                show_values,
+                show_values || analysis,
             )?;
 
+            let analysis = analysis.then(|| {
+                analyze_disassembly(
+                    execution.target.clone(),
+                    execution.start_address,
+                    execution.end_address,
+                    &execution.instructions,
+                )
+            });
+
             output::print_disassembly(
-                execution.view(),
+                analysis
+                    .as_ref()
+                    .map(|analysis| execution.view_with_analysis(analysis))
+                    .unwrap_or_else(|| execution.view()),
                 output::DisassemblyRenderOptions {
                     include_annotations: !no_annotations,
                     include_references: show_references,
@@ -1499,8 +1557,12 @@ fn handle_cache_command(
             cache,
             image,
             symbol,
+            swift_symbol,
             addr,
             section,
+            objc_owner,
+            objc_selector,
+            objc_method_kind,
             count,
             limit,
             bytes,
@@ -1509,14 +1571,21 @@ fn handle_cache_command(
             no_annotations,
             show_references,
             show_values,
+            analysis,
         } => {
-            let (projected, image_view) = load_projected_cache_image(cache, &image)?;
+            let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
+            let projected = session.project_image(&image).map_err(map_cache_error)?;
+            let image_view = cache_image_view_from_projected(&projected);
             let execution = execute_disassembly(
                 &projected.image,
                 DisasmFlagArgs {
                     symbol,
+                    swift_symbol,
                     addr,
                     section,
+                    objc_owner,
+                    objc_selector,
+                    objc_method_kind,
                     count,
                     limit,
                     bytes,
@@ -1524,11 +1593,26 @@ fn handle_cache_command(
                     to,
                 },
                 !no_annotations,
-                show_values,
+                show_values || analysis,
             )?;
+            let analysis = if analysis {
+                let mut analysis = analyze_disassembly(
+                    execution.target.clone(),
+                    execution.start_address,
+                    execution.end_address,
+                    &execution.instructions,
+                );
+                enrich_cache_analysis(&mut analysis, &session)?;
+                Some(analysis)
+            } else {
+                None
+            };
             output::print_cache_disassembly(
                 &image_view,
-                execution.view(),
+                analysis
+                    .as_ref()
+                    .map(|analysis| execution.view_with_analysis(analysis))
+                    .unwrap_or_else(|| execution.view()),
                 output::DisassemblyRenderOptions {
                     include_annotations: !no_annotations,
                     include_references: show_references,
@@ -1796,6 +1880,92 @@ fn cache_provider_view(entry: CacheSymbolProviderRecord) -> output::CacheSymbolP
     }
 }
 
+fn enrich_cache_analysis(
+    analysis: &mut DisassemblyAnalysis,
+    session: &SharedCacheSession,
+) -> Result<(), CliRunError> {
+    let mut seen = BTreeSet::new();
+    let mut cache_links = Vec::new();
+
+    for import in &analysis.imports {
+        let providers = match session.symbol_providers(&import.name) {
+            Ok(providers) => providers,
+            Err(damsel_macho::MachoError::SymbolNotFound(_)) => continue,
+            Err(error) => return Err(map_cache_error(error)),
+        };
+
+        for provider in providers
+            .into_iter()
+            .filter(|provider| cache_provider_matches_import(provider, &import.dylib))
+        {
+            let key = (
+                import.instruction_address,
+                import.name.clone(),
+                import.dylib.clone(),
+                provider.provider_image.image_id.to_string(),
+                provider.target_dylib.clone(),
+                provider.target_symbol.clone(),
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+
+            cache_links.push(DisassemblyCacheLinkUse {
+                instruction_address: import.instruction_address,
+                symbol_name: import.name.clone(),
+                dylib: import.dylib.clone(),
+                provider_image_id: provider.provider_image.image_id.to_string(),
+                provider_install_name: provider.provider_image.install_name,
+                provider_member_name: provider.provider_image.member_name,
+                provider_kind: provider.provider_kind.to_string(),
+                target_dylib: provider.target_dylib,
+                target_symbol: provider.target_symbol,
+                resolved_target_image_id: provider
+                    .resolved_target_image
+                    .as_ref()
+                    .map(|image| image.image_id.to_string()),
+                resolved_target_install_name: provider
+                    .resolved_target_image
+                    .as_ref()
+                    .map(|image| image.install_name.clone()),
+                resolved_target_member_name: provider
+                    .resolved_target_image
+                    .as_ref()
+                    .map(|image| image.member_name.clone()),
+            });
+        }
+    }
+
+    cache_links.sort_by(|left, right| {
+        (
+            left.instruction_address,
+            left.symbol_name.as_str(),
+            left.dylib.as_str(),
+            left.provider_install_name.as_str(),
+            left.provider_kind.as_str(),
+        )
+            .cmp(&(
+                right.instruction_address,
+                right.symbol_name.as_str(),
+                right.dylib.as_str(),
+                right.provider_install_name.as_str(),
+                right.provider_kind.as_str(),
+            ))
+    });
+    analysis.summary.cache_link_count = cache_links.len();
+    analysis.cache_links = cache_links;
+    Ok(())
+}
+
+fn cache_provider_matches_import(provider: &CacheSymbolProviderRecord, dylib: &str) -> bool {
+    provider.provider_image.install_name == dylib
+        || provider.target_dylib.as_deref() == Some(dylib)
+        || provider
+            .resolved_target_image
+            .as_ref()
+            .is_some_and(|image| image.install_name == dylib)
+}
+
 fn cache_importer_view(entry: CacheSymbolImporterRecord) -> output::CacheSymbolImporterView {
     output::CacheSymbolImporterView {
         image_id: entry.importer_image.image_id.to_string(),
@@ -1839,6 +2009,418 @@ fn cache_reexport_view(entry: CacheReexportRecord) -> output::CacheReexportView 
             .resolved_target_image
             .as_ref()
             .map(|image| image.member_name.clone()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedObjcMethodTarget {
+    address: u64,
+    display_target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ObjcMethodCandidate {
+    owner_display: String,
+    owner_kind: &'static str,
+    selector: String,
+    is_class_method: bool,
+    address: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedSwiftSymbolTarget {
+    address: u64,
+    display_target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SwiftSymbolCandidate {
+    mangled: String,
+    normalized_mangled: String,
+    demangled: Option<String>,
+    address: u64,
+}
+
+fn resolve_swift_symbol_target(
+    image: &BinaryImage,
+    query: &str,
+) -> Result<ResolvedSwiftSymbolTarget, CliRunError> {
+    let mut candidates = swift_symbol_candidates(image);
+    let exact_mangled = candidates
+        .iter()
+        .filter(|candidate| candidate.mangled == query || candidate.normalized_mangled == query)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !exact_mangled.is_empty() || swift_mangled_payload(query).is_some() {
+        return swift_symbol_match(query, exact_mangled);
+    }
+
+    if candidates.is_empty() {
+        return Err(CliRunError::command(
+            "swift_symbol_not_found",
+            format!("Swift symbol not found: {query}"),
+        ));
+    }
+
+    let mangled_symbols = candidates
+        .iter()
+        .map(|candidate| candidate.mangled.clone())
+        .collect::<Vec<_>>();
+    let demangled = demangle_swift_symbols(&mangled_symbols)?;
+    for candidate in &mut candidates {
+        candidate.demangled = demangled.get(&candidate.mangled).cloned();
+    }
+
+    let exact_demangled = candidates
+        .iter()
+        .filter(|candidate| candidate.demangled.as_deref() == Some(query))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !exact_demangled.is_empty() {
+        return swift_symbol_match(query, exact_demangled);
+    }
+
+    let partial_demangled = candidates
+        .into_iter()
+        .filter(|candidate| {
+            candidate
+                .demangled
+                .as_deref()
+                .is_some_and(|value| contains_case_insensitive(value, query))
+        })
+        .collect::<Vec<_>>();
+    swift_symbol_match(query, partial_demangled)
+}
+
+fn swift_symbol_match(
+    query: &str,
+    mut matches: Vec<SwiftSymbolCandidate>,
+) -> Result<ResolvedSwiftSymbolTarget, CliRunError> {
+    matches.sort_by(|left, right| {
+        (
+            left.demangled.as_deref().unwrap_or(""),
+            left.mangled.as_str(),
+            left.address,
+        )
+            .cmp(&(
+                right.demangled.as_deref().unwrap_or(""),
+                right.mangled.as_str(),
+                right.address,
+            ))
+    });
+    matches.dedup_by(|left, right| {
+        left.address == right.address
+            && left.mangled == right.mangled
+            && left.demangled == right.demangled
+    });
+
+    match matches.as_slice() {
+        [] => Err(CliRunError::command(
+            "swift_symbol_not_found",
+            format!("Swift symbol not found: {query}"),
+        )),
+        [candidate] => Ok(ResolvedSwiftSymbolTarget {
+            address: candidate.address,
+            display_target: format!(
+                "swift:{}",
+                candidate.demangled.as_deref().unwrap_or(&candidate.mangled)
+            ),
+        }),
+        _ => Err(CliRunError::command(
+            "swift_symbol_ambiguous",
+            format!("Swift symbol is ambiguous: {query}"),
+        )),
+    }
+}
+
+fn swift_symbol_candidates(image: &BinaryImage) -> Vec<SwiftSymbolCandidate> {
+    let mut candidates = image
+        .symbols()
+        .iter()
+        .filter(|symbol| symbol.defined && is_executable_symbol(image, symbol))
+        .filter_map(|symbol| {
+            let normalized_mangled = swift_mangled_payload(&symbol.name)?.to_string();
+            Some(SwiftSymbolCandidate {
+                mangled: symbol.name.clone(),
+                normalized_mangled,
+                demangled: None,
+                address: symbol.address,
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        (left.address, left.mangled.as_str()).cmp(&(right.address, right.mangled.as_str()))
+    });
+    candidates
+        .dedup_by(|left, right| left.address == right.address && left.mangled == right.mangled);
+    candidates
+}
+
+fn is_executable_symbol(image: &BinaryImage, symbol: &Symbol) -> bool {
+    matches!(symbol.kind, SymbolKind::Text | SymbolKind::Label)
+        || image
+            .containing_section(symbol.address)
+            .is_some_and(|section| section.executable)
+}
+
+fn swift_mangled_payload(name: &str) -> Option<&str> {
+    let trimmed = name.strip_prefix('_').unwrap_or(name);
+    ["$s", "$S", "$e", "$E", "$T", "_T"]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+        .then_some(trimmed)
+}
+
+fn demangle_swift_symbols(symbols: &[String]) -> Result<BTreeMap<String, String>, CliRunError> {
+    let Some(tool) = resolve_swift_demangle_tool() else {
+        return Err(CliRunError::command(
+            "swift_demangler_unavailable",
+            "Swift demangled-name lookup requires `swift-demangle` or `xcrun --find swift-demangle`",
+        ));
+    };
+
+    let mut demangled = BTreeMap::new();
+    for chunk in symbols.chunks(128) {
+        let output = ProcessCommand::new(&tool)
+            .args(chunk)
+            .output()
+            .map_err(|error| {
+                CliRunError::command(
+                    "swift_demangler_unavailable",
+                    format!("failed to run swift demangler: {error}"),
+                )
+            })?;
+        if !output.status.success() {
+            return Err(CliRunError::command(
+                "swift_demangler_failed",
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+        demangled.extend(parse_swift_demangle_output(&String::from_utf8_lossy(
+            &output.stdout,
+        )));
+    }
+    Ok(demangled)
+}
+
+fn resolve_swift_demangle_tool() -> Option<PathBuf> {
+    if ProcessCommand::new("swift-demangle")
+        .arg("--help")
+        .output()
+        .is_ok()
+    {
+        return Some(PathBuf::from("swift-demangle"));
+    }
+
+    let output = ProcessCommand::new("xcrun")
+        .args(["--find", "swift-demangle"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!path.is_empty()).then_some(PathBuf::from(path))
+}
+
+fn parse_swift_demangle_output(output: &str) -> BTreeMap<String, String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let (mangled, demangled) = line.split_once(" ---> ")?;
+            Some((mangled.to_string(), demangled.to_string()))
+        })
+        .collect()
+}
+
+fn resolve_objc_method_target(
+    image: &BinaryImage,
+    owner: &str,
+    selector: &str,
+    is_class_method: Option<bool>,
+) -> Result<ResolvedObjcMethodTarget, CliRunError> {
+    let objc = image.objc();
+    let mut candidates = Vec::new();
+
+    for class_record in &objc.classes {
+        if class_record.name.as_deref() == Some(owner) {
+            let owner_display = class_record
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{:#x}", class_record.class_pointer));
+            collect_objc_method_candidates(
+                &mut candidates,
+                owner_display.as_str(),
+                "class",
+                false,
+                &class_record.methods,
+                selector,
+                is_class_method,
+            );
+            collect_objc_method_candidates(
+                &mut candidates,
+                owner_display.as_str(),
+                "metaclass",
+                true,
+                &class_record.class_methods,
+                selector,
+                is_class_method,
+            );
+        }
+    }
+
+    for category_record in &objc.categories {
+        let class_name = category_record.class_name.as_deref();
+        let category_name = category_record.name.as_deref();
+        let owner_matches = category_name == Some(owner)
+            || class_name == Some(owner)
+            || class_name
+                .zip(category_name)
+                .is_some_and(|(class_name, category_name)| {
+                    format!("{class_name}({category_name})") == owner
+                });
+        if owner_matches {
+            let owner_display = match (class_name, category_name) {
+                (Some(class_name), Some(category_name)) => {
+                    format!("{class_name}({category_name})")
+                }
+                (_, Some(category_name)) => category_name.to_string(),
+                _ => format!("{:#x}", category_record.pointer),
+            };
+            collect_objc_method_candidates(
+                &mut candidates,
+                owner_display.as_str(),
+                "category",
+                false,
+                &category_record.methods,
+                selector,
+                is_class_method,
+            );
+            collect_objc_method_candidates(
+                &mut candidates,
+                owner_display.as_str(),
+                "category-metaclass",
+                true,
+                &category_record.class_methods,
+                selector,
+                is_class_method,
+            );
+        }
+    }
+
+    for protocol_record in &objc.protocols {
+        if protocol_record.name.as_deref() == Some(owner) {
+            let owner_display = protocol_record
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{:#x}", protocol_record.pointer));
+            collect_objc_method_candidates(
+                &mut candidates,
+                owner_display.as_str(),
+                "protocol",
+                false,
+                &protocol_record.required_instance_methods,
+                selector,
+                is_class_method,
+            );
+            collect_objc_method_candidates(
+                &mut candidates,
+                owner_display.as_str(),
+                "protocol",
+                true,
+                &protocol_record.required_class_methods,
+                selector,
+                is_class_method,
+            );
+            collect_objc_method_candidates(
+                &mut candidates,
+                owner_display.as_str(),
+                "protocol",
+                false,
+                &protocol_record.optional_instance_methods,
+                selector,
+                is_class_method,
+            );
+            collect_objc_method_candidates(
+                &mut candidates,
+                owner_display.as_str(),
+                "protocol",
+                true,
+                &protocol_record.optional_class_methods,
+                selector,
+                is_class_method,
+            );
+        }
+    }
+
+    candidates.sort_by(|left, right| {
+        (
+            left.owner_display.as_str(),
+            left.owner_kind,
+            left.is_class_method,
+            left.selector.as_str(),
+            left.address,
+        )
+            .cmp(&(
+                right.owner_display.as_str(),
+                right.owner_kind,
+                right.is_class_method,
+                right.selector.as_str(),
+                right.address,
+            ))
+    });
+    candidates.dedup();
+
+    match candidates.as_slice() {
+        [] => Err(CliRunError::command(
+            "objc_method_not_found",
+            format!("Objective-C method not found: owner={owner} selector={selector}"),
+        )),
+        [candidate] => Ok(ResolvedObjcMethodTarget {
+            address: candidate.address,
+            display_target: format!(
+                "objc:{}[{} {}]",
+                if candidate.is_class_method { "+" } else { "-" },
+                candidate.owner_display,
+                candidate.selector
+            ),
+        }),
+        _ => Err(CliRunError::command(
+            "objc_method_ambiguous",
+            format!(
+                "Objective-C method is ambiguous: owner={owner} selector={selector}; refine with `--objc-method-kind`"
+            ),
+        )),
+    }
+}
+
+fn collect_objc_method_candidates(
+    out: &mut Vec<ObjcMethodCandidate>,
+    owner_display: &str,
+    owner_kind: &'static str,
+    is_class_method: bool,
+    methods: &[ObjcMethodRecord],
+    selector: &str,
+    class_method_filter: Option<bool>,
+) {
+    if class_method_filter.is_some_and(|expected| expected != is_class_method) {
+        return;
+    }
+
+    for method in methods {
+        if method.selector.as_deref() != Some(selector) {
+            continue;
+        }
+        let Some(address) = method.implementation else {
+            continue;
+        };
+        out.push(ObjcMethodCandidate {
+            owner_display: owner_display.to_string(),
+            owner_kind,
+            selector: selector.to_string(),
+            is_class_method,
+            address,
+        });
     }
 }
 
@@ -1892,8 +2474,12 @@ pub(crate) fn map_cache_error(error: damsel_macho::MachoError) -> CliRunError {
 #[derive(Debug, Clone)]
 pub(crate) struct DisasmFlagArgs {
     pub(crate) symbol: Option<String>,
+    pub(crate) swift_symbol: Option<String>,
     pub(crate) addr: Option<u64>,
     pub(crate) section: Option<String>,
+    pub(crate) objc_owner: Option<String>,
+    pub(crate) objc_selector: Option<String>,
+    pub(crate) objc_method_kind: Option<ObjcMethodKindArg>,
     pub(crate) count: Option<usize>,
     pub(crate) limit: Option<usize>,
     pub(crate) bytes: Option<usize>,
@@ -1904,6 +2490,7 @@ pub(crate) struct DisasmFlagArgs {
 #[derive(Debug)]
 pub(crate) struct DisasmPlan {
     decode_target: DisassemblyTarget,
+    display_target: Option<String>,
     max_instructions: Option<usize>,
     limit: Option<DisassemblyLimit>,
     window_start: u64,
@@ -1935,6 +2522,25 @@ impl DisassemblyExecution {
             stop_reason: self.stop_reason.clone(),
             window_end: self.window_end,
             instructions: &self.instructions,
+            analysis: None,
+        }
+    }
+
+    pub(crate) fn view_with_analysis<'a>(
+        &'a self,
+        analysis: &'a DisassemblyAnalysis,
+    ) -> output::DisassemblyView<'a> {
+        output::DisassemblyView {
+            target: &self.target,
+            start_address: self.start_address,
+            bytes_len: self.bytes_len,
+            decoded_bytes: self.decoded_bytes,
+            end_address: self.end_address,
+            instruction_count: self.instruction_count,
+            stop_reason: self.stop_reason.clone(),
+            window_end: self.window_end,
+            instructions: &self.instructions,
+            analysis: Some(analysis),
         }
     }
 }
@@ -1968,13 +2574,40 @@ pub(crate) fn plan_disassembly(
         ));
     }
 
-    let (base_target, base_start) = if let Some(symbol) = args.symbol {
+    let (base_target, base_start, display_target) = if let Some(symbol) = args.symbol {
         let symbol_entry = image
             .symbol_by_name(&symbol)
             .ok_or_else(|| CliRunError::command("symbol_not_found", symbol.clone()))?;
-        (DisassemblyTarget::Symbol(symbol), symbol_entry.address)
+        (
+            DisassemblyTarget::Symbol(symbol),
+            symbol_entry.address,
+            None,
+        )
+    } else if let Some(swift_symbol) = args.swift_symbol {
+        let resolved = resolve_swift_symbol_target(image, &swift_symbol)?;
+        (
+            DisassemblyTarget::Address(resolved.address),
+            resolved.address,
+            Some(resolved.display_target),
+        )
     } else if let Some(addr) = args.addr {
-        (DisassemblyTarget::Address(addr), addr)
+        (DisassemblyTarget::Address(addr), addr, None)
+    } else if let Some(selector) = args.objc_selector {
+        let owner = args
+            .objc_owner
+            .expect("objc-owner is required by clap when objc-selector is present");
+        let resolved = resolve_objc_method_target(
+            image,
+            &owner,
+            &selector,
+            args.objc_method_kind
+                .map(ObjcMethodKindArg::is_class_method),
+        )?;
+        (
+            DisassemblyTarget::Address(resolved.address),
+            resolved.address,
+            Some(resolved.display_target),
+        )
     } else {
         let section_name = args.section.expect("section target");
         let section_entry = image
@@ -1983,6 +2616,7 @@ pub(crate) fn plan_disassembly(
         (
             DisassemblyTarget::Section(section_name),
             section_entry.address,
+            None,
         )
     };
 
@@ -2041,6 +2675,7 @@ pub(crate) fn plan_disassembly(
 
     Ok(DisasmPlan {
         decode_target,
+        display_target,
         max_instructions,
         limit: request_limit,
         window_start,
@@ -2118,7 +2753,7 @@ pub(crate) fn execute_disassembly(
         .unwrap_or(disasm_plan.window_start);
 
     Ok(DisassemblyExecution {
-        target: result.target,
+        target: disasm_plan.display_target.unwrap_or(result.target),
         start_address: disasm_plan.window_start,
         bytes_len,
         decoded_bytes: result.decoded_bytes,
@@ -2243,5 +2878,189 @@ pub(crate) fn infer_bytes_len(
             .saturating_add(u64::from(last.size))
             .saturating_sub(start) as usize,
         None => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use damsel_core::{
+        Architecture, BinaryFormat, Endianness, ObjcMetadata, Platform, Section, SliceInfo,
+    };
+
+    fn synthetic_swift_image(symbols: Vec<Symbol>) -> BinaryImage {
+        BinaryImage::from_memory_bytes(
+            Some("swift-symbol-test".to_string()),
+            BinaryFormat::MachO,
+            Architecture::Arm64,
+            Endianness::Little,
+            None,
+            Some(Platform::unknown("macos")),
+            SliceInfo {
+                offset: 0,
+                size: 128,
+                is_universal: false,
+                cpu_subtype: 0,
+            },
+            vec![],
+            vec![Section {
+                segment_name: "__TEXT".to_string(),
+                name: "__text".to_string(),
+                address: 0x1000,
+                size: 128,
+                file_offset: Some(0),
+                file_size: 128,
+                kind: "Text".to_string(),
+                executable: true,
+            }],
+            symbols,
+            vec![],
+            vec![],
+            ObjcMetadata::default(),
+            damsel_core::DyldMetadata::default(),
+            vec![0u8; 128].into(),
+        )
+    }
+
+    fn text_symbol(name: &str, address: u64) -> Symbol {
+        Symbol {
+            name: name.to_string(),
+            address,
+            size: 16,
+            kind: SymbolKind::Text,
+            defined: true,
+            global: true,
+            weak: false,
+            section: Some("__text".to_string()),
+        }
+    }
+
+    #[test]
+    fn swift_symbol_target_accepts_exact_macho_mangled_symbol() {
+        let image = synthetic_swift_image(vec![
+            text_symbol("_$s11SwiftSample9publicAddyS2iF", 0x1020),
+            text_symbol("_main", 0x1000),
+        ]);
+
+        let resolved = resolve_swift_symbol_target(&image, "_$s11SwiftSample9publicAddyS2iF")
+            .expect("resolve exact mangled Swift symbol");
+
+        assert_eq!(resolved.address, 0x1020);
+        assert_eq!(
+            resolved.display_target,
+            "swift:_$s11SwiftSample9publicAddyS2iF"
+        );
+    }
+
+    #[test]
+    fn swift_symbol_target_accepts_normalized_mangled_symbol() {
+        let image =
+            synthetic_swift_image(vec![text_symbol("_$s11SwiftSample9publicAddyS2iF", 0x1020)]);
+
+        let resolved = resolve_swift_symbol_target(&image, "$s11SwiftSample9publicAddyS2iF")
+            .expect("resolve normalized Swift symbol");
+
+        assert_eq!(resolved.address, 0x1020);
+    }
+
+    #[test]
+    fn swift_symbol_target_ignores_non_swift_symbols() {
+        let image = synthetic_swift_image(vec![text_symbol("_main", 0x1000)]);
+
+        let error = resolve_swift_symbol_target(&image, "_$s11SwiftSample9publicAddyS2iF")
+            .expect_err("non-Swift symbols should not satisfy Swift target lookup");
+
+        assert_eq!(error.code, "swift_symbol_not_found");
+    }
+
+    #[test]
+    fn swift_symbol_match_prefers_demangled_display_when_available() {
+        let resolved = swift_symbol_match(
+            "SwiftSample.publicAdd",
+            vec![SwiftSymbolCandidate {
+                mangled: "_$s11SwiftSample9publicAddyS2iF".to_string(),
+                normalized_mangled: "$s11SwiftSample9publicAddyS2iF".to_string(),
+                demangled: Some("SwiftSample.publicAdd(Swift.Int) -> Swift.Int".to_string()),
+                address: 0x1020,
+            }],
+        )
+        .expect("resolve demangled candidate");
+
+        assert_eq!(resolved.address, 0x1020);
+        assert_eq!(
+            resolved.display_target,
+            "swift:SwiftSample.publicAdd(Swift.Int) -> Swift.Int"
+        );
+    }
+
+    #[test]
+    fn swift_symbol_match_reports_ambiguous_demangled_queries() {
+        let error = swift_symbol_match(
+            "SwiftSample.publicAdd",
+            vec![
+                SwiftSymbolCandidate {
+                    mangled: "_$s11SwiftSample9publicAddyS2iF".to_string(),
+                    normalized_mangled: "$s11SwiftSample9publicAddyS2iF".to_string(),
+                    demangled: Some("SwiftSample.publicAdd(Swift.Int) -> Swift.Int".to_string()),
+                    address: 0x1020,
+                },
+                SwiftSymbolCandidate {
+                    mangled: "_$s11SwiftSample9publicAddySdF".to_string(),
+                    normalized_mangled: "$s11SwiftSample9publicAddySdF".to_string(),
+                    demangled: Some(
+                        "SwiftSample.publicAdd(Swift.Double) -> Swift.Double".to_string(),
+                    ),
+                    address: 0x1040,
+                },
+            ],
+        )
+        .expect_err("overloaded demangled query should be ambiguous");
+
+        assert_eq!(error.code, "swift_symbol_ambiguous");
+    }
+
+    #[test]
+    fn parse_swift_demangle_output_reads_tool_lines() {
+        let parsed = parse_swift_demangle_output(
+            "_$s11SwiftSample9publicAddyS2iF ---> SwiftSample.publicAdd(Swift.Int) -> Swift.Int\n",
+        );
+
+        assert_eq!(
+            parsed
+                .get("_$s11SwiftSample9publicAddyS2iF")
+                .map(String::as_str),
+            Some("SwiftSample.publicAdd(Swift.Int) -> Swift.Int")
+        );
+    }
+
+    #[test]
+    fn exact_swift_symbol_plan_uses_address_target() {
+        let image =
+            synthetic_swift_image(vec![text_symbol("_$s11SwiftSample9publicAddyS2iF", 0x1020)]);
+
+        let plan = plan_disassembly(
+            &image,
+            DisasmFlagArgs {
+                symbol: None,
+                swift_symbol: Some("_$s11SwiftSample9publicAddyS2iF".to_string()),
+                addr: None,
+                section: None,
+                objc_owner: None,
+                objc_selector: None,
+                objc_method_kind: None,
+                count: None,
+                limit: Some(8),
+                bytes: None,
+                from: None,
+                to: None,
+            },
+        )
+        .expect("plan Swift symbol");
+
+        assert_eq!(plan.decode_target, DisassemblyTarget::Address(0x1020));
+        assert_eq!(
+            plan.display_target.as_deref(),
+            Some("swift:_$s11SwiftSample9publicAddyS2iF")
+        );
     }
 }

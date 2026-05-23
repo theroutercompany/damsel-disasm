@@ -1,0 +1,122 @@
+name: blacksmith real-cache evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit to collect evidence from"
+        required: false
+        default: "main"
+      runner:
+        description: "Blacksmith arm64 macOS runner label"
+        required: true
+        type: choice
+        default: "blacksmith-6vcpu-macos-15"
+        options:
+          - "blacksmith-6vcpu-macos-15"
+          - "blacksmith-12vcpu-macos-15"
+          - "blacksmith-6vcpu-macos-26"
+          - "blacksmith-12vcpu-macos-26"
+          - "blacksmith-6vcpu-macos-latest"
+          - "blacksmith-12vcpu-macos-latest"
+      require_external:
+        description: "Require LLVM fixture comparison before collecting evidence"
+        required: true
+        type: boolean
+        default: true
+      run_full_alpha:
+        description: "Run the full alpha validation matrix before evidence collection"
+        required: true
+        type: boolean
+        default: true
+      retention_days:
+        description: "Artifact retention days"
+        required: true
+        type: number
+        default: 14
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.runner }}-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: collect Blacksmith real-cache evidence (${{ inputs.runner }})
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Record runner identity
+        run: |
+          set -euo pipefail
+          mkdir -p dist/evidence
+          {
+            echo "runner=${{ inputs.runner }}"
+            echo "ref=${{ inputs.ref }}"
+            echo "github_sha=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "run_full_alpha=${{ inputs.run_full_alpha }}"
+            sw_vers || true
+            uname -a || true
+            xcrun --find llvm-objdump || true
+            xcrun --find llvm-otool || true
+          } | tee dist/evidence/runner-identity.txt
+      - name: Collect real-cache evidence archive
+        run: |
+          set -euo pipefail
+          archive="dist/evidence/damsel-blacksmith-real-cache-evidence-${{ inputs.runner }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+          log="dist/evidence/damsel-blacksmith-real-cache-evidence-${{ inputs.runner }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.log"
+          args=(--real-cache-archive "${archive}")
+
+          if [[ "${{ inputs.run_full_alpha }}" != "true" ]]; then
+            args+=(
+              --skip-workspace-tests
+              --skip-fixtures
+              --skip-bench
+              --skip-ui
+            )
+          fi
+
+          if [[ "${{ inputs.require_external }}" == "true" ]]; then
+            args+=(--require-external)
+          else
+            args+=(--skip-external)
+          fi
+
+          set +e
+          bin/disassembler-v2-alpha-validate.sh "${args[@]}" >"${log}" 2>&1
+          status=$?
+          set -e
+          cat "${log}"
+
+          if [[ "${status}" -ne 0 ]]; then
+            if [[ -f "${archive}" ]] && grep -Fq "independent host/release evidence is insufficient" "${log}"; then
+              echo "single-host public-beta audit failed as expected after evidence collection"
+            else
+              exit "${status}"
+            fi
+          fi
+
+          bin/shared-cache-evidence-package.sh --verify "${archive}"
+          shasum -a 256 "${archive}" >"${archive}.sha256"
+          echo "archive=${archive}" >>"${GITHUB_OUTPUT}"
+      - name: Upload evidence archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: damsel-blacksmith-real-cache-evidence-${{ inputs.runner }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/evidence/*.tar.gz
+            dist/evidence/*.tar.gz.sha256
+            dist/evidence/*.log
+            dist/evidence/runner-identity.txt
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}

@@ -12,9 +12,38 @@ GitHub prerelease conventions:
 ### Added
 - Private GitHub release hardening with nightly and beta lanes.
 - Release validation, packaging, checksum, and notes-generation helpers.
+- Disassembler validation harnesses for LLVM fixture comparison and local
+  real-cache smoke coverage.
+- One-command disassembler v2 alpha validation sweep for local operators.
+- The alpha validator can write a real-cache evidence archive with
+  `--real-cache-archive`.
+- Manual GitHub-hosted macOS real-cache evidence collection workflow for
+  producing downloadable beta evidence archives.
+- Manual Blacksmith macOS real-cache evidence workflow for independent hosted
+  Apple Silicon macOS 15/26 evidence collection.
+- Public-beta evidence package auditing is integrated into the alpha validation
+  sweep via repeatable `--beta-evidence` inputs.
+- Portable self-test for the disassembler v2 alpha validation sweep.
+- Machine-readable JSON Lines reporting for real-cache smoke evidence.
+- Real-cache evidence audit helper for public-beta breadth checks.
+- Evidence packaging and verification helper for moving real-cache smoke reports
+  between hosts.
+- Evidence packages now self-verify after creation and can emit a transfer
+  archive with `--archive`.
+- Real-cache evidence verification and audit accept verified package archives,
+  package directories, raw JSONL reports, and downloaded GitHub artifact zip
+  wrappers.
+- Portable self-tests for the real-cache evidence packaging and audit gates.
 
 ### Changed
 - Release/operator documentation was added at the repo root.
+- Real shared-cache smoke validation now samples multiple projected images per
+  unique cache UUID instead of only the first image.
+
+### Fixed
+- Mach-O indirect-symbol attribution now treats library ordinals as one-based,
+  handles self-prefixed library lists, and tolerates duplicate same-dylib import
+  rows in projected dyld-cache images.
 
 ## Beta and Nightly Notes Policy
 

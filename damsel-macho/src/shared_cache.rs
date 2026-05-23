@@ -696,7 +696,8 @@ impl SharedCacheSession {
 
         with_real_cache(root_path, |cache| {
             for cache_image in self.cache.images() {
-                let dyld_image = dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
+                let dyld_image =
+                    dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
                 let object_file = dyld_image.parse_object().map_err(|error: object::Error| {
                     MachoError::MalformedSharedCache(error.to_string())
                 })?;
@@ -865,7 +866,8 @@ impl SharedCacheSession {
         let mut providers = Vec::new();
         with_real_cache(root_path, |cache| {
             for cache_image in self.cache.images() {
-                let dyld_image = dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
+                let dyld_image =
+                    dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
                 let object_file = dyld_image.parse_object().map_err(|error: object::Error| {
                     MachoError::MalformedSharedCache(error.to_string())
                 })?;
@@ -952,10 +954,8 @@ impl SharedCacheSession {
             .iter()
             .filter_map(|export| {
                 let (target_dylib, target_symbol) = export.reexport_target.as_ref()?;
-                let resolved_target_image = self
-                    .cache
-                    .image_by_install_name(target_dylib)
-                    .map(|image| {
+                let resolved_target_image =
+                    self.cache.image_by_install_name(target_dylib).map(|image| {
                         projected_image_provenance(
                             &self.cache,
                             image,
@@ -1125,11 +1125,12 @@ impl SharedCacheSession {
     ) -> Result<ProjectedBinaryImage> {
         with_real_cache(root_path, |cache| {
             let dyld_image = dyld_cache_image_by_index(cache, image.image_index as usize)?;
-            let (image_data, header_offset) = dyld_image
-                .image_data_and_offset()
-                .map_err(|error: object::Error| {
-                    MachoError::MalformedSharedCache(error.to_string())
-                })?;
+            let (image_data, header_offset) =
+                dyld_image
+                    .image_data_and_offset()
+                    .map_err(|error: object::Error| {
+                        MachoError::MalformedSharedCache(error.to_string())
+                    })?;
             let object_file =
                 MachOFile64::<ObjectEndianness, &[u8]>::parse_dyld_cache_image(&dyld_image)
                     .map_err(|error: object::Error| {

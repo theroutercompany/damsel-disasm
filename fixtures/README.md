@@ -8,6 +8,7 @@ Fixture inventory (checked in under `fixtures/bin`):
 - `arm64e-sample`: arm64e Mach-O sample used for slice-selection and arm64e parsing.
 - `x86_64-only-hello`: thin x86_64 Mach-O used for unsupported-arch rejection.
 - `duplicate-symbol-ordinal`: two-dylib duplicate-symbol fixture used to prove ordinal-backed attribution.
+- `swift-sample`: Swift executable with stable mangled function symbols used for Swift entrypoint tests.
 - `import-lazy`: helper-bearing lazy-binding fixture used for stub/helper linkage and helper-target disassembly.
 - `import-rich`: arm64 Mach-O with multiple external imports/stubs.
 - `export-kinds`: arm64 export-bearing fixture used for regular, weak, absolute, and thread-local export truth.
@@ -31,6 +32,7 @@ Sources:
 - `src/objc-sample.m` builds the Objective-C metadata fixture.
 - `src/semantic-switch.c` builds the semantic-analysis fixture.
 - `src/dup-alpha.c`, `src/dup-beta.c`, and `src/duplicate-symbol-main.c` build the duplicate-symbol fixture.
+- `src/swift-sample.swift` builds the Swift symbol-entrypoint fixture.
 
 Script usage:
 - `fixtures/build-fixtures.sh`: rebuild fixtures (`macOS` + Xcode tooling only).
@@ -45,7 +47,7 @@ Script usage:
 - `sh fixtures/tests/build-fixtures-parity.sh`: read-only parity probes for
   `--help`, `--manifest`, `--manifest-corpus`, `--manifest-all`, `--check`,
   no-usable-hash failure, SDK probe failure, missing `clang`/`strip`,
-  missing/invocation-broken `python3`, and missing `nm`.
+  missing/invocation-broken `python3`, missing `nm`, and missing `swiftc`.
 - `arm64e-sample` is rebuilt on a best-effort basis; if the local toolchain does
   not support `-arch arm64e`, the script preserves the checked-in binary.
 
@@ -58,8 +60,8 @@ Host/tool portability notes:
 - Rebuild mode validates required tooling with a canonical probe contract:
   `xcrun` must be present, SDK resolution must succeed via
   `xcrun --show-sdk-path`, `clang`/`strip` are resolved via `xcrun --find`
-  (with PATH fallback), `python3` must be invocable, and `nm` must resolve to
-  an executable path.
+  (with PATH fallback), `python3` must be invocable, `nm` must resolve to an
+  executable path, and `swiftc` must resolve via `xcrun --find` or PATH.
 - Temporary files/directories now use `mktemp` when available; a pid-scoped
   fallback is retained with warnings for constrained environments.
 

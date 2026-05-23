@@ -1,12 +1,15 @@
 use crate::errors::{MachoError, Result};
 use damsel_core::{
-    Annotation, BinaryImage, DecodedInstruction, DisassemblyLimit, DisassemblyRequest,
-    DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
-    DisassemblyTarget, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
-    IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
-    Reference, Relocation, Section, StubHelperEntry, Symbol, TableSlotEncoding,
+    Annotation, BasicBlock, BinaryImage, ControlFlowEdge, ControlFlowEdgeKind, DecodedInstruction,
+    DisassemblyAnalysis, DisassemblyImportUse, DisassemblyIndirectUse, DisassemblyJumpTableUse,
+    DisassemblyLimit, DisassemblyRecoveredValueUse, DisassemblyRequest, DisassemblyRequestV2,
+    DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason, DisassemblySummary,
+    DisassemblyTarget, DisassemblyTargetUse, Import, ImportBindingKind, ImportBindingRecord,
+    ImportBindingSource, IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind,
+    RecoveredValueSource, Reference, Relocation, Section, StubHelperEntry, Symbol,
+    TableSlotEncoding,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub fn disassemble_v2(
     image: &BinaryImage,
@@ -17,6 +20,270 @@ pub fn disassemble_v2(
 
 pub fn disassemble(image: &BinaryImage, request: &DisassemblyRequest) -> Result<DisassemblyResult> {
     Ok(disassemble_impl(image, &request.to_v2())?.into_legacy())
+}
+
+pub fn analyze_disassembly(
+    target: impl Into<String>,
+    start_address: u64,
+    end_address: u64,
+    instructions: &[DecodedInstruction],
+) -> DisassemblyAnalysis {
+    let basic_blocks = build_basic_blocks(instructions);
+    let mut edges = Vec::new();
+    let mut direct_calls = Vec::new();
+    let mut branch_targets = Vec::new();
+    let mut data_references = Vec::new();
+    let mut indirect_controls = Vec::new();
+    let mut imports = Vec::new();
+    let mut recovered_values = Vec::new();
+    let mut jump_tables = Vec::new();
+    let mut return_count = 0;
+
+    for instruction in instructions {
+        let lower = instruction.mnemonic.to_ascii_lowercase();
+        let from_block = block_id_for_address(&basic_blocks, instruction.address).unwrap_or(0);
+        let resolved_direct_target =
+            instruction
+                .references
+                .iter()
+                .find_map(|reference| match reference {
+                    Reference::Call { target } | Reference::Branch { target } => Some(*target),
+                    _ => None,
+                });
+
+        if is_return_mnemonic(&lower) {
+            return_count += 1;
+            push_edge(
+                &mut edges,
+                ControlFlowEdge {
+                    from_block,
+                    source_address: instruction.address,
+                    target_address: None,
+                    kind: ControlFlowEdgeKind::Return,
+                    via: None,
+                },
+            );
+        }
+
+        for reference in &instruction.references {
+            match reference {
+                Reference::Call { target } => {
+                    push_target_use(
+                        &mut direct_calls,
+                        DisassemblyTargetUse {
+                            instruction_address: instruction.address,
+                            target_address: *target,
+                        },
+                    );
+                    push_edge(
+                        &mut edges,
+                        ControlFlowEdge {
+                            from_block,
+                            source_address: instruction.address,
+                            target_address: Some(*target),
+                            kind: ControlFlowEdgeKind::Call,
+                            via: None,
+                        },
+                    );
+                }
+                Reference::Branch { target } => {
+                    let kind = if is_conditional_branch_mnemonic(&lower) {
+                        ControlFlowEdgeKind::ConditionalBranch
+                    } else {
+                        ControlFlowEdgeKind::Branch
+                    };
+                    push_target_use(
+                        &mut branch_targets,
+                        DisassemblyTargetUse {
+                            instruction_address: instruction.address,
+                            target_address: *target,
+                        },
+                    );
+                    push_edge(
+                        &mut edges,
+                        ControlFlowEdge {
+                            from_block,
+                            source_address: instruction.address,
+                            target_address: Some(*target),
+                            kind,
+                            via: None,
+                        },
+                    );
+                }
+                Reference::IndirectCall { via } => {
+                    push_indirect_use(
+                        &mut indirect_controls,
+                        DisassemblyIndirectUse {
+                            instruction_address: instruction.address,
+                            kind: ControlFlowEdgeKind::IndirectCall,
+                            via: via.clone(),
+                            resolved_target: resolved_direct_target,
+                        },
+                    );
+                    push_edge(
+                        &mut edges,
+                        ControlFlowEdge {
+                            from_block,
+                            source_address: instruction.address,
+                            target_address: resolved_direct_target,
+                            kind: ControlFlowEdgeKind::IndirectCall,
+                            via: Some(via.clone()),
+                        },
+                    );
+                }
+                Reference::IndirectBranch { via } => {
+                    push_indirect_use(
+                        &mut indirect_controls,
+                        DisassemblyIndirectUse {
+                            instruction_address: instruction.address,
+                            kind: ControlFlowEdgeKind::IndirectBranch,
+                            via: via.clone(),
+                            resolved_target: resolved_direct_target,
+                        },
+                    );
+                    push_edge(
+                        &mut edges,
+                        ControlFlowEdge {
+                            from_block,
+                            source_address: instruction.address,
+                            target_address: resolved_direct_target,
+                            kind: ControlFlowEdgeKind::IndirectBranch,
+                            via: Some(via.clone()),
+                        },
+                    );
+                }
+                Reference::Data { target } | Reference::Page { target } => {
+                    push_target_use(
+                        &mut data_references,
+                        DisassemblyTargetUse {
+                            instruction_address: instruction.address,
+                            target_address: *target,
+                        },
+                    );
+                }
+                Reference::Import {
+                    name,
+                    dylib,
+                    address,
+                } => push_import_use(
+                    &mut imports,
+                    DisassemblyImportUse {
+                        instruction_address: instruction.address,
+                        dylib: dylib.clone(),
+                        name: name.clone(),
+                        address: *address,
+                    },
+                ),
+                Reference::ImportBinding {
+                    dylib,
+                    name,
+                    address,
+                    ..
+                }
+                | Reference::Stub {
+                    dylib: Some(dylib),
+                    name: Some(name),
+                    pointer_address: address,
+                    ..
+                }
+                | Reference::StubHelper {
+                    dylib: Some(dylib),
+                    name: Some(name),
+                    pointer_address: address,
+                    ..
+                } => push_import_use(
+                    &mut imports,
+                    DisassemblyImportUse {
+                        instruction_address: instruction.address,
+                        dylib: dylib.clone(),
+                        name: name.clone(),
+                        address: *address,
+                    },
+                ),
+                Reference::RelocationEvidence { .. }
+                | Reference::Stub { .. }
+                | Reference::StubHelper { .. } => {}
+            }
+        }
+
+        for recovered in &instruction.recovered_values {
+            push_recovered_value_use(
+                &mut recovered_values,
+                DisassemblyRecoveredValueUse {
+                    instruction_address: instruction.address,
+                    register: recovered.register.clone(),
+                    value: recovered.value,
+                    kind: recovered.kind,
+                    source: recovered.source,
+                },
+            );
+        }
+
+        for annotation in &instruction.annotations {
+            if let Annotation::JumpTableCandidate {
+                base,
+                index_register,
+                element_size,
+            } = annotation
+            {
+                push_jump_table_use(
+                    &mut jump_tables,
+                    DisassemblyJumpTableUse {
+                        instruction_address: instruction.address,
+                        table_base: *base,
+                        index_register: index_register.clone(),
+                        element_size: *element_size,
+                    },
+                );
+            }
+        }
+    }
+
+    add_fallthrough_edges(instructions, &basic_blocks, &mut edges);
+
+    let indirect_call_count = indirect_controls
+        .iter()
+        .filter(|entry| entry.kind == ControlFlowEdgeKind::IndirectCall)
+        .count();
+    let unresolved_indirect_count = indirect_controls
+        .iter()
+        .filter(|entry| entry.resolved_target.is_none())
+        .count();
+
+    DisassemblyAnalysis {
+        target: target.into(),
+        start_address,
+        end_address,
+        instruction_count: instructions.len(),
+        summary: DisassemblySummary {
+            basic_block_count: basic_blocks.len(),
+            edge_count: edges.len(),
+            direct_call_count: direct_calls.len(),
+            indirect_call_count,
+            branch_count: branch_targets.len()
+                + indirect_controls
+                    .iter()
+                    .filter(|entry| entry.kind == ControlFlowEdgeKind::IndirectBranch)
+                    .count(),
+            return_count,
+            data_reference_count: data_references.len(),
+            import_count: imports.len(),
+            cache_link_count: 0,
+            recovered_value_count: recovered_values.len(),
+            jump_table_count: jump_tables.len(),
+            unresolved_indirect_count,
+        },
+        basic_blocks,
+        edges,
+        direct_calls,
+        branch_targets,
+        data_references,
+        indirect_controls,
+        imports,
+        cache_links: Vec::new(),
+        recovered_values,
+        jump_tables,
+    }
 }
 
 fn disassemble_impl(
@@ -325,6 +592,173 @@ fn image_limit_reached(
         }
         DisassemblyLimit::Unlimited => false,
     }
+}
+
+fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
+    if instructions.is_empty() {
+        return Vec::new();
+    }
+
+    let instruction_addresses = instructions
+        .iter()
+        .map(|instruction| instruction.address)
+        .collect::<BTreeSet<_>>();
+    let mut leaders = BTreeSet::from([instructions[0].address]);
+
+    for (index, instruction) in instructions.iter().enumerate() {
+        let lower = instruction.mnemonic.to_ascii_lowercase();
+        for reference in &instruction.references {
+            if let Reference::Branch { target } = reference
+                && instruction_addresses.contains(target)
+            {
+                leaders.insert(*target);
+            }
+        }
+
+        if is_cfg_boundary_mnemonic(&lower)
+            && let Some(next) = instructions.get(index + 1)
+        {
+            leaders.insert(next.address);
+        }
+    }
+
+    let mut blocks = Vec::new();
+    let mut current_start = instructions[0].address;
+    let mut current_end = instructions[0]
+        .address
+        .saturating_add(u64::from(instructions[0].size));
+    let mut current_count = 0;
+
+    for instruction in instructions {
+        if current_count > 0 && leaders.contains(&instruction.address) {
+            blocks.push(BasicBlock {
+                id: blocks.len(),
+                start_address: current_start,
+                end_address: current_end,
+                instruction_count: current_count,
+            });
+            current_start = instruction.address;
+            current_count = 0;
+        }
+        current_end = instruction
+            .address
+            .saturating_add(u64::from(instruction.size));
+        current_count += 1;
+    }
+
+    blocks.push(BasicBlock {
+        id: blocks.len(),
+        start_address: current_start,
+        end_address: current_end,
+        instruction_count: current_count,
+    });
+    blocks
+}
+
+fn block_id_for_address(blocks: &[BasicBlock], address: u64) -> Option<usize> {
+    blocks
+        .iter()
+        .find(|block| address >= block.start_address && address < block.end_address)
+        .map(|block| block.id)
+}
+
+fn add_fallthrough_edges(
+    instructions: &[DecodedInstruction],
+    blocks: &[BasicBlock],
+    edges: &mut Vec<ControlFlowEdge>,
+) {
+    for block in blocks {
+        let Some(last) = instructions
+            .iter()
+            .filter(|instruction| {
+                instruction.address >= block.start_address
+                    && instruction.address < block.end_address
+            })
+            .last()
+        else {
+            continue;
+        };
+        let lower = last.mnemonic.to_ascii_lowercase();
+        if is_return_mnemonic(&lower) || is_unconditional_transfer_mnemonic(&lower) {
+            continue;
+        }
+        let next_address = last.address.saturating_add(u64::from(last.size));
+        if let Some(target_block) = blocks
+            .iter()
+            .find(|candidate| candidate.start_address == next_address)
+        {
+            push_edge(
+                edges,
+                ControlFlowEdge {
+                    from_block: block.id,
+                    source_address: last.address,
+                    target_address: Some(target_block.start_address),
+                    kind: ControlFlowEdgeKind::Fallthrough,
+                    via: None,
+                },
+            );
+        }
+    }
+}
+
+fn push_edge(target: &mut Vec<ControlFlowEdge>, edge: ControlFlowEdge) {
+    if !target.contains(&edge) {
+        target.push(edge);
+    }
+}
+
+fn push_target_use(target: &mut Vec<DisassemblyTargetUse>, entry: DisassemblyTargetUse) {
+    if !target.contains(&entry) {
+        target.push(entry);
+    }
+}
+
+fn push_indirect_use(target: &mut Vec<DisassemblyIndirectUse>, entry: DisassemblyIndirectUse) {
+    if !target.contains(&entry) {
+        target.push(entry);
+    }
+}
+
+fn push_import_use(target: &mut Vec<DisassemblyImportUse>, entry: DisassemblyImportUse) {
+    if !target.contains(&entry) {
+        target.push(entry);
+    }
+}
+
+fn push_recovered_value_use(
+    target: &mut Vec<DisassemblyRecoveredValueUse>,
+    entry: DisassemblyRecoveredValueUse,
+) {
+    if !target.contains(&entry) {
+        target.push(entry);
+    }
+}
+
+fn push_jump_table_use(target: &mut Vec<DisassemblyJumpTableUse>, entry: DisassemblyJumpTableUse) {
+    if !target.contains(&entry) {
+        target.push(entry);
+    }
+}
+
+fn is_cfg_boundary_mnemonic(mnemonic: &str) -> bool {
+    is_conditional_branch_mnemonic(mnemonic)
+        || is_unconditional_transfer_mnemonic(mnemonic)
+        || is_return_mnemonic(mnemonic)
+}
+
+fn is_conditional_branch_mnemonic(mnemonic: &str) -> bool {
+    mnemonic.starts_with("b.") || matches!(mnemonic, "cbz" | "cbnz" | "tbz" | "tbnz")
+}
+
+fn is_unconditional_transfer_mnemonic(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "b" | "br" | "braa" | "braaz" | "brab" | "brabz" | "eret"
+    )
+}
+
+fn is_return_mnemonic(mnemonic: &str) -> bool {
+    matches!(mnemonic, "ret" | "retaa" | "retab" | "eret")
 }
 
 fn annotate_instructions(
@@ -669,11 +1103,19 @@ fn synthesize_analysis_references(
     let mut known_values = BTreeMap::<String, RecoveredValue>::new();
     let mut jump_table_sources = BTreeMap::<String, (u64, String, u8)>::new();
     let mut relative_slot_loads = BTreeMap::<String, TableSlotEvidence>::new();
+    let join_addresses = basic_block_join_addresses(instructions);
 
     for instruction in instructions {
         let lower = instruction.mnemonic.to_ascii_lowercase();
         let destination = destination_register(instruction);
         let mut destination_updated = false;
+        if join_addresses.contains(&instruction.address) {
+            clear_analysis_state(
+                &mut known_values,
+                &mut jump_table_sources,
+                &mut relative_slot_loads,
+            );
+        }
 
         if lower == "adrp" || lower == "adr" {
             if let (Some(target), Some(register)) =
@@ -1036,12 +1478,99 @@ fn synthesize_analysis_references(
             }
         }
 
-        if is_hard_control_flow_boundary(&lower) && !matches!(lower.as_str(), "bl" | "blr") {
+        if is_call_mnemonic(&lower) {
+            clear_call_clobbered_state(
+                &mut known_values,
+                &mut jump_table_sources,
+                &mut relative_slot_loads,
+            );
+        } else if is_hard_control_flow_boundary(&lower) {
             known_values.clear();
             jump_table_sources.clear();
             relative_slot_loads.clear();
         }
     }
+}
+
+fn basic_block_join_addresses(instructions: &[DecodedInstruction]) -> BTreeSet<u64> {
+    let blocks = build_basic_blocks(instructions);
+    if blocks.len() < 2 {
+        return BTreeSet::new();
+    }
+
+    let mut edges = Vec::new();
+    let instruction_addresses = instructions
+        .iter()
+        .map(|instruction| instruction.address)
+        .collect::<BTreeSet<_>>();
+    for instruction in instructions {
+        let from_block = block_id_for_address(&blocks, instruction.address).unwrap_or(0);
+        for reference in &instruction.references {
+            if let Reference::Branch { target } = reference
+                && instruction_addresses.contains(target)
+            {
+                push_edge(
+                    &mut edges,
+                    ControlFlowEdge {
+                        from_block,
+                        source_address: instruction.address,
+                        target_address: Some(*target),
+                        kind: ControlFlowEdgeKind::Branch,
+                        via: None,
+                    },
+                );
+            }
+        }
+    }
+    add_fallthrough_edges(instructions, &blocks, &mut edges);
+
+    let mut incoming_counts = BTreeMap::<u64, usize>::new();
+    for edge in edges {
+        if let Some(target_address) = edge.target_address {
+            *incoming_counts.entry(target_address).or_default() += 1;
+        }
+    }
+
+    blocks
+        .iter()
+        .filter(|block| {
+            incoming_counts
+                .get(&block.start_address)
+                .copied()
+                .unwrap_or(0)
+                > 1
+        })
+        .map(|block| block.start_address)
+        .collect()
+}
+
+fn clear_analysis_state(
+    known_values: &mut BTreeMap<String, RecoveredValue>,
+    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    relative_slot_loads: &mut BTreeMap<String, TableSlotEvidence>,
+) {
+    known_values.clear();
+    jump_table_sources.clear();
+    relative_slot_loads.clear();
+}
+
+fn clear_call_clobbered_state(
+    known_values: &mut BTreeMap<String, RecoveredValue>,
+    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    relative_slot_loads: &mut BTreeMap<String, TableSlotEvidence>,
+) {
+    for index in 0..=18 {
+        let key = format!("x{index}");
+        known_values.remove(&key);
+        jump_table_sources.remove(&key);
+        relative_slot_loads.remove(&key);
+    }
+    known_values.remove("x30");
+    jump_table_sources.remove("x30");
+    relative_slot_loads.remove("x30");
+    known_values.remove("lr");
+    jump_table_sources.remove("lr");
+    relative_slot_loads.remove("lr");
 }
 
 fn canonical_state_key(register: &str) -> Option<String> {
@@ -2278,6 +2807,117 @@ mod tests {
             instructions[2]
                 .references
                 .contains(&Reference::Call { target: 0x1238 })
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_call_clobbered_registers() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(0x120),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(0x220),
+                ],
+            ),
+            DecodedInstruction {
+                references: vec![Reference::Call { target: 0x3000 }],
+                ..instruction(0x1008, "bl", vec![Operand::Label(0x3000)])
+            },
+            instruction(
+                0x100c,
+                "add",
+                vec![
+                    Operand::Register("x1".to_string()),
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "add",
+                vec![
+                    Operand::Register("x20".to_string()),
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3]
+                .recovered_values
+                .iter()
+                .all(|value| value.register != "x1"),
+            "x0 is call-clobbered and must not flow past bl"
+        );
+        assert!(
+            instructions[4]
+                .recovered_values
+                .iter()
+                .any(|value| { value.register == "x20" && value.value == 0x224 })
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_clears_ambiguous_join_state() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(0x100),
+                ],
+            ),
+            DecodedInstruction {
+                references: vec![Reference::Branch { target: 0x1010 }],
+                ..instruction(0x1004, "b", vec![Operand::Label(0x1010)])
+            },
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(0x200),
+                ],
+            ),
+            DecodedInstruction {
+                references: vec![Reference::Branch { target: 0x1010 }],
+                ..instruction(0x100c, "b", vec![Operand::Label(0x1010)])
+            },
+            instruction(
+                0x1010,
+                "add",
+                vec![
+                    Operand::Register("x1".to_string()),
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[4]
+                .recovered_values
+                .iter()
+                .all(|value| value.register != "x1"),
+            "join block has two possible x0 values and must not inherit either one"
         );
     }
 

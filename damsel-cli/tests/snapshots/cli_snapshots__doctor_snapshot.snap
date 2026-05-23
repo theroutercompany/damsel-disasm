@@ -21,6 +21,7 @@ tools:
   clang: detected=yes usable=yes path=<path>
   python3: detected=yes usable=yes path=<path>
   nm: detected=yes usable=yes path=<path>
+  swiftc: detected=yes usable=yes path=<path>
   sdk_path_probe: detected=yes usable=yes path=<path>
   sha256sum: detected=yes usable=yes path=<path>
   shasum: detected=yes usable=yes path=<path>

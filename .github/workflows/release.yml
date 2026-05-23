@@ -84,8 +84,19 @@ jobs:
         run: |
           set -euo pipefail
           bash -n bin/release-validate.sh
+          bash -n bin/disasm-external-compare.sh
+          bash -n bin/disassembler-v2-alpha-validate.sh
+          bash -n bin/disassembler-v2-alpha-validate-test.sh
           bash -n bin/release-package.sh
           bash -n bin/render-release-notes.sh
+          bash -n bin/shared-cache-evidence-audit.sh
+          bash -n bin/shared-cache-evidence-audit-test.sh
+          bash -n bin/shared-cache-evidence-package.sh
+          bash -n bin/shared-cache-evidence-package-test.sh
+          bash -n bin/shared-cache-real-smoke.sh
+          bin/disassembler-v2-alpha-validate-test.sh
+          bin/shared-cache-evidence-audit-test.sh
+          bin/shared-cache-evidence-package-test.sh
           ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".github/workflows/verify.yml"); puts "yaml-ok"'
       - name: Re-run channel validation
         run: |
@@ -185,6 +196,8 @@ jobs:
           }
           assert all(set(member.keys()) == {"name", "role", "path"} for member in payload["data"]["members"])
           PY
+      - name: Compare built disassembler against LLVM tools
+        run: DAMSEL_BIN=target/release/damsel-cli bin/disasm-external-compare.sh
       - name: Upload raw binary
         uses: actions/upload-artifact@v4
         with:

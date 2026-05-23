@@ -1,11 +1,12 @@
 use damsel_core::{
     Annotation, BinaryImage, CapabilityStatus, CompatibilityCapability, CompatibilityIssue,
-    CompatibilityPolicy, CompatibilityToolRequirement, DecodedInstruction, ExportFlagName,
-    ExportKind, HostArchitecture, HostPlatform, Import, ImportBindingKind, ImportBindingRecord,
-    ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource, ObjcClassRecord,
-    ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource, ObjcPointerKind,
-    ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource, RecoveredValue,
-    Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry, StubKind, Symbol,
+    CompatibilityPolicy, CompatibilityToolRequirement, DecodedInstruction, DisassemblyAnalysis,
+    ExportFlagName, ExportKind, HostArchitecture, HostPlatform, Import, ImportBindingKind,
+    ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource,
+    ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
+    ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
+    RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry,
+    StubKind, Symbol,
 };
 use std::env;
 use std::fmt::Write as _;
@@ -165,6 +166,7 @@ pub(crate) struct DisassemblyView<'a> {
     pub stop_reason: String,
     pub window_end: Option<u64>,
     pub instructions: &'a [DecodedInstruction],
+    pub analysis: Option<&'a DisassemblyAnalysis>,
 }
 
 #[derive(Debug, Clone)]
@@ -338,6 +340,7 @@ struct DoctorTools {
     strip: ToolStatus,
     python3: ToolStatus,
     nm: ToolStatus,
+    swiftc: ToolStatus,
     sdk_path_probe: ToolStatus,
     hash_tools: HashToolStatus,
     selected_hash_tool: Option<String>,
@@ -1564,6 +1567,9 @@ pub(crate) fn print_disassembly(
                     );
                 }
             }
+            if let Some(analysis) = view.analysis {
+                print_disassembly_analysis_text(analysis);
+            }
         }
         OutputFormat::Json => emit_json_response(
             "disasm",
@@ -1573,6 +1579,75 @@ pub(crate) fn print_disassembly(
             },
             output,
         ),
+    }
+}
+
+fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
+    println!("analysis:");
+    println!(
+        "  summary: blocks={} edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
+        analysis.summary.basic_block_count,
+        analysis.summary.edge_count,
+        analysis.summary.direct_call_count,
+        analysis.summary.indirect_call_count,
+        analysis.summary.branch_count,
+        analysis.summary.return_count,
+        analysis.summary.data_reference_count,
+        analysis.summary.import_count,
+        analysis.summary.cache_link_count,
+        analysis.summary.recovered_value_count,
+        analysis.summary.jump_table_count,
+        analysis.summary.unresolved_indirect_count
+    );
+    if !analysis.basic_blocks.is_empty() {
+        println!("  blocks:");
+        for block in &analysis.basic_blocks {
+            println!(
+                "    - id={} range={:#x}..{:#x} instructions={}",
+                block.id, block.start_address, block.end_address, block.instruction_count
+            );
+        }
+    }
+    if !analysis.edges.is_empty() {
+        println!("  edges:");
+        for edge in &analysis.edges {
+            let target = edge
+                .target_address
+                .map(|value| format!("{value:#x}"))
+                .unwrap_or_else(|| "-".to_string());
+            let via = edge.via.as_deref().unwrap_or("-");
+            println!(
+                "    - block={} source={:#x} kind={} target={} via={}",
+                edge.from_block, edge.source_address, edge.kind, target, via
+            );
+        }
+    }
+    if !analysis.imports.is_empty() {
+        println!("  imports:");
+        for import in &analysis.imports {
+            let address = import
+                .address
+                .map(|value| format!("{value:#x}"))
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "    - at={:#x} {}:{} address={}",
+                import.instruction_address, import.dylib, import.name, address
+            );
+        }
+    }
+    if !analysis.cache_links.is_empty() {
+        println!("  cache_links:");
+        for link in &analysis.cache_links {
+            println!(
+                "    - at={:#x} symbol={} dylib={} provider={} kind={} resolved_target={}",
+                link.instruction_address,
+                link.symbol_name,
+                link.dylib,
+                link.provider_install_name,
+                link.provider_kind,
+                link.resolved_target_install_name.as_deref().unwrap_or("-")
+            );
+        }
     }
 }
 
@@ -4455,7 +4530,7 @@ impl JsonDto for DisasmJsonDto<'_> {
             })
             .collect();
 
-        JsonValue::Object(vec![
+        let mut fields = vec![
             (
                 "target".to_string(),
                 JsonValue::String(self.view.target.to_string()),
@@ -4483,8 +4558,347 @@ impl JsonDto for DisasmJsonDto<'_> {
                 JsonValue::String(self.view.stop_reason.clone()),
             ),
             ("instructions".to_string(), JsonValue::Array(instructions)),
-        ])
+        ];
+        if let Some(analysis) = self.view.analysis {
+            fields.push(("analysis".to_string(), disassembly_analysis_json(analysis)));
+        }
+        JsonValue::Object(fields)
     }
+}
+
+fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "target".to_string(),
+            JsonValue::String(analysis.target.clone()),
+        ),
+        ("start_address".to_string(), u64_num(analysis.start_address)),
+        ("end_address".to_string(), u64_num(analysis.end_address)),
+        (
+            "instruction_count".to_string(),
+            usize_num(analysis.instruction_count),
+        ),
+        (
+            "summary".to_string(),
+            JsonValue::Object(vec![
+                (
+                    "basic_block_count".to_string(),
+                    usize_num(analysis.summary.basic_block_count),
+                ),
+                (
+                    "edge_count".to_string(),
+                    usize_num(analysis.summary.edge_count),
+                ),
+                (
+                    "direct_call_count".to_string(),
+                    usize_num(analysis.summary.direct_call_count),
+                ),
+                (
+                    "indirect_call_count".to_string(),
+                    usize_num(analysis.summary.indirect_call_count),
+                ),
+                (
+                    "branch_count".to_string(),
+                    usize_num(analysis.summary.branch_count),
+                ),
+                (
+                    "return_count".to_string(),
+                    usize_num(analysis.summary.return_count),
+                ),
+                (
+                    "data_reference_count".to_string(),
+                    usize_num(analysis.summary.data_reference_count),
+                ),
+                (
+                    "import_count".to_string(),
+                    usize_num(analysis.summary.import_count),
+                ),
+                (
+                    "cache_link_count".to_string(),
+                    usize_num(analysis.summary.cache_link_count),
+                ),
+                (
+                    "recovered_value_count".to_string(),
+                    usize_num(analysis.summary.recovered_value_count),
+                ),
+                (
+                    "jump_table_count".to_string(),
+                    usize_num(analysis.summary.jump_table_count),
+                ),
+                (
+                    "unresolved_indirect_count".to_string(),
+                    usize_num(analysis.summary.unresolved_indirect_count),
+                ),
+            ]),
+        ),
+        (
+            "basic_blocks".to_string(),
+            JsonValue::Array(
+                analysis
+                    .basic_blocks
+                    .iter()
+                    .map(|block| {
+                        JsonValue::Object(vec![
+                            ("id".to_string(), usize_num(block.id)),
+                            ("start_address".to_string(), u64_num(block.start_address)),
+                            ("end_address".to_string(), u64_num(block.end_address)),
+                            (
+                                "instruction_count".to_string(),
+                                usize_num(block.instruction_count),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "edges".to_string(),
+            JsonValue::Array(
+                analysis
+                    .edges
+                    .iter()
+                    .map(|edge| {
+                        JsonValue::Object(vec![
+                            ("from_block".to_string(), usize_num(edge.from_block)),
+                            ("source_address".to_string(), u64_num(edge.source_address)),
+                            (
+                                "target_address".to_string(),
+                                edge.target_address.map(u64_num).unwrap_or(JsonValue::Null),
+                            ),
+                            ("kind".to_string(), JsonValue::String(edge.kind.to_string())),
+                            (
+                                "via".to_string(),
+                                edge.via
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "direct_calls".to_string(),
+            JsonValue::Array(analysis.direct_calls.iter().map(target_use_json).collect()),
+        ),
+        (
+            "branch_targets".to_string(),
+            JsonValue::Array(
+                analysis
+                    .branch_targets
+                    .iter()
+                    .map(target_use_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "data_references".to_string(),
+            JsonValue::Array(
+                analysis
+                    .data_references
+                    .iter()
+                    .map(target_use_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "indirect_controls".to_string(),
+            JsonValue::Array(
+                analysis
+                    .indirect_controls
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "instruction_address".to_string(),
+                                u64_num(entry.instruction_address),
+                            ),
+                            (
+                                "kind".to_string(),
+                                JsonValue::String(entry.kind.to_string()),
+                            ),
+                            ("via".to_string(), JsonValue::String(entry.via.clone())),
+                            (
+                                "resolved_target".to_string(),
+                                entry
+                                    .resolved_target
+                                    .map(u64_num)
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "imports".to_string(),
+            JsonValue::Array(
+                analysis
+                    .imports
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "instruction_address".to_string(),
+                                u64_num(entry.instruction_address),
+                            ),
+                            ("dylib".to_string(), JsonValue::String(entry.dylib.clone())),
+                            ("name".to_string(), JsonValue::String(entry.name.clone())),
+                            (
+                                "address".to_string(),
+                                entry.address.map(u64_num).unwrap_or(JsonValue::Null),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "cache_links".to_string(),
+            JsonValue::Array(
+                analysis
+                    .cache_links
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "instruction_address".to_string(),
+                                u64_num(entry.instruction_address),
+                            ),
+                            (
+                                "symbol_name".to_string(),
+                                JsonValue::String(entry.symbol_name.clone()),
+                            ),
+                            ("dylib".to_string(), JsonValue::String(entry.dylib.clone())),
+                            (
+                                "provider_image_id".to_string(),
+                                JsonValue::String(entry.provider_image_id.clone()),
+                            ),
+                            (
+                                "provider_install_name".to_string(),
+                                JsonValue::String(entry.provider_install_name.clone()),
+                            ),
+                            (
+                                "provider_member_name".to_string(),
+                                JsonValue::String(entry.provider_member_name.clone()),
+                            ),
+                            (
+                                "provider_kind".to_string(),
+                                JsonValue::String(entry.provider_kind.clone()),
+                            ),
+                            (
+                                "target_dylib".to_string(),
+                                entry
+                                    .target_dylib
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "target_symbol".to_string(),
+                                entry
+                                    .target_symbol
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "resolved_target_image_id".to_string(),
+                                entry
+                                    .resolved_target_image_id
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "resolved_target_install_name".to_string(),
+                                entry
+                                    .resolved_target_install_name
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "resolved_target_member_name".to_string(),
+                                entry
+                                    .resolved_target_member_name
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "recovered_values".to_string(),
+            JsonValue::Array(
+                analysis
+                    .recovered_values
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "instruction_address".to_string(),
+                                u64_num(entry.instruction_address),
+                            ),
+                            (
+                                "register".to_string(),
+                                JsonValue::String(entry.register.clone()),
+                            ),
+                            ("value".to_string(), u64_num(entry.value)),
+                            (
+                                "kind".to_string(),
+                                JsonValue::String(format!("{:?}", entry.kind)),
+                            ),
+                            (
+                                "source".to_string(),
+                                JsonValue::String(format!("{:?}", entry.source)),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "jump_tables".to_string(),
+            JsonValue::Array(
+                analysis
+                    .jump_tables
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "instruction_address".to_string(),
+                                u64_num(entry.instruction_address),
+                            ),
+                            ("table_base".to_string(), u64_num(entry.table_base)),
+                            (
+                                "index_register".to_string(),
+                                JsonValue::String(entry.index_register.clone()),
+                            ),
+                            (
+                                "element_size".to_string(),
+                                u64_num(u64::from(entry.element_size)),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+fn target_use_json(entry: &damsel_core::DisassemblyTargetUse) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "instruction_address".to_string(),
+            u64_num(entry.instruction_address),
+        ),
+        ("target_address".to_string(), u64_num(entry.target_address)),
+    ])
 }
 
 struct ErrorJsonDto<'a> {
@@ -4588,6 +5002,7 @@ impl JsonDto for DoctorJsonDto<'_> {
                         tool_status_json(&report.tools.python3),
                     ),
                     ("nm".to_string(), tool_status_json(&report.tools.nm)),
+                    ("swiftc".to_string(), tool_status_json(&report.tools.swiftc)),
                     (
                         "sdk_path_probe".to_string(),
                         tool_status_json(&report.tools.sdk_path_probe),
@@ -5233,6 +5648,7 @@ fn print_doctor_text(report: &DoctorReport) {
     print_tool_line("clang", &report.tools.clang);
     print_tool_line("python3", &report.tools.python3);
     print_tool_line("nm", &report.tools.nm);
+    print_tool_line("swiftc", &report.tools.swiftc);
     print_tool_line("sdk_path_probe", &report.tools.sdk_path_probe);
     print_tool_line("sha256sum", &report.tools.hash_tools.sha256sum);
     print_tool_line("shasum", &report.tools.hash_tools.shasum);
@@ -5554,6 +5970,13 @@ fn push_tool_requirement_from_policy(
             "missing_nm",
             "unusable_nm",
         ),
+        CompatibilityToolRequirement::Swiftc => push_tool_requirement(
+            reasons,
+            &context.tools.swiftc,
+            "swiftc",
+            "missing_swiftc",
+            "unusable_swiftc",
+        ),
         CompatibilityToolRequirement::Sha256sum
         | CompatibilityToolRequirement::Shasum
         | CompatibilityToolRequirement::Openssl => {}
@@ -5571,6 +5994,7 @@ fn tool_requirement_usable(
         CompatibilityToolRequirement::Strip => context.tools.strip.usable,
         CompatibilityToolRequirement::Python3 => context.tools.python3.usable,
         CompatibilityToolRequirement::Nm => context.tools.nm.usable,
+        CompatibilityToolRequirement::Swiftc => context.tools.swiftc.usable,
         CompatibilityToolRequirement::Sha256sum => context.tools.hash_tools.sha256sum.usable,
         CompatibilityToolRequirement::Shasum => context.tools.hash_tools.shasum.usable,
         CompatibilityToolRequirement::Openssl => context.tools.hash_tools.openssl.usable,
@@ -5609,6 +6033,7 @@ fn detect_doctor_tools() -> DoctorTools {
     let strip = probe_tool_via_xcrun_or_path(&xcrun, "strip");
     let python3 = probe_python3();
     let nm = probe_executable_tool_with_probe("nm", &["--version"]);
+    let swiftc = probe_tool_via_xcrun_or_path(&xcrun, "swiftc");
     let sdk_path_probe = probe_xcrun_sdk_path(&xcrun);
     let hash_tools = HashToolStatus {
         sha256sum: probe_hash_tool("sha256sum"),
@@ -5623,6 +6048,7 @@ fn detect_doctor_tools() -> DoctorTools {
         strip,
         python3,
         nm,
+        swiftc,
         sdk_path_probe,
         hash_tools,
         selected_hash_tool,
@@ -5955,6 +6381,7 @@ mod tests {
             strip: usable_tool("/usr/bin/strip"),
             python3: usable_tool("/usr/bin/python3"),
             nm: usable_tool("/usr/bin/nm"),
+            swiftc: usable_tool("/usr/bin/swiftc"),
             sdk_path_probe: usable_tool("/Applications/Xcode.app/SDKs/MacOSX.sdk"),
             hash_tools: HashToolStatus {
                 sha256sum,

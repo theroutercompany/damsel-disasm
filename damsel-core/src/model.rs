@@ -236,6 +236,7 @@ pub enum CompatibilityToolRequirement {
     Strip,
     Python3,
     Nm,
+    Swiftc,
     Sha256sum,
     Shasum,
     Openssl,
@@ -250,6 +251,7 @@ impl CompatibilityToolRequirement {
             Self::Strip => "strip",
             Self::Python3 => "python3",
             Self::Nm => "nm",
+            Self::Swiftc => "swiftc",
             Self::Sha256sum => "sha256sum",
             Self::Shasum => "shasum",
             Self::Openssl => "openssl",
@@ -319,6 +321,7 @@ const REBUILD_REQUIRED_TOOLS_ALL: &[CompatibilityToolRequirement] = &[
     CompatibilityToolRequirement::Strip,
     CompatibilityToolRequirement::Python3,
     CompatibilityToolRequirement::Nm,
+    CompatibilityToolRequirement::Swiftc,
 ];
 const DRIFT_REQUIRED_TOOLS_ANY: &[CompatibilityToolRequirement] = &[
     CompatibilityToolRequirement::Sha256sum,
@@ -396,6 +399,7 @@ const TOOLS_ALL_USABLE: &[(CompatibilityToolRequirement, bool)] = &[
     (CompatibilityToolRequirement::Strip, true),
     (CompatibilityToolRequirement::Python3, true),
     (CompatibilityToolRequirement::Nm, true),
+    (CompatibilityToolRequirement::Swiftc, true),
     (CompatibilityToolRequirement::Sha256sum, true),
     (CompatibilityToolRequirement::Shasum, true),
     (CompatibilityToolRequirement::Openssl, true),
@@ -407,6 +411,7 @@ const TOOLS_OPENSSL_ONLY: &[(CompatibilityToolRequirement, bool)] = &[
     (CompatibilityToolRequirement::Strip, false),
     (CompatibilityToolRequirement::Python3, false),
     (CompatibilityToolRequirement::Nm, false),
+    (CompatibilityToolRequirement::Swiftc, false),
     (CompatibilityToolRequirement::Sha256sum, false),
     (CompatibilityToolRequirement::Shasum, false),
     (CompatibilityToolRequirement::Openssl, true),
@@ -418,6 +423,7 @@ const TOOLS_NO_HASH_BACKEND: &[(CompatibilityToolRequirement, bool)] = &[
     (CompatibilityToolRequirement::Strip, true),
     (CompatibilityToolRequirement::Python3, true),
     (CompatibilityToolRequirement::Nm, true),
+    (CompatibilityToolRequirement::Swiftc, true),
     (CompatibilityToolRequirement::Sha256sum, false),
     (CompatibilityToolRequirement::Shasum, false),
     (CompatibilityToolRequirement::Openssl, false),
@@ -429,6 +435,7 @@ const TOOLS_MISSING_SDK_PROBE: &[(CompatibilityToolRequirement, bool)] = &[
     (CompatibilityToolRequirement::Strip, true),
     (CompatibilityToolRequirement::Python3, true),
     (CompatibilityToolRequirement::Nm, true),
+    (CompatibilityToolRequirement::Swiftc, true),
     (CompatibilityToolRequirement::Sha256sum, true),
     (CompatibilityToolRequirement::Shasum, true),
     (CompatibilityToolRequirement::Openssl, true),
@@ -2296,6 +2303,139 @@ impl DecodedInstruction {
             )
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ControlFlowEdgeKind {
+    Fallthrough,
+    Branch,
+    ConditionalBranch,
+    Call,
+    IndirectCall,
+    IndirectBranch,
+    Return,
+}
+
+impl fmt::Display for ControlFlowEdgeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::Fallthrough => "fallthrough",
+            Self::Branch => "branch",
+            Self::ConditionalBranch => "conditional-branch",
+            Self::Call => "call",
+            Self::IndirectCall => "indirect-call",
+            Self::IndirectBranch => "indirect-branch",
+            Self::Return => "return",
+        };
+        f.write_str(text)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControlFlowEdge {
+    pub from_block: usize,
+    pub source_address: u64,
+    pub target_address: Option<u64>,
+    pub kind: ControlFlowEdgeKind,
+    pub via: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BasicBlock {
+    pub id: usize,
+    pub start_address: u64,
+    pub end_address: u64,
+    pub instruction_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyTargetUse {
+    pub instruction_address: u64,
+    pub target_address: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyIndirectUse {
+    pub instruction_address: u64,
+    pub kind: ControlFlowEdgeKind,
+    pub via: String,
+    pub resolved_target: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyImportUse {
+    pub instruction_address: u64,
+    pub dylib: String,
+    pub name: String,
+    pub address: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyRecoveredValueUse {
+    pub instruction_address: u64,
+    pub register: String,
+    pub value: u64,
+    pub kind: RecoveredValueKind,
+    pub source: RecoveredValueSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyJumpTableUse {
+    pub instruction_address: u64,
+    pub table_base: u64,
+    pub index_register: String,
+    pub element_size: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyCacheLinkUse {
+    pub instruction_address: u64,
+    pub symbol_name: String,
+    pub dylib: String,
+    pub provider_image_id: String,
+    pub provider_install_name: String,
+    pub provider_member_name: String,
+    pub provider_kind: String,
+    pub target_dylib: Option<String>,
+    pub target_symbol: Option<String>,
+    pub resolved_target_image_id: Option<String>,
+    pub resolved_target_install_name: Option<String>,
+    pub resolved_target_member_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblySummary {
+    pub basic_block_count: usize,
+    pub edge_count: usize,
+    pub direct_call_count: usize,
+    pub indirect_call_count: usize,
+    pub branch_count: usize,
+    pub return_count: usize,
+    pub data_reference_count: usize,
+    pub import_count: usize,
+    pub cache_link_count: usize,
+    pub recovered_value_count: usize,
+    pub jump_table_count: usize,
+    pub unresolved_indirect_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyAnalysis {
+    pub target: String,
+    pub start_address: u64,
+    pub end_address: u64,
+    pub instruction_count: usize,
+    pub basic_blocks: Vec<BasicBlock>,
+    pub edges: Vec<ControlFlowEdge>,
+    pub direct_calls: Vec<DisassemblyTargetUse>,
+    pub branch_targets: Vec<DisassemblyTargetUse>,
+    pub data_references: Vec<DisassemblyTargetUse>,
+    pub indirect_controls: Vec<DisassemblyIndirectUse>,
+    pub imports: Vec<DisassemblyImportUse>,
+    pub cache_links: Vec<DisassemblyCacheLinkUse>,
+    pub recovered_values: Vec<DisassemblyRecoveredValueUse>,
+    pub jump_tables: Vec<DisassemblyJumpTableUse>,
+    pub summary: DisassemblySummary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

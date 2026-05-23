@@ -45,6 +45,7 @@ assert_contains "$tmpdir/help.txt" "macOS-only rebuild"
 
 "$SCRIPT" --manifest >"$tmpdir/manifest.txt"
 assert_contains "$tmpdir/manifest.txt" "arm64-symbolized"
+assert_contains "$tmpdir/manifest.txt" "swift-sample"
 
 "$SCRIPT" --manifest-corpus >"$tmpdir/manifest-corpus.txt"
 assert_contains "$tmpdir/manifest-corpus.txt" "README.md"
@@ -495,5 +496,90 @@ status=$?
 set -e
 assert_exit_code "$status" 2 "nm missing"
 assert_contains "$tmpdir/nmmissing.stderr" "fixture rebuild requires nm"
+
+mkdir -p "$tmpdir/fake-swiftc-missing"
+cat >"$tmpdir/fake-swiftc-missing/uname" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  -s)
+    echo "Darwin"
+    ;;
+  -m)
+    echo "arm64"
+    ;;
+  *)
+    echo "Darwin"
+    ;;
+esac
+EOF
+cat >"$tmpdir/fake-swiftc-missing/dirname" <<'EOF'
+#!/bin/sh
+value="${1:-.}"
+case "$value" in
+  */*)
+    printf '%s\n' "${value%/*}"
+    ;;
+  *)
+    echo "."
+    ;;
+esac
+EOF
+cat >"$tmpdir/fake-swiftc-missing/xcrun" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  --show-sdk-path)
+    echo "/tmp/mock-sdk"
+    exit 0
+    ;;
+  --find)
+    case "${2:-}" in
+      clang)
+        echo "__FAKE_DIR__/clang"
+        exit 0
+        ;;
+      strip)
+        echo "__FAKE_DIR__/strip"
+        exit 0
+        ;;
+      swiftc)
+        exit 1
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+cat >"$tmpdir/fake-swiftc-missing/clang" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+cat >"$tmpdir/fake-swiftc-missing/strip" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+cat >"$tmpdir/fake-swiftc-missing/python3" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+cat >"$tmpdir/fake-swiftc-missing/nm" <<'EOF'
+#!/bin/sh
+if [ "$1" = "--version" ]; then exit 0; fi
+exit 1
+EOF
+sed "s#__FAKE_DIR__#$tmpdir/fake-swiftc-missing#g" "$tmpdir/fake-swiftc-missing/xcrun" >"$tmpdir/fake-swiftc-missing/xcrun.tmp"
+mv "$tmpdir/fake-swiftc-missing/xcrun.tmp" "$tmpdir/fake-swiftc-missing/xcrun"
+chmod +x "$tmpdir/fake-swiftc-missing/uname" "$tmpdir/fake-swiftc-missing/dirname" "$tmpdir/fake-swiftc-missing/xcrun" "$tmpdir/fake-swiftc-missing/clang" "$tmpdir/fake-swiftc-missing/strip" "$tmpdir/fake-swiftc-missing/python3" "$tmpdir/fake-swiftc-missing/nm"
+
+set +e
+PATH="$tmpdir/fake-swiftc-missing" "$SCRIPT" >"$tmpdir/swiftcmissing.stdout" 2>"$tmpdir/swiftcmissing.stderr"
+status=$?
+set -e
+assert_exit_code "$status" 2 "swiftc missing"
+assert_contains "$tmpdir/swiftcmissing.stderr" "unable to locate swiftc via xcrun or PATH"
 
 echo "fixtures parity probes passed"

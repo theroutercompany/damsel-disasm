@@ -53,6 +53,40 @@ fn disasm_unknown_symbol_returns_error() {
 }
 
 #[test]
+fn disasm_unknown_objc_method_returns_typed_error() {
+    let path = fixture("objc-sample");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "disasm",
+            path.to_str().expect("utf8 path"),
+            "--objc-owner",
+            "Greeter",
+            "--objc-selector",
+            "doesNotExist",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [objc_method_not_found]"));
+}
+
+#[test]
+fn disasm_unknown_swift_symbol_returns_typed_error() {
+    let path = fixture("arm64-symbolized");
+    Command::cargo_bin("damsel-cli")
+        .expect("binary exists")
+        .args([
+            "disasm",
+            path.to_str().expect("utf8 path"),
+            "--swift-symbol",
+            "_$s11SwiftSample9publicAddyS2iF",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error [swift_symbol_not_found]"));
+}
+
+#[test]
 fn info_non_macho_returns_typed_unsupported_input_error() {
     let path = write_temp_input(b"not a macho file");
     let path_string = path.to_string_lossy().to_string();

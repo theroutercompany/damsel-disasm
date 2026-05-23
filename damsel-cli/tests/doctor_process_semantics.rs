@@ -77,6 +77,7 @@ mod harness {
         pub(crate) openssl_success: bool,
         pub(crate) python3_success: bool,
         pub(crate) nm_success: bool,
+        pub(crate) swiftc_success: bool,
     }
 
     #[derive(Debug)]
@@ -94,6 +95,7 @@ mod harness {
                 openssl_success: true,
                 python3_success: true,
                 nm_success: true,
+                swiftc_success: true,
             })
         }
 
@@ -106,6 +108,7 @@ mod harness {
                 openssl_success: false,
                 python3_success: true,
                 nm_success: true,
+                swiftc_success: true,
             })
         }
 
@@ -118,6 +121,7 @@ mod harness {
                 openssl_success: true,
                 python3_success: true,
                 nm_success: true,
+                swiftc_success: true,
             })
         }
 
@@ -130,6 +134,7 @@ mod harness {
                 openssl_success: false,
                 python3_success: false,
                 nm_success: true,
+                swiftc_success: true,
             })
         }
 
@@ -143,9 +148,10 @@ mod harness {
             fs::create_dir_all(&sdk_dir).expect("create fake sdk");
 
             let xcrun_script = format!(
-                "#!/bin/sh\nif [ \"{xcrun_success}\" != \"1\" ]; then exit 1; fi\ncase \"$1\" in\n  --version) exit 0 ;;\n  --find)\n    case \"$2\" in\n      clang) echo \"{root}/clang\"; exit 0 ;;\n      strip) echo \"{root}/strip\"; exit 0 ;;\n      *) exit 1 ;;\n    esac ;;\n  --show-sdk-path)\n    if [ \"{sdk_probe_success}\" = \"1\" ]; then\n      echo \"{sdk}\"; exit 0\n    fi\n    exit 1 ;;\n  *) exit 1 ;;\nesac\n",
+                "#!/bin/sh\nif [ \"{xcrun_success}\" != \"1\" ]; then exit 1; fi\ncase \"$1\" in\n  --version) exit 0 ;;\n  --find)\n    case \"$2\" in\n      clang) echo \"{root}/clang\"; exit 0 ;;\n      strip) echo \"{root}/strip\"; exit 0 ;;\n      swiftc)\n        if [ \"{swiftc_success}\" = \"1\" ]; then echo \"{root}/swiftc\"; exit 0; fi\n        exit 1 ;;\n      *) exit 1 ;;\n    esac ;;\n  --show-sdk-path)\n    if [ \"{sdk_probe_success}\" = \"1\" ]; then\n      echo \"{sdk}\"; exit 0\n    fi\n    exit 1 ;;\n  *) exit 1 ;;\nesac\n",
                 xcrun_success = if profile.xcrun_success { "1" } else { "0" },
                 root = root.display(),
+                swiftc_success = if profile.swiftc_success { "1" } else { "0" },
                 sdk_probe_success = if profile.sdk_probe_success { "1" } else { "0" },
                 sdk = sdk_dir.display(),
             );
@@ -169,6 +175,14 @@ mod harness {
             write_exec_script(
                 &root.join("nm"),
                 if profile.nm_success {
+                    "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n"
+                } else {
+                    "#!/bin/sh\nexit 1\n"
+                },
+            );
+            write_exec_script(
+                &root.join("swiftc"),
+                if profile.swiftc_success {
                     "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n"
                 } else {
                     "#!/bin/sh\nexit 1\n"
