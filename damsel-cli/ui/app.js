@@ -603,6 +603,10 @@ function renderAnalysisObjcReferences(references) {
             entry.resolved_address === null
               ? '<span class="mono">-</span>'
               : renderJumpButton(entry.resolved_address);
+          const importProvider =
+            entry.import_dylib || entry.import_symbol
+              ? `${entry.import_dylib ?? "-"}:${entry.import_symbol ?? "-"}`
+              : "-";
           return `
             <div class="analysis-row">
               ${renderJumpButton(entry.instruction_address)}
@@ -610,6 +614,7 @@ function renderAnalysisObjcReferences(references) {
               ${renderJumpButton(entry.target_address)}
               ${resolved}
               <span class="mono">${escapeHtml(entry.name ?? "-")}</span>
+              <span class="mono">${escapeHtml(importProvider)}</span>
             </div>
           `;
         })

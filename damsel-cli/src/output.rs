@@ -1664,13 +1664,23 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
                 .resolved_address
                 .map(|value| format!("{value:#x}"))
                 .unwrap_or_else(|| "-".to_string());
+            let import = match (
+                entry.import_dylib.as_deref(),
+                entry.import_symbol.as_deref(),
+            ) {
+                (Some(dylib), Some(symbol)) => format!("{dylib}:{symbol}"),
+                (Some(dylib), None) => dylib.to_string(),
+                (None, Some(symbol)) => symbol.to_string(),
+                (None, None) => "-".to_string(),
+            };
             println!(
-                "    - at={:#x} kind={} target={:#x} resolved={} name={}",
+                "    - at={:#x} kind={} target={:#x} resolved={} name={} import={}",
                 entry.instruction_address,
                 entry.kind,
                 entry.target_address,
                 resolved,
-                entry.name.as_deref().unwrap_or("-")
+                entry.name.as_deref().unwrap_or("-"),
+                import
             );
         }
     }
@@ -4878,6 +4888,22 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                                 "name".to_string(),
                                 entry
                                     .name
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "import_dylib".to_string(),
+                                entry
+                                    .import_dylib
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "import_symbol".to_string(),
+                                entry
+                                    .import_symbol
                                     .as_ref()
                                     .map(|value| JsonValue::String(value.clone()))
                                     .unwrap_or(JsonValue::Null),

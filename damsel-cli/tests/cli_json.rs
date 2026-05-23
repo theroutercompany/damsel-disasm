@@ -2065,13 +2065,19 @@ fn disasm_json_analysis_reports_objc_references_for_fixture() {
         references.iter().any(|entry| entry["kind"] == "selector"
             && entry["name"].is_string()
             && entry["resolved_address"].is_number()
-            && entry["resolved_address"] != entry["target_address"]),
+            && entry["resolved_address"] != entry["target_address"]
+            && entry["import_dylib"].is_null()
+            && entry["import_symbol"].is_null()),
         "{out}"
     );
     assert!(
         references.iter().any(|entry| entry["kind"] == "class"
             && entry["name"] == "NSString"
-            && entry["resolved_address"].is_null()),
+            && entry["resolved_address"].is_null()
+            && entry["import_symbol"] == "_OBJC_CLASS_$_NSString"
+            && entry["import_dylib"]
+                .as_str()
+                .is_some_and(|value| value.contains("Foundation.framework"))),
         "{out}"
     );
     for entry in references {
@@ -2083,6 +2089,8 @@ fn disasm_json_analysis_reports_objc_references_for_fixture() {
                 "resolved_address",
                 "kind",
                 "name",
+                "import_dylib",
+                "import_symbol",
             ],
         );
     }

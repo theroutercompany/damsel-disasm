@@ -488,8 +488,13 @@ fn disasm_analysis_reports_objc_runtime_references_for_objc_fixture() {
             entry.kind == DisassemblyObjcReferenceKind::Class
                 && entry.name.as_deref() == Some("NSString")
                 && entry.resolved_address.is_none()
+                && entry.import_symbol.as_deref() == Some("_OBJC_CLASS_$_NSString")
+                && entry
+                    .import_dylib
+                    .as_deref()
+                    .is_some_and(|value| value.contains("Foundation.framework"))
         }),
-        "imported ObjC class references should stay typed even when dyld does not provide a concrete class metadata address"
+        "imported ObjC class references should stay typed and carry import provenance even when dyld does not provide a concrete class metadata address"
     );
     assert!(
         analysis

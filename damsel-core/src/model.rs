@@ -2413,6 +2413,8 @@ pub struct DisassemblyObjcUse {
     pub resolved_address: Option<u64>,
     pub kind: DisassemblyObjcReferenceKind,
     pub name: Option<String>,
+    pub import_dylib: Option<String>,
+    pub import_symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3872,12 +3874,17 @@ impl BinaryImage {
     }
 
     pub fn objc_imported_class_name_at_address(&self, address: u64) -> Option<&str> {
-        self.dyld.bindings_at_address(address).find_map(|binding| {
-            binding
-                .name
-                .strip_prefix("_OBJC_CLASS_$_")
-                .or_else(|| binding.name.strip_prefix("_OBJC_METACLASS_$_"))
-        })
+        self.objc_imported_class_binding_at_address(address)
+            .and_then(|binding| objc_imported_class_name_from_symbol(&binding.name))
+    }
+
+    pub fn objc_imported_class_binding_at_address(
+        &self,
+        address: u64,
+    ) -> Option<&ImportBindingRecord> {
+        self.dyld
+            .bindings_at_address(address)
+            .find(|binding| objc_imported_class_name_from_symbol(&binding.name).is_some())
     }
 
     pub fn objc_method_list_owner_at_address(&self, address: u64) -> Option<&str> {
@@ -4053,6 +4060,12 @@ impl BinaryImage {
         }
         index
     }
+}
+
+fn objc_imported_class_name_from_symbol(symbol: &str) -> Option<&str> {
+    symbol
+        .strip_prefix("_OBJC_CLASS_$_")
+        .or_else(|| symbol.strip_prefix("_OBJC_METACLASS_$_"))
 }
 
 impl BinaryImageBuilder {

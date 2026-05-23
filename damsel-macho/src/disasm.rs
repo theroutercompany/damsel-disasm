@@ -871,13 +871,22 @@ fn objc_reference_use_from_recovered(
             }
         })?,
     };
-    let (name, resolved_address) = image
+    let (name, resolved_address, import_dylib, import_symbol) = image
         .and_then(|image| match kind {
             DisassemblyObjcReferenceKind::Selector => image
                 .objc_selector_ref_at_address(recovered.value)
-                .map(|entry| (entry.resolved_name.clone(), entry.resolved_address)),
+                .map(|entry| {
+                    (
+                        entry.resolved_name.clone(),
+                        entry.resolved_address,
+                        None,
+                        None,
+                    )
+                }),
             DisassemblyObjcReferenceKind::Class => {
                 let class_ref = image.objc_class_ref_at_address(recovered.value);
+                let imported_binding =
+                    image.objc_imported_class_binding_at_address(recovered.value);
                 let name = class_ref
                     .and_then(|entry| entry.resolved_name.clone())
                     .or_else(|| {
@@ -898,19 +907,23 @@ fn objc_reference_use_from_recovered(
                                 && image.objc_class_name_at_address(recovered.value).is_some())
                             .then_some(recovered.value)
                         });
-                Some((name, resolved_address))
+                let import_dylib = imported_binding.map(|binding| binding.dylib.clone());
+                let import_symbol = imported_binding.map(|binding| binding.name.clone());
+                Some((name, resolved_address, import_dylib, import_symbol))
             }
             DisassemblyObjcReferenceKind::MethodList => image
                 .objc_method_list_owner_at_address(recovered.value)
-                .map(|name| (Some(name.to_string()), Some(recovered.value))),
+                .map(|name| (Some(name.to_string()), Some(recovered.value), None, None)),
         })
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, None, None));
     Some(DisassemblyObjcUse {
         instruction_address,
         target_address: recovered.value,
         resolved_address,
         kind,
         name,
+        import_dylib,
+        import_symbol,
     })
 }
 
