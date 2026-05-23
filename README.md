@@ -93,6 +93,19 @@ Useful verification commands:
 bin/disassembler-v2-alpha-validate.sh --require-external
 ```
 
+For a pinned Nix development and validation environment:
+
+```sh
+nix develop
+nix flake check
+nix develop --command bin/disassembler-v2-alpha-validate.sh --require-external
+```
+
+The flake pins the Rust, LLVM, Ruby, and shell tooling used by the fixture-backed
+validator. It improves reproducibility of code behavior and local operator
+commands; it does not replace independent real dyld shared-cache evidence from
+another macOS release or host.
+
 When public-beta evidence packages are available, feed them to the same
 validator:
 

@@ -202,7 +202,33 @@ All seven tracks are alpha-ready only when:
   or the release notes explicitly state that real-cache validation is pending.
 - The UI endpoint can return analysis without breaking the current UI flow.
 
-Public beta requires a stricter gate: broad real-cache coverage across at least
-two OS cache sets, no known crashing parser cases in the expanded fixture
-matrix, and no unresolved correctness issues in branch/indirect-target summary
-semantics.
+Current product gate:
+
+- Alpha-ready means the seven feature tracks pass the fixture-backed validator,
+  release workflow contract checks, and a documented local real-cache smoke.
+- Private beta may rely on the Nix flake for reproducible tooling plus scoped
+  local real-cache evidence, with release notes explicitly stating the remaining
+  platform-breadth gap.
+- Public beta requires a stricter gate: broad real-cache coverage across at
+  least two OS cache sets, no known crashing parser cases in the expanded
+  fixture matrix, and no unresolved correctness issues in branch/indirect-target
+  summary semantics.
+
+## Post-Alpha Feature Backlog
+
+The next product layer should build on the implemented seven-track alpha rather
+than redo the decoder:
+
+- Reproducible validation surface: keep the Nix flake, GitHub release checks, and
+  alpha validator aligned so contributors can reproduce CI behavior locally.
+- Cross-window graph navigation: build on the current block-resolved edge
+  contract by stitching local windows into function-level and image-level
+  call/reference views.
+- Deeper Swift runtime navigation: move beyond symbol-table entrypoints into
+  metadata-backed type/function exploration where fixtures can keep it honest.
+- ObjC xref explorer: expose class/category/protocol method references and IMP
+  callsites as navigable CLI/UI flows.
+- Performance telemetry: add stable decode/analysis counters for large
+  real-cache windows so regressions are measurable instead of anecdotal.
+- Corpus hardening: add malformed and edge-case fixtures whenever a parser or
+  analyzer assumption is discovered during real-cache exploration.

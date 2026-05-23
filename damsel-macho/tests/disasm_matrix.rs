@@ -398,6 +398,18 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
             ControlFlowEdgeKind::ConditionalBranch | ControlFlowEdgeKind::Branch
         )
     }));
+    assert!(analysis.edges.iter().any(|edge| {
+        matches!(
+            edge.kind,
+            ControlFlowEdgeKind::ConditionalBranch | ControlFlowEdgeKind::Branch
+        ) && edge.target_address.is_some()
+            && edge.to_block.is_some()
+    }));
+    assert!(analysis.edges.iter().any(|edge| {
+        edge.kind == ControlFlowEdgeKind::Fallthrough
+            && edge.target_address.is_some()
+            && edge.to_block.is_some()
+    }));
     assert!(analysis.summary.data_reference_count > 0);
     assert!(analysis.summary.recovered_value_count > 0);
     assert!(analysis.summary.jump_table_count > 0);

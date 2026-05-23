@@ -526,6 +526,7 @@ function renderAnalysisEdges(edges) {
           (edge) => `
             <div class="analysis-row">
               <span class="mono">${escapeHtml(edge.kind)}</span>
+              <span class="mono">#${escapeHtml(edge.from_block)}</span>
               ${renderJumpButton(edge.source_address)}
               <span class="detail-key">to</span>
               ${
@@ -533,6 +534,7 @@ function renderAnalysisEdges(edges) {
                   ? '<span class="mono">return</span>'
                   : renderJumpButton(edge.target_address)
               }
+              <span class="mono">#${escapeHtml(edge.to_block ?? "-")}</span>
             </div>
           `,
         )

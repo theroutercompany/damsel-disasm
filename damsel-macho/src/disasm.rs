@@ -57,6 +57,7 @@ pub fn analyze_disassembly(
                 &mut edges,
                 ControlFlowEdge {
                     from_block,
+                    to_block: None,
                     source_address: instruction.address,
                     target_address: None,
                     kind: ControlFlowEdgeKind::Return,
@@ -79,6 +80,7 @@ pub fn analyze_disassembly(
                         &mut edges,
                         ControlFlowEdge {
                             from_block,
+                            to_block: block_id_for_address(&basic_blocks, *target),
                             source_address: instruction.address,
                             target_address: Some(*target),
                             kind: ControlFlowEdgeKind::Call,
@@ -103,6 +105,7 @@ pub fn analyze_disassembly(
                         &mut edges,
                         ControlFlowEdge {
                             from_block,
+                            to_block: block_id_for_address(&basic_blocks, *target),
                             source_address: instruction.address,
                             target_address: Some(*target),
                             kind,
@@ -124,6 +127,8 @@ pub fn analyze_disassembly(
                         &mut edges,
                         ControlFlowEdge {
                             from_block,
+                            to_block: resolved_direct_target
+                                .and_then(|target| block_id_for_address(&basic_blocks, target)),
                             source_address: instruction.address,
                             target_address: resolved_direct_target,
                             kind: ControlFlowEdgeKind::IndirectCall,
@@ -145,6 +150,8 @@ pub fn analyze_disassembly(
                         &mut edges,
                         ControlFlowEdge {
                             from_block,
+                            to_block: resolved_direct_target
+                                .and_then(|target| block_id_for_address(&basic_blocks, target)),
                             source_address: instruction.address,
                             target_address: resolved_direct_target,
                             kind: ControlFlowEdgeKind::IndirectBranch,
@@ -691,6 +698,7 @@ fn add_fallthrough_edges(
                 edges,
                 ControlFlowEdge {
                     from_block: block.id,
+                    to_block: Some(target_block.id),
                     source_address: last.address,
                     target_address: Some(target_block.start_address),
                     kind: ControlFlowEdgeKind::Fallthrough,
@@ -1513,6 +1521,7 @@ fn basic_block_join_addresses(instructions: &[DecodedInstruction]) -> BTreeSet<u
                     &mut edges,
                     ControlFlowEdge {
                         from_block,
+                        to_block: block_id_for_address(&blocks, *target),
                         source_address: instruction.address,
                         target_address: Some(*target),
                         kind: ControlFlowEdgeKind::Branch,

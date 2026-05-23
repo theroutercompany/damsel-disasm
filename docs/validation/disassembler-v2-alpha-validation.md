@@ -48,11 +48,27 @@ bin/shared-cache-evidence-package-test.sh
 bin/shared-cache-evidence-audit-test.sh
 ```
 
+## Reproducible Tooling Gate
+
+The repository includes a Nix flake for reproducible development shells and
+validation checks:
+
+```sh
+nix develop
+nix flake check
+nix develop --command bin/disassembler-v2-alpha-validate.sh --require-external
+```
+
+This gate pins the local Rust, LLVM, Ruby, and shell tooling used by the
+fixture-backed validation path. It is a reproducibility gate, not a platform
+breadth gate: it cannot prove behavior against a second real dyld shared cache
+or a different macOS release.
+
 Coverage expected from the checked-in corpus:
 
 | Area | Fixture or test | Expected evidence |
 | --- | --- | --- |
-| CFG and summary | `semantic-switch`, `damsel-macho/tests/disasm_matrix.rs` | Multiple basic blocks, direct edges, fallthrough edges, data refs, recovered values, jump-table summary |
+| CFG and summary | `semantic-switch`, `damsel-macho/tests/disasm_matrix.rs` | Multiple basic blocks, direct edges, fallthrough edges with resolved `from_block`/`to_block` IDs, data refs, recovered values, jump-table summary |
 | Cache links | `internal-linkage-arm64.cache`, `damsel-cli/tests/cli_json.rs` | Import rows resolve to provider images and stable `cache_links` JSON |
 | Value-flow safety | `damsel-macho` unit tests | Call-clobbered registers stop flowing past calls while callee-saved registers survive |
 | ObjC entrypoints | `objc-sample`, `damsel-cli/tests/cli_json.rs` | `--objc-owner` plus `--objc-selector` resolves to an implementation address |
@@ -110,7 +126,9 @@ entries such as absolute paths, parent traversal, links, or unexpected member
 types, then verifies the extracted package. The report records host metadata,
 cache UUIDs,
 duplicate-UUID skips, sampled projected images, skipped image reasons, and
-summary counts. Beta evidence should include at least one report whose host OS
+summary counts. Private alpha and private beta candidates may ship with the
+fixture-backed validator, Nix flake check, and at least one local real-cache
+evidence package. Public beta should include at least one report whose host OS
 release or cache UUID set is independent from the current local macOS 26.5 run.
 
 Audit one or more packages before claiming public-beta breadth. The audit

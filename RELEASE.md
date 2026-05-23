@@ -99,6 +99,16 @@ The release workflow must run this verification subset before publishing:
 bin/disassembler-v2-alpha-validate.sh --require-external
 ```
 
+Maintainers can reproduce the fixture-backed validation environment with Nix:
+
+```sh
+nix develop --command bin/disassembler-v2-alpha-validate.sh --require-external
+nix flake check
+```
+
+The Nix flake is a tooling reproducibility gate. It does not replace hosted or
+second-machine real-cache evidence for public-beta breadth.
+
 With public-beta evidence packages, use the same validator to enforce the
 real-cache breadth gate:
 

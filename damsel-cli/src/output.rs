@@ -1617,8 +1617,15 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
                 .unwrap_or_else(|| "-".to_string());
             let via = edge.via.as_deref().unwrap_or("-");
             println!(
-                "    - block={} source={:#x} kind={} target={} via={}",
-                edge.from_block, edge.source_address, edge.kind, target, via
+                "    - block={} to_block={} source={:#x} kind={} target={} via={}",
+                edge.from_block,
+                edge.to_block
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                edge.source_address,
+                edge.kind,
+                target,
+                via
             );
         }
     }
@@ -4660,6 +4667,10 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                     .map(|edge| {
                         JsonValue::Object(vec![
                             ("from_block".to_string(), usize_num(edge.from_block)),
+                            (
+                                "to_block".to_string(),
+                                edge.to_block.map(usize_num).unwrap_or(JsonValue::Null),
+                            ),
                             ("source_address".to_string(), u64_num(edge.source_address)),
                             (
                                 "target_address".to_string(),

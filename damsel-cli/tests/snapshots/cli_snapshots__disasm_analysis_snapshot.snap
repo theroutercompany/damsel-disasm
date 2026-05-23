@@ -27,11 +27,11 @@ analysis:
     - id=2 range=0x1000004d4..0x1000004d8 instructions=1
     - id=3 range=0x1000004d8..0x1000004f0 instructions=6
   edges:
-    - block=0 source=0x1000004c4 kind=conditional-branch target=0x1000004d4 via=-
-    - block=1 source=0x1000004cc kind=call target=0x100000590 via=-
-    - block=1 source=0x1000004d0 kind=branch target=0x1000004d8 via=-
-    - block=0 source=0x1000004c4 kind=fallthrough target=0x1000004c8 via=-
-    - block=2 source=0x1000004d4 kind=fallthrough target=0x1000004d8 via=-
+    - block=0 to_block=2 source=0x1000004c4 kind=conditional-branch target=0x1000004d4 via=-
+    - block=1 to_block=- source=0x1000004cc kind=call target=0x100000590 via=-
+    - block=1 to_block=3 source=0x1000004d0 kind=branch target=0x1000004d8 via=-
+    - block=0 to_block=1 source=0x1000004c4 kind=fallthrough target=0x1000004c8 via=-
+    - block=2 to_block=3 source=0x1000004d4 kind=fallthrough target=0x1000004d8 via=-
   imports:
     - at=0x1000004cc /usr/lib/libSystem.B.dylib:_atoi address=0x100004008
     - at=0x1000004e4 /usr/lib/libSystem.B.dylib:___stderrp address=0x100004000

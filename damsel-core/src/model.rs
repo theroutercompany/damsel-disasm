@@ -2334,6 +2334,7 @@ impl fmt::Display for ControlFlowEdgeKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlFlowEdge {
     pub from_block: usize,
+    pub to_block: Option<usize>,
     pub source_address: u64,
     pub target_address: Option<u64>,
     pub kind: ControlFlowEdgeKind,

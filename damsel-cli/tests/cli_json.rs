@@ -1952,6 +1952,26 @@ fn disasm_json_analysis_contract_is_opt_in() {
             .iter()
             .any(|edge| edge["kind"] == "conditional-branch" || edge["kind"] == "branch")
     }));
+    let edges = analysis["edges"].as_array().expect("analysis edges");
+    assert!(
+        edges
+            .iter()
+            .any(|edge| edge["target_address"].is_number() && edge["to_block"].is_number()),
+        "expected at least one edge to resolve its target block"
+    );
+    for edge in edges {
+        assert_exact_object_keys(
+            edge,
+            &[
+                "from_block",
+                "to_block",
+                "source_address",
+                "target_address",
+                "kind",
+                "via",
+            ],
+        );
+    }
     assert!(
         analysis["jump_tables"]
             .as_array()
