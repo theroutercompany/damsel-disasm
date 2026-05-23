@@ -1599,6 +1599,18 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         analysis.summary.jump_table_count,
         analysis.summary.unresolved_indirect_count
     );
+    println!(
+        "  metrics: decoded_bytes={} references={} annotations={} max_refs_per_instruction={} max_annotations_per_instruction={} max_block_instructions={} intra_window_edges={} external_target_edges={} unresolved_target_edges={}",
+        analysis.metrics.decoded_byte_count,
+        analysis.metrics.reference_count,
+        analysis.metrics.annotation_count,
+        analysis.metrics.max_instruction_reference_count,
+        analysis.metrics.max_instruction_annotation_count,
+        analysis.metrics.max_basic_block_instruction_count,
+        analysis.metrics.intra_window_edge_count,
+        analysis.metrics.external_target_edge_count,
+        analysis.metrics.unresolved_target_edge_count
+    );
     if !analysis.basic_blocks.is_empty() {
         println!("  blocks:");
         for block in &analysis.basic_blocks {
@@ -4584,6 +4596,47 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
         (
             "instruction_count".to_string(),
             usize_num(analysis.instruction_count),
+        ),
+        (
+            "metrics".to_string(),
+            JsonValue::Object(vec![
+                (
+                    "decoded_byte_count".to_string(),
+                    usize_num(analysis.metrics.decoded_byte_count),
+                ),
+                (
+                    "reference_count".to_string(),
+                    usize_num(analysis.metrics.reference_count),
+                ),
+                (
+                    "annotation_count".to_string(),
+                    usize_num(analysis.metrics.annotation_count),
+                ),
+                (
+                    "max_instruction_reference_count".to_string(),
+                    usize_num(analysis.metrics.max_instruction_reference_count),
+                ),
+                (
+                    "max_instruction_annotation_count".to_string(),
+                    usize_num(analysis.metrics.max_instruction_annotation_count),
+                ),
+                (
+                    "max_basic_block_instruction_count".to_string(),
+                    usize_num(analysis.metrics.max_basic_block_instruction_count),
+                ),
+                (
+                    "intra_window_edge_count".to_string(),
+                    usize_num(analysis.metrics.intra_window_edge_count),
+                ),
+                (
+                    "external_target_edge_count".to_string(),
+                    usize_num(analysis.metrics.external_target_edge_count),
+                ),
+                (
+                    "unresolved_target_edge_count".to_string(),
+                    usize_num(analysis.metrics.unresolved_target_edge_count),
+                ),
+            ]),
         ),
         (
             "summary".to_string(),

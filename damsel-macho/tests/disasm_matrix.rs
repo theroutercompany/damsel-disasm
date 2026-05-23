@@ -392,6 +392,13 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
         analysis.basic_blocks.len()
     );
     assert_eq!(analysis.summary.edge_count, analysis.edges.len());
+    assert_eq!(
+        analysis.metrics.decoded_byte_count as u64,
+        result.end_address.saturating_sub(result.start_address)
+    );
+    assert!(analysis.metrics.reference_count > 0);
+    assert!(analysis.metrics.annotation_count > 0);
+    assert!(analysis.metrics.max_basic_block_instruction_count > 1);
     assert!(analysis.edges.iter().any(|edge| {
         matches!(
             edge.kind,
@@ -410,6 +417,9 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
             && edge.target_address.is_some()
             && edge.to_block.is_some()
     }));
+    assert!(analysis.metrics.intra_window_edge_count > 0);
+    assert!(analysis.metrics.external_target_edge_count > 0);
+    assert_eq!(analysis.metrics.unresolved_target_edge_count, 0);
     assert!(analysis.summary.data_reference_count > 0);
     assert!(analysis.summary.recovered_value_count > 0);
     assert!(analysis.summary.jump_table_count > 0);

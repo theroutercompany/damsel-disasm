@@ -262,6 +262,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("includeAnalysis"));
     assert!(js.contains("renderAnalysisEdges"));
     assert!(js.contains("to_block"));
+    assert!(js.contains("Intra-window Edges"));
     assert!(js.contains("Basic Blocks"));
 
     let upload = upload_fixture(&client, &server, "semantic-switch");

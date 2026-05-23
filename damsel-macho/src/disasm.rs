@@ -2,12 +2,12 @@ use crate::errors::{MachoError, Result};
 use damsel_core::{
     Annotation, BasicBlock, BinaryImage, ControlFlowEdge, ControlFlowEdgeKind, DecodedInstruction,
     DisassemblyAnalysis, DisassemblyImportUse, DisassemblyIndirectUse, DisassemblyJumpTableUse,
-    DisassemblyLimit, DisassemblyRecoveredValueUse, DisassemblyRequest, DisassemblyRequestV2,
-    DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason, DisassemblySummary,
-    DisassemblyTarget, DisassemblyTargetUse, Import, ImportBindingKind, ImportBindingRecord,
-    ImportBindingSource, IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind,
-    RecoveredValueSource, Reference, Relocation, Section, StubHelperEntry, Symbol,
-    TableSlotEncoding,
+    DisassemblyLimit, DisassemblyMetrics, DisassemblyRecoveredValueUse, DisassemblyRequest,
+    DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
+    DisassemblySummary, DisassemblyTarget, DisassemblyTargetUse, Import, ImportBindingKind,
+    ImportBindingRecord, ImportBindingSource, IndirectTargetReason, Operand, RecoveredValue,
+    RecoveredValueKind, RecoveredValueSource, Reference, Relocation, Section, StubHelperEntry,
+    Symbol, TableSlotEncoding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,8 +38,19 @@ pub fn analyze_disassembly(
     let mut recovered_values = Vec::new();
     let mut jump_tables = Vec::new();
     let mut return_count = 0;
+    let mut reference_count = 0;
+    let mut annotation_count = 0;
+    let mut max_instruction_reference_count = 0;
+    let mut max_instruction_annotation_count = 0;
 
     for instruction in instructions {
+        reference_count += instruction.references.len();
+        annotation_count += instruction.annotations.len();
+        max_instruction_reference_count =
+            max_instruction_reference_count.max(instruction.references.len());
+        max_instruction_annotation_count =
+            max_instruction_annotation_count.max(instruction.annotations.len());
+
         let lower = instruction.mnemonic.to_ascii_lowercase();
         let from_block = block_id_for_address(&basic_blocks, instruction.address).unwrap_or(0);
         let resolved_direct_target =
@@ -247,6 +258,22 @@ pub fn analyze_disassembly(
     }
 
     add_fallthrough_edges(instructions, &basic_blocks, &mut edges);
+    let intra_window_edge_count = edges.iter().filter(|edge| edge.to_block.is_some()).count();
+    let external_target_edge_count = edges
+        .iter()
+        .filter(|edge| edge.target_address.is_some() && edge.to_block.is_none())
+        .count();
+    let unresolved_target_edge_count = edges
+        .iter()
+        .filter(|edge| edge.target_address.is_none() && edge.kind != ControlFlowEdgeKind::Return)
+        .count();
+    let max_basic_block_instruction_count = basic_blocks
+        .iter()
+        .map(|block| block.instruction_count)
+        .max()
+        .unwrap_or(0);
+    let decoded_byte_count =
+        usize::try_from(end_address.saturating_sub(start_address)).unwrap_or(usize::MAX);
 
     let indirect_call_count = indirect_controls
         .iter()
@@ -262,6 +289,17 @@ pub fn analyze_disassembly(
         start_address,
         end_address,
         instruction_count: instructions.len(),
+        metrics: DisassemblyMetrics {
+            decoded_byte_count,
+            reference_count,
+            annotation_count,
+            max_instruction_reference_count,
+            max_instruction_annotation_count,
+            max_basic_block_instruction_count,
+            intra_window_edge_count,
+            external_target_edge_count,
+            unresolved_target_edge_count,
+        },
         summary: DisassemblySummary {
             basic_block_count: basic_blocks.len(),
             edge_count: edges.len(),

@@ -1901,6 +1901,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "start_address",
             "end_address",
             "instruction_count",
+            "metrics",
             "summary",
             "basic_blocks",
             "edges",
@@ -1912,6 +1913,20 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "cache_links",
             "recovered_values",
             "jump_tables",
+        ],
+    );
+    assert_exact_object_keys(
+        &analysis["metrics"],
+        &[
+            "decoded_byte_count",
+            "reference_count",
+            "annotation_count",
+            "max_instruction_reference_count",
+            "max_instruction_annotation_count",
+            "max_basic_block_instruction_count",
+            "intra_window_edge_count",
+            "external_target_edge_count",
+            "unresolved_target_edge_count",
         ],
     );
     assert_exact_object_keys(
@@ -1933,6 +1948,15 @@ fn disasm_json_analysis_contract_is_opt_in() {
     );
     assert!(analysis["summary"]["basic_block_count"].as_u64().unwrap() > 1);
     assert!(analysis["summary"]["edge_count"].as_u64().unwrap() > 0);
+    assert!(analysis["metrics"]["decoded_byte_count"].as_u64().unwrap() > 0);
+    assert!(analysis["metrics"]["reference_count"].as_u64().unwrap() > 0);
+    assert!(analysis["metrics"]["annotation_count"].as_u64().unwrap() > 0);
+    assert!(
+        analysis["metrics"]["intra_window_edge_count"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
     assert!(
         analysis["summary"]["data_reference_count"]
             .as_u64()

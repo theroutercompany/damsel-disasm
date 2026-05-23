@@ -68,7 +68,7 @@ Coverage expected from the checked-in corpus:
 
 | Area | Fixture or test | Expected evidence |
 | --- | --- | --- |
-| CFG and summary | `semantic-switch`, `damsel-macho/tests/disasm_matrix.rs` | Multiple basic blocks, direct edges, fallthrough edges with resolved `from_block`/`to_block` IDs, data refs, recovered values, jump-table summary |
+| CFG and summary | `semantic-switch`, `damsel-macho/tests/disasm_matrix.rs` | Multiple basic blocks, direct edges, fallthrough edges with resolved `from_block`/`to_block` IDs, stable decode/reference/annotation telemetry, data refs, recovered values, jump-table summary |
 | Cache links | `internal-linkage-arm64.cache`, `damsel-cli/tests/cli_json.rs` | Import rows resolve to provider images and stable `cache_links` JSON |
 | Value-flow safety | `damsel-macho` unit tests | Call-clobbered registers stop flowing past calls while callee-saved registers survive |
 | ObjC entrypoints | `objc-sample`, `damsel-cli/tests/cli_json.rs` | `--objc-owner` plus `--objc-selector` resolves to an implementation address |

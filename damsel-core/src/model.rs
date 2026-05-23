@@ -2421,11 +2421,25 @@ pub struct DisassemblySummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyMetrics {
+    pub decoded_byte_count: usize,
+    pub reference_count: usize,
+    pub annotation_count: usize,
+    pub max_instruction_reference_count: usize,
+    pub max_instruction_annotation_count: usize,
+    pub max_basic_block_instruction_count: usize,
+    pub intra_window_edge_count: usize,
+    pub external_target_edge_count: usize,
+    pub unresolved_target_edge_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisassemblyAnalysis {
     pub target: String,
     pub start_address: u64,
     pub end_address: u64,
     pub instruction_count: usize,
+    pub metrics: DisassemblyMetrics,
     pub basic_blocks: Vec<BasicBlock>,
     pub edges: Vec<ControlFlowEdge>,
     pub direct_calls: Vec<DisassemblyTargetUse>,

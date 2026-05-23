@@ -441,6 +441,7 @@ function renderInspector() {
 }
 
 function renderAnalysisBlock(analysis) {
+  const metrics = analysis.metrics || {};
   return `
     <section class="inspector-block analysis-block">
       <h3>Summary Graph</h3>
@@ -456,6 +457,13 @@ function renderAnalysisBlock(analysis) {
           ["Cache Links", analysis.summary.cache_link_count],
           ["Recovered Values", analysis.summary.recovered_value_count],
           ["Jump Tables", analysis.summary.jump_table_count],
+          ["Decoded Bytes", metrics.decoded_byte_count ?? 0],
+          ["References", metrics.reference_count ?? 0],
+          ["Annotations", metrics.annotation_count ?? 0],
+          ["Max Block Insn", metrics.max_basic_block_instruction_count ?? 0],
+          ["Intra-window Edges", metrics.intra_window_edge_count ?? 0],
+          ["External Target Edges", metrics.external_target_edge_count ?? 0],
+          ["Unresolved Target Edges", metrics.unresolved_target_edge_count ?? 0],
         ])}
       </div>
       ${renderAnalysisBlocks(analysis.basic_blocks || [])}

@@ -228,7 +228,8 @@ than redo the decoder:
   metadata-backed type/function exploration where fixtures can keep it honest.
 - ObjC xref explorer: expose class/category/protocol method references and IMP
   callsites as navigable CLI/UI flows.
-- Performance telemetry: add stable decode/analysis counters for large
-  real-cache windows so regressions are measurable instead of anecdotal.
+- Performance telemetry: extend the current stable decode/reference/annotation
+  and edge-target counters into aggregate reporting for large real-cache windows
+  so regressions are measurable instead of anecdotal.
 - Corpus hardening: add malformed and edge-case fixtures whenever a parser or
   analyzer assumption is discovered during real-cache exploration.
