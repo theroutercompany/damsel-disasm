@@ -497,6 +497,7 @@ jobs:
               "clang",
               "python3",
               "nm",
+              "swiftc",
               "sdk_path_probe",
               "hash_tools",
               "selected_hash_tool",
@@ -508,7 +509,7 @@ jobs:
           assert data["host"]["architecture"] == os.environ["EXPECTED_HOST_ARCH"]
           assert data["overall_status"] in valid
 
-          for tool_key in ["xcrun", "strip", "clang", "python3", "nm", "sdk_path_probe"]:
+          for tool_key in ["xcrun", "strip", "clang", "python3", "nm", "swiftc", "sdk_path_probe"]:
               assert set(data["tools"][tool_key].keys()) == {"detected", "usable", "path"}
               assert isinstance(data["tools"][tool_key]["detected"], bool)
               assert isinstance(data["tools"][tool_key]["usable"], bool)
