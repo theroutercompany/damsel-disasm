@@ -141,10 +141,10 @@ def normalize_mnemonic(value):
     return value.strip().lower()
 
 
-def first_hex_target(value):
-    match = re.search(r"#?(0x[0-9a-fA-F]+)", value)
-    if match:
-        return int(match.group(1), 16)
+def branch_hex_target(value):
+    matches = re.findall(r"#?(0x[0-9a-fA-F]+)", value)
+    if matches:
+        return int(matches[-1], 16)
     return None
 
 
@@ -203,8 +203,8 @@ def compare_tool(tool_name, tool_entries, damsel_instructions):
 
         is_direct_branch = mnemonic in DIRECT_BRANCHES or mnemonic.startswith("b.")
         if is_direct_branch:
-            damsel_target = first_hex_target(instruction.get("rendered", ""))
-            tool_target = first_hex_target(tool_entry["text"])
+            damsel_target = branch_hex_target(instruction.get("rendered", ""))
+            tool_target = branch_hex_target(tool_entry["text"])
             if damsel_target is not None and tool_target is not None and damsel_target != tool_target:
                 die(
                     f"{tool_name} branch target mismatch at 0x{address:x}: "
