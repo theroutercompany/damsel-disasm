@@ -7,7 +7,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use damsel_core::{BinaryImage, Section};
-use damsel_macho::{analyze_disassembly, load_bytes};
+use damsel_macho::{analyze_disassembly_with_image, load_bytes};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -406,7 +406,8 @@ async fn disassemble_image(
     )?;
     let base_view = execution.view();
     let analysis = request.options.include_analysis.then(|| {
-        analyze_disassembly(
+        analyze_disassembly_with_image(
+            &stored.image,
             base_view.target.to_string(),
             base_view.start_address,
             base_view.end_address,

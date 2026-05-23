@@ -2,7 +2,7 @@ use damsel_core::{
     CacheImageRecord, CacheLookupResult, DisassemblyLimit, DisassemblyOptions,
     DisassemblyRequestV2, DisassemblyTarget,
 };
-use damsel_macho::{analyze_disassembly, disassemble_v2, inspect_shared_cache};
+use damsel_macho::{analyze_disassembly_with_image, disassemble_v2, inspect_shared_cache};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -133,7 +133,8 @@ fn real_shared_cache_env_projected_image_smoke() {
             "projected image {} disassembles at least one instruction",
             image.install_name
         );
-        let analysis = analyze_disassembly(
+        let analysis = analyze_disassembly_with_image(
+            &projected.image,
             result.target.clone(),
             result.start_address,
             result.end_address,

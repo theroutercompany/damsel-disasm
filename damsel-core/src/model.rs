@@ -2388,6 +2388,32 @@ pub struct DisassemblyJumpTableUse {
     pub element_size: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisassemblyObjcReferenceKind {
+    Selector,
+    Class,
+    MethodList,
+}
+
+impl fmt::Display for DisassemblyObjcReferenceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::Selector => "selector",
+            Self::Class => "class",
+            Self::MethodList => "method-list",
+        };
+        f.write_str(text)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyObjcUse {
+    pub instruction_address: u64,
+    pub target_address: u64,
+    pub kind: DisassemblyObjcReferenceKind,
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisassemblyCacheLinkUse {
     pub instruction_address: u64,
@@ -2414,6 +2440,9 @@ pub struct DisassemblySummary {
     pub return_count: usize,
     pub data_reference_count: usize,
     pub import_count: usize,
+    pub objc_selector_count: usize,
+    pub objc_class_count: usize,
+    pub objc_method_list_count: usize,
     pub cache_link_count: usize,
     pub recovered_value_count: usize,
     pub jump_table_count: usize,
@@ -2447,6 +2476,7 @@ pub struct DisassemblyAnalysis {
     pub data_references: Vec<DisassemblyTargetUse>,
     pub indirect_controls: Vec<DisassemblyIndirectUse>,
     pub imports: Vec<DisassemblyImportUse>,
+    pub objc_references: Vec<DisassemblyObjcUse>,
     pub cache_links: Vec<DisassemblyCacheLinkUse>,
     pub recovered_values: Vec<DisassemblyRecoveredValueUse>,
     pub jump_tables: Vec<DisassemblyJumpTableUse>,
@@ -3810,7 +3840,8 @@ impl BinaryImage {
             .pointer_refs
             .iter()
             .find(|entry| {
-                entry.kind == ObjcPointerKind::SelRef && entry.resolved_address == Some(address)
+                entry.kind == ObjcPointerKind::SelRef
+                    && (entry.table_address == address || entry.resolved_address == Some(address))
             })
             .and_then(|entry| entry.resolved_name.as_deref())
     }
@@ -3831,7 +3862,8 @@ impl BinaryImage {
                         matches!(
                             entry.kind,
                             ObjcPointerKind::ClassRef | ObjcPointerKind::ClassList
-                        ) && entry.resolved_address == Some(address)
+                        ) && (entry.table_address == address
+                            || entry.resolved_address == Some(address))
                     })
                     .and_then(|entry| entry.resolved_name.as_deref())
             })

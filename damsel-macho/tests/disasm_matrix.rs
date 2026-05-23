@@ -1,9 +1,12 @@
 use damsel_core::{
-    Annotation, ControlFlowEdgeKind, DisassemblyLimit, DisassemblyOptions, DisassemblyRequest,
-    DisassemblyRequestV2, DisassemblyStopReason, DisassemblyTarget, RecoveredValueKind,
-    RecoveredValueSource, Reference, TableSlotEncoding,
+    Annotation, ControlFlowEdgeKind, DisassemblyLimit, DisassemblyObjcReferenceKind,
+    DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2, DisassemblyStopReason,
+    DisassemblyTarget, RecoveredValueKind, RecoveredValueSource, Reference, TableSlotEncoding,
 };
-use damsel_macho::{MachoError, analyze_disassembly, disassemble, disassemble_v2, load};
+use damsel_macho::{
+    MachoError, analyze_disassembly, analyze_disassembly_with_image, disassemble, disassemble_v2,
+    load,
+};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -423,6 +426,70 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
     assert!(analysis.summary.data_reference_count > 0);
     assert!(analysis.summary.recovered_value_count > 0);
     assert!(analysis.summary.jump_table_count > 0);
+}
+
+#[test]
+fn disasm_analysis_reports_objc_runtime_references_for_objc_fixture() {
+    let path = fixture("objc-sample");
+    if !path.exists() {
+        eprintln!("objc-sample fixture not present; skipping");
+        return;
+    }
+    let image = load(path).expect("load objc fixture");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Section("__text".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Unlimited,
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble objc fixture");
+    let analysis = analyze_disassembly_with_image(
+        &image,
+        result.target.clone(),
+        result.start_address,
+        result.end_address,
+        &result.instructions,
+    );
+
+    assert_eq!(analysis.instruction_count, result.instructions.len());
+    assert_eq!(
+        analysis.summary.objc_selector_count,
+        analysis
+            .objc_references
+            .iter()
+            .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::Selector)
+            .count()
+    );
+    assert_eq!(
+        analysis.summary.objc_class_count,
+        analysis
+            .objc_references
+            .iter()
+            .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::Class)
+            .count()
+    );
+    assert_eq!(
+        analysis.summary.objc_method_list_count,
+        analysis
+            .objc_references
+            .iter()
+            .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::MethodList)
+            .count()
+    );
+    assert!(
+        analysis.summary.objc_selector_count > 0 || analysis.summary.objc_class_count > 0,
+        "objc fixture should expose selector or class references"
+    );
+    assert!(
+        analysis
+            .objc_references
+            .iter()
+            .any(|entry| entry.name.is_some()),
+        "objc references should carry resolved names when image metadata is available"
+    );
 }
 
 #[test]

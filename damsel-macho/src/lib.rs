@@ -11,7 +11,9 @@ pub use damsel_core::{
     SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,
     SymbolicationMatch,
 };
-pub use disasm::{analyze_disassembly, disassemble, disassemble_v2};
+pub use disasm::{
+    analyze_disassembly, analyze_disassembly_with_image, disassemble, disassemble_v2,
+};
 pub use errors::{MachoError, Result};
 pub use loader::{load, load_bytes};
 pub use shared_cache::{

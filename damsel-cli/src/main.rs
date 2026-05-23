@@ -12,7 +12,7 @@ use damsel_core::{
     SymbolicationMatch,
 };
 use damsel_macho::{
-    SharedCacheSession, analyze_disassembly, disassemble_v2, inspect_shared_cache, load,
+    SharedCacheSession, analyze_disassembly_with_image, disassemble_v2, inspect_shared_cache, load,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -1057,7 +1057,8 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             )?;
 
             let analysis = analysis.then(|| {
-                analyze_disassembly(
+                analyze_disassembly_with_image(
+                    &image,
                     execution.target.clone(),
                     execution.start_address,
                     execution.end_address,
@@ -1596,7 +1597,8 @@ fn handle_cache_command(
                 show_values || analysis,
             )?;
             let analysis = if analysis {
-                let mut analysis = analyze_disassembly(
+                let mut analysis = analyze_disassembly_with_image(
+                    &projected.image,
                     execution.target.clone(),
                     execution.start_address,
                     execution.end_address,

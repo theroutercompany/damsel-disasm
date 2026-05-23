@@ -2,12 +2,12 @@ use crate::errors::{MachoError, Result};
 use damsel_core::{
     Annotation, BasicBlock, BinaryImage, ControlFlowEdge, ControlFlowEdgeKind, DecodedInstruction,
     DisassemblyAnalysis, DisassemblyImportUse, DisassemblyIndirectUse, DisassemblyJumpTableUse,
-    DisassemblyLimit, DisassemblyMetrics, DisassemblyRecoveredValueUse, DisassemblyRequest,
-    DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
-    DisassemblySummary, DisassemblyTarget, DisassemblyTargetUse, Import, ImportBindingKind,
-    ImportBindingRecord, ImportBindingSource, IndirectTargetReason, Operand, RecoveredValue,
-    RecoveredValueKind, RecoveredValueSource, Reference, Relocation, Section, StubHelperEntry,
-    Symbol, TableSlotEncoding,
+    DisassemblyLimit, DisassemblyMetrics, DisassemblyObjcReferenceKind, DisassemblyObjcUse,
+    DisassemblyRecoveredValueUse, DisassemblyRequest, DisassemblyRequestV2, DisassemblyResult,
+    DisassemblyResultV2, DisassemblyStopReason, DisassemblySummary, DisassemblyTarget,
+    DisassemblyTargetUse, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
+    IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
+    Reference, Relocation, Section, StubHelperEntry, Symbol, TableSlotEncoding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,6 +28,32 @@ pub fn analyze_disassembly(
     end_address: u64,
     instructions: &[DecodedInstruction],
 ) -> DisassemblyAnalysis {
+    analyze_disassembly_impl(None, target, start_address, end_address, instructions)
+}
+
+pub fn analyze_disassembly_with_image(
+    image: &BinaryImage,
+    target: impl Into<String>,
+    start_address: u64,
+    end_address: u64,
+    instructions: &[DecodedInstruction],
+) -> DisassemblyAnalysis {
+    analyze_disassembly_impl(
+        Some(image),
+        target,
+        start_address,
+        end_address,
+        instructions,
+    )
+}
+
+fn analyze_disassembly_impl(
+    image: Option<&BinaryImage>,
+    target: impl Into<String>,
+    start_address: u64,
+    end_address: u64,
+    instructions: &[DecodedInstruction],
+) -> DisassemblyAnalysis {
     let basic_blocks = build_basic_blocks(instructions);
     let mut edges = Vec::new();
     let mut direct_calls = Vec::new();
@@ -35,6 +61,7 @@ pub fn analyze_disassembly(
     let mut data_references = Vec::new();
     let mut indirect_controls = Vec::new();
     let mut imports = Vec::new();
+    let mut objc_references = Vec::new();
     let mut recovered_values = Vec::new();
     let mut jump_tables = Vec::new();
     let mut return_count = 0;
@@ -225,6 +252,11 @@ pub fn analyze_disassembly(
         }
 
         for recovered in &instruction.recovered_values {
+            if let Some(objc_use) =
+                objc_reference_use_from_recovered(image, instruction.address, recovered)
+            {
+                push_objc_reference_use(&mut objc_references, objc_use);
+            }
             push_recovered_value_use(
                 &mut recovered_values,
                 DisassemblyRecoveredValueUse {
@@ -283,6 +315,18 @@ pub fn analyze_disassembly(
         .iter()
         .filter(|entry| entry.resolved_target.is_none())
         .count();
+    let objc_selector_count = objc_references
+        .iter()
+        .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::Selector)
+        .count();
+    let objc_class_count = objc_references
+        .iter()
+        .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::Class)
+        .count();
+    let objc_method_list_count = objc_references
+        .iter()
+        .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::MethodList)
+        .count();
 
     DisassemblyAnalysis {
         target: target.into(),
@@ -313,6 +357,9 @@ pub fn analyze_disassembly(
             return_count,
             data_reference_count: data_references.len(),
             import_count: imports.len(),
+            objc_selector_count,
+            objc_class_count,
+            objc_method_list_count,
             cache_link_count: 0,
             recovered_value_count: recovered_values.len(),
             jump_table_count: jump_tables.len(),
@@ -325,6 +372,7 @@ pub fn analyze_disassembly(
         data_references,
         indirect_controls,
         imports,
+        objc_references,
         cache_links: Vec::new(),
         recovered_values,
         jump_tables,
@@ -771,6 +819,12 @@ fn push_import_use(target: &mut Vec<DisassemblyImportUse>, entry: DisassemblyImp
     }
 }
 
+fn push_objc_reference_use(target: &mut Vec<DisassemblyObjcUse>, entry: DisassemblyObjcUse) {
+    if !target.contains(&entry) {
+        target.push(entry);
+    }
+}
+
 fn push_recovered_value_use(
     target: &mut Vec<DisassemblyRecoveredValueUse>,
     entry: DisassemblyRecoveredValueUse,
@@ -784,6 +838,36 @@ fn push_jump_table_use(target: &mut Vec<DisassemblyJumpTableUse>, entry: Disasse
     if !target.contains(&entry) {
         target.push(entry);
     }
+}
+
+fn objc_reference_use_from_recovered(
+    image: Option<&BinaryImage>,
+    instruction_address: u64,
+    recovered: &RecoveredValue,
+) -> Option<DisassemblyObjcUse> {
+    let kind = match recovered.kind {
+        RecoveredValueKind::ObjcSelector => DisassemblyObjcReferenceKind::Selector,
+        RecoveredValueKind::ObjcClass => DisassemblyObjcReferenceKind::Class,
+        RecoveredValueKind::ObjcMethodList => DisassemblyObjcReferenceKind::MethodList,
+        _ => return None,
+    };
+    let name = image.and_then(|image| match kind {
+        DisassemblyObjcReferenceKind::Selector => image
+            .objc_selector_name_at_address(recovered.value)
+            .map(str::to_string),
+        DisassemblyObjcReferenceKind::Class => image
+            .objc_class_name_at_address(recovered.value)
+            .map(str::to_string),
+        DisassemblyObjcReferenceKind::MethodList => image
+            .objc_method_list_owner_at_address(recovered.value)
+            .map(str::to_string),
+    });
+    Some(DisassemblyObjcUse {
+        instruction_address,
+        target_address: recovered.value,
+        kind,
+        name,
+    })
 }
 
 fn is_cfg_boundary_mnemonic(mnemonic: &str) -> bool {

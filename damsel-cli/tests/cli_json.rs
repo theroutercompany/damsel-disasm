@@ -1910,6 +1910,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "data_references",
             "indirect_controls",
             "imports",
+            "objc_references",
             "cache_links",
             "recovered_values",
             "jump_tables",
@@ -1940,6 +1941,9 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "return_count",
             "data_reference_count",
             "import_count",
+            "objc_selector_count",
+            "objc_class_count",
+            "objc_method_list_count",
             "cache_link_count",
             "recovered_value_count",
             "jump_table_count",
@@ -2001,6 +2005,74 @@ fn disasm_json_analysis_contract_is_opt_in() {
             .as_array()
             .is_some_and(|tables| !tables.is_empty())
     );
+    assert!(analysis["objc_references"].as_array().is_some());
+}
+
+#[test]
+fn disasm_json_analysis_reports_objc_references_for_fixture() {
+    let path = fixture("objc-sample");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "--section",
+        "__text",
+        "--show-references",
+        "--show-values",
+        "--analysis",
+    ]);
+    let json = parse_json(&out);
+    let analysis = &json["data"]["analysis"];
+    let references = analysis["objc_references"]
+        .as_array()
+        .expect("objc reference array");
+
+    assert!(
+        analysis["summary"]["objc_selector_count"].as_u64().unwrap() > 0
+            || analysis["summary"]["objc_class_count"].as_u64().unwrap() > 0,
+        "{out}"
+    );
+    assert!(!references.is_empty(), "{out}");
+    assert_eq!(
+        analysis["summary"]["objc_selector_count"].as_u64(),
+        Some(
+            references
+                .iter()
+                .filter(|entry| entry["kind"] == "selector")
+                .count() as u64
+        )
+    );
+    assert_eq!(
+        analysis["summary"]["objc_class_count"].as_u64(),
+        Some(
+            references
+                .iter()
+                .filter(|entry| entry["kind"] == "class")
+                .count() as u64
+        )
+    );
+    assert_eq!(
+        analysis["summary"]["objc_method_list_count"].as_u64(),
+        Some(
+            references
+                .iter()
+                .filter(|entry| entry["kind"] == "method-list")
+                .count() as u64
+        )
+    );
+    assert!(
+        references
+            .iter()
+            .any(|entry| entry["kind"] == "selector" && entry["name"].is_string()),
+        "{out}"
+    );
+    for entry in references {
+        assert_exact_object_keys(
+            entry,
+            &["instruction_address", "target_address", "kind", "name"],
+        );
+    }
 }
 
 #[test]

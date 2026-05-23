@@ -1585,7 +1585,7 @@ pub(crate) fn print_disassembly(
 fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
     println!("analysis:");
     println!(
-        "  summary: blocks={} edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
+        "  summary: blocks={} edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
         analysis.summary.basic_block_count,
         analysis.summary.edge_count,
         analysis.summary.direct_call_count,
@@ -1594,6 +1594,9 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         analysis.summary.return_count,
         analysis.summary.data_reference_count,
         analysis.summary.import_count,
+        analysis.summary.objc_selector_count,
+        analysis.summary.objc_class_count,
+        analysis.summary.objc_method_list_count,
         analysis.summary.cache_link_count,
         analysis.summary.recovered_value_count,
         analysis.summary.jump_table_count,
@@ -1651,6 +1654,18 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
             println!(
                 "    - at={:#x} {}:{} address={}",
                 import.instruction_address, import.dylib, import.name, address
+            );
+        }
+    }
+    if !analysis.objc_references.is_empty() {
+        println!("  objc_references:");
+        for entry in &analysis.objc_references {
+            println!(
+                "    - at={:#x} kind={} target={:#x} name={}",
+                entry.instruction_address,
+                entry.kind,
+                entry.target_address,
+                entry.name.as_deref().unwrap_or("-")
             );
         }
     }
@@ -4674,6 +4689,18 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                     usize_num(analysis.summary.import_count),
                 ),
                 (
+                    "objc_selector_count".to_string(),
+                    usize_num(analysis.summary.objc_selector_count),
+                ),
+                (
+                    "objc_class_count".to_string(),
+                    usize_num(analysis.summary.objc_class_count),
+                ),
+                (
+                    "objc_method_list_count".to_string(),
+                    usize_num(analysis.summary.objc_method_list_count),
+                ),
+                (
                     "cache_link_count".to_string(),
                     usize_num(analysis.summary.cache_link_count),
                 ),
@@ -4812,6 +4839,36 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                             (
                                 "address".to_string(),
                                 entry.address.map(u64_num).unwrap_or(JsonValue::Null),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "objc_references".to_string(),
+            JsonValue::Array(
+                analysis
+                    .objc_references
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "instruction_address".to_string(),
+                                u64_num(entry.instruction_address),
+                            ),
+                            ("target_address".to_string(), u64_num(entry.target_address)),
+                            (
+                                "kind".to_string(),
+                                JsonValue::String(entry.kind.to_string()),
+                            ),
+                            (
+                                "name".to_string(),
+                                entry
+                                    .name
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
                             ),
                         ])
                     })

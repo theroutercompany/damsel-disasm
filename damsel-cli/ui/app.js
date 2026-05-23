@@ -454,6 +454,9 @@ function renderAnalysisBlock(analysis) {
           ["Branches", analysis.summary.branch_count],
           ["Returns", analysis.summary.return_count],
           ["Imports", analysis.summary.import_count],
+          ["ObjC Selectors", analysis.summary.objc_selector_count ?? 0],
+          ["ObjC Classes", analysis.summary.objc_class_count ?? 0],
+          ["ObjC Method Lists", analysis.summary.objc_method_list_count ?? 0],
           ["Cache Links", analysis.summary.cache_link_count],
           ["Recovered Values", analysis.summary.recovered_value_count],
           ["Jump Tables", analysis.summary.jump_table_count],
@@ -469,6 +472,7 @@ function renderAnalysisBlock(analysis) {
       ${renderAnalysisBlocks(analysis.basic_blocks || [])}
       ${renderAnalysisEdges(analysis.edges || [])}
       ${renderAnalysisImports(analysis.imports || [], analysis.cache_links || [])}
+      ${renderAnalysisObjcReferences(analysis.objc_references || [])}
     </section>
   `;
 }
@@ -577,6 +581,30 @@ function renderAnalysisImports(imports, cacheLinks) {
               ${renderJumpButton(entry.instruction_address)}
               <span class="mono">${escapeHtml(entry.provider_kind)}</span>
               <span class="mono">${escapeHtml(entry.provider_install_name)}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderAnalysisObjcReferences(references) {
+  if (!references.length) {
+    return "";
+  }
+
+  return `
+    <div class="analysis-list">
+      <div class="item-eyebrow">ObjC References</div>
+      ${references
+        .map(
+          (entry) => `
+            <div class="analysis-row">
+              ${renderJumpButton(entry.instruction_address)}
+              <span class="mono">${escapeHtml(entry.kind)}</span>
+              ${renderJumpButton(entry.target_address)}
+              <span class="mono">${escapeHtml(entry.name ?? "-")}</span>
             </div>
           `,
         )
