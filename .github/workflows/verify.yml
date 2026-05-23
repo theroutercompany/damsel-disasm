@@ -79,7 +79,8 @@ jobs:
           abort("real-cache evidence workflow missing workflow_dispatch trigger") unless evidence_triggers.key?("workflow_dispatch")
           evidence_jobs = evidence["jobs"] || {}
           collect = evidence_jobs["collect"] || abort("real-cache evidence workflow missing collect job")
-          abort("real-cache evidence workflow must run on selected runner input") unless collect["runs-on"] == "${{ inputs.runner }}"
+          input_runner_expression = "$" + "{{ inputs.runner }}"
+          abort("real-cache evidence workflow must run on selected runner input") unless collect["runs-on"] == input_runner_expression
           evidence_permissions = evidence["permissions"] || {}
           abort("real-cache evidence workflow should use contents: read") unless evidence_permissions["contents"] == "read"
           inputs = evidence_triggers.fetch("workflow_dispatch").fetch("inputs")
@@ -96,7 +97,7 @@ jobs:
           abort("blacksmith evidence workflow missing workflow_dispatch trigger") unless blacksmith_triggers.key?("workflow_dispatch")
           blacksmith_jobs = blacksmith["jobs"] || {}
           blacksmith_collect = blacksmith_jobs["collect"] || abort("blacksmith evidence workflow missing collect job")
-          abort("blacksmith evidence workflow must run on selected runner input") unless blacksmith_collect["runs-on"] == "${{ inputs.runner }}"
+          abort("blacksmith evidence workflow must run on selected runner input") unless blacksmith_collect["runs-on"] == input_runner_expression
           blacksmith_permissions = blacksmith["permissions"] || {}
           abort("blacksmith evidence workflow should use contents: read") unless blacksmith_permissions["contents"] == "read"
           blacksmith_inputs = blacksmith_triggers.fetch("workflow_dispatch").fetch("inputs")
