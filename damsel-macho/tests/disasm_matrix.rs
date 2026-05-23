@@ -484,6 +484,14 @@ fn disasm_analysis_reports_objc_runtime_references_for_objc_fixture() {
         "objc fixture should expose selector or class references"
     );
     assert!(
+        analysis.objc_references.iter().any(|entry| {
+            entry.kind == DisassemblyObjcReferenceKind::Class
+                && entry.name.as_deref() == Some("NSString")
+                && entry.resolved_address.is_none()
+        }),
+        "imported ObjC class references should stay typed even when dyld does not provide a concrete class metadata address"
+    );
+    assert!(
         analysis
             .objc_references
             .iter()

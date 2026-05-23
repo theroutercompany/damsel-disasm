@@ -2068,6 +2068,12 @@ fn disasm_json_analysis_reports_objc_references_for_fixture() {
             && entry["resolved_address"] != entry["target_address"]),
         "{out}"
     );
+    assert!(
+        references.iter().any(|entry| entry["kind"] == "class"
+            && entry["name"] == "NSString"
+            && entry["resolved_address"].is_null()),
+        "{out}"
+    );
     for entry in references {
         assert_exact_object_keys(
             entry,

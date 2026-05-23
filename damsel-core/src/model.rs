@@ -3871,6 +3871,15 @@ impl BinaryImage {
             })
     }
 
+    pub fn objc_imported_class_name_at_address(&self, address: u64) -> Option<&str> {
+        self.dyld.bindings_at_address(address).find_map(|binding| {
+            binding
+                .name
+                .strip_prefix("_OBJC_CLASS_$_")
+                .or_else(|| binding.name.strip_prefix("_OBJC_METACLASS_$_"))
+        })
+    }
+
     pub fn objc_method_list_owner_at_address(&self, address: u64) -> Option<&str> {
         self.objc
             .classes

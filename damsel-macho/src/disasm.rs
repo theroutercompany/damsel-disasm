@@ -849,21 +849,57 @@ fn objc_reference_use_from_recovered(
         RecoveredValueKind::ObjcSelector => DisassemblyObjcReferenceKind::Selector,
         RecoveredValueKind::ObjcClass => DisassemblyObjcReferenceKind::Class,
         RecoveredValueKind::ObjcMethodList => DisassemblyObjcReferenceKind::MethodList,
-        _ => return None,
+        _ => image.and_then(|image| {
+            if image
+                .objc_selector_ref_at_address(recovered.value)
+                .is_some()
+            {
+                Some(DisassemblyObjcReferenceKind::Selector)
+            } else if image.objc_class_ref_at_address(recovered.value).is_some()
+                || image
+                    .objc_imported_class_name_at_address(recovered.value)
+                    .is_some()
+            {
+                Some(DisassemblyObjcReferenceKind::Class)
+            } else if image
+                .objc_method_list_owner_at_address(recovered.value)
+                .is_some()
+            {
+                Some(DisassemblyObjcReferenceKind::MethodList)
+            } else {
+                None
+            }
+        })?,
     };
     let (name, resolved_address) = image
         .and_then(|image| match kind {
             DisassemblyObjcReferenceKind::Selector => image
                 .objc_selector_ref_at_address(recovered.value)
                 .map(|entry| (entry.resolved_name.clone(), entry.resolved_address)),
-            DisassemblyObjcReferenceKind::Class => image
-                .objc_class_ref_at_address(recovered.value)
-                .map(|entry| (entry.resolved_name.clone(), entry.resolved_address))
-                .or_else(|| {
-                    image
-                        .objc_class_name_at_address(recovered.value)
-                        .map(|name| (Some(name.to_string()), Some(recovered.value)))
-                }),
+            DisassemblyObjcReferenceKind::Class => {
+                let class_ref = image.objc_class_ref_at_address(recovered.value);
+                let name = class_ref
+                    .and_then(|entry| entry.resolved_name.clone())
+                    .or_else(|| {
+                        image
+                            .objc_class_name_at_address(recovered.value)
+                            .map(str::to_string)
+                    })
+                    .or_else(|| {
+                        image
+                            .objc_imported_class_name_at_address(recovered.value)
+                            .map(str::to_string)
+                    });
+                let resolved_address =
+                    class_ref
+                        .and_then(|entry| entry.resolved_address)
+                        .or_else(|| {
+                            (class_ref.is_none()
+                                && image.objc_class_name_at_address(recovered.value).is_some())
+                            .then_some(recovered.value)
+                        });
+                Some((name, resolved_address))
+            }
             DisassemblyObjcReferenceKind::MethodList => image
                 .objc_method_list_owner_at_address(recovered.value)
                 .map(|name| (Some(name.to_string()), Some(recovered.value))),
