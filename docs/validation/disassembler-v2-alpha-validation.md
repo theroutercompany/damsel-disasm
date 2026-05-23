@@ -71,7 +71,7 @@ Coverage expected from the checked-in corpus:
 | CFG and summary | `semantic-switch`, `damsel-macho/tests/disasm_matrix.rs` | Multiple basic blocks, direct edges, fallthrough edges with resolved `from_block`/`to_block` IDs, stable decode/reference/annotation telemetry, data refs, recovered values, jump-table summary |
 | Cache links | `internal-linkage-arm64.cache`, `damsel-cli/tests/cli_json.rs` | Import rows resolve to provider images and stable `cache_links` JSON |
 | Value-flow safety | `damsel-macho` unit tests | Call-clobbered registers stop flowing past calls while callee-saved registers survive |
-| ObjC entrypoints and summary refs | `objc-sample`, `damsel-cli/tests/cli_json.rs`, `damsel-macho/tests/disasm_matrix.rs` | `--objc-owner` plus `--objc-selector` resolves to an implementation address, and `--analysis` reports selector/class/method-list reference counts plus stable reference rows when ObjC metadata is present |
+| ObjC entrypoints and summary refs | `objc-sample`, `damsel-cli/tests/cli_json.rs`, `damsel-macho/tests/disasm_matrix.rs` | `--objc-owner` plus `--objc-selector` resolves to an implementation address, and `--analysis` reports selector/class/method-list reference counts plus stable reference rows with slot and resolved metadata addresses when ObjC metadata is present |
 | Swift entrypoints | `swift-sample`, `damsel-cli` tests | Exact Mach-O mangled names resolve end-to-end without external tools; demangled display and ambiguity paths are deterministic |
 | Text output | `damsel-cli/tests/cli_snapshots.rs` | Representative `--analysis` summary and graph text is snapshot-covered |
 | UI payload | `damsel-cli/tests/ui_api.rs` | `/api/images/{id}/disasm` returns analysis and the shell exposes graph navigation code |

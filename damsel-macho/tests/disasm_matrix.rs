@@ -487,8 +487,10 @@ fn disasm_analysis_reports_objc_runtime_references_for_objc_fixture() {
         analysis
             .objc_references
             .iter()
-            .any(|entry| entry.name.is_some()),
-        "objc references should carry resolved names when image metadata is available"
+            .any(|entry| entry.name.is_some()
+                && entry.resolved_address.is_some()
+                && entry.resolved_address != Some(entry.target_address)),
+        "objc references should carry resolved names and dereferenced metadata addresses when image metadata is available"
     );
 }
 

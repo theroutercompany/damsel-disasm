@@ -851,20 +851,28 @@ fn objc_reference_use_from_recovered(
         RecoveredValueKind::ObjcMethodList => DisassemblyObjcReferenceKind::MethodList,
         _ => return None,
     };
-    let name = image.and_then(|image| match kind {
-        DisassemblyObjcReferenceKind::Selector => image
-            .objc_selector_name_at_address(recovered.value)
-            .map(str::to_string),
-        DisassemblyObjcReferenceKind::Class => image
-            .objc_class_name_at_address(recovered.value)
-            .map(str::to_string),
-        DisassemblyObjcReferenceKind::MethodList => image
-            .objc_method_list_owner_at_address(recovered.value)
-            .map(str::to_string),
-    });
+    let (name, resolved_address) = image
+        .and_then(|image| match kind {
+            DisassemblyObjcReferenceKind::Selector => image
+                .objc_selector_ref_at_address(recovered.value)
+                .map(|entry| (entry.resolved_name.clone(), entry.resolved_address)),
+            DisassemblyObjcReferenceKind::Class => image
+                .objc_class_ref_at_address(recovered.value)
+                .map(|entry| (entry.resolved_name.clone(), entry.resolved_address))
+                .or_else(|| {
+                    image
+                        .objc_class_name_at_address(recovered.value)
+                        .map(|name| (Some(name.to_string()), Some(recovered.value)))
+                }),
+            DisassemblyObjcReferenceKind::MethodList => image
+                .objc_method_list_owner_at_address(recovered.value)
+                .map(|name| (Some(name.to_string()), Some(recovered.value))),
+        })
+        .unwrap_or((None, None));
     Some(DisassemblyObjcUse {
         instruction_address,
         target_address: recovered.value,
+        resolved_address,
         kind,
         name,
     })

@@ -1660,11 +1660,16 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
     if !analysis.objc_references.is_empty() {
         println!("  objc_references:");
         for entry in &analysis.objc_references {
+            let resolved = entry
+                .resolved_address
+                .map(|value| format!("{value:#x}"))
+                .unwrap_or_else(|| "-".to_string());
             println!(
-                "    - at={:#x} kind={} target={:#x} name={}",
+                "    - at={:#x} kind={} target={:#x} resolved={} name={}",
                 entry.instruction_address,
                 entry.kind,
                 entry.target_address,
+                resolved,
                 entry.name.as_deref().unwrap_or("-")
             );
         }
@@ -4858,6 +4863,13 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                                 u64_num(entry.instruction_address),
                             ),
                             ("target_address".to_string(), u64_num(entry.target_address)),
+                            (
+                                "resolved_address".to_string(),
+                                entry
+                                    .resolved_address
+                                    .map(u64_num)
+                                    .unwrap_or(JsonValue::Null),
+                            ),
                             (
                                 "kind".to_string(),
                                 JsonValue::String(entry.kind.to_string()),

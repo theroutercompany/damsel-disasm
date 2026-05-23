@@ -2062,15 +2062,22 @@ fn disasm_json_analysis_reports_objc_references_for_fixture() {
         )
     );
     assert!(
-        references
-            .iter()
-            .any(|entry| entry["kind"] == "selector" && entry["name"].is_string()),
+        references.iter().any(|entry| entry["kind"] == "selector"
+            && entry["name"].is_string()
+            && entry["resolved_address"].is_number()
+            && entry["resolved_address"] != entry["target_address"]),
         "{out}"
     );
     for entry in references {
         assert_exact_object_keys(
             entry,
-            &["instruction_address", "target_address", "kind", "name"],
+            &[
+                "instruction_address",
+                "target_address",
+                "resolved_address",
+                "kind",
+                "name",
+            ],
         );
     }
 }

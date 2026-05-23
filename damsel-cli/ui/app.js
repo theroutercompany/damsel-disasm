@@ -598,16 +598,21 @@ function renderAnalysisObjcReferences(references) {
     <div class="analysis-list">
       <div class="item-eyebrow">ObjC References</div>
       ${references
-        .map(
-          (entry) => `
+        .map((entry) => {
+          const resolved =
+            entry.resolved_address === null
+              ? '<span class="mono">-</span>'
+              : renderJumpButton(entry.resolved_address);
+          return `
             <div class="analysis-row">
               ${renderJumpButton(entry.instruction_address)}
               <span class="mono">${escapeHtml(entry.kind)}</span>
               ${renderJumpButton(entry.target_address)}
+              ${resolved}
               <span class="mono">${escapeHtml(entry.name ?? "-")}</span>
             </div>
-          `,
-        )
+          `;
+        })
         .join("")}
     </div>
   `;

@@ -2410,6 +2410,7 @@ impl fmt::Display for DisassemblyObjcReferenceKind {
 pub struct DisassemblyObjcUse {
     pub instruction_address: u64,
     pub target_address: u64,
+    pub resolved_address: Option<u64>,
     pub kind: DisassemblyObjcReferenceKind,
     pub name: Option<String>,
 }
@@ -3835,15 +3836,25 @@ impl BinaryImage {
         printable.then_some(value)
     }
 
+    pub fn objc_selector_ref_at_address(&self, address: u64) -> Option<&ObjcPointerRef> {
+        self.objc.pointer_refs.iter().find(|entry| {
+            entry.kind == ObjcPointerKind::SelRef
+                && (entry.table_address == address || entry.resolved_address == Some(address))
+        })
+    }
+
     pub fn objc_selector_name_at_address(&self, address: u64) -> Option<&str> {
-        self.objc
-            .pointer_refs
-            .iter()
-            .find(|entry| {
-                entry.kind == ObjcPointerKind::SelRef
-                    && (entry.table_address == address || entry.resolved_address == Some(address))
-            })
+        self.objc_selector_ref_at_address(address)
             .and_then(|entry| entry.resolved_name.as_deref())
+    }
+
+    pub fn objc_class_ref_at_address(&self, address: u64) -> Option<&ObjcPointerRef> {
+        self.objc.pointer_refs.iter().find(|entry| {
+            matches!(
+                entry.kind,
+                ObjcPointerKind::ClassRef | ObjcPointerKind::ClassList
+            ) && (entry.table_address == address || entry.resolved_address == Some(address))
+        })
     }
 
     pub fn objc_class_name_at_address(&self, address: u64) -> Option<&str> {
@@ -3855,16 +3866,7 @@ impl BinaryImage {
             })
             .and_then(|record| record.name.as_deref())
             .or_else(|| {
-                self.objc
-                    .pointer_refs
-                    .iter()
-                    .find(|entry| {
-                        matches!(
-                            entry.kind,
-                            ObjcPointerKind::ClassRef | ObjcPointerKind::ClassList
-                        ) && (entry.table_address == address
-                            || entry.resolved_address == Some(address))
-                    })
+                self.objc_class_ref_at_address(address)
                     .and_then(|entry| entry.resolved_name.as_deref())
             })
     }
