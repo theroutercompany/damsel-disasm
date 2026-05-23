@@ -1944,6 +1944,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "objc_selector_count",
             "objc_class_count",
             "objc_method_list_count",
+            "objc_message_send_count",
             "cache_link_count",
             "recovered_value_count",
             "jump_table_count",
@@ -2061,6 +2062,15 @@ fn disasm_json_analysis_reports_objc_references_for_fixture() {
                 .count() as u64
         )
     );
+    assert_eq!(
+        analysis["summary"]["objc_message_send_count"].as_u64(),
+        Some(
+            references
+                .iter()
+                .filter(|entry| entry["kind"] == "message-send")
+                .count() as u64
+        )
+    );
     assert!(
         references.iter().any(|entry| entry["kind"] == "selector"
             && entry["name"].is_string()
@@ -2080,6 +2090,17 @@ fn disasm_json_analysis_reports_objc_references_for_fixture() {
                 .is_some_and(|value| value.contains("Foundation.framework"))),
         "{out}"
     );
+    assert!(
+        references
+            .iter()
+            .any(|entry| entry["kind"] == "message-send"
+                && entry["name"] == "title"
+                && entry["target_address"].is_number()
+                && entry["resolved_address"] == entry["target_address"]
+                && entry["import_dylib"].is_null()
+                && entry["import_symbol"].is_null()),
+        "{out}"
+    );
     for entry in references {
         assert_exact_object_keys(
             entry,
@@ -2094,6 +2115,62 @@ fn disasm_json_analysis_reports_objc_references_for_fixture() {
             ],
         );
     }
+}
+
+#[test]
+fn cache_disasm_json_analysis_reports_objc_message_sends_from_target_symbols() {
+    let path = cache_fixture("valid-single-arm64.cache");
+    let out = run_json_ok(&[
+        "--format",
+        "json",
+        "cache",
+        "disasm",
+        path.to_str().expect("utf8 path"),
+        "/usr/lib/libobjc.A.dylib",
+        "--objc-owner",
+        "Speaker",
+        "--objc-selector",
+        "prefix",
+        "--objc-method-kind",
+        "instance",
+        "--limit",
+        "32",
+        "--show-references",
+        "--show-values",
+        "--analysis",
+    ]);
+    let json = parse_json(&out);
+    assert_eq!(json["command"], "cache_disasm");
+    let analysis = &json["data"]["disassembly"]["analysis"];
+    let references = analysis["objc_references"]
+        .as_array()
+        .expect("objc reference array");
+
+    assert_eq!(
+        analysis["summary"]["objc_message_send_count"].as_u64(),
+        Some(
+            references
+                .iter()
+                .filter(|entry| entry["kind"] == "message-send")
+                .count() as u64
+        )
+    );
+    assert!(
+        references
+            .iter()
+            .any(|entry| entry["kind"] == "message-send"
+                && entry["name"] == "title"
+                && entry["resolved_address"] == entry["target_address"]),
+        "{out}"
+    );
+    assert!(
+        references
+            .iter()
+            .any(|entry| entry["kind"] == "message-send"
+                && entry["name"] == "stringWithFormat:"
+                && entry["resolved_address"] == entry["target_address"]),
+        "{out}"
+    );
 }
 
 #[test]

@@ -2393,6 +2393,7 @@ pub enum DisassemblyObjcReferenceKind {
     Selector,
     Class,
     MethodList,
+    MessageSend,
 }
 
 impl fmt::Display for DisassemblyObjcReferenceKind {
@@ -2401,6 +2402,7 @@ impl fmt::Display for DisassemblyObjcReferenceKind {
             Self::Selector => "selector",
             Self::Class => "class",
             Self::MethodList => "method-list",
+            Self::MessageSend => "message-send",
         };
         f.write_str(text)
     }
@@ -2446,6 +2448,7 @@ pub struct DisassemblySummary {
     pub objc_selector_count: usize,
     pub objc_class_count: usize,
     pub objc_method_list_count: usize,
+    pub objc_message_send_count: usize,
     pub cache_link_count: usize,
     pub recovered_value_count: usize,
     pub jump_table_count: usize,

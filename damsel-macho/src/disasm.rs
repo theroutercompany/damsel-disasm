@@ -270,6 +270,11 @@ fn analyze_disassembly_impl(
         }
 
         for annotation in &instruction.annotations {
+            if let Some(objc_use) =
+                objc_message_send_use_from_annotation(instruction.address, annotation)
+            {
+                push_objc_reference_use(&mut objc_references, objc_use);
+            }
             if let Annotation::JumpTableCandidate {
                 base,
                 index_register,
@@ -327,6 +332,10 @@ fn analyze_disassembly_impl(
         .iter()
         .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::MethodList)
         .count();
+    let objc_message_send_count = objc_references
+        .iter()
+        .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::MessageSend)
+        .count();
 
     DisassemblyAnalysis {
         target: target.into(),
@@ -360,6 +369,7 @@ fn analyze_disassembly_impl(
             objc_selector_count,
             objc_class_count,
             objc_method_list_count,
+            objc_message_send_count,
             cache_link_count: 0,
             recovered_value_count: recovered_values.len(),
             jump_table_count: jump_tables.len(),
@@ -914,6 +924,7 @@ fn objc_reference_use_from_recovered(
             DisassemblyObjcReferenceKind::MethodList => image
                 .objc_method_list_owner_at_address(recovered.value)
                 .map(|name| (Some(name.to_string()), Some(recovered.value), None, None)),
+            DisassemblyObjcReferenceKind::MessageSend => None,
         })
         .unwrap_or((None, None, None, None));
     Some(DisassemblyObjcUse {
@@ -925,6 +936,42 @@ fn objc_reference_use_from_recovered(
         import_dylib,
         import_symbol,
     })
+}
+
+fn objc_message_send_use_from_annotation(
+    instruction_address: u64,
+    annotation: &Annotation,
+) -> Option<DisassemblyObjcUse> {
+    let Annotation::TargetSymbol { address, name } = annotation else {
+        return None;
+    };
+    let selector = objc_message_send_selector_from_symbol(name)?;
+    Some(DisassemblyObjcUse {
+        instruction_address,
+        target_address: *address,
+        resolved_address: Some(*address),
+        kind: DisassemblyObjcReferenceKind::MessageSend,
+        name: Some(selector.to_string()),
+        import_dylib: None,
+        import_symbol: None,
+    })
+}
+
+fn objc_message_send_selector_from_symbol(symbol: &str) -> Option<&str> {
+    let (callee, selector) = symbol.split_once('$')?;
+    if selector.is_empty() {
+        return None;
+    }
+    matches!(
+        callee,
+        "_objc_msgSend"
+            | "_objc_msgSendSuper"
+            | "_objc_msgSendSuper2"
+            | "_objc_msgSend_stret"
+            | "_objc_msgSendSuper_stret"
+            | "_objc_msgSendSuper2_stret"
+    )
+    .then_some(selector)
 }
 
 fn is_cfg_boundary_mnemonic(mnemonic: &str) -> bool {

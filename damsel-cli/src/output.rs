@@ -1585,7 +1585,7 @@ pub(crate) fn print_disassembly(
 fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
     println!("analysis:");
     println!(
-        "  summary: blocks={} edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
+        "  summary: blocks={} edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
         analysis.summary.basic_block_count,
         analysis.summary.edge_count,
         analysis.summary.direct_call_count,
@@ -1597,6 +1597,7 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         analysis.summary.objc_selector_count,
         analysis.summary.objc_class_count,
         analysis.summary.objc_method_list_count,
+        analysis.summary.objc_message_send_count,
         analysis.summary.cache_link_count,
         analysis.summary.recovered_value_count,
         analysis.summary.jump_table_count,
@@ -4714,6 +4715,10 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                 (
                     "objc_method_list_count".to_string(),
                     usize_num(analysis.summary.objc_method_list_count),
+                ),
+                (
+                    "objc_message_send_count".to_string(),
+                    usize_num(analysis.summary.objc_message_send_count),
                 ),
                 (
                     "cache_link_count".to_string(),

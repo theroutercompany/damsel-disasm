@@ -457,6 +457,7 @@ function renderAnalysisBlock(analysis) {
           ["ObjC Selectors", analysis.summary.objc_selector_count ?? 0],
           ["ObjC Classes", analysis.summary.objc_class_count ?? 0],
           ["ObjC Method Lists", analysis.summary.objc_method_list_count ?? 0],
+          ["ObjC Sends", analysis.summary.objc_message_send_count ?? 0],
           ["Cache Links", analysis.summary.cache_link_count],
           ["Recovered Values", analysis.summary.recovered_value_count],
           ["Jump Tables", analysis.summary.jump_table_count],

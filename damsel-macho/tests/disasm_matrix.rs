@@ -479,6 +479,14 @@ fn disasm_analysis_reports_objc_runtime_references_for_objc_fixture() {
             .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::MethodList)
             .count()
     );
+    assert_eq!(
+        analysis.summary.objc_message_send_count,
+        analysis
+            .objc_references
+            .iter()
+            .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::MessageSend)
+            .count()
+    );
     assert!(
         analysis.summary.objc_selector_count > 0 || analysis.summary.objc_class_count > 0,
         "objc fixture should expose selector or class references"
@@ -504,6 +512,14 @@ fn disasm_analysis_reports_objc_runtime_references_for_objc_fixture() {
                 && entry.resolved_address.is_some()
                 && entry.resolved_address != Some(entry.target_address)),
         "objc references should carry resolved names and dereferenced metadata addresses when image metadata is available"
+    );
+    assert!(
+        analysis.objc_references.iter().any(|entry| {
+            entry.kind == DisassemblyObjcReferenceKind::MessageSend
+                && entry.name.as_deref() == Some("title")
+                && entry.resolved_address == Some(entry.target_address)
+        }),
+        "objc message-send target symbols should become navigable analysis references"
     );
 }
 
