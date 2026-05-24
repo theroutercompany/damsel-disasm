@@ -2345,13 +2345,9 @@ fn indirect_control_kind(mnemonic: &str) -> String {
 }
 
 fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
-    mnemonic == "ret"
-        || mnemonic == "retaa"
-        || mnemonic == "retab"
-        || mnemonic == "eret"
+    is_unconditional_transfer_mnemonic(mnemonic)
+        || is_return_mnemonic(mnemonic)
         || mnemonic.starts_with("b.")
-        || mnemonic == "b"
-        || mnemonic == "bl"
 }
 
 fn instruction_writes_destination(mnemonic: &str) -> bool {
@@ -2363,12 +2359,9 @@ fn instruction_writes_destination(mnemonic: &str) -> bool {
         || mnemonic == "cbz"
         || mnemonic == "cbnz"
         || mnemonic.starts_with("b.")
-        || mnemonic == "b"
-        || mnemonic == "bl"
-        || mnemonic == "blr"
-        || mnemonic == "retaa"
-        || mnemonic == "retab"
-        || mnemonic == "ret")
+        || is_unconditional_transfer_mnemonic(mnemonic)
+        || is_call_mnemonic(mnemonic)
+        || is_return_mnemonic(mnemonic))
 }
 
 fn is_call_mnemonic(mnemonic: &str) -> bool {
@@ -3371,6 +3364,39 @@ mod tests {
                 .recovered_values
                 .is_empty(),
             "callee entry must not inherit caller layout state through x19: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_clears_state_after_indirect_branch_boundaries() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(0x220),
+                ],
+            ),
+            instruction(0x1004, "br", vec![Operand::Register("x8".to_string())]),
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x20".to_string()),
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "instructions after an indirect branch must not inherit linear state: {:?}",
             instructions
         );
     }
