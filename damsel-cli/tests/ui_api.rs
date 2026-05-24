@@ -272,7 +272,11 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("import_symbol"));
     assert!(js.contains("renderAnalysisOverview"));
     assert!(js.contains("renderOverviewCacheLinks"));
+    assert!(js.contains("renderOverviewIndirectControls"));
+    assert!(js.contains("renderOverviewJumpTables"));
     assert!(js.contains("first_instruction_address"));
+    assert!(js.contains("resolved_target"));
+    assert!(js.contains("Jump Table"));
     assert!(js.contains("to_block"));
     assert!(js.contains("Intra-window Edges"));
     assert!(js.contains("Overview"));
@@ -305,6 +309,16 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     );
     assert!(
         disasm_json["analysis"]["overview"]["branch_targets"]
+            .as_array()
+            .is_some()
+    );
+    assert!(
+        disasm_json["analysis"]["overview"]["jump_tables"]
+            .as_array()
+            .is_some()
+    );
+    assert!(
+        disasm_json["analysis"]["overview"]["indirect_controls"]
             .as_array()
             .is_some()
     );

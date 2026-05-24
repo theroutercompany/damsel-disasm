@@ -2305,7 +2305,7 @@ impl DecodedInstruction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ControlFlowEdgeKind {
     Fallthrough,
     Branch,
@@ -2452,6 +2452,24 @@ pub struct DisassemblyImportSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyIndirectControlSummary {
+    pub kind: ControlFlowEdgeKind,
+    pub via: String,
+    pub resolved_target: Option<u64>,
+    pub count: usize,
+    pub first_instruction_address: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyJumpTableSummary {
+    pub table_base: u64,
+    pub index_register: String,
+    pub element_size: u8,
+    pub count: usize,
+    pub first_instruction_address: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisassemblyCacheLinkSummary {
     pub symbol_name: String,
     pub dylib: String,
@@ -2494,6 +2512,8 @@ pub struct DisassemblyRecoveredValueSummary {
 pub struct DisassemblyOverview {
     pub call_targets: Vec<DisassemblyTargetSummary>,
     pub branch_targets: Vec<DisassemblyTargetSummary>,
+    pub indirect_controls: Vec<DisassemblyIndirectControlSummary>,
+    pub jump_tables: Vec<DisassemblyJumpTableSummary>,
     pub data_targets: Vec<DisassemblyTargetSummary>,
     pub imports: Vec<DisassemblyImportSummary>,
     pub cache_links: Vec<DisassemblyCacheLinkSummary>,

@@ -1957,6 +1957,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
         &[
             "call_targets",
             "branch_targets",
+            "indirect_controls",
+            "jump_tables",
             "data_targets",
             "imports",
             "cache_links",
@@ -2019,6 +2021,11 @@ fn disasm_json_analysis_contract_is_opt_in() {
             .as_array()
             .is_some_and(|tables| !tables.is_empty())
     );
+    assert!(
+        analysis["indirect_controls"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
     let overview = &analysis["overview"];
     assert!(
         overview["branch_targets"]
@@ -2030,6 +2037,56 @@ fn disasm_json_analysis_contract_is_opt_in() {
             .as_array()
             .is_some_and(|rows| !rows.is_empty())
     );
+    assert!(
+        overview["indirect_controls"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+    assert!(
+        overview["jump_tables"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+    for entry in overview["indirect_controls"]
+        .as_array()
+        .expect("indirect controls")
+    {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "kind",
+                "via",
+                "resolved_target",
+                "count",
+                "first_instruction_address",
+            ],
+        );
+        assert!(entry["kind"].is_string());
+        assert!(entry["via"].is_string());
+        assert!(entry["resolved_target"].is_number() || entry["resolved_target"].is_null());
+        assert!(entry["count"].as_u64().unwrap() > 0);
+        assert!(entry["first_instruction_address"].is_number());
+    }
+    for entry in overview["jump_tables"]
+        .as_array()
+        .expect("jump table overview")
+    {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "table_base",
+                "index_register",
+                "element_size",
+                "count",
+                "first_instruction_address",
+            ],
+        );
+        assert!(entry["table_base"].is_number());
+        assert!(entry["index_register"].is_string());
+        assert!(entry["element_size"].as_u64().unwrap() > 0);
+        assert!(entry["count"].as_u64().unwrap() > 0);
+        assert!(entry["first_instruction_address"].is_number());
+    }
     for entry in overview["data_targets"].as_array().expect("data targets") {
         assert_exact_object_keys(
             entry,

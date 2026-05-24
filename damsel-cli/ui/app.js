@@ -483,6 +483,8 @@ function renderAnalysisOverview(overview) {
   const sections = [
     renderOverviewTargets("Calls", overview.call_targets || []),
     renderOverviewTargets("Branches", overview.branch_targets || []),
+    renderOverviewIndirectControls(overview.indirect_controls || []),
+    renderOverviewJumpTables(overview.jump_tables || []),
     renderOverviewTargets("Data", overview.data_targets || []),
     renderOverviewImports(overview.imports || []),
     renderOverviewCacheLinks(overview.cache_links || []),
@@ -534,6 +536,51 @@ function renderOverviewImports(rows) {
           ${renderJumpButton(entry.first_instruction_address)}
           <span class="mono">${escapeHtml(entry.dylib)}</span>
           <span class="mono">${escapeHtml(entry.name)}</span>
+          <span class="mono">${escapeHtml(String(entry.count))}x</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderOverviewIndirectControls(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return rows
+    .map((entry) => {
+      const resolvedTarget =
+        entry.resolved_target === null || entry.resolved_target === undefined
+          ? `<span class="mono">n/a</span>`
+          : renderJumpButton(entry.resolved_target);
+      return `
+        <div class="analysis-row">
+          <span class="mono">Indirect ${escapeHtml(entry.kind)}</span>
+          ${renderJumpButton(entry.first_instruction_address)}
+          <span class="mono">${escapeHtml(entry.via)}</span>
+          ${resolvedTarget}
+          <span class="mono">${escapeHtml(String(entry.count))}x</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderOverviewJumpTables(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return rows
+    .map(
+      (entry) => `
+        <div class="analysis-row">
+          <span class="mono">Jump Table</span>
+          ${renderJumpButton(entry.first_instruction_address)}
+          ${renderJumpButton(entry.table_base)}
+          <span class="mono">${escapeHtml(entry.index_register)}</span>
+          <span class="mono">${escapeHtml(String(entry.element_size))}B</span>
           <span class="mono">${escapeHtml(String(entry.count))}x</span>
         </div>
       `,

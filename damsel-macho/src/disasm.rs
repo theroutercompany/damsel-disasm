@@ -1,7 +1,8 @@
 use crate::errors::{MachoError, Result};
 use damsel_core::{
     Annotation, BasicBlock, BinaryImage, ControlFlowEdge, ControlFlowEdgeKind, DecodedInstruction,
-    DisassemblyAnalysis, DisassemblyImportSummary, DisassemblyImportUse, DisassemblyIndirectUse,
+    DisassemblyAnalysis, DisassemblyImportSummary, DisassemblyImportUse,
+    DisassemblyIndirectControlSummary, DisassemblyIndirectUse, DisassemblyJumpTableSummary,
     DisassemblyJumpTableUse, DisassemblyLimit, DisassemblyMetrics, DisassemblyObjcReferenceKind,
     DisassemblyObjcReferenceSummary, DisassemblyObjcUse, DisassemblyOverview,
     DisassemblyRecoveredValueSummary, DisassemblyRecoveredValueUse, DisassemblyRequest,
@@ -341,6 +342,8 @@ fn analyze_disassembly_impl(
     let overview = build_disassembly_overview(
         &direct_calls,
         &branch_targets,
+        &indirect_controls,
+        &jump_tables,
         &data_references,
         &imports,
         &objc_references,
@@ -403,6 +406,8 @@ fn analyze_disassembly_impl(
 fn build_disassembly_overview(
     direct_calls: &[DisassemblyTargetUse],
     branch_targets: &[DisassemblyTargetUse],
+    indirect_controls: &[DisassemblyIndirectUse],
+    jump_tables: &[DisassemblyJumpTableUse],
     data_references: &[DisassemblyTargetUse],
     imports: &[DisassemblyImportUse],
     objc_references: &[DisassemblyObjcUse],
@@ -411,6 +416,8 @@ fn build_disassembly_overview(
     DisassemblyOverview {
         call_targets: summarize_target_uses(direct_calls),
         branch_targets: summarize_target_uses(branch_targets),
+        indirect_controls: summarize_indirect_control_uses(indirect_controls),
+        jump_tables: summarize_jump_table_uses(jump_tables),
         data_targets: summarize_target_uses(data_references),
         imports: summarize_import_uses(imports),
         cache_links: Vec::new(),
@@ -438,6 +445,93 @@ fn summarize_target_uses(entries: &[DisassemblyTargetUse]) -> Vec<DisassemblyTar
     }
     let mut rows = by_target.into_values().collect::<Vec<_>>();
     rows.sort_by_key(|row| (row.first_instruction_address, row.target_address));
+    rows
+}
+
+fn summarize_indirect_control_uses(
+    entries: &[DisassemblyIndirectUse],
+) -> Vec<DisassemblyIndirectControlSummary> {
+    let mut by_control: BTreeMap<
+        (ControlFlowEdgeKind, String, Option<u64>),
+        DisassemblyIndirectControlSummary,
+    > = BTreeMap::new();
+    for entry in entries {
+        let key = (entry.kind, entry.via.clone(), entry.resolved_target);
+        by_control
+            .entry(key)
+            .and_modify(|summary| {
+                summary.count += 1;
+                summary.first_instruction_address = summary
+                    .first_instruction_address
+                    .min(entry.instruction_address);
+            })
+            .or_insert(DisassemblyIndirectControlSummary {
+                kind: entry.kind,
+                via: entry.via.clone(),
+                resolved_target: entry.resolved_target,
+                count: 1,
+                first_instruction_address: entry.instruction_address,
+            });
+    }
+    let mut rows = by_control.into_values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        (
+            left.first_instruction_address,
+            left.kind,
+            left.via.as_str(),
+            left.resolved_target,
+        )
+            .cmp(&(
+                right.first_instruction_address,
+                right.kind,
+                right.via.as_str(),
+                right.resolved_target,
+            ))
+    });
+    rows
+}
+
+fn summarize_jump_table_uses(
+    entries: &[DisassemblyJumpTableUse],
+) -> Vec<DisassemblyJumpTableSummary> {
+    let mut by_table: BTreeMap<(u64, String, u8), DisassemblyJumpTableSummary> = BTreeMap::new();
+    for entry in entries {
+        let key = (
+            entry.table_base,
+            entry.index_register.clone(),
+            entry.element_size,
+        );
+        by_table
+            .entry(key)
+            .and_modify(|summary| {
+                summary.count += 1;
+                summary.first_instruction_address = summary
+                    .first_instruction_address
+                    .min(entry.instruction_address);
+            })
+            .or_insert(DisassemblyJumpTableSummary {
+                table_base: entry.table_base,
+                index_register: entry.index_register.clone(),
+                element_size: entry.element_size,
+                count: 1,
+                first_instruction_address: entry.instruction_address,
+            });
+    }
+    let mut rows = by_table.into_values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        (
+            left.first_instruction_address,
+            left.table_base,
+            left.index_register.as_str(),
+            left.element_size,
+        )
+            .cmp(&(
+                right.first_instruction_address,
+                right.table_base,
+                right.index_register.as_str(),
+                right.element_size,
+            ))
+    });
     rows
 }
 

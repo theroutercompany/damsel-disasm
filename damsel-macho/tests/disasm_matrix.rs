@@ -427,8 +427,24 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
     assert!(analysis.summary.recovered_value_count > 0);
     assert!(analysis.summary.jump_table_count > 0);
     assert!(
+        !analysis.indirect_controls.is_empty(),
+        "analysis should retain raw indirect controls"
+    );
+    assert!(
+        !analysis.jump_tables.is_empty(),
+        "analysis should retain raw jump-table uses"
+    );
+    assert!(
         !analysis.overview.branch_targets.is_empty(),
         "overview should summarize branch targets"
+    );
+    assert!(
+        !analysis.overview.indirect_controls.is_empty(),
+        "overview should summarize indirect controls"
+    );
+    assert!(
+        !analysis.overview.jump_tables.is_empty(),
+        "overview should summarize jump tables"
     );
     assert!(
         !analysis.overview.data_targets.is_empty(),
@@ -444,6 +460,22 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
             .data_targets
             .iter()
             .all(|entry| entry.count > 0 && entry.first_instruction_address > 0)
+    );
+    assert!(
+        analysis
+            .overview
+            .indirect_controls
+            .iter()
+            .all(|entry| entry.count > 0 && !entry.via.is_empty())
+    );
+    assert!(
+        analysis
+            .overview
+            .jump_tables
+            .iter()
+            .all(|entry| entry.count > 0
+                && !entry.index_register.is_empty()
+                && entry.element_size > 0)
     );
 }
 

@@ -1706,6 +1706,8 @@ fn print_disassembly_overview_text(analysis: &DisassemblyAnalysis) {
     let overview = &analysis.overview;
     if overview.call_targets.is_empty()
         && overview.branch_targets.is_empty()
+        && overview.indirect_controls.is_empty()
+        && overview.jump_tables.is_empty()
         && overview.data_targets.is_empty()
         && overview.imports.is_empty()
         && overview.cache_links.is_empty()
@@ -1718,6 +1720,32 @@ fn print_disassembly_overview_text(analysis: &DisassemblyAnalysis) {
     println!("  overview:");
     print_target_summary_text("calls", &overview.call_targets);
     print_target_summary_text("branches", &overview.branch_targets);
+    if !overview.indirect_controls.is_empty() {
+        println!("    indirect_controls:");
+        for entry in &overview.indirect_controls {
+            let resolved = entry
+                .resolved_target
+                .map(|value| format!("{value:#x}"))
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "      - first={:#x} count={} kind={} via={} resolved_target={}",
+                entry.first_instruction_address, entry.count, entry.kind, entry.via, resolved
+            );
+        }
+    }
+    if !overview.jump_tables.is_empty() {
+        println!("    jump_tables:");
+        for entry in &overview.jump_tables {
+            println!(
+                "      - first={:#x} count={} table_base={:#x} index={} element_size={}",
+                entry.first_instruction_address,
+                entry.count,
+                entry.table_base,
+                entry.index_register,
+                entry.element_size
+            );
+        }
+    }
     print_target_summary_text("data", &overview.data_targets);
     if !overview.imports.is_empty() {
         println!("    imports:");
@@ -5172,6 +5200,63 @@ fn disassembly_overview_json(overview: &damsel_core::DisassemblyOverview) -> Jso
                     .branch_targets
                     .iter()
                     .map(target_summary_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "indirect_controls".to_string(),
+            JsonValue::Array(
+                overview
+                    .indirect_controls
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "kind".to_string(),
+                                JsonValue::String(entry.kind.to_string()),
+                            ),
+                            ("via".to_string(), JsonValue::String(entry.via.clone())),
+                            (
+                                "resolved_target".to_string(),
+                                entry
+                                    .resolved_target
+                                    .map(u64_num)
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            ("count".to_string(), usize_num(entry.count)),
+                            (
+                                "first_instruction_address".to_string(),
+                                u64_num(entry.first_instruction_address),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "jump_tables".to_string(),
+            JsonValue::Array(
+                overview
+                    .jump_tables
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            ("table_base".to_string(), u64_num(entry.table_base)),
+                            (
+                                "index_register".to_string(),
+                                JsonValue::String(entry.index_register.clone()),
+                            ),
+                            (
+                                "element_size".to_string(),
+                                u64_num(u64::from(entry.element_size)),
+                            ),
+                            ("count".to_string(), usize_num(entry.count)),
+                            (
+                                "first_instruction_address".to_string(),
+                                u64_num(entry.first_instruction_address),
+                            ),
+                        ])
+                    })
                     .collect(),
             ),
         ),
