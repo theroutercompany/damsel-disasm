@@ -2005,8 +2005,8 @@ fn synthesize_analysis_references(
             }
         }
 
-        if let Some(destination) = destination {
-            if !destination_updated && instruction_writes_destination(&lower) {
+        if !destination_updated {
+            for destination in written_destination_registers(instruction, &lower) {
                 remove_known_value(&mut known_values, &destination);
                 remove_table_slot_evidence(&mut relative_slot_loads, &destination);
             }
@@ -2200,6 +2200,32 @@ fn destination_register(instruction: &DecodedInstruction) -> Option<String> {
     }
 }
 
+fn written_destination_registers(instruction: &DecodedInstruction, mnemonic: &str) -> Vec<String> {
+    if !instruction_writes_destination(mnemonic) {
+        return Vec::new();
+    }
+
+    if mnemonic.starts_with("ldp") || mnemonic.starts_with("ldnp") {
+        return instruction
+            .operands
+            .iter()
+            .take(2)
+            .filter_map(register_operand_name)
+            .collect();
+    }
+
+    destination_register(instruction).into_iter().collect()
+}
+
+fn register_operand_name(operand: &Operand) -> Option<String> {
+    match operand {
+        Operand::Register(register) => Some(register.clone()),
+        Operand::QualifiedRegister { register, .. } => Some(register.clone()),
+        Operand::SystemRegister(register) => Some(register.clone()),
+        _ => None,
+    }
+}
+
 fn add_immediate_inputs(instruction: &DecodedInstruction) -> Option<(Option<String>, String, i64)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
     if lower.starts_with("add") || lower == "sub" || lower.starts_with("subs") {
@@ -2357,6 +2383,7 @@ fn instruction_writes_destination(mnemonic: &str) -> bool {
         || mnemonic == "cbz"
         || mnemonic == "cbnz"
         || mnemonic.starts_with("b.")
+        || mnemonic.starts_with("st")
         || is_unconditional_transfer_mnemonic(mnemonic)
         || is_call_mnemonic(mnemonic)
         || is_return_mnemonic(mnemonic))
@@ -3556,6 +3583,113 @@ mod tests {
                 .recovered_values
                 .iter()
                 .any(|value| { value.register == "x20" && value.value == 0x224 })
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_preserves_register_values_across_stores() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "str",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::Memory {
+                        base: "sp".to_string(),
+                        index: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1008, "blr", vec![Operand::Register("x8".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Call { target: 0x1234 }),
+            "store source registers must keep their recovered values: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_pair_load_destinations() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x5678),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldp",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "sp".to_string(),
+                        index: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x100c,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "add",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.is_empty(),
+            "ldp must invalidate its first destination register: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4].recovered_values.is_empty(),
+            "ldp must invalidate its second destination register: {:?}",
+            instructions
         );
     }
 
