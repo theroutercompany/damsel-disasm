@@ -112,22 +112,34 @@ function formatAddress(value) {
   return `0x${bigint.toString(16)}`;
 }
 
-function numericValue(input) {
-  if (!input.value.trim()) {
-    return null;
+function parseOptionalInteger(input, label) {
+  const rawValue = input.value.trim();
+  if (!rawValue) {
+    return { value: null, error: null };
   }
 
-  const value = Number(input.value);
-  return Number.isFinite(value) ? value : null;
+  const normalized = rawValue.replaceAll("_", "");
+  const isHex = /^0x[0-9a-f]+$/i.test(normalized);
+  const isDecimal = /^[0-9]+$/.test(normalized);
+  if (!isHex && !isDecimal) {
+    return { value: null, error: `${label} must be a decimal or hex integer.` };
+  }
+
+  const value = Number.parseInt(normalized, isHex ? 16 : 10);
+  if (!Number.isSafeInteger(value)) {
+    return { value: null, error: `${label} is outside the JavaScript safe integer range.` };
+  }
+
+  return { value, error: null };
+}
+
+function numericValue(input) {
+  return parseOptionalInteger(input, "Value").value;
 }
 
 function currentStartAddressHint(targetKind) {
   if (targetKind === "address" && elements.addressInput.value.trim()) {
-    try {
-      return Number.parseInt(elements.addressInput.value.trim().replace(/^0x/i, ""), 16);
-    } catch {
-      return null;
-    }
+    return numericValue(elements.addressInput);
   }
 
   if (targetKind === "section") {
@@ -160,33 +172,46 @@ function validateInputs() {
     return "Enter a decode address.";
   }
 
-  const bytes = numericValue(elements.bytesInput);
-  const limit = numericValue(elements.limitInput);
-  const from = numericValue(elements.fromInput);
-  const to = numericValue(elements.toInput);
+  const address =
+    targetKind === "address"
+      ? parseOptionalInteger(elements.addressInput, "Address")
+      : { value: null, error: null };
+  const bytes = parseOptionalInteger(elements.bytesInput, "Bytes");
+  const limit = parseOptionalInteger(elements.limitInput, "Limit");
+  const from = parseOptionalInteger(elements.fromInput, "From");
+  const to = parseOptionalInteger(elements.toInput, "To");
   const startHint = currentStartAddressHint(targetKind);
+  for (const parsed of [address, bytes, limit, from, to]) {
+    if (parsed.error) {
+      return parsed.error;
+    }
+  }
 
-  if (bytes !== null && bytes <= 0) {
+  if (targetKind === "address" && address.value === null) {
+    return "Enter a valid decimal or hex decode address.";
+  }
+
+  if (bytes.value !== null && bytes.value <= 0) {
     return "Bytes must be greater than 0.";
   }
 
-  if (limit !== null && limit <= 0) {
+  if (limit.value !== null && limit.value <= 0) {
     return "Limit must be greater than 0.";
   }
 
-  if (bytes !== null && limit !== null) {
+  if (bytes.value !== null && limit.value !== null) {
     return "Bytes cannot be combined with limit.";
   }
 
-  if (to !== null && (bytes !== null || limit !== null)) {
+  if (to.value !== null && (bytes.value !== null || limit.value !== null)) {
     return "To cannot be combined with bytes or limit.";
   }
 
-  if (from !== null && to !== null && to <= from) {
+  if (from.value !== null && to.value !== null && to.value <= from.value) {
     return "To must be greater than from.";
   }
 
-  if (startHint !== null && to !== null && to <= startHint) {
+  if (startHint !== null && to.value !== null && to.value <= startHint) {
     return "To must be greater than the decode start.";
   }
 
@@ -920,9 +945,20 @@ function renderAnalysisObjcReferences(references) {
 }
 
 function renderJumpButton(value) {
+  if (value === null || value === undefined) {
+    return '<span class="mono">n/a</span>';
+  }
+
+  let label;
+  try {
+    label = formatAddress(value);
+  } catch {
+    return '<span class="mono">n/a</span>';
+  }
+
   return `
     <button class="jump-button mono" type="button" data-jump-target="${value}">
-      ${escapeHtml(formatAddress(value))}
+      ${escapeHtml(label)}
     </button>
   `;
 }

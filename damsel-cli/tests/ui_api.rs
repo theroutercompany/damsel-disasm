@@ -256,6 +256,9 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(html.contains("data-component=\"floating-dock\""));
     assert!(html.contains("data-component=\"floating-load\""));
     assert!(html.contains("Drop Mach-O or choose file"));
+    assert!(html.contains("id=\"from-input\" type=\"text\""));
+    assert!(html.contains("id=\"to-input\" type=\"text\""));
+    assert!(html.contains("0x100000460 or decimal"));
 
     let js = client
         .get(format!("{}/app.js", server.base_url))
@@ -265,6 +268,9 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         .expect("js body");
     assert!(js.contains("syncWorkbenchState"));
     assert!(js.contains("includeAnalysis"));
+    assert!(js.contains("parseOptionalInteger"));
+    assert!(js.contains("decimal or hex integer"));
+    assert!(js.contains("JavaScript safe integer range"));
     assert!(js.contains("renderResultAnalysisMeta"));
     assert!(js.contains("renderAnalysisEdges"));
     assert!(js.contains("renderAnalysisTargetUses"));
@@ -297,6 +303,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("ObjC Selectors"));
     assert!(js.contains("ObjC Sends"));
     assert!(js.contains("Basic Blocks"));
+    assert!(js.contains(">n/a<"));
 
     let upload = upload_fixture(&client, &server, "semantic-switch");
     let image_id = upload["imageId"].as_str().expect("image id");
