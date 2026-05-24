@@ -2567,7 +2567,7 @@ fn synthesize_mov_wide_value(
         _ => return None,
     };
     let shift = match instruction.operands.get(2) {
-        Some(operand) => parse_shift_bits(operand)?,
+        Some(operand) => parse_mov_wide_shift_bits(&destination, operand)?,
         None => 0,
     };
     let lane_mask = 0xffff_u64.checked_shl(shift)?;
@@ -2662,6 +2662,14 @@ fn parse_shift_bits(operand: &Operand) -> Option<u32> {
     } else {
         None
     }
+}
+
+fn parse_mov_wide_shift_bits(destination: &str, operand: &Operand) -> Option<u32> {
+    let shift = parse_shift_bits(operand)?;
+    if destination.to_ascii_lowercase().starts_with('w') && shift > 16 {
+        return None;
+    }
+    Some(shift)
 }
 
 fn parse_shift_from_text(text: &str) -> Option<u32> {
@@ -3863,6 +3871,27 @@ mod tests {
         assert!(
             instructions[0].recovered_values.is_empty(),
             "invalid mov-wide shifts must not panic or synthesize misleading values"
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_ignores_width_invalid_mov_wide_shifts() {
+        let image = synthetic_image();
+        let mut instructions = vec![instruction(
+            0x1000,
+            "movz",
+            vec![
+                Operand::Register("w0".to_string()),
+                Operand::ImmediateUnsigned(1),
+                Operand::ImmediateUnsigned(32),
+            ],
+        )];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[0].recovered_values.is_empty(),
+            "32-bit mov-wide destinations only support 0/16-bit shifts"
         );
     }
 
