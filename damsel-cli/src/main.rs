@@ -5,11 +5,11 @@ use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use damsel_core::{
     BinaryImage, CacheDependentRecord, CacheImageDependencyRecord, CacheImageRecord,
     CacheLookupResult, CacheReexportRecord, CacheSymbolImporterRecord, CacheSymbolProviderRecord,
-    DecodedInstruction, DisassemblyAnalysis, DisassemblyCacheLinkUse, DisassemblyLimit,
-    DisassemblyOptions, DisassemblyRequestV2, DisassemblyTarget, ExportFlagName, Import,
-    ImportBindingKind, ObjcMethodRecord, ObjcNameSource, ObjcSelectorSource, ProjectedBinaryImage,
-    Relocation, Section, SharedCache, SharedCacheMemberRole, StubKind, Symbol, SymbolKind,
-    SymbolicationMatch,
+    DecodedInstruction, DisassemblyAnalysis, DisassemblyCacheLinkSummary, DisassemblyCacheLinkUse,
+    DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2, DisassemblyTarget, ExportFlagName,
+    Import, ImportBindingKind, ObjcMethodRecord, ObjcNameSource, ObjcSelectorSource,
+    ProjectedBinaryImage, Relocation, Section, SharedCache, SharedCacheMemberRole, StubKind,
+    Symbol, SymbolKind, SymbolicationMatch,
 };
 use damsel_macho::{
     SharedCacheSession, analyze_disassembly_with_image, disassemble_v2, inspect_shared_cache, load,
@@ -1955,8 +1955,88 @@ fn enrich_cache_analysis(
             ))
     });
     analysis.summary.cache_link_count = cache_links.len();
+    analysis.overview.cache_links = summarize_cache_link_uses(&cache_links);
     analysis.cache_links = cache_links;
     Ok(())
+}
+
+fn summarize_cache_link_uses(
+    entries: &[DisassemblyCacheLinkUse],
+) -> Vec<DisassemblyCacheLinkSummary> {
+    let mut by_link: BTreeMap<
+        (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+        DisassemblyCacheLinkSummary,
+    > = BTreeMap::new();
+
+    for entry in entries {
+        let key = (
+            entry.symbol_name.clone(),
+            entry.dylib.clone(),
+            entry.provider_image_id.clone(),
+            entry.provider_install_name.clone(),
+            entry.provider_member_name.clone(),
+            entry.provider_kind.clone(),
+            entry.target_dylib.clone(),
+            entry.target_symbol.clone(),
+            entry.resolved_target_image_id.clone(),
+            entry.resolved_target_install_name.clone(),
+            entry.resolved_target_member_name.clone(),
+        );
+        by_link
+            .entry(key)
+            .and_modify(|summary| {
+                summary.count += 1;
+                summary.first_instruction_address = summary
+                    .first_instruction_address
+                    .min(entry.instruction_address);
+            })
+            .or_insert(DisassemblyCacheLinkSummary {
+                symbol_name: entry.symbol_name.clone(),
+                dylib: entry.dylib.clone(),
+                provider_image_id: entry.provider_image_id.clone(),
+                provider_install_name: entry.provider_install_name.clone(),
+                provider_member_name: entry.provider_member_name.clone(),
+                provider_kind: entry.provider_kind.clone(),
+                target_dylib: entry.target_dylib.clone(),
+                target_symbol: entry.target_symbol.clone(),
+                resolved_target_image_id: entry.resolved_target_image_id.clone(),
+                resolved_target_install_name: entry.resolved_target_install_name.clone(),
+                resolved_target_member_name: entry.resolved_target_member_name.clone(),
+                count: 1,
+                first_instruction_address: entry.instruction_address,
+            });
+    }
+
+    let mut rows = by_link.into_values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        (
+            left.first_instruction_address,
+            left.symbol_name.as_str(),
+            left.dylib.as_str(),
+            left.provider_install_name.as_str(),
+            left.provider_kind.as_str(),
+        )
+            .cmp(&(
+                right.first_instruction_address,
+                right.symbol_name.as_str(),
+                right.dylib.as_str(),
+                right.provider_install_name.as_str(),
+                right.provider_kind.as_str(),
+            ))
+    });
+    rows
 }
 
 fn cache_provider_matches_import(provider: &CacheSymbolProviderRecord, dylib: &str) -> bool {

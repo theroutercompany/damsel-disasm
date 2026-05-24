@@ -413,6 +413,7 @@ fn build_disassembly_overview(
         branch_targets: summarize_target_uses(branch_targets),
         data_targets: summarize_target_uses(data_references),
         imports: summarize_import_uses(imports),
+        cache_links: Vec::new(),
         objc_references: summarize_objc_uses(objc_references),
         recovered_values: summarize_recovered_value_uses(recovered_values),
     }

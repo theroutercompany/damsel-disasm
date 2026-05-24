@@ -485,6 +485,7 @@ function renderAnalysisOverview(overview) {
     renderOverviewTargets("Branches", overview.branch_targets || []),
     renderOverviewTargets("Data", overview.data_targets || []),
     renderOverviewImports(overview.imports || []),
+    renderOverviewCacheLinks(overview.cache_links || []),
     renderOverviewObjc(overview.objc_references || []),
     renderOverviewValues(overview.recovered_values || []),
   ].filter(Boolean);
@@ -533,6 +534,27 @@ function renderOverviewImports(rows) {
           ${renderJumpButton(entry.first_instruction_address)}
           <span class="mono">${escapeHtml(entry.dylib)}</span>
           <span class="mono">${escapeHtml(entry.name)}</span>
+          <span class="mono">${escapeHtml(String(entry.count))}x</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderOverviewCacheLinks(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return rows
+    .map(
+      (entry) => `
+        <div class="analysis-row">
+          <span class="mono">Cache Link</span>
+          ${renderJumpButton(entry.first_instruction_address)}
+          <span class="mono">${escapeHtml(entry.symbol_name)}</span>
+          <span class="mono">${escapeHtml(entry.provider_kind)}</span>
+          <span class="mono">${escapeHtml(entry.provider_install_name)}</span>
           <span class="mono">${escapeHtml(String(entry.count))}x</span>
         </div>
       `,

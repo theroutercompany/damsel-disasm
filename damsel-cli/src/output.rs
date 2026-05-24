@@ -1708,6 +1708,7 @@ fn print_disassembly_overview_text(analysis: &DisassemblyAnalysis) {
         && overview.branch_targets.is_empty()
         && overview.data_targets.is_empty()
         && overview.imports.is_empty()
+        && overview.cache_links.is_empty()
         && overview.objc_references.is_empty()
         && overview.recovered_values.is_empty()
     {
@@ -1728,6 +1729,21 @@ fn print_disassembly_overview_text(analysis: &DisassemblyAnalysis) {
             println!(
                 "      - first={:#x} count={} {}:{} address={}",
                 entry.first_instruction_address, entry.count, entry.dylib, entry.name, address
+            );
+        }
+    }
+    if !overview.cache_links.is_empty() {
+        println!("    cache_links:");
+        for entry in &overview.cache_links {
+            println!(
+                "      - first={:#x} count={} symbol={} dylib={} provider={} kind={} resolved_target={}",
+                entry.first_instruction_address,
+                entry.count,
+                entry.symbol_name,
+                entry.dylib,
+                entry.provider_install_name,
+                entry.provider_kind,
+                entry.resolved_target_install_name.as_deref().unwrap_or("-")
             );
         }
     }
@@ -5182,6 +5198,85 @@ fn disassembly_overview_json(overview: &damsel_core::DisassemblyOverview) -> Jso
                             (
                                 "address".to_string(),
                                 entry.address.map(u64_num).unwrap_or(JsonValue::Null),
+                            ),
+                            ("count".to_string(), usize_num(entry.count)),
+                            (
+                                "first_instruction_address".to_string(),
+                                u64_num(entry.first_instruction_address),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "cache_links".to_string(),
+            JsonValue::Array(
+                overview
+                    .cache_links
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "symbol_name".to_string(),
+                                JsonValue::String(entry.symbol_name.clone()),
+                            ),
+                            ("dylib".to_string(), JsonValue::String(entry.dylib.clone())),
+                            (
+                                "provider_image_id".to_string(),
+                                JsonValue::String(entry.provider_image_id.clone()),
+                            ),
+                            (
+                                "provider_install_name".to_string(),
+                                JsonValue::String(entry.provider_install_name.clone()),
+                            ),
+                            (
+                                "provider_member_name".to_string(),
+                                JsonValue::String(entry.provider_member_name.clone()),
+                            ),
+                            (
+                                "provider_kind".to_string(),
+                                JsonValue::String(entry.provider_kind.clone()),
+                            ),
+                            (
+                                "target_dylib".to_string(),
+                                entry
+                                    .target_dylib
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "target_symbol".to_string(),
+                                entry
+                                    .target_symbol
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "resolved_target_image_id".to_string(),
+                                entry
+                                    .resolved_target_image_id
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "resolved_target_install_name".to_string(),
+                                entry
+                                    .resolved_target_install_name
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "resolved_target_member_name".to_string(),
+                                entry
+                                    .resolved_target_member_name
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
                             ),
                             ("count".to_string(), usize_num(entry.count)),
                             (

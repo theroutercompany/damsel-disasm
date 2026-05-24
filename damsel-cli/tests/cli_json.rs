@@ -1959,6 +1959,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "branch_targets",
             "data_targets",
             "imports",
+            "cache_links",
             "objc_references",
             "recovered_values",
         ],
@@ -2350,6 +2351,18 @@ fn cache_disasm_json_analysis_links_imports_to_cache_providers() {
                 && entry["count"].as_u64().is_some_and(|count| count > 0)
                 && entry["first_instruction_address"].is_number())
     );
+    assert!(
+        analysis["overview"]["cache_links"]
+            .as_array()
+            .expect("cache link overview")
+            .iter()
+            .any(|entry| entry["symbol_name"] == "_puts"
+                && entry["dylib"] == "/usr/lib/libSystem.B.dylib"
+                && entry["provider_install_name"] == "/usr/lib/libSystem.B.dylib"
+                && entry["provider_kind"] == "export"
+                && entry["count"].as_u64().is_some_and(|count| count > 0)
+                && entry["first_instruction_address"].is_number())
+    );
     assert_eq!(
         analysis["summary"]["cache_link_count"].as_u64(),
         analysis["cache_links"]
@@ -2384,6 +2397,29 @@ fn cache_disasm_json_analysis_links_imports_to_cache_providers() {
                 "resolved_target_image_id",
                 "resolved_target_install_name",
                 "resolved_target_member_name",
+            ],
+        );
+    }
+    for entry in analysis["overview"]["cache_links"]
+        .as_array()
+        .expect("cache link overview")
+    {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "symbol_name",
+                "dylib",
+                "provider_image_id",
+                "provider_install_name",
+                "provider_member_name",
+                "provider_kind",
+                "target_dylib",
+                "target_symbol",
+                "resolved_target_image_id",
+                "resolved_target_install_name",
+                "resolved_target_member_name",
+                "count",
+                "first_instruction_address",
             ],
         );
     }

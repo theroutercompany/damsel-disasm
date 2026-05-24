@@ -2452,6 +2452,23 @@ pub struct DisassemblyImportSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyCacheLinkSummary {
+    pub symbol_name: String,
+    pub dylib: String,
+    pub provider_image_id: String,
+    pub provider_install_name: String,
+    pub provider_member_name: String,
+    pub provider_kind: String,
+    pub target_dylib: Option<String>,
+    pub target_symbol: Option<String>,
+    pub resolved_target_image_id: Option<String>,
+    pub resolved_target_install_name: Option<String>,
+    pub resolved_target_member_name: Option<String>,
+    pub count: usize,
+    pub first_instruction_address: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisassemblyObjcReferenceSummary {
     pub kind: DisassemblyObjcReferenceKind,
     pub name: Option<String>,
@@ -2479,6 +2496,7 @@ pub struct DisassemblyOverview {
     pub branch_targets: Vec<DisassemblyTargetSummary>,
     pub data_targets: Vec<DisassemblyTargetSummary>,
     pub imports: Vec<DisassemblyImportSummary>,
+    pub cache_links: Vec<DisassemblyCacheLinkSummary>,
     pub objc_references: Vec<DisassemblyObjcReferenceSummary>,
     pub recovered_values: Vec<DisassemblyRecoveredValueSummary>,
 }
