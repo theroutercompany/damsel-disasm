@@ -2257,6 +2257,12 @@ fn canonical_state_key(register: &str) -> Option<String> {
     if lower == "lr" {
         return Some("x30".to_string());
     }
+    if lower == "ip0" {
+        return Some("x16".to_string());
+    }
+    if lower == "ip1" {
+        return Some("x17".to_string());
+    }
     if let Some(index) = lower.strip_prefix('x').or_else(|| lower.strip_prefix('w')) {
         if !index.is_empty() && index.chars().all(|ch| ch.is_ascii_digit()) {
             return Some(format!("x{index}"));
@@ -3939,6 +3945,48 @@ mod tests {
                 .references
                 .contains(&Reference::Call { target: 0x1234 }),
             "lr must resolve through the same state key as x30: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_ip_aliases() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x16".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(0x1004, "blr", vec![Operand::Register("ip0".to_string())]),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("ip1".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x17".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1]
+                .references
+                .contains(&Reference::Call { target: 0x1234 }),
+            "ip0 must resolve through the same state key as x16: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "ip1 writes must resolve through the same state key as x17: {:?}",
             instructions
         );
     }
