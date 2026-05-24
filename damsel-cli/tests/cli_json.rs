@@ -2162,6 +2162,10 @@ fn disasm_json_analysis_contract_is_opt_in() {
             ],
         );
     }
+    let first_block_id = blocks
+        .first()
+        .and_then(|block| block["id"].as_u64())
+        .expect("first block id");
     for block in blocks {
         let predecessors = block["predecessors"].as_array().expect("predecessors");
         let back_edge_predecessors = block["back_edge_predecessors"]
@@ -2170,8 +2174,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
         let successors = block["successors"].as_array().expect("successors");
         assert_eq!(
             block["entry"].as_bool().expect("entry flag"),
-            predecessors.is_empty(),
-            "entry flag should match empty predecessor list"
+            block["id"].as_u64() == Some(first_block_id) || predecessors.is_empty(),
+            "entry flag should mark the first block and predecessor-free block starts"
         );
         assert_eq!(
             block["exit"].as_bool().expect("exit flag"),

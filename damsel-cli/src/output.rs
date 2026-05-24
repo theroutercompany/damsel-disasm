@@ -5260,6 +5260,7 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
 }
 
 struct BasicBlockEdgeIndex<'a> {
+    entry_blocks: BTreeSet<usize>,
     predecessors: BTreeMap<usize, BTreeSet<usize>>,
     successors: BTreeMap<usize, BTreeSet<usize>>,
     back_edge_predecessors: BTreeMap<usize, BTreeSet<usize>>,
@@ -5270,6 +5271,7 @@ struct BasicBlockEdgeIndex<'a> {
 impl<'a> BasicBlockEdgeIndex<'a> {
     fn new(analysis: &'a DisassemblyAnalysis) -> Self {
         let mut index = Self {
+            entry_blocks: BTreeSet::new(),
             predecessors: BTreeMap::new(),
             successors: BTreeMap::new(),
             back_edge_predecessors: BTreeMap::new(),
@@ -5305,11 +5307,17 @@ impl<'a> BasicBlockEdgeIndex<'a> {
                     .push(edge);
             }
         }
+        let first_block_id = analysis.basic_blocks.first().map(|block| block.id);
+        for block in &analysis.basic_blocks {
+            if Some(block.id) == first_block_id || !index.predecessors.contains_key(&block.id) {
+                index.entry_blocks.insert(block.id);
+            }
+        }
         index
     }
 
     fn is_entry(&self, block_id: usize) -> bool {
-        !self.predecessors.contains_key(&block_id)
+        self.entry_blocks.contains(&block_id)
     }
 
     fn is_exit(&self, block_id: usize) -> bool {
@@ -7514,7 +7522,7 @@ mod tests {
             jump_tables: Vec::new(),
             summary: damsel_core::DisassemblySummary {
                 basic_block_count: 2,
-                entry_block_count: 0,
+                entry_block_count: 1,
                 exit_block_count: 0,
                 edge_count: 2,
                 back_edge_count: 1,
@@ -7544,6 +7552,7 @@ mod tests {
             json_object_field(&header, "loop_header"),
             &JsonValue::Bool(true)
         );
+        assert_eq!(json_object_field(&header, "entry"), &JsonValue::Bool(true));
         assert_eq!(
             json_array_items(json_object_field(&header, "back_edge_predecessors")),
             &[JsonValue::Number("1".to_string())]

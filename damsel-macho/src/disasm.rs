@@ -308,9 +308,10 @@ fn analyze_disassembly_impl(
             outgoing_blocks.insert(edge.from_block);
         }
     }
+    let first_block_id = basic_blocks.first().map(|block| block.id);
     let entry_block_count = basic_blocks
         .iter()
-        .filter(|block| !incoming_blocks.contains(&block.id))
+        .filter(|block| Some(block.id) == first_block_id || !incoming_blocks.contains(&block.id))
         .count();
     let exit_block_count = basic_blocks
         .iter()
@@ -3547,6 +3548,7 @@ mod tests {
         let analysis = analyze_disassembly("synthetic-loop", 0x1000, 0x100c, &instructions);
 
         assert_eq!(analysis.summary.basic_block_count, 2);
+        assert_eq!(analysis.summary.entry_block_count, 1);
         assert_eq!(analysis.summary.edge_count, 3);
         assert_eq!(analysis.summary.back_edge_count, 1);
         assert_eq!(analysis.summary.loop_header_count, 1);
