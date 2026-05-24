@@ -299,6 +299,18 @@ fn analyze_disassembly_impl(
 
     add_fallthrough_edges(instructions, &basic_blocks, &mut edges);
     let intra_window_edge_count = edges.iter().filter(|edge| edge.to_block.is_some()).count();
+    let entry_block_count = basic_blocks
+        .iter()
+        .filter(|block| !edges.iter().any(|edge| edge.to_block == Some(block.id)))
+        .count();
+    let exit_block_count = basic_blocks
+        .iter()
+        .filter(|block| {
+            !edges
+                .iter()
+                .any(|edge| edge.from_block == block.id && edge.to_block.is_some())
+        })
+        .count();
     let external_target_edge_count = edges
         .iter()
         .filter(|edge| edge.target_address.is_some() && edge.to_block.is_none())
@@ -368,6 +380,8 @@ fn analyze_disassembly_impl(
         },
         summary: DisassemblySummary {
             basic_block_count: basic_blocks.len(),
+            entry_block_count,
+            exit_block_count,
             edge_count: edges.len(),
             direct_call_count: direct_calls.len(),
             indirect_call_count,
@@ -3447,6 +3461,38 @@ mod tests {
             "call edge should resolve to the block that starts at the call target: {:?}",
             analysis.edges
         );
+    }
+
+    #[test]
+    fn analysis_reports_entry_and_exit_block_counts_for_conditional_split() {
+        let instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Branch { target: 0x1008 }],
+                ..instruction(0x1000, "b.eq", vec![Operand::Label(0x1008)])
+            },
+            instruction(0x1004, "ret", vec![]),
+            instruction(0x1008, "ret", vec![]),
+        ];
+
+        let analysis = analyze_disassembly("synthetic-split", 0x1000, 0x100c, &instructions);
+
+        assert_eq!(analysis.summary.basic_block_count, 3);
+        assert_eq!(analysis.summary.entry_block_count, 1);
+        assert_eq!(analysis.summary.exit_block_count, 2);
+    }
+
+    #[test]
+    fn analysis_reports_multiple_entry_blocks_after_terminal_boundary() {
+        let instructions = vec![
+            instruction(0x1000, "ret", vec![]),
+            instruction(0x1004, "ret", vec![]),
+        ];
+
+        let analysis = analyze_disassembly("synthetic-disjoint", 0x1000, 0x1008, &instructions);
+
+        assert_eq!(analysis.summary.basic_block_count, 2);
+        assert_eq!(analysis.summary.entry_block_count, 2);
+        assert_eq!(analysis.summary.exit_block_count, 2);
     }
 
     #[test]

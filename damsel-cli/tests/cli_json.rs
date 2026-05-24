@@ -1999,6 +1999,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
         &analysis["summary"],
         &[
             "basic_block_count",
+            "entry_block_count",
+            "exit_block_count",
             "edge_count",
             "direct_call_count",
             "indirect_call_count",
@@ -2031,6 +2033,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
         ],
     );
     assert!(analysis["summary"]["basic_block_count"].as_u64().unwrap() > 1);
+    assert!(analysis["summary"]["entry_block_count"].as_u64().unwrap() > 0);
+    assert!(analysis["summary"]["exit_block_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["edge_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["decoded_byte_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["reference_count"].as_u64().unwrap() > 0);

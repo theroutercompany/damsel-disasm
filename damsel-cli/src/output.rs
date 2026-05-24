@@ -1586,8 +1586,10 @@ pub(crate) fn print_disassembly(
 fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
     println!("analysis:");
     println!(
-        "  summary: blocks={} edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
+        "  summary: blocks={} entries={} exits={} edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
         analysis.summary.basic_block_count,
+        analysis.summary.entry_block_count,
+        analysis.summary.exit_block_count,
         analysis.summary.edge_count,
         analysis.summary.direct_call_count,
         analysis.summary.indirect_call_count,
@@ -4802,6 +4804,14 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                 (
                     "basic_block_count".to_string(),
                     usize_num(analysis.summary.basic_block_count),
+                ),
+                (
+                    "entry_block_count".to_string(),
+                    usize_num(analysis.summary.entry_block_count),
+                ),
+                (
+                    "exit_block_count".to_string(),
+                    usize_num(analysis.summary.exit_block_count),
                 ),
                 (
                     "edge_count".to_string(),

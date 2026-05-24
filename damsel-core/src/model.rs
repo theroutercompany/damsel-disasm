@@ -2524,6 +2524,8 @@ pub struct DisassemblyOverview {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisassemblySummary {
     pub basic_block_count: usize,
+    pub entry_block_count: usize,
+    pub exit_block_count: usize,
     pub edge_count: usize,
     pub direct_call_count: usize,
     pub indirect_call_count: usize,
