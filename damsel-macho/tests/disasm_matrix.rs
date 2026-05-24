@@ -498,6 +498,14 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
     assert!(
         analysis
             .overview
+            .data_targets
+            .iter()
+            .all(|entry| ![0x40, 0x30, 0x2, 0x5, 0x7, 0x48].contains(&entry.target_address)),
+        "ordinary immediates must not be summarized as data references"
+    );
+    assert!(
+        analysis
+            .overview
             .indirect_controls
             .iter()
             .all(|entry| entry.count > 0 && !entry.via.is_empty())

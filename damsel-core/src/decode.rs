@@ -164,12 +164,11 @@ fn derive_references(
         match operand.op_type {
             Arm64OperandType::Imm(value) if value >= 0 && !is_control_flow => {
                 let target = value as u64;
-                let reference = if is_page_materialization {
-                    Reference::Page { target }
-                } else {
-                    Reference::Data { target }
-                };
-                push_reference(&mut references, reference);
+                if is_page_materialization {
+                    push_reference(&mut references, Reference::Page { target });
+                } else if is_literal_data_reference_mnemonic(&lower) {
+                    push_reference(&mut references, Reference::Data { target });
+                }
             }
             Arm64OperandType::Reg(register) if is_control_flow => {
                 if is_indirect_control(&lower) {
@@ -303,6 +302,10 @@ fn is_call_mnemonic(mnemonic: &str) -> bool {
         mnemonic,
         "bl" | "blr" | "blraa" | "blraaz" | "blrab" | "blrabz"
     )
+}
+
+fn is_literal_data_reference_mnemonic(mnemonic: &str) -> bool {
+    matches!(mnemonic, "ldr" | "ldrsw" | "prfm")
 }
 
 fn is_indirect_control(mnemonic: &str) -> bool {

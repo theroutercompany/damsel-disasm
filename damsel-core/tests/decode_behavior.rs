@@ -122,6 +122,10 @@ fn decode_does_not_misclassify_add_immediate_as_branch() {
             .iter()
             .any(|reference| matches!(reference, Reference::Branch { .. }))
     );
+    assert!(
+        instructions[0].references.is_empty(),
+        "ordinary arithmetic immediates must not become data references"
+    );
 }
 
 #[test]
