@@ -1612,6 +1612,16 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         analysis.summary.unresolved_indirect_count
     );
     println!(
+        "  edge_kinds: fallthrough={} branches={} conditional_branches={} calls={} indirect_calls={} indirect_branches={} returns={}",
+        analysis.summary.edge_kind_counts.fallthrough_count,
+        analysis.summary.edge_kind_counts.branch_count,
+        analysis.summary.edge_kind_counts.conditional_branch_count,
+        analysis.summary.edge_kind_counts.call_count,
+        analysis.summary.edge_kind_counts.indirect_call_count,
+        analysis.summary.edge_kind_counts.indirect_branch_count,
+        analysis.summary.edge_kind_counts.return_count
+    );
+    println!(
         "  metrics: decoded_bytes={} references={} annotations={} max_refs_per_instruction={} max_annotations_per_instruction={} max_block_instructions={} intra_window_edges={} external_target_edges={} unresolved_target_edges={}",
         analysis.metrics.decoded_byte_count,
         analysis.metrics.reference_count,
@@ -4849,6 +4859,39 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                     usize_num(analysis.summary.loop_header_count),
                 ),
                 (
+                    "edge_kind_counts".to_string(),
+                    JsonValue::Object(vec![
+                        (
+                            "fallthrough_count".to_string(),
+                            usize_num(analysis.summary.edge_kind_counts.fallthrough_count),
+                        ),
+                        (
+                            "branch_count".to_string(),
+                            usize_num(analysis.summary.edge_kind_counts.branch_count),
+                        ),
+                        (
+                            "conditional_branch_count".to_string(),
+                            usize_num(analysis.summary.edge_kind_counts.conditional_branch_count),
+                        ),
+                        (
+                            "call_count".to_string(),
+                            usize_num(analysis.summary.edge_kind_counts.call_count),
+                        ),
+                        (
+                            "indirect_call_count".to_string(),
+                            usize_num(analysis.summary.edge_kind_counts.indirect_call_count),
+                        ),
+                        (
+                            "indirect_branch_count".to_string(),
+                            usize_num(analysis.summary.edge_kind_counts.indirect_branch_count),
+                        ),
+                        (
+                            "return_count".to_string(),
+                            usize_num(analysis.summary.edge_kind_counts.return_count),
+                        ),
+                    ]),
+                ),
+                (
                     "direct_call_count".to_string(),
                     usize_num(analysis.summary.direct_call_count),
                 ),
@@ -7449,6 +7492,10 @@ mod tests {
                 edge_count: 1,
                 back_edge_count: 0,
                 loop_header_count: 0,
+                edge_kind_counts: damsel_core::ControlFlowEdgeKindCounts {
+                    indirect_branch_count: 1,
+                    ..damsel_core::ControlFlowEdgeKindCounts::default()
+                },
                 direct_call_count: 0,
                 indirect_call_count: 0,
                 branch_count: 1,
@@ -7563,6 +7610,11 @@ mod tests {
                 edge_count: 2,
                 back_edge_count: 1,
                 loop_header_count: 1,
+                edge_kind_counts: damsel_core::ControlFlowEdgeKindCounts {
+                    fallthrough_count: 1,
+                    branch_count: 1,
+                    ..damsel_core::ControlFlowEdgeKindCounts::default()
+                },
                 direct_call_count: 0,
                 indirect_call_count: 0,
                 branch_count: 1,
@@ -7658,6 +7710,7 @@ mod tests {
                 edge_count: 0,
                 back_edge_count: 0,
                 loop_header_count: 0,
+                edge_kind_counts: damsel_core::ControlFlowEdgeKindCounts::default(),
                 direct_call_count: 0,
                 indirect_call_count: 0,
                 branch_count: 0,

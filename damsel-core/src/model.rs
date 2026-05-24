@@ -2355,6 +2355,35 @@ impl ControlFlowEdge {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ControlFlowEdgeKindCounts {
+    pub fallthrough_count: usize,
+    pub branch_count: usize,
+    pub conditional_branch_count: usize,
+    pub call_count: usize,
+    pub indirect_call_count: usize,
+    pub indirect_branch_count: usize,
+    pub return_count: usize,
+}
+
+impl ControlFlowEdgeKindCounts {
+    pub fn from_edges(edges: &[ControlFlowEdge]) -> Self {
+        let mut counts = Self::default();
+        for edge in edges {
+            match edge.kind {
+                ControlFlowEdgeKind::Fallthrough => counts.fallthrough_count += 1,
+                ControlFlowEdgeKind::Branch => counts.branch_count += 1,
+                ControlFlowEdgeKind::ConditionalBranch => counts.conditional_branch_count += 1,
+                ControlFlowEdgeKind::Call => counts.call_count += 1,
+                ControlFlowEdgeKind::IndirectCall => counts.indirect_call_count += 1,
+                ControlFlowEdgeKind::IndirectBranch => counts.indirect_branch_count += 1,
+                ControlFlowEdgeKind::Return => counts.return_count += 1,
+            }
+        }
+        counts
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasicBlock {
     pub id: usize,
@@ -2545,6 +2574,7 @@ pub struct DisassemblySummary {
     pub edge_count: usize,
     pub back_edge_count: usize,
     pub loop_header_count: usize,
+    pub edge_kind_counts: ControlFlowEdgeKindCounts,
     pub direct_call_count: usize,
     pub indirect_call_count: usize,
     pub branch_count: usize,

@@ -1,16 +1,16 @@
 use crate::errors::{MachoError, Result};
 use damsel_core::{
-    Annotation, BasicBlock, BinaryImage, ControlFlowEdge, ControlFlowEdgeKind, DecodedInstruction,
-    DisassemblyAnalysis, DisassemblyImportSummary, DisassemblyImportUse,
-    DisassemblyIndirectControlSummary, DisassemblyIndirectUse, DisassemblyJumpTableSummary,
-    DisassemblyJumpTableUse, DisassemblyLimit, DisassemblyMetrics, DisassemblyObjcReferenceKind,
-    DisassemblyObjcReferenceSummary, DisassemblyObjcUse, DisassemblyOverview,
-    DisassemblyRecoveredValueSummary, DisassemblyRecoveredValueUse, DisassemblyRequest,
-    DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
-    DisassemblySummary, DisassemblyTarget, DisassemblyTargetSummary, DisassemblyTargetUse, Import,
-    ImportBindingKind, ImportBindingRecord, ImportBindingSource, IndirectTargetReason, Operand,
-    RecoveredValue, RecoveredValueKind, RecoveredValueSource, Reference, Relocation, Section,
-    StubHelperEntry, Symbol, TableSlotEncoding,
+    Annotation, BasicBlock, BinaryImage, ControlFlowEdge, ControlFlowEdgeKind,
+    ControlFlowEdgeKindCounts, DecodedInstruction, DisassemblyAnalysis, DisassemblyImportSummary,
+    DisassemblyImportUse, DisassemblyIndirectControlSummary, DisassemblyIndirectUse,
+    DisassemblyJumpTableSummary, DisassemblyJumpTableUse, DisassemblyLimit, DisassemblyMetrics,
+    DisassemblyObjcReferenceKind, DisassemblyObjcReferenceSummary, DisassemblyObjcUse,
+    DisassemblyOverview, DisassemblyRecoveredValueSummary, DisassemblyRecoveredValueUse,
+    DisassemblyRequest, DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2,
+    DisassemblyStopReason, DisassemblySummary, DisassemblyTarget, DisassemblyTargetSummary,
+    DisassemblyTargetUse, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
+    IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
+    Reference, Relocation, Section, StubHelperEntry, Symbol, TableSlotEncoding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -329,6 +329,7 @@ fn analyze_disassembly_impl(
         .collect::<BTreeSet<_>>();
     let back_edge_count = edges.iter().filter(|edge| edge.is_back_edge()).count();
     let loop_header_count = back_edge_targets.len();
+    let edge_kind_counts = ControlFlowEdgeKindCounts::from_edges(&edges);
     let external_target_edge_count = edges
         .iter()
         .filter(|edge| edge.target_address.is_some() && edge.to_block.is_none())
@@ -405,6 +406,7 @@ fn analyze_disassembly_impl(
             edge_count: edges.len(),
             back_edge_count,
             loop_header_count,
+            edge_kind_counts,
             direct_call_count: direct_calls.len(),
             indirect_call_count,
             branch_count: branch_targets.len()
@@ -3556,6 +3558,12 @@ mod tests {
         assert_eq!(analysis.summary.exit_block_count, 2);
         assert_eq!(analysis.summary.primary_entry_reachable_block_count, 3);
         assert_eq!(analysis.summary.disconnected_block_count, 0);
+        assert_eq!(analysis.summary.edge_kind_counts.fallthrough_count, 1);
+        assert_eq!(
+            analysis.summary.edge_kind_counts.conditional_branch_count,
+            1
+        );
+        assert_eq!(analysis.summary.edge_kind_counts.return_count, 2);
     }
 
     #[test]
@@ -3594,6 +3602,12 @@ mod tests {
         assert_eq!(analysis.summary.edge_count, 3);
         assert_eq!(analysis.summary.back_edge_count, 1);
         assert_eq!(analysis.summary.loop_header_count, 1);
+        assert_eq!(analysis.summary.edge_kind_counts.fallthrough_count, 1);
+        assert_eq!(
+            analysis.summary.edge_kind_counts.conditional_branch_count,
+            1
+        );
+        assert_eq!(analysis.summary.edge_kind_counts.return_count, 1);
         assert!(analysis.edges.iter().any(ControlFlowEdge::is_back_edge));
     }
 

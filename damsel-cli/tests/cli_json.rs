@@ -2006,6 +2006,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "edge_count",
             "back_edge_count",
             "loop_header_count",
+            "edge_kind_counts",
             "direct_call_count",
             "indirect_call_count",
             "branch_count",
@@ -2053,6 +2054,38 @@ fn disasm_json_analysis_contract_is_opt_in() {
     assert!(analysis["summary"]["edge_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["back_edge_count"].as_u64().is_some());
     assert!(analysis["summary"]["loop_header_count"].as_u64().is_some());
+    assert_exact_object_keys(
+        &analysis["summary"]["edge_kind_counts"],
+        &[
+            "fallthrough_count",
+            "branch_count",
+            "conditional_branch_count",
+            "call_count",
+            "indirect_call_count",
+            "indirect_branch_count",
+            "return_count",
+        ],
+    );
+    let edge_kind_total = [
+        "fallthrough_count",
+        "branch_count",
+        "conditional_branch_count",
+        "call_count",
+        "indirect_call_count",
+        "indirect_branch_count",
+        "return_count",
+    ]
+    .iter()
+    .map(|key| {
+        analysis["summary"]["edge_kind_counts"][*key]
+            .as_u64()
+            .expect("edge kind count")
+    })
+    .sum::<u64>();
+    assert_eq!(
+        edge_kind_total,
+        analysis["summary"]["edge_count"].as_u64().unwrap()
+    );
     assert!(analysis["metrics"]["decoded_byte_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["reference_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["annotation_count"].as_u64().unwrap() > 0);

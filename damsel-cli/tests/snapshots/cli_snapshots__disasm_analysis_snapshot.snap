@@ -22,6 +22,7 @@ target: __TEXT:__text start=0x1000004b0 end=0x1000004f0 bytes=0x40 decoded=0x40 
        0x1000004ec  f8687933  ldr x19, [x9, x8] ; memory synthesis x9 + 0x0 -> 0x100004048 | ref data 0x100004048
 analysis:
   summary: blocks=4 entries=1 exits=1 primary_reachable=4 disconnected=0 edges=5 back_edges=0 loop_headers=0 calls=1 indirect_calls=0 branches=2 returns=0 data_refs=3 imports=2 objc_selectors=0 objc_classes=0 objc_method_lists=0 objc_message_sends=0 cache_links=0 recovered_values=4 jump_tables=0 unresolved_indirect=0
+  edge_kinds: fallthrough=2 branches=1 conditional_branches=1 calls=1 indirect_calls=0 indirect_branches=0 returns=0
   metrics: decoded_bytes=64 references=11 annotations=9 max_refs_per_instruction=4 max_annotations_per_instruction=4 max_block_instructions=6 intra_window_edges=4 external_target_edges=1 unresolved_target_edges=0
   overview:
     calls:
