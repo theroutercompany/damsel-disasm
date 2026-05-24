@@ -1662,7 +1662,12 @@ fn synthesize_analysis_references(
                     kind: classify_recovered_value(image, target, RecoveredValueKind::Address),
                     source: RecoveredValueSource::Adr,
                 };
-                store_known_value(&mut known_values, recovered.clone());
+                store_known_value_replacing_derived_state(
+                    &mut known_values,
+                    &mut jump_table_sources,
+                    &mut relative_slot_loads,
+                    recovered.clone(),
+                );
                 push_recovered_value(&mut instruction.recovered_values, recovered);
                 destination_updated = true;
                 if include_annotations {
@@ -1682,7 +1687,12 @@ fn synthesize_analysis_references(
                 kind: classify_recovered_value(image, value, RecoveredValueKind::Literal),
                 source: RecoveredValueSource::MoveWide,
             };
-            store_known_value(&mut known_values, recovered.clone());
+            store_known_value_replacing_derived_state(
+                &mut known_values,
+                &mut jump_table_sources,
+                &mut relative_slot_loads,
+                recovered.clone(),
+            );
             push_recovered_value(&mut instruction.recovered_values, recovered);
             destination_updated = true;
         }
@@ -1697,7 +1707,12 @@ fn synthesize_analysis_references(
                 kind: classify_recovered_value(image, value, RecoveredValueKind::Literal),
                 source,
             };
-            store_known_value(&mut known_values, recovered.clone());
+            store_known_value_replacing_derived_state(
+                &mut known_values,
+                &mut jump_table_sources,
+                &mut relative_slot_loads,
+                recovered.clone(),
+            );
             push_recovered_value(&mut instruction.recovered_values, recovered);
             destination_updated = true;
         }
@@ -1718,7 +1733,12 @@ fn synthesize_analysis_references(
                             ),
                             source: RecoveredValueSource::AdrpAdd,
                         };
-                        store_known_value(&mut known_values, recovered.clone());
+                        store_known_value_replacing_derived_state(
+                            &mut known_values,
+                            &mut jump_table_sources,
+                            &mut relative_slot_loads,
+                            recovered.clone(),
+                        );
                         push_recovered_value(&mut instruction.recovered_values, recovered);
                         destination_updated = true;
                     }
@@ -1742,7 +1762,12 @@ fn synthesize_analysis_references(
         if let Some((recovered, slot_evidence)) =
             synthesize_register_add_value(image, instruction, &known_values, &relative_slot_loads)
         {
-            store_known_value(&mut known_values, recovered.clone());
+            store_known_value_replacing_derived_state(
+                &mut known_values,
+                &mut jump_table_sources,
+                &mut relative_slot_loads,
+                recovered.clone(),
+            );
             push_recovered_value(&mut instruction.recovered_values, recovered.clone());
             if include_annotations {
                 push_annotation(
@@ -1764,7 +1789,12 @@ fn synthesize_analysis_references(
         if let Some((target, recovered)) = synthesize_literal_load(image, instruction, &lower) {
             push_reference_if_missing(&mut instruction.references, Reference::Data { target });
             push_recovered_value(&mut instruction.recovered_values, recovered.clone());
-            store_known_value(&mut known_values, recovered);
+            store_known_value_replacing_derived_state(
+                &mut known_values,
+                &mut jump_table_sources,
+                &mut relative_slot_loads,
+                recovered,
+            );
             destination_updated = true;
         }
 
@@ -1780,6 +1810,7 @@ fn synthesize_analysis_references(
                         element_size,
                     );
                     let reference_target = effective_target.unwrap_or(base_target);
+                    let mut jump_table_source_key = None;
                     push_reference_if_missing(
                         &mut instruction.references,
                         Reference::Data {
@@ -1793,9 +1824,10 @@ fn synthesize_analysis_references(
                             .and_then(canonical_state_key)
                         {
                             jump_table_sources.insert(
-                                jump_key,
+                                jump_key.clone(),
                                 (base_target, index_register.clone(), element_size),
                             );
+                            jump_table_source_key = Some(jump_key);
                         }
                     }
                     if let Some(dest) = destination.as_ref() {
@@ -1814,6 +1846,7 @@ fn synthesize_analysis_references(
                                 {
                                     if let Some(key) = canonical_state_key(dest) {
                                         remove_known_value(&mut known_values, dest);
+                                        remove_jump_table_source(&mut jump_table_sources, dest);
                                         relative_slot_loads.insert(
                                             key,
                                             TableSlotEvidence {
@@ -1876,7 +1909,17 @@ fn synthesize_analysis_references(
                                         }),
                                     source,
                                 };
-                                store_known_value(&mut known_values, recovered.clone());
+                                if canonical_state_key(dest) == jump_table_source_key {
+                                    remove_table_slot_evidence(&mut relative_slot_loads, dest);
+                                    store_known_value(&mut known_values, recovered.clone());
+                                } else {
+                                    store_known_value_replacing_derived_state(
+                                        &mut known_values,
+                                        &mut jump_table_sources,
+                                        &mut relative_slot_loads,
+                                        recovered.clone(),
+                                    );
+                                }
                                 push_recovered_value(&mut instruction.recovered_values, recovered);
                                 destination_updated = true;
                                 if include_annotations {
@@ -2008,8 +2051,12 @@ fn synthesize_analysis_references(
 
         if !destination_updated {
             for destination in written_destination_registers(instruction, &lower) {
-                remove_known_value(&mut known_values, &destination);
-                remove_table_slot_evidence(&mut relative_slot_loads, &destination);
+                remove_register_analysis_state(
+                    &mut known_values,
+                    &mut jump_table_sources,
+                    &mut relative_slot_loads,
+                    &destination,
+                );
             }
         }
 
@@ -2157,9 +2204,40 @@ fn store_known_value(
     known_values.insert(key, recovered);
 }
 
+fn store_known_value_replacing_derived_state(
+    known_values: &mut BTreeMap<String, RecoveredValue>,
+    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    relative_slot_loads: &mut BTreeMap<String, TableSlotEvidence>,
+    recovered: RecoveredValue,
+) {
+    remove_jump_table_source(jump_table_sources, &recovered.register);
+    remove_table_slot_evidence(relative_slot_loads, &recovered.register);
+    store_known_value(known_values, recovered);
+}
+
+fn remove_register_analysis_state(
+    known_values: &mut BTreeMap<String, RecoveredValue>,
+    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    relative_slot_loads: &mut BTreeMap<String, TableSlotEvidence>,
+    register: &str,
+) {
+    remove_known_value(known_values, register);
+    remove_jump_table_source(jump_table_sources, register);
+    remove_table_slot_evidence(relative_slot_loads, register);
+}
+
 fn remove_known_value(known_values: &mut BTreeMap<String, RecoveredValue>, register: &str) {
     if let Some(key) = canonical_state_key(register) {
         known_values.remove(&key);
+    }
+}
+
+fn remove_jump_table_source(
+    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    register: &str,
+) {
+    if let Some(key) = canonical_state_key(register) {
+        jump_table_sources.remove(&key);
     }
 }
 
@@ -4011,6 +4089,64 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_clears_stale_jump_table_source_after_register_overwrite() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x100c,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "indirect branch should resolve through the current x10 value: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "stale jump-table source must not override the current x10 value: {:?}",
+            instructions
+        );
     }
 
     #[test]
