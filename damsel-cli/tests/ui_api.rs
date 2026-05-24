@@ -292,6 +292,8 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("BigInt"));
     assert!(js.contains("requestIntegerValue"));
     assert!(js.contains("structuredOperandEntries"));
+    assert!(js.contains("formatBlockIds"));
+    assert!(js.contains("renderExternalSuccessorCount"));
     assert!(!js.contains("Number(jumpButton.dataset.target)"));
     assert!(!js.contains("Number(button.dataset.jumpTarget)"));
     assert!(js.contains("renderResultAnalysisMeta"));
@@ -362,6 +364,18 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         disasm_json["analysis"]["edges"]
             .as_array()
             .is_some_and(|edges| !edges.is_empty())
+    );
+    assert!(
+        disasm_json["analysis"]["basic_blocks"]
+            .as_array()
+            .expect("basic blocks")
+            .iter()
+            .all(|block| {
+                block["predecessors"].is_array()
+                    && block["successors"].is_array()
+                    && block["external_successors"].is_array()
+                    && block["terminal"].is_boolean()
+            })
     );
     assert!(
         disasm_json["analysis"]["overview"]["branch_targets"]

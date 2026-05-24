@@ -2053,8 +2053,30 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 && block["start_address"].is_number()
                 && block["end_address"].is_number()
                 && block["instruction_count"].is_number()
+                && block["predecessors"].is_array()
+                && block["successors"].is_array()
+                && block["external_successors"].is_array()
+                && block["terminal"].is_boolean()
         })
     }));
+    let blocks = analysis["basic_blocks"]
+        .as_array()
+        .expect("analysis blocks");
+    for block in blocks {
+        assert_exact_object_keys(
+            block,
+            &[
+                "id",
+                "start_address",
+                "end_address",
+                "instruction_count",
+                "predecessors",
+                "successors",
+                "external_successors",
+                "terminal",
+            ],
+        );
+    }
     assert!(analysis["edges"].as_array().is_some_and(|edges| {
         edges
             .iter()
@@ -2068,6 +2090,48 @@ fn disasm_json_analysis_contract_is_opt_in() {
         "expected at least one edge to resolve its target block"
     );
     for edge in edges {
+        let from_block = edge["from_block"].as_u64().expect("edge from block");
+        let from_block_json = blocks
+            .iter()
+            .find(|block| block["id"].as_u64() == Some(from_block))
+            .expect("from block should exist");
+        if let Some(to_block) = edge["to_block"].as_u64() {
+            let to_block_json = blocks
+                .iter()
+                .find(|block| block["id"].as_u64() == Some(to_block))
+                .expect("to block should exist");
+            assert!(
+                from_block_json["successors"]
+                    .as_array()
+                    .expect("successors")
+                    .iter()
+                    .any(|successor| successor.as_u64() == Some(to_block)),
+                "from block should expose edge to successor"
+            );
+            assert!(
+                to_block_json["predecessors"]
+                    .as_array()
+                    .expect("predecessors")
+                    .iter()
+                    .any(|predecessor| predecessor.as_u64() == Some(from_block)),
+                "to block should expose edge from predecessor"
+            );
+        } else if edge["target_address"].is_number() {
+            assert!(
+                from_block_json["external_successors"]
+                    .as_array()
+                    .expect("external successors")
+                    .iter()
+                    .any(
+                        |successor| successor["target_address"] == edge["target_address"]
+                            && successor["source_address"] == edge["source_address"]
+                            && successor["kind"] == edge["kind"]
+                    ),
+                "from block should expose external successor"
+            );
+        } else if edge["kind"] == "return" {
+            assert_eq!(from_block_json["terminal"], true);
+        }
         assert_exact_object_keys(
             edge,
             &[
@@ -2079,6 +2143,17 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "via",
             ],
         );
+    }
+    for block in blocks {
+        for successor in block["external_successors"]
+            .as_array()
+            .expect("external successors")
+        {
+            assert_exact_object_keys(
+                successor,
+                &["kind", "source_address", "target_address", "via"],
+            );
+        }
     }
     assert!(
         analysis["jump_tables"]

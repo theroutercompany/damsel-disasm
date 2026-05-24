@@ -785,11 +785,36 @@ function renderAnalysisBlocks(blocks) {
               ${renderJumpButton(block.start_address)}
               <span class="mono">${escapeHtml(formatAddress(block.end_address))}</span>
               <span class="mono">${escapeHtml(String(block.instruction_count))} insn</span>
+              <span class="detail-key">pred</span>
+              <span class="mono">${escapeHtml(formatBlockIds(block.predecessors || []))}</span>
+              <span class="detail-key">succ</span>
+              <span class="mono">${escapeHtml(formatBlockIds(block.successors || []))}</span>
+              ${renderExternalSuccessorCount(block.external_successors || [])}
+              ${block.terminal ? '<span class="mono">return</span>' : ""}
             </div>
           `,
         )
         .join("")}
     </div>
+  `;
+}
+
+function formatBlockIds(blockIds) {
+  if (!blockIds.length) {
+    return "-";
+  }
+
+  return blockIds.map((id) => `#${id}`).join(", ");
+}
+
+function renderExternalSuccessorCount(externalSuccessors) {
+  if (!externalSuccessors.length) {
+    return "";
+  }
+
+  return `
+    <span class="detail-key">external</span>
+    <span class="mono">${escapeHtml(String(externalSuccessors.length))}</span>
   `;
 }
 

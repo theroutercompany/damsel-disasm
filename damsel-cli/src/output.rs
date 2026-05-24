@@ -1,12 +1,13 @@
 use damsel_core::{
-    Annotation, BinaryImage, CapabilityStatus, CompatibilityCapability, CompatibilityIssue,
-    CompatibilityPolicy, CompatibilityToolRequirement, DecodedInstruction, DisassemblyAnalysis,
-    ExportFlagName, ExportKind, HostArchitecture, HostPlatform, Import, ImportBindingKind,
-    ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource,
-    ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
-    ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
-    Operand, RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry,
-    StubHelperEntry, StubKind, Symbol,
+    Annotation, BasicBlock, BinaryImage, CapabilityStatus, CompatibilityCapability,
+    CompatibilityIssue, CompatibilityPolicy, CompatibilityToolRequirement, ControlFlowEdge,
+    ControlFlowEdgeKind, DecodedInstruction, DisassemblyAnalysis, ExportFlagName, ExportKind,
+    HostArchitecture, HostPlatform, Import, ImportBindingKind, ImportBindingRecord,
+    ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource, ObjcClassRecord,
+    ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource, ObjcPointerKind,
+    ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource, Operand,
+    RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry,
+    StubKind, Symbol,
 };
 use std::env;
 use std::fmt::Write as _;
@@ -4874,17 +4875,7 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                 analysis
                     .basic_blocks
                     .iter()
-                    .map(|block| {
-                        JsonValue::Object(vec![
-                            ("id".to_string(), usize_num(block.id)),
-                            ("start_address".to_string(), u64_num(block.start_address)),
-                            ("end_address".to_string(), u64_num(block.end_address)),
-                            (
-                                "instruction_count".to_string(),
-                                usize_num(block.instruction_count),
-                            ),
-                        ])
-                    })
+                    .map(|block| basic_block_json(analysis, block))
                     .collect(),
             ),
         ),
@@ -5181,6 +5172,84 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                     })
                     .collect(),
             ),
+        ),
+    ])
+}
+
+fn basic_block_json(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> JsonValue {
+    JsonValue::Object(vec![
+        ("id".to_string(), usize_num(block.id)),
+        ("start_address".to_string(), u64_num(block.start_address)),
+        ("end_address".to_string(), u64_num(block.end_address)),
+        (
+            "instruction_count".to_string(),
+            usize_num(block.instruction_count),
+        ),
+        (
+            "predecessors".to_string(),
+            block_id_list_json(
+                analysis
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.to_block == Some(block.id))
+                    .map(|edge| edge.from_block),
+            ),
+        ),
+        (
+            "successors".to_string(),
+            block_id_list_json(
+                analysis
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.from_block == block.id)
+                    .filter_map(|edge| edge.to_block),
+            ),
+        ),
+        (
+            "external_successors".to_string(),
+            JsonValue::Array(
+                analysis
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.from_block == block.id && edge.to_block.is_none())
+                    .filter(|edge| edge.target_address.is_some())
+                    .map(external_successor_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "terminal".to_string(),
+            JsonValue::Bool(analysis.edges.iter().any(|edge| {
+                edge.from_block == block.id && edge.kind == ControlFlowEdgeKind::Return
+            })),
+        ),
+    ])
+}
+
+fn block_id_list_json(block_ids: impl Iterator<Item = usize>) -> JsonValue {
+    JsonValue::Array(
+        block_ids
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(usize_num)
+            .collect(),
+    )
+}
+
+fn external_successor_json(edge: &ControlFlowEdge) -> JsonValue {
+    JsonValue::Object(vec![
+        ("kind".to_string(), JsonValue::String(edge.kind.to_string())),
+        ("source_address".to_string(), u64_num(edge.source_address)),
+        (
+            "target_address".to_string(),
+            edge.target_address.map(u64_num).unwrap_or(JsonValue::Null),
+        ),
+        (
+            "via".to_string(),
+            edge.via
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
         ),
     ])
 }
