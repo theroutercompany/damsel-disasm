@@ -265,6 +265,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         .expect("js body");
     assert!(js.contains("syncWorkbenchState"));
     assert!(js.contains("includeAnalysis"));
+    assert!(js.contains("renderResultAnalysisMeta"));
     assert!(js.contains("renderAnalysisEdges"));
     assert!(js.contains("renderAnalysisTargetUses"));
     assert!(js.contains("renderAnalysisIndirectControls"));
@@ -286,6 +287,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("Intra-window Edges"));
     assert!(js.contains("Direct Calls"));
     assert!(js.contains("Branch Targets"));
+    assert!(js.contains("data refs"));
     assert!(js.contains("Data Refs"));
     assert!(js.contains("Data References"));
     assert!(js.contains("Indirect Controls"));
