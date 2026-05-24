@@ -87,9 +87,21 @@ impl InstructionDecoder for Bad64Decoder {
                 .map_err(|err| DecodeError::InvalidInstruction(err.to_string()))?;
             let ArchDetail::Arm64Detail(arm64_detail) = detail.arch_detail();
             let arm64_operands = arm64_detail.operands().collect::<Vec<_>>();
-            let operands = arm64_detail
-                .operands()
-                .map(|operand| map_operand(&cs, &mnemonic, arm64_detail.writeback(), &operand))
+            let direct_control_target =
+                direct_control_target_operand_index(&cs, &detail, &mnemonic, &arm64_operands);
+            let operands = arm64_operands
+                .iter()
+                .enumerate()
+                .map(|(index, operand)| {
+                    map_operand(
+                        &cs,
+                        &mnemonic,
+                        arm64_detail.writeback(),
+                        direct_control_target.map(|(target_index, _)| target_index),
+                        index,
+                        operand,
+                    )
+                })
                 .collect::<Vec<_>>();
             let derivation = derive_references(&cs, &detail, &mnemonic, &arm64_operands);
             let mut references = derivation.references;
@@ -144,7 +156,9 @@ fn derive_references(
     let is_call_like = is_call_group || is_call_mnemonic(&lower);
     let is_branch_like = is_jump_group || is_relative_branch(&lower);
     let is_control_flow = is_call_like || is_branch_like;
-    let direct_control_target = direct_control_target(operands, is_call_like, is_branch_like);
+    let direct_control_target =
+        direct_control_target_operand(operands, is_call_like, is_branch_like)
+            .map(|(_, target)| target);
 
     for operand in operands {
         match operand.op_type {
@@ -222,20 +236,33 @@ fn derive_references(
     ReferenceDerivation { references, notes }
 }
 
-fn direct_control_target(
+fn direct_control_target_operand_index(
+    cs: &Capstone,
+    detail: &InsnDetail<'_>,
+    mnemonic: &str,
+    operands: &[Arm64Operand],
+) -> Option<(usize, u64)> {
+    let lower = mnemonic.to_ascii_lowercase();
+    let is_call_like = has_group(cs, detail, "call") || is_call_mnemonic(&lower);
+    let is_branch_like = has_group(cs, detail, "jump") || is_relative_branch(&lower);
+    direct_control_target_operand(operands, is_call_like, is_branch_like)
+}
+
+fn direct_control_target_operand(
     operands: &[Arm64Operand],
     is_call_like: bool,
     is_branch_like: bool,
-) -> Option<u64> {
+) -> Option<(usize, u64)> {
     if !is_call_like && !is_branch_like {
         return None;
     }
 
     operands
         .iter()
+        .enumerate()
         .rev()
-        .filter_map(|operand| match operand.op_type {
-            Arm64OperandType::Imm(value) if value >= 0 => Some(value as u64),
+        .filter_map(|(index, operand)| match operand.op_type {
+            Arm64OperandType::Imm(value) if value >= 0 => Some((index, value as u64)),
             _ => None,
         })
         .next()
@@ -298,7 +325,14 @@ fn is_return_like(mnemonic: &str) -> bool {
     matches!(mnemonic, "ret" | "eret" | "drps" | "retaa" | "retab")
 }
 
-fn map_operand(cs: &Capstone, mnemonic: &str, writeback: bool, operand: &Arm64Operand) -> Operand {
+fn map_operand(
+    cs: &Capstone,
+    mnemonic: &str,
+    writeback: bool,
+    direct_control_target_index: Option<usize>,
+    operand_index: usize,
+    operand: &Arm64Operand,
+) -> Operand {
     let lower = mnemonic.to_ascii_lowercase();
     match operand.op_type {
         Arm64OperandType::Reg(register) => Operand::Register(
@@ -306,7 +340,12 @@ fn map_operand(cs: &Capstone, mnemonic: &str, writeback: bool, operand: &Arm64Op
                 .unwrap_or_else(|| format!("{register:?}")),
         ),
         Arm64OperandType::Imm(value) => {
-            if (is_relative_branch(&lower) || lower == "adr" || lower == "adrp") && value >= 0 {
+            let is_direct_control_target = direct_control_target_index == Some(operand_index);
+            if ((is_relative_branch(&lower) && is_direct_control_target)
+                || lower == "adr"
+                || lower == "adrp")
+                && value >= 0
+            {
                 Operand::Label(value as u64)
             } else if value < 0 {
                 Operand::ImmediateSigned(value)

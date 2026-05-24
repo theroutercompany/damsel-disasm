@@ -1772,6 +1772,21 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
     assert!(instructions[0]["references"].is_array());
     assert!(instructions[0]["annotations"].is_array());
     assert!(instructions[0]["recovered_values"].is_array());
+    let tbnz = instructions
+        .iter()
+        .find(|instruction| instruction["mnemonic"] == "tbnz")
+        .expect("semantic fixture should include tbnz");
+    assert_eq!(tbnz["operands"][1], "#0x0");
+    assert_eq!(tbnz["operands"][2], "0x10000053c");
+    assert!(
+        tbnz["references"]
+            .as_array()
+            .is_some_and(|references| references
+                .iter()
+                .any(|reference| reference["type"] == "branch"
+                    && reference["target"].as_u64() == Some(0x10000053c))),
+        "tbnz should expose only the branch destination as a branch reference"
+    );
     assert!(instructions.iter().any(|instruction| {
         instruction["annotations"]
             .as_array()

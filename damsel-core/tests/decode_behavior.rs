@@ -1,6 +1,6 @@
 use damsel_core::{
-    Annotation, DisassemblyLimit, DisassemblyOptions, Reference, decode_aarch64, decode_aarch64_v2,
-    decode_aarch64_with_limit,
+    Annotation, DisassemblyLimit, DisassemblyOptions, Operand, Reference, decode_aarch64,
+    decode_aarch64_v2, decode_aarch64_with_limit,
 };
 
 fn decode(bytes: &[u8], start: u64, max: Option<usize>) -> Vec<damsel_core::DecodedInstruction> {
@@ -70,6 +70,22 @@ fn decode_uses_final_immediate_for_test_bit_branch_targets() {
             .iter()
             .any(|reference| matches!(reference, Reference::Branch { target } if *target == 0)),
         "bit index must not be recorded as a branch target"
+    );
+    assert!(
+        matches!(
+            instructions[0].operands.get(1),
+            Some(Operand::ImmediateUnsigned(0))
+        ),
+        "tbnz bit index should stay an immediate operand, got {:?}",
+        instructions[0].operands
+    );
+    assert!(
+        matches!(
+            instructions[0].operands.get(2),
+            Some(Operand::Label(0x10000053c))
+        ),
+        "tbnz branch destination should be the only label operand, got {:?}",
+        instructions[0].operands
     );
 }
 
