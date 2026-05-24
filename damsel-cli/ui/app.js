@@ -473,6 +473,8 @@ function renderAnalysisBlock(analysis) {
       ${renderAnalysisOverview(analysis.overview || {})}
       ${renderAnalysisBlocks(analysis.basic_blocks || [])}
       ${renderAnalysisEdges(analysis.edges || [])}
+      ${renderAnalysisIndirectControls(analysis.indirect_controls || [])}
+      ${renderAnalysisJumpTables(analysis.jump_tables || [])}
       ${renderAnalysisImports(analysis.imports || [], analysis.cache_links || [])}
       ${renderAnalysisObjcReferences(analysis.objc_references || [])}
     </section>
@@ -720,6 +722,63 @@ function renderAnalysisEdges(edges) {
                   : renderJumpButton(edge.target_address)
               }
               <span class="mono">#${escapeHtml(edge.to_block ?? "-")}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderAnalysisIndirectControls(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return `
+    <div class="analysis-list">
+      <div class="item-eyebrow">Indirect Controls</div>
+      ${rows
+        .map((entry) => {
+          const resolvedTarget =
+            entry.resolved_target === null || entry.resolved_target === undefined
+              ? '<span class="mono">unresolved</span>'
+              : renderJumpButton(entry.resolved_target);
+          return `
+            <div class="analysis-row">
+              <span class="mono">${escapeHtml(entry.kind)}</span>
+              ${renderJumpButton(entry.instruction_address)}
+              <span class="detail-key">via</span>
+              <span class="mono">${escapeHtml(entry.via)}</span>
+              <span class="detail-key">target</span>
+              ${resolvedTarget}
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderAnalysisJumpTables(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return `
+    <div class="analysis-list">
+      <div class="item-eyebrow">Jump Tables</div>
+      ${rows
+        .map(
+          (entry) => `
+            <div class="analysis-row">
+              ${renderJumpButton(entry.instruction_address)}
+              <span class="detail-key">base</span>
+              ${renderJumpButton(entry.table_base)}
+              <span class="detail-key">index</span>
+              <span class="mono">${escapeHtml(entry.index_register)}</span>
+              <span class="detail-key">elem</span>
+              <span class="mono">${escapeHtml(String(entry.element_size))}B</span>
             </div>
           `,
         )

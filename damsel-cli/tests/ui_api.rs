@@ -266,6 +266,8 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("syncWorkbenchState"));
     assert!(js.contains("includeAnalysis"));
     assert!(js.contains("renderAnalysisEdges"));
+    assert!(js.contains("renderAnalysisIndirectControls"));
+    assert!(js.contains("renderAnalysisJumpTables"));
     assert!(js.contains("renderAnalysisObjcReferences"));
     assert!(js.contains("resolved_address"));
     assert!(js.contains("import_dylib"));
@@ -280,6 +282,8 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("Jump Table"));
     assert!(js.contains("to_block"));
     assert!(js.contains("Intra-window Edges"));
+    assert!(js.contains("Indirect Controls"));
+    assert!(js.contains("Jump Tables"));
     assert!(js.contains("Overview"));
     assert!(js.contains("ObjC Selectors"));
     assert!(js.contains("ObjC Sends"));
@@ -323,4 +327,10 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
             .as_array()
             .is_some()
     );
+    assert!(
+        disasm_json["analysis"]["indirect_controls"]
+            .as_array()
+            .is_some()
+    );
+    assert!(disasm_json["analysis"]["jump_tables"].as_array().is_some());
 }
