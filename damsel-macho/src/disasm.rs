@@ -1073,10 +1073,9 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
 }
 
 fn block_id_for_address(blocks: &[BasicBlock], address: u64) -> Option<usize> {
-    blocks
-        .iter()
-        .find(|block| address >= block.start_address && address < block.end_address)
-        .map(|block| block.id)
+    let index = blocks.partition_point(|block| block.start_address <= address);
+    let block = index.checked_sub(1).and_then(|index| blocks.get(index))?;
+    (address < block.end_address).then_some(block.id)
 }
 
 fn add_fallthrough_edges(
@@ -3419,6 +3418,31 @@ mod tests {
             references: Vec::new(),
             annotations: Vec::new(),
         }
+    }
+
+    #[test]
+    fn block_id_for_address_uses_half_open_block_ranges() {
+        let blocks = vec![
+            BasicBlock {
+                id: 0,
+                start_address: 0x1000,
+                end_address: 0x1008,
+                instruction_count: 2,
+            },
+            BasicBlock {
+                id: 1,
+                start_address: 0x1008,
+                end_address: 0x1010,
+                instruction_count: 2,
+            },
+        ];
+
+        assert_eq!(block_id_for_address(&blocks, 0x0fff), None);
+        assert_eq!(block_id_for_address(&blocks, 0x1000), Some(0));
+        assert_eq!(block_id_for_address(&blocks, 0x1004), Some(0));
+        assert_eq!(block_id_for_address(&blocks, 0x1008), Some(1));
+        assert_eq!(block_id_for_address(&blocks, 0x100c), Some(1));
+        assert_eq!(block_id_for_address(&blocks, 0x1010), None);
     }
 
     #[test]
