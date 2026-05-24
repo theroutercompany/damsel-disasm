@@ -2442,7 +2442,7 @@ fn synthesize_register_add_value(
     relative_slot_loads: &BTreeMap<String, TableSlotEvidence>,
 ) -> Option<(RecoveredValue, TableSlotEvidence)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
-    if !(lower == "add" || lower == "sub") {
+    if lower != "add" {
         return None;
     }
 
@@ -4446,6 +4446,54 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn synthesize_relative_slot_sub_does_not_resolve_add_target() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldrsw",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x1008,
+                "sub",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(0x100c, "blr", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "relative table-slot targets are add-derived and must not attach to sub: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Call { target: 0x3000 }),
+            "sub must not inherit the add-pattern target as an indirect call"
+        );
     }
 
     #[test]
