@@ -5,8 +5,8 @@ use damsel_core::{
     ImportBindingRecord, ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource,
     ObjcClassRecord, ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource,
     ObjcPointerKind, ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource,
-    RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry,
-    StubKind, Symbol,
+    Operand, RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry,
+    StubHelperEntry, StubKind, Symbol,
 };
 use std::env;
 use std::fmt::Write as _;
@@ -4657,6 +4657,10 @@ impl JsonDto for DisasmJsonDto<'_> {
                         ),
                     ),
                     (
+                        "structured_operands".to_string(),
+                        JsonValue::Array(instruction.operands.iter().map(operand_json).collect()),
+                    ),
+                    (
                         "rendered".to_string(),
                         JsonValue::String(instruction.render()),
                     ),
@@ -5938,6 +5942,162 @@ fn reference_json(reference: &Reference) -> JsonValue {
             ("encoding".to_string(), JsonValue::String(encoding.clone())),
             ("target".to_string(), JsonValue::String(target.clone())),
             ("addend".to_string(), i64_num(*addend)),
+        ]),
+    }
+}
+
+fn operand_json(operand: &Operand) -> JsonValue {
+    let display = operand.to_string();
+    match operand {
+        Operand::Register(register) => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("register".to_string()),
+            ),
+            ("display".to_string(), JsonValue::String(display)),
+            ("register".to_string(), JsonValue::String(register.clone())),
+        ]),
+        Operand::ImmediateSigned(value) => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("immediate_signed".to_string()),
+            ),
+            ("display".to_string(), JsonValue::String(display)),
+            ("value".to_string(), i64_num(*value)),
+            (
+                "value_hex".to_string(),
+                JsonValue::String(format!("{value:#x}")),
+            ),
+        ]),
+        Operand::ImmediateUnsigned(value) => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("immediate_unsigned".to_string()),
+            ),
+            ("display".to_string(), JsonValue::String(display)),
+            ("value".to_string(), u64_num(*value)),
+            (
+                "value_hex".to_string(),
+                JsonValue::String(format!("{value:#x}")),
+            ),
+        ]),
+        Operand::FloatingImmediate(bits) => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("floating_immediate".to_string()),
+            ),
+            ("display".to_string(), JsonValue::String(display)),
+            ("bits".to_string(), u64_num(u64::from(*bits))),
+            (
+                "bits_hex".to_string(),
+                JsonValue::String(format!("{bits:#x}")),
+            ),
+        ]),
+        Operand::Label(target) => JsonValue::Object(vec![
+            ("type".to_string(), JsonValue::String("label".to_string())),
+            ("display".to_string(), JsonValue::String(display)),
+            ("target".to_string(), u64_num(*target)),
+            (
+                "target_hex".to_string(),
+                JsonValue::String(format!("{target:#x}")),
+            ),
+        ]),
+        Operand::Memory {
+            base,
+            index,
+            displacement,
+            writeback,
+        } => JsonValue::Object(vec![
+            ("type".to_string(), JsonValue::String("memory".to_string())),
+            ("display".to_string(), JsonValue::String(display)),
+            ("base".to_string(), JsonValue::String(base.clone())),
+            (
+                "index".to_string(),
+                index
+                    .as_ref()
+                    .map(|value| JsonValue::String(value.clone()))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            ("displacement".to_string(), i64_num(*displacement)),
+            (
+                "displacement_hex".to_string(),
+                JsonValue::String(format!("{displacement:#x}")),
+            ),
+            (
+                "writeback".to_string(),
+                JsonValue::Bool(writeback.is_some()),
+            ),
+            (
+                "writeback_suffix".to_string(),
+                writeback
+                    .as_ref()
+                    .map(|value| JsonValue::String(value.clone()))
+                    .unwrap_or(JsonValue::Null),
+            ),
+        ]),
+        Operand::ShiftedRegister { register, shift } => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("shifted_register".to_string()),
+            ),
+            ("display".to_string(), JsonValue::String(display)),
+            ("register".to_string(), JsonValue::String(register.clone())),
+            ("shift".to_string(), JsonValue::String(shift.clone())),
+        ]),
+        Operand::QualifiedRegister {
+            register,
+            qualifier,
+        } => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("qualified_register".to_string()),
+            ),
+            ("display".to_string(), JsonValue::String(display)),
+            ("register".to_string(), JsonValue::String(register.clone())),
+            (
+                "qualifier".to_string(),
+                JsonValue::String(qualifier.to_string()),
+            ),
+        ]),
+        Operand::MultiRegister(registers) => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("multi_register".to_string()),
+            ),
+            ("display".to_string(), JsonValue::String(display)),
+            (
+                "registers".to_string(),
+                JsonValue::Array(registers.iter().cloned().map(JsonValue::String).collect()),
+            ),
+        ]),
+        Operand::SystemRegister(register) => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("system_register".to_string()),
+            ),
+            ("display".to_string(), JsonValue::String(display)),
+            ("register".to_string(), JsonValue::String(register.clone())),
+        ]),
+        Operand::Condition(condition) => JsonValue::Object(vec![
+            (
+                "type".to_string(),
+                JsonValue::String("condition".to_string()),
+            ),
+            ("display".to_string(), JsonValue::String(display)),
+            (
+                "condition".to_string(),
+                JsonValue::String(condition.clone()),
+            ),
+        ]),
+        Operand::Name(name) => JsonValue::Object(vec![
+            ("type".to_string(), JsonValue::String("name".to_string())),
+            ("display".to_string(), JsonValue::String(display)),
+            ("name".to_string(), JsonValue::String(name.clone())),
+        ]),
+        Operand::Other(value) => JsonValue::Object(vec![
+            ("type".to_string(), JsonValue::String("other".to_string())),
+            ("display".to_string(), JsonValue::String(display)),
+            ("value".to_string(), JsonValue::String(value.clone())),
         ]),
     }
 }

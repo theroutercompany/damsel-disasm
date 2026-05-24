@@ -489,6 +489,7 @@ function renderInspector() {
       ["Rendered", instruction.rendered],
     ]),
   );
+  blocks.push(renderObjectBlock("Operands", structuredOperandEntries(instruction)));
   blocks.push(renderReferenceBlock(instruction.references || []));
   blocks.push(renderObjectBlock("Annotations", instruction.annotations || []));
   blocks.push(renderObjectBlock("Recovered Values", instruction.recovered_values || []));
@@ -504,6 +505,17 @@ function renderInspector() {
         await jumpToAddress(button.dataset.jumpTarget);
       });
     });
+}
+
+function structuredOperandEntries(instruction) {
+  if (Array.isArray(instruction.structured_operands)) {
+    return instruction.structured_operands;
+  }
+
+  return (instruction.operands || []).map((display, index) => ({
+    index,
+    display,
+  }));
 }
 
 function renderInstructionJumpChip(value) {
@@ -1118,6 +1130,14 @@ function formatValue(value) {
 
   if (typeof value === "boolean") {
     return value ? "true" : "false";
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map(formatValue).join(", ")}]`;
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value);
   }
 
   return String(value);

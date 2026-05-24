@@ -1778,6 +1778,54 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
         .expect("semantic fixture should include tbnz");
     assert_eq!(tbnz["operands"][1], "#0x0");
     assert_eq!(tbnz["operands"][2], "0x10000053c");
+    assert_eq!(tbnz["structured_operands"][1]["type"], "immediate_unsigned");
+    assert_eq!(tbnz["structured_operands"][1]["display"], "#0x0");
+    assert_eq!(tbnz["structured_operands"][1]["value"].as_u64(), Some(0));
+    assert_eq!(tbnz["structured_operands"][1]["value_hex"], "0x0");
+    assert_eq!(tbnz["structured_operands"][2]["type"], "label");
+    assert_eq!(tbnz["structured_operands"][2]["display"], "0x10000053c");
+    assert_eq!(
+        tbnz["structured_operands"][2]["target"].as_u64(),
+        Some(0x10000053c)
+    );
+    assert_eq!(tbnz["structured_operands"][2]["target_hex"], "0x10000053c");
+    assert_exact_object_keys(
+        &tbnz["structured_operands"][1],
+        &["type", "display", "value", "value_hex"],
+    );
+    assert_exact_object_keys(
+        &tbnz["structured_operands"][2],
+        &["type", "display", "target", "target_hex"],
+    );
+    let stp = instructions
+        .iter()
+        .find(|instruction| instruction["mnemonic"] == "stp")
+        .expect("semantic fixture should include stp");
+    let memory_operand = stp["structured_operands"]
+        .as_array()
+        .expect("structured operands")
+        .iter()
+        .find(|operand| operand["type"] == "memory")
+        .expect("stp should expose a structured memory operand");
+    assert_eq!(memory_operand["base"], "sp");
+    assert_eq!(memory_operand["index"], serde_json::Value::Null);
+    assert_eq!(memory_operand["displacement"].as_i64(), Some(0x20));
+    assert_eq!(memory_operand["displacement_hex"], "0x20");
+    assert_eq!(memory_operand["writeback"], false);
+    assert_eq!(memory_operand["writeback_suffix"], serde_json::Value::Null);
+    assert_exact_object_keys(
+        memory_operand,
+        &[
+            "type",
+            "display",
+            "base",
+            "index",
+            "displacement",
+            "displacement_hex",
+            "writeback",
+            "writeback_suffix",
+        ],
+    );
     assert!(
         tbnz["references"]
             .as_array()
@@ -1869,6 +1917,7 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
             "opcode",
             "mnemonic",
             "operands",
+            "structured_operands",
             "rendered",
             "references",
             "annotations",

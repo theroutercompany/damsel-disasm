@@ -291,6 +291,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("unsigned 64-bit integer"));
     assert!(js.contains("BigInt"));
     assert!(js.contains("requestIntegerValue"));
+    assert!(js.contains("structuredOperandEntries"));
     assert!(!js.contains("Number(jumpButton.dataset.target)"));
     assert!(!js.contains("Number(button.dataset.jumpTarget)"));
     assert!(js.contains("renderResultAnalysisMeta"));
@@ -344,6 +345,18 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         disasm_json["instructions"]
             .as_array()
             .is_some_and(|rows| !rows.is_empty())
+    );
+    assert!(
+        disasm_json["instructions"][0]["structured_operands"]
+            .as_array()
+            .is_some_and(|operands| !operands.is_empty())
+    );
+    assert!(
+        disasm_json["instructions"][0]["structured_operands"]
+            .as_array()
+            .expect("structured operands")
+            .iter()
+            .all(|operand| operand["type"].is_string() && operand["display"].is_string())
     );
     assert!(
         disasm_json["analysis"]["edges"]
