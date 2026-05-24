@@ -2128,6 +2128,14 @@ fn synthesize_analysis_references(
                 );
             }
         }
+        for base in memory_writeback_base_registers(instruction) {
+            remove_register_analysis_state(
+                &mut known_values,
+                &mut jump_table_sources,
+                &mut relative_slot_loads,
+                &base,
+            );
+        }
 
         if is_call_mnemonic(&lower) {
             clear_call_clobbered_state(
@@ -2376,6 +2384,21 @@ fn register_operand_name(operand: &Operand) -> Option<String> {
         Operand::SystemRegister(register) => Some(register.clone()),
         _ => None,
     }
+}
+
+fn memory_writeback_base_registers(instruction: &DecodedInstruction) -> Vec<String> {
+    instruction
+        .operands
+        .iter()
+        .filter_map(|operand| match operand {
+            Operand::Memory {
+                base,
+                writeback: Some(_),
+                ..
+            } => Some(base.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn add_immediate_inputs(instruction: &DecodedInstruction) -> Option<(Option<String>, String, i64)> {
@@ -3992,6 +4015,66 @@ mod tests {
                 .contains(&Reference::Call { target: 0x1234 }),
             "store source registers must keep their recovered values: {:?}",
             instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_memory_writeback_bases() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "ldr",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        displacement: 0,
+                        writeback: Some(", #0x8".to_string()),
+                    },
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x1".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1]
+                .references
+                .contains(&Reference::Data { target: 0x3000 }),
+            "the writeback load should still use the incoming base before invalidation"
+        );
+        assert!(
+            !instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x3000 }),
+            "writeback must invalidate the base register before later memory synthesis"
+        );
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "writeback must not leave a stale base for later recovered values"
         );
     }
 
