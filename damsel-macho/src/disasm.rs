@@ -2564,13 +2564,12 @@ fn synthesize_mov_wide_value(
         Operand::ImmediateSigned(value) if *value >= 0 => (*value as u64) & 0xffff,
         _ => return None,
     };
-    let shift = instruction
-        .operands
-        .get(2)
-        .and_then(parse_shift_bits)
-        .unwrap_or(0);
-    let lane_mask = 0xffff_u64.checked_shl(shift).unwrap_or(0);
-    let shifted_imm = (imm << shift) & lane_mask;
+    let shift = match instruction.operands.get(2) {
+        Some(operand) => parse_shift_bits(operand)?,
+        None => 0,
+    };
+    let lane_mask = 0xffff_u64.checked_shl(shift)?;
+    let shifted_imm = imm.checked_shl(shift)? & lane_mask;
 
     let value = if lower.starts_with("movz") {
         shifted_imm
@@ -3829,6 +3828,27 @@ mod tests {
         assert!(
             instructions[0].recovered_values.is_empty(),
             "writes to xzr/wzr are sinks and must not appear as recovered state"
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_ignores_invalid_mov_wide_shifts() {
+        let image = synthetic_image();
+        let mut instructions = vec![instruction(
+            0x1000,
+            "movz",
+            vec![
+                Operand::Register("x0".to_string()),
+                Operand::ImmediateUnsigned(1),
+                Operand::ImmediateUnsigned(64),
+            ],
+        )];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[0].recovered_values.is_empty(),
+            "invalid mov-wide shifts must not panic or synthesize misleading values"
         );
     }
 
