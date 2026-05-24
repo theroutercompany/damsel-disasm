@@ -144,17 +144,14 @@ fn derive_references(
     let is_call_like = is_call_group || is_call_mnemonic(&lower);
     let is_branch_like = is_jump_group || is_relative_branch(&lower);
     let is_control_flow = is_call_like || is_branch_like;
+    let direct_control_target = direct_control_target(operands, is_call_like, is_branch_like);
 
     for operand in operands {
         match operand.op_type {
-            Arm64OperandType::Imm(value) if value >= 0 => {
+            Arm64OperandType::Imm(value) if value >= 0 && !is_control_flow => {
                 let target = value as u64;
                 let reference = if is_page_materialization {
                     Reference::Page { target }
-                } else if is_call_like {
-                    Reference::Call { target }
-                } else if is_branch_like {
-                    Reference::Branch { target }
                 } else {
                     Reference::Data { target }
                 };
@@ -206,6 +203,15 @@ fn derive_references(
         }
     }
 
+    if let Some(target) = direct_control_target {
+        let reference = if is_call_like {
+            Reference::Call { target }
+        } else {
+            Reference::Branch { target }
+        };
+        push_reference(&mut references, reference);
+    }
+
     if references.is_empty() && is_control_flow && !is_return_like(&lower) {
         push_note(
             &mut notes,
@@ -214,6 +220,25 @@ fn derive_references(
     }
 
     ReferenceDerivation { references, notes }
+}
+
+fn direct_control_target(
+    operands: &[Arm64Operand],
+    is_call_like: bool,
+    is_branch_like: bool,
+) -> Option<u64> {
+    if !is_call_like && !is_branch_like {
+        return None;
+    }
+
+    operands
+        .iter()
+        .rev()
+        .filter_map(|operand| match operand.op_type {
+            Arm64OperandType::Imm(value) if value >= 0 => Some(value as u64),
+            _ => None,
+        })
+        .next()
 }
 
 fn has_group(cs: &Capstone, detail: &InsnDetail<'_>, expected: &str) -> bool {

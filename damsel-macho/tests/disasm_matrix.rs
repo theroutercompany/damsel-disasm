@@ -387,6 +387,25 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
         result.end_address,
         &result.instructions,
     );
+    let tbnz = result
+        .instructions
+        .iter()
+        .find(|instruction| instruction.address == 0x100000518)
+        .expect("semantic fixture should contain tbnz");
+    assert!(
+        tbnz.references.iter().any(
+            |reference| matches!(reference, Reference::Branch { target } if *target == 0x10000053c)
+        ),
+        "tbnz should reference its branch destination, got {:?}",
+        tbnz.references
+    );
+    assert!(
+        !tbnz
+            .references
+            .iter()
+            .any(|reference| matches!(reference, Reference::Branch { target } if *target == 0)),
+        "tbnz bit index must not be exposed as a branch target"
+    );
 
     assert_eq!(analysis.instruction_count, result.instructions.len());
     assert!(analysis.summary.basic_block_count > 1);
@@ -437,6 +456,21 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
     assert!(
         !analysis.overview.branch_targets.is_empty(),
         "overview should summarize branch targets"
+    );
+    assert!(
+        analysis
+            .branch_targets
+            .iter()
+            .any(|entry| entry.instruction_address == 0x100000518
+                && entry.target_address == 0x10000053c),
+        "analysis should carry the corrected tbnz target"
+    );
+    assert!(
+        analysis
+            .branch_targets
+            .iter()
+            .all(|entry| entry.target_address != 0),
+        "analysis must not expose tbz/tbnz bit indexes as branch targets"
     );
     assert!(
         !analysis.overview.indirect_controls.is_empty(),

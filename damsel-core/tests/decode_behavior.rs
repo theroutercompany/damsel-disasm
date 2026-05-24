@@ -52,6 +52,28 @@ fn decode_classifies_branch_call_and_page_references() {
 }
 
 #[test]
+fn decode_uses_final_immediate_for_test_bit_branch_targets() {
+    let bytes = [0x28, 0x01, 0x00, 0x37]; // tbnz w8, #0, 0x10000053c
+    let instructions = decode(&bytes, 0x100000518, None);
+
+    assert_eq!(instructions.len(), 1);
+    assert!(
+        instructions[0].references.iter().any(
+            |reference| matches!(reference, Reference::Branch { target } if *target == 0x10000053c)
+        ),
+        "expected tbnz to reference the branch destination, got {:?}",
+        instructions[0].references
+    );
+    assert!(
+        !instructions[0]
+            .references
+            .iter()
+            .any(|reference| matches!(reference, Reference::Branch { target } if *target == 0)),
+        "bit index must not be recorded as a branch target"
+    );
+}
+
+#[test]
 fn decode_emits_first_class_indirect_control_references() {
     let bytes = [
         0x00, 0x00, 0x3f, 0xd6, // blr x0
