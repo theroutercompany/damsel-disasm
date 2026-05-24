@@ -2655,7 +2655,7 @@ fn synthesize_simple_register_value(
                 _ => None,
             }
         }
-        "and" => {
+        "and" | "orr" | "eor" => {
             let destination = match instruction.operands.first()? {
                 Operand::Register(register) => register.clone(),
                 _ => return None,
@@ -2670,11 +2670,14 @@ fn synthesize_simple_register_value(
                 Operand::Label(value) => *value,
                 _ => return None,
             };
-            Some((
-                destination,
-                read_simple_register_value(known_values, source)? & mask,
-                RecoveredValueSource::Other,
-            ))
+            let source_value = read_simple_register_value(known_values, source)?;
+            let value = match lower.as_str() {
+                "and" => source_value & mask,
+                "orr" => source_value | mask,
+                "eor" => source_value ^ mask,
+                _ => return None,
+            };
+            Some((destination, value, RecoveredValueSource::Other))
         }
         _ => None,
     }
@@ -4008,6 +4011,52 @@ mod tests {
         assert!(instructions[0].recovered_values.iter().any(|value| {
             value.register == "x8"
                 && value.value == 0
+                && value.source == RecoveredValueSource::Other
+        }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_logical_immediate_values() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0b1010),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "orr",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0b0101),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "eor",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0b0011),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[1].recovered_values.iter().any(|value| {
+            value.register == "x9"
+                && value.value == 0b1111
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[2].recovered_values.iter().any(|value| {
+            value.register == "x10"
+                && value.value == 0b1100
                 && value.source == RecoveredValueSource::Other
         }));
     }
