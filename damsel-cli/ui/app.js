@@ -860,17 +860,23 @@ function renderExternalSuccessors(externalSuccessors) {
     <span class="external-successor-list">
       ${externalSuccessors
         .map(
-          (successor) => `
+          (successor) => {
+            const target =
+              successor.target_address === null || successor.target_address === undefined
+                ? '<span class="mono">unresolved</span>'
+                : renderJumpButton(successor.target_address);
+            return `
             <span class="external-successor">
               <span class="mono">${escapeHtml(successor.kind ?? "edge")}</span>
-              ${renderJumpButton(successor.target_address)}
+              ${target}
               ${
                 successor.via
                   ? `<span class="mono">via ${escapeHtml(successor.via)}</span>`
                   : ""
               }
             </span>
-          `,
+          `;
+          },
         )
         .join("")}
     </span>
@@ -894,8 +900,10 @@ function renderAnalysisEdges(edges, blockById = new Map()) {
               ${renderJumpButton(edge.source_address)}
               <span class="detail-key">to</span>
               ${
-                edge.target_address === null
+                edge.kind === "return"
                   ? '<span class="mono">return</span>'
+                  : edge.target_address === null
+                    ? '<span class="mono">unresolved</span>'
                   : renderJumpButton(edge.target_address)
               }
               ${renderBlockLink(edge.to_block, blockById)}

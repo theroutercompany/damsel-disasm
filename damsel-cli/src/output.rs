@@ -5222,7 +5222,7 @@ fn basic_block_json(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> JsonV
                     .edges
                     .iter()
                     .filter(|edge| edge.from_block == block.id && edge.to_block.is_none())
-                    .filter(|edge| edge.target_address.is_some())
+                    .filter(|edge| edge.kind != ControlFlowEdgeKind::Return)
                     .map(external_successor_json)
                     .collect(),
             ),
@@ -7219,6 +7219,114 @@ mod tests {
             target_triple: Some("test-target".to_string()),
             tools: doctor_tools(Some("sha256sum")),
         }
+    }
+
+    fn json_object_field<'a>(value: &'a JsonValue, key: &str) -> &'a JsonValue {
+        let JsonValue::Object(fields) = value else {
+            panic!("expected object while looking up {key}");
+        };
+        fields
+            .iter()
+            .find_map(|(candidate, value)| (candidate == key).then_some(value))
+            .unwrap_or_else(|| panic!("missing object field {key}"))
+    }
+
+    fn json_array_items(value: &JsonValue) -> &[JsonValue] {
+        let JsonValue::Array(items) = value else {
+            panic!("expected array");
+        };
+        items
+    }
+
+    #[test]
+    fn basic_block_json_exposes_unresolved_indirect_external_successor() {
+        let analysis = DisassemblyAnalysis {
+            target: "synthetic".to_string(),
+            start_address: 0x1000,
+            end_address: 0x1004,
+            instruction_count: 1,
+            metrics: damsel_core::DisassemblyMetrics {
+                decoded_byte_count: 0,
+                reference_count: 0,
+                annotation_count: 0,
+                max_instruction_reference_count: 0,
+                max_instruction_annotation_count: 0,
+                max_basic_block_instruction_count: 1,
+                intra_window_edge_count: 0,
+                external_target_edge_count: 0,
+                unresolved_target_edge_count: 1,
+            },
+            basic_blocks: vec![BasicBlock {
+                id: 0,
+                start_address: 0x1000,
+                end_address: 0x1004,
+                instruction_count: 1,
+            }],
+            edges: vec![ControlFlowEdge {
+                from_block: 0,
+                to_block: None,
+                source_address: 0x1000,
+                target_address: None,
+                kind: ControlFlowEdgeKind::IndirectBranch,
+                via: Some("x16".to_string()),
+            }],
+            direct_calls: Vec::new(),
+            branch_targets: Vec::new(),
+            data_references: Vec::new(),
+            indirect_controls: Vec::new(),
+            imports: Vec::new(),
+            objc_references: Vec::new(),
+            cache_links: Vec::new(),
+            overview: damsel_core::DisassemblyOverview::default(),
+            recovered_values: Vec::new(),
+            jump_tables: Vec::new(),
+            summary: damsel_core::DisassemblySummary {
+                basic_block_count: 1,
+                entry_block_count: 1,
+                exit_block_count: 1,
+                edge_count: 1,
+                direct_call_count: 0,
+                indirect_call_count: 0,
+                branch_count: 1,
+                return_count: 0,
+                data_reference_count: 0,
+                import_count: 0,
+                objc_selector_count: 0,
+                objc_class_count: 0,
+                objc_method_list_count: 0,
+                objc_message_send_count: 0,
+                cache_link_count: 0,
+                recovered_value_count: 0,
+                jump_table_count: 0,
+                unresolved_indirect_count: 1,
+            },
+        };
+
+        let block = basic_block_json(&analysis, &analysis.basic_blocks[0]);
+        let external_successors =
+            json_array_items(json_object_field(&block, "external_successors"));
+
+        assert_eq!(external_successors.len(), 1);
+        assert_eq!(
+            json_object_field(&external_successors[0], "kind"),
+            &JsonValue::String("indirect-branch".to_string())
+        );
+        assert_eq!(
+            json_object_field(&external_successors[0], "source_address"),
+            &JsonValue::Number("4096".to_string())
+        );
+        assert_eq!(
+            json_object_field(&external_successors[0], "target_address"),
+            &JsonValue::Null
+        );
+        assert_eq!(
+            json_object_field(&external_successors[0], "via"),
+            &JsonValue::String("x16".to_string())
+        );
+        assert_eq!(
+            json_object_field(&block, "terminal"),
+            &JsonValue::Bool(false)
+        );
     }
 
     #[test]
