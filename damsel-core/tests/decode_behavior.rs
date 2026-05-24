@@ -129,6 +129,26 @@ fn decode_does_not_misclassify_add_immediate_as_branch() {
 }
 
 #[test]
+fn decode_preserves_shifted_register_operands() {
+    let bytes = [0x20, 0x0c, 0x02, 0x8b]; // add x0, x1, x2, lsl #3
+    let instructions = decode(&bytes, 0x1000, None);
+    assert_eq!(instructions.len(), 1);
+    assert_eq!(
+        instructions[0].operands,
+        vec![
+            Operand::Register("x0".to_string()),
+            Operand::Register("x1".to_string()),
+            Operand::ShiftedRegister {
+                register: "x2".to_string(),
+                shift: "lsl #3".to_string(),
+            },
+        ],
+        "shifted register operands must not collapse to plain registers"
+    );
+    assert_eq!(instructions[0].render(), "add x0, x1, x2, lsl #3");
+}
+
+#[test]
 fn decode_rejects_truncated_instruction_stream() {
     let bytes = [0x00, 0x00, 0x00];
     match decode_aarch64(&bytes, 0x1000, None) {

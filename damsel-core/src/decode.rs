@@ -3,7 +3,7 @@ use crate::{
 };
 use capstone::arch;
 use capstone::arch::ArchDetail;
-use capstone::arch::arm64::{Arm64Operand, Arm64OperandType};
+use capstone::arch::arm64::{Arm64Operand, Arm64OperandType, Arm64Shift};
 use capstone::prelude::*;
 use thiserror::Error;
 
@@ -338,10 +338,16 @@ fn map_operand(
 ) -> Operand {
     let lower = mnemonic.to_ascii_lowercase();
     match operand.op_type {
-        Arm64OperandType::Reg(register) => Operand::Register(
-            cs.reg_name(register)
-                .unwrap_or_else(|| format!("{register:?}")),
-        ),
+        Arm64OperandType::Reg(register) => {
+            let register = cs
+                .reg_name(register)
+                .unwrap_or_else(|| format!("{register:?}"));
+            if let Some(shift) = arm64_shift_text(operand.shift) {
+                Operand::ShiftedRegister { register, shift }
+            } else {
+                Operand::Register(register)
+            }
+        }
         Arm64OperandType::Imm(value) => {
             let is_direct_control_target = direct_control_target_index == Some(operand_index);
             if ((is_relative_branch(&lower) && is_direct_control_target)
@@ -377,6 +383,18 @@ fn map_operand(
         Arm64OperandType::SMEIndex(value) => Operand::Other(format!("{value:?}")),
         Arm64OperandType::Invalid => Operand::Other("<invalid>".to_string()),
     }
+}
+
+fn arm64_shift_text(shift: Arm64Shift) -> Option<String> {
+    let (kind, amount) = match shift {
+        Arm64Shift::Invalid => return None,
+        Arm64Shift::Lsl(amount) => ("lsl", amount),
+        Arm64Shift::Msl(amount) => ("msl", amount),
+        Arm64Shift::Lsr(amount) => ("lsr", amount),
+        Arm64Shift::Asr(amount) => ("asr", amount),
+        Arm64Shift::Ror(amount) => ("ror", amount),
+    };
+    Some(format!("{kind} #{amount}"))
 }
 
 fn opcode_from_bytes(bytes: &[u8]) -> u32 {
