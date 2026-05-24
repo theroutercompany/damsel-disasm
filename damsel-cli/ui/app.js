@@ -473,6 +473,9 @@ function renderAnalysisBlock(analysis) {
       ${renderAnalysisOverview(analysis.overview || {})}
       ${renderAnalysisBlocks(analysis.basic_blocks || [])}
       ${renderAnalysisEdges(analysis.edges || [])}
+      ${renderAnalysisTargetUses("Direct Calls", analysis.direct_calls || [])}
+      ${renderAnalysisTargetUses("Branch Targets", analysis.branch_targets || [])}
+      ${renderAnalysisTargetUses("Data References", analysis.data_references || [])}
       ${renderAnalysisIndirectControls(analysis.indirect_controls || [])}
       ${renderAnalysisJumpTables(analysis.jump_tables || [])}
       ${renderAnalysisImports(analysis.imports || [], analysis.cache_links || [])}
@@ -722,6 +725,30 @@ function renderAnalysisEdges(edges) {
                   : renderJumpButton(edge.target_address)
               }
               <span class="mono">#${escapeHtml(edge.to_block ?? "-")}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderAnalysisTargetUses(label, rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return `
+    <div class="analysis-list">
+      <div class="item-eyebrow">${escapeHtml(label)}</div>
+      ${rows
+        .map(
+          (entry) => `
+            <div class="analysis-row">
+              <span class="detail-key">at</span>
+              ${renderJumpButton(entry.instruction_address)}
+              <span class="detail-key">target</span>
+              ${renderJumpButton(entry.target_address)}
             </div>
           `,
         )

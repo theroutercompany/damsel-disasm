@@ -266,6 +266,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("syncWorkbenchState"));
     assert!(js.contains("includeAnalysis"));
     assert!(js.contains("renderAnalysisEdges"));
+    assert!(js.contains("renderAnalysisTargetUses"));
     assert!(js.contains("renderAnalysisIndirectControls"));
     assert!(js.contains("renderAnalysisJumpTables"));
     assert!(js.contains("renderAnalysisObjcReferences"));
@@ -282,6 +283,9 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("Jump Table"));
     assert!(js.contains("to_block"));
     assert!(js.contains("Intra-window Edges"));
+    assert!(js.contains("Direct Calls"));
+    assert!(js.contains("Branch Targets"));
+    assert!(js.contains("Data References"));
     assert!(js.contains("Indirect Controls"));
     assert!(js.contains("Jump Tables"));
     assert!(js.contains("Overview"));
@@ -329,6 +333,17 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     );
     assert!(
         disasm_json["analysis"]["indirect_controls"]
+            .as_array()
+            .is_some()
+    );
+    assert!(disasm_json["analysis"]["direct_calls"].as_array().is_some());
+    assert!(
+        disasm_json["analysis"]["branch_targets"]
+            .as_array()
+            .is_some()
+    );
+    assert!(
+        disasm_json["analysis"]["data_references"]
             .as_array()
             .is_some()
     );
