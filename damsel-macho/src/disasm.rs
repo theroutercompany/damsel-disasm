@@ -298,18 +298,23 @@ fn analyze_disassembly_impl(
     }
 
     add_fallthrough_edges(instructions, &basic_blocks, &mut edges);
-    let intra_window_edge_count = edges.iter().filter(|edge| edge.to_block.is_some()).count();
+    let mut incoming_blocks = BTreeSet::new();
+    let mut outgoing_blocks = BTreeSet::new();
+    let mut intra_window_edge_count = 0;
+    for edge in &edges {
+        if let Some(to_block) = edge.to_block {
+            intra_window_edge_count += 1;
+            incoming_blocks.insert(to_block);
+            outgoing_blocks.insert(edge.from_block);
+        }
+    }
     let entry_block_count = basic_blocks
         .iter()
-        .filter(|block| !edges.iter().any(|edge| edge.to_block == Some(block.id)))
+        .filter(|block| !incoming_blocks.contains(&block.id))
         .count();
     let exit_block_count = basic_blocks
         .iter()
-        .filter(|block| {
-            !edges
-                .iter()
-                .any(|edge| edge.from_block == block.id && edge.to_block.is_some())
-        })
+        .filter(|block| !outgoing_blocks.contains(&block.id))
         .count();
     let external_target_edge_count = edges
         .iter()
