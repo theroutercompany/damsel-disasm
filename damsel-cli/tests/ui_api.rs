@@ -269,6 +269,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("renderAnalysisTargetUses"));
     assert!(js.contains("renderAnalysisIndirectControls"));
     assert!(js.contains("renderAnalysisJumpTables"));
+    assert!(js.contains("renderAnalysisRecoveredValues"));
     assert!(js.contains("renderAnalysisObjcReferences"));
     assert!(js.contains("resolved_address"));
     assert!(js.contains("import_dylib"));
@@ -285,9 +286,11 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("Intra-window Edges"));
     assert!(js.contains("Direct Calls"));
     assert!(js.contains("Branch Targets"));
+    assert!(js.contains("Data Refs"));
     assert!(js.contains("Data References"));
     assert!(js.contains("Indirect Controls"));
     assert!(js.contains("Jump Tables"));
+    assert!(js.contains("Unresolved Indirect"));
     assert!(js.contains("Overview"));
     assert!(js.contains("ObjC Selectors"));
     assert!(js.contains("ObjC Sends"));
@@ -348,4 +351,9 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
             .is_some()
     );
     assert!(disasm_json["analysis"]["jump_tables"].as_array().is_some());
+    assert!(
+        disasm_json["analysis"]["recovered_values"]
+            .as_array()
+            .is_some()
+    );
 }

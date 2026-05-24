@@ -453,6 +453,7 @@ function renderAnalysisBlock(analysis) {
           ["Indirect Calls", analysis.summary.indirect_call_count],
           ["Branches", analysis.summary.branch_count],
           ["Returns", analysis.summary.return_count],
+          ["Data Refs", analysis.summary.data_reference_count],
           ["Imports", analysis.summary.import_count],
           ["ObjC Selectors", analysis.summary.objc_selector_count ?? 0],
           ["ObjC Classes", analysis.summary.objc_class_count ?? 0],
@@ -461,6 +462,7 @@ function renderAnalysisBlock(analysis) {
           ["Cache Links", analysis.summary.cache_link_count],
           ["Recovered Values", analysis.summary.recovered_value_count],
           ["Jump Tables", analysis.summary.jump_table_count],
+          ["Unresolved Indirect", analysis.summary.unresolved_indirect_count],
           ["Decoded Bytes", metrics.decoded_byte_count ?? 0],
           ["References", metrics.reference_count ?? 0],
           ["Annotations", metrics.annotation_count ?? 0],
@@ -478,6 +480,7 @@ function renderAnalysisBlock(analysis) {
       ${renderAnalysisTargetUses("Data References", analysis.data_references || [])}
       ${renderAnalysisIndirectControls(analysis.indirect_controls || [])}
       ${renderAnalysisJumpTables(analysis.jump_tables || [])}
+      ${renderAnalysisRecoveredValues(analysis.recovered_values || [])}
       ${renderAnalysisImports(analysis.imports || [], analysis.cache_links || [])}
       ${renderAnalysisObjcReferences(analysis.objc_references || [])}
     </section>
@@ -806,6 +809,31 @@ function renderAnalysisJumpTables(rows) {
               <span class="mono">${escapeHtml(entry.index_register)}</span>
               <span class="detail-key">elem</span>
               <span class="mono">${escapeHtml(String(entry.element_size))}B</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderAnalysisRecoveredValues(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return `
+    <div class="analysis-list">
+      <div class="item-eyebrow">Recovered Values</div>
+      ${rows
+        .map(
+          (entry) => `
+            <div class="analysis-row">
+              ${renderJumpButton(entry.instruction_address)}
+              <span class="mono">${escapeHtml(entry.register)}</span>
+              <span class="mono">${escapeHtml(formatAddress(entry.value))}</span>
+              <span class="mono">${escapeHtml(entry.kind)}</span>
+              <span class="mono">${escapeHtml(entry.source)}</span>
             </div>
           `,
         )
