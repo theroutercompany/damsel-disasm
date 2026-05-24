@@ -1813,6 +1813,7 @@ fn synthesize_analysis_references(
                                     .filter(|slot| slot.encoding == TableSlotEncoding::Relative32)
                                 {
                                     if let Some(key) = canonical_state_key(dest) {
+                                        remove_known_value(&mut known_values, dest);
                                         relative_slot_loads.insert(
                                             key,
                                             TableSlotEvidence {
@@ -3947,6 +3948,65 @@ mod tests {
                 Annotation::IndirectTargetResolved {
                     target: 0x2000,
                     reason: IndirectTargetReason::ExportAddress,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn synthesize_relative_slot_load_clears_prior_register_value() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1004, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1008,
+                "ldrsw",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x100c,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.is_empty(),
+            "ldrsw relative slot evidence must replace stale known register values: {:?}",
+            instructions
+        );
+        assert!(instructions[2].annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::TableSlotResolved {
+                    encoding: TableSlotEncoding::Relative32,
+                    target: 0x3000,
                     ..
                 }
             )
