@@ -313,6 +313,11 @@ fn analyze_disassembly_impl(
         .iter()
         .filter(|block| Some(block.id) == first_block_id || !incoming_blocks.contains(&block.id))
         .count();
+    let primary_entry_reachable_blocks = primary_entry_reachable_blocks(&basic_blocks, &edges);
+    let primary_entry_reachable_block_count = primary_entry_reachable_blocks.len();
+    let disconnected_block_count = basic_blocks
+        .len()
+        .saturating_sub(primary_entry_reachable_block_count);
     let exit_block_count = basic_blocks
         .iter()
         .filter(|block| !outgoing_blocks.contains(&block.id))
@@ -395,6 +400,8 @@ fn analyze_disassembly_impl(
             basic_block_count: basic_blocks.len(),
             entry_block_count,
             exit_block_count,
+            primary_entry_reachable_block_count,
+            disconnected_block_count,
             edge_count: edges.len(),
             back_edge_count,
             loop_header_count,
@@ -1137,6 +1144,36 @@ fn push_edge(target: &mut Vec<ControlFlowEdge>, edge: ControlFlowEdge) {
     if !target.contains(&edge) {
         target.push(edge);
     }
+}
+
+fn primary_entry_reachable_blocks(
+    blocks: &[BasicBlock],
+    edges: &[ControlFlowEdge],
+) -> BTreeSet<usize> {
+    let Some(first_block) = blocks.first() else {
+        return BTreeSet::new();
+    };
+    let mut successors = BTreeMap::<usize, Vec<usize>>::new();
+    for edge in edges {
+        if let Some(to_block) = edge.to_block {
+            successors
+                .entry(edge.from_block)
+                .or_default()
+                .push(to_block);
+        }
+    }
+
+    let mut reachable = BTreeSet::new();
+    let mut stack = vec![first_block.id];
+    while let Some(block_id) = stack.pop() {
+        if !reachable.insert(block_id) {
+            continue;
+        }
+        if let Some(next_blocks) = successors.get(&block_id) {
+            stack.extend(next_blocks.iter().copied());
+        }
+    }
+    reachable
 }
 
 fn push_target_use(target: &mut Vec<DisassemblyTargetUse>, entry: DisassemblyTargetUse) {
@@ -3518,6 +3555,8 @@ mod tests {
         assert_eq!(analysis.summary.basic_block_count, 3);
         assert_eq!(analysis.summary.entry_block_count, 1);
         assert_eq!(analysis.summary.exit_block_count, 2);
+        assert_eq!(analysis.summary.primary_entry_reachable_block_count, 3);
+        assert_eq!(analysis.summary.disconnected_block_count, 0);
     }
 
     #[test]
@@ -3532,6 +3571,8 @@ mod tests {
         assert_eq!(analysis.summary.basic_block_count, 2);
         assert_eq!(analysis.summary.entry_block_count, 2);
         assert_eq!(analysis.summary.exit_block_count, 2);
+        assert_eq!(analysis.summary.primary_entry_reachable_block_count, 1);
+        assert_eq!(analysis.summary.disconnected_block_count, 1);
     }
 
     #[test]
@@ -3549,6 +3590,8 @@ mod tests {
 
         assert_eq!(analysis.summary.basic_block_count, 2);
         assert_eq!(analysis.summary.entry_block_count, 1);
+        assert_eq!(analysis.summary.primary_entry_reachable_block_count, 2);
+        assert_eq!(analysis.summary.disconnected_block_count, 0);
         assert_eq!(analysis.summary.edge_count, 3);
         assert_eq!(analysis.summary.back_edge_count, 1);
         assert_eq!(analysis.summary.loop_header_count, 1);

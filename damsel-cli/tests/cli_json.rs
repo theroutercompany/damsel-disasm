@@ -2001,6 +2001,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "basic_block_count",
             "entry_block_count",
             "exit_block_count",
+            "primary_entry_reachable_block_count",
+            "disconnected_block_count",
             "edge_count",
             "back_edge_count",
             "loop_header_count",
@@ -2037,6 +2039,17 @@ fn disasm_json_analysis_contract_is_opt_in() {
     assert!(analysis["summary"]["basic_block_count"].as_u64().unwrap() > 1);
     assert!(analysis["summary"]["entry_block_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["exit_block_count"].as_u64().unwrap() > 0);
+    assert!(
+        analysis["summary"]["primary_entry_reachable_block_count"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(
+        analysis["summary"]["disconnected_block_count"]
+            .as_u64()
+            .is_some()
+    );
     assert!(analysis["summary"]["edge_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["back_edge_count"].as_u64().is_some());
     assert!(analysis["summary"]["loop_header_count"].as_u64().is_some());
@@ -2063,6 +2076,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 && block["instruction_count"].is_number()
                 && block["entry"].is_boolean()
                 && block["exit"].is_boolean()
+                && block["primary_entry_reachable"].is_boolean()
                 && block["loop_header"].is_boolean()
                 && block["back_edge_predecessors"].is_array()
                 && block["predecessors"].is_array()
@@ -2084,6 +2098,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "instruction_count",
                 "entry",
                 "exit",
+                "primary_entry_reachable",
                 "loop_header",
                 "back_edge_predecessors",
                 "predecessors",
@@ -2166,6 +2181,10 @@ fn disasm_json_analysis_contract_is_opt_in() {
         .first()
         .and_then(|block| block["id"].as_u64())
         .expect("first block id");
+    assert!(blocks.iter().any(|block| {
+        block["id"].as_u64() == Some(first_block_id)
+            && block["primary_entry_reachable"].as_bool() == Some(true)
+    }));
     for block in blocks {
         let predecessors = block["predecessors"].as_array().expect("predecessors");
         let back_edge_predecessors = block["back_edge_predecessors"]

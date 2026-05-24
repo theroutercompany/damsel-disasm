@@ -1587,10 +1587,12 @@ pub(crate) fn print_disassembly(
 fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
     println!("analysis:");
     println!(
-        "  summary: blocks={} entries={} exits={} edges={} back_edges={} loop_headers={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
+        "  summary: blocks={} entries={} exits={} primary_reachable={} disconnected={} edges={} back_edges={} loop_headers={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
         analysis.summary.basic_block_count,
         analysis.summary.entry_block_count,
         analysis.summary.exit_block_count,
+        analysis.summary.primary_entry_reachable_block_count,
+        analysis.summary.disconnected_block_count,
         analysis.summary.edge_count,
         analysis.summary.back_edge_count,
         analysis.summary.loop_header_count,
@@ -1627,13 +1629,14 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         println!("  blocks:");
         for block in &analysis.basic_blocks {
             println!(
-                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} loop_header={}",
+                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} reachable={} loop_header={}",
                 block.id,
                 block.start_address,
                 block.end_address,
                 block.instruction_count,
                 block_edge_index.is_entry(block.id),
                 block_edge_index.is_exit(block.id),
+                block_edge_index.is_primary_entry_reachable(block.id),
                 block_edge_index.is_loop_header(block.id)
             );
         }
@@ -4826,6 +4829,14 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                     usize_num(analysis.summary.exit_block_count),
                 ),
                 (
+                    "primary_entry_reachable_block_count".to_string(),
+                    usize_num(analysis.summary.primary_entry_reachable_block_count),
+                ),
+                (
+                    "disconnected_block_count".to_string(),
+                    usize_num(analysis.summary.disconnected_block_count),
+                ),
+                (
                     "edge_count".to_string(),
                     usize_num(analysis.summary.edge_count),
                 ),
@@ -5228,6 +5239,10 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
             JsonValue::Bool(edge_index.is_exit(block.id)),
         ),
         (
+            "primary_entry_reachable".to_string(),
+            JsonValue::Bool(edge_index.is_primary_entry_reachable(block.id)),
+        ),
+        (
             "loop_header".to_string(),
             JsonValue::Bool(edge_index.is_loop_header(block.id)),
         ),
@@ -5261,6 +5276,7 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
 
 struct BasicBlockEdgeIndex<'a> {
     entry_blocks: BTreeSet<usize>,
+    primary_entry_reachable_blocks: BTreeSet<usize>,
     predecessors: BTreeMap<usize, BTreeSet<usize>>,
     successors: BTreeMap<usize, BTreeSet<usize>>,
     back_edge_predecessors: BTreeMap<usize, BTreeSet<usize>>,
@@ -5272,6 +5288,7 @@ impl<'a> BasicBlockEdgeIndex<'a> {
     fn new(analysis: &'a DisassemblyAnalysis) -> Self {
         let mut index = Self {
             entry_blocks: BTreeSet::new(),
+            primary_entry_reachable_blocks: BTreeSet::new(),
             predecessors: BTreeMap::new(),
             successors: BTreeMap::new(),
             back_edge_predecessors: BTreeMap::new(),
@@ -5313,6 +5330,17 @@ impl<'a> BasicBlockEdgeIndex<'a> {
                 index.entry_blocks.insert(block.id);
             }
         }
+        if let Some(first_block_id) = first_block_id {
+            let mut stack = vec![first_block_id];
+            while let Some(block_id) = stack.pop() {
+                if !index.primary_entry_reachable_blocks.insert(block_id) {
+                    continue;
+                }
+                if let Some(next_blocks) = index.successors.get(&block_id) {
+                    stack.extend(next_blocks.iter().copied());
+                }
+            }
+        }
         index
     }
 
@@ -5322,6 +5350,10 @@ impl<'a> BasicBlockEdgeIndex<'a> {
 
     fn is_exit(&self, block_id: usize) -> bool {
         !self.successors.contains_key(&block_id)
+    }
+
+    fn is_primary_entry_reachable(&self, block_id: usize) -> bool {
+        self.primary_entry_reachable_blocks.contains(&block_id)
     }
 
     fn is_returning(&self, block_id: usize) -> bool {
@@ -7412,6 +7444,8 @@ mod tests {
                 basic_block_count: 1,
                 entry_block_count: 1,
                 exit_block_count: 1,
+                primary_entry_reachable_block_count: 1,
+                disconnected_block_count: 0,
                 edge_count: 1,
                 back_edge_count: 0,
                 loop_header_count: 0,
@@ -7524,6 +7558,8 @@ mod tests {
                 basic_block_count: 2,
                 entry_block_count: 1,
                 exit_block_count: 0,
+                primary_entry_reachable_block_count: 2,
+                disconnected_block_count: 0,
                 edge_count: 2,
                 back_edge_count: 1,
                 loop_header_count: 1,
@@ -7554,6 +7590,10 @@ mod tests {
         );
         assert_eq!(json_object_field(&header, "entry"), &JsonValue::Bool(true));
         assert_eq!(
+            json_object_field(&header, "primary_entry_reachable"),
+            &JsonValue::Bool(true)
+        );
+        assert_eq!(
             json_array_items(json_object_field(&header, "back_edge_predecessors")),
             &[JsonValue::Number("1".to_string())]
         );
@@ -7563,6 +7603,93 @@ mod tests {
         );
         assert!(
             json_array_items(json_object_field(&non_header, "back_edge_predecessors")).is_empty()
+        );
+    }
+
+    #[test]
+    fn basic_block_json_marks_disconnected_blocks() {
+        let analysis = DisassemblyAnalysis {
+            target: "synthetic-disconnected".to_string(),
+            start_address: 0x1000,
+            end_address: 0x1008,
+            instruction_count: 2,
+            metrics: damsel_core::DisassemblyMetrics {
+                decoded_byte_count: 0,
+                reference_count: 0,
+                annotation_count: 0,
+                max_instruction_reference_count: 0,
+                max_instruction_annotation_count: 0,
+                max_basic_block_instruction_count: 1,
+                intra_window_edge_count: 0,
+                external_target_edge_count: 0,
+                unresolved_target_edge_count: 0,
+            },
+            basic_blocks: vec![
+                BasicBlock {
+                    id: 0,
+                    start_address: 0x1000,
+                    end_address: 0x1004,
+                    instruction_count: 1,
+                },
+                BasicBlock {
+                    id: 1,
+                    start_address: 0x1004,
+                    end_address: 0x1008,
+                    instruction_count: 1,
+                },
+            ],
+            edges: Vec::new(),
+            direct_calls: Vec::new(),
+            branch_targets: Vec::new(),
+            data_references: Vec::new(),
+            indirect_controls: Vec::new(),
+            imports: Vec::new(),
+            objc_references: Vec::new(),
+            cache_links: Vec::new(),
+            overview: damsel_core::DisassemblyOverview::default(),
+            recovered_values: Vec::new(),
+            jump_tables: Vec::new(),
+            summary: damsel_core::DisassemblySummary {
+                basic_block_count: 2,
+                entry_block_count: 2,
+                exit_block_count: 2,
+                primary_entry_reachable_block_count: 1,
+                disconnected_block_count: 1,
+                edge_count: 0,
+                back_edge_count: 0,
+                loop_header_count: 0,
+                direct_call_count: 0,
+                indirect_call_count: 0,
+                branch_count: 0,
+                return_count: 0,
+                data_reference_count: 0,
+                import_count: 0,
+                objc_selector_count: 0,
+                objc_class_count: 0,
+                objc_method_list_count: 0,
+                objc_message_send_count: 0,
+                cache_link_count: 0,
+                recovered_value_count: 0,
+                jump_table_count: 0,
+                unresolved_indirect_count: 0,
+            },
+        };
+
+        let block_edge_index = BasicBlockEdgeIndex::new(&analysis);
+        let primary = basic_block_json(&analysis.basic_blocks[0], &block_edge_index);
+        let disconnected = basic_block_json(&analysis.basic_blocks[1], &block_edge_index);
+
+        assert_eq!(
+            json_object_field(&primary, "primary_entry_reachable"),
+            &JsonValue::Bool(true)
+        );
+        assert_eq!(
+            json_object_field(&disconnected, "primary_entry_reachable"),
+            &JsonValue::Bool(false)
+        );
+        assert_eq!(
+            json_object_field(&disconnected, "entry"),
+            &JsonValue::Bool(true)
         );
     }
 

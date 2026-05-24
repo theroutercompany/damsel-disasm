@@ -470,7 +470,10 @@ function renderResultAnalysisMeta(analysis) {
   const loopHeaders = summary.loop_header_count ?? 0;
   const loopHeaderLabel = loopHeaders === 1 ? "loop header" : "loop headers";
   const loopHeaderText = loopHeaders ? ` · ${loopHeaders} ${loopHeaderLabel}` : "";
-  return ` · ${summary.basic_block_count ?? 0} blocks (${summary.entry_block_count ?? 0} entry/${summary.exit_block_count ?? 0} exit) · ${summary.edge_count ?? 0} edges${backEdgeText}${loopHeaderText} · ${summary.direct_call_count ?? 0} calls · ${summary.data_reference_count ?? 0} data refs · ${summary.import_count ?? 0} imports${unresolvedText}`;
+  const disconnected = summary.disconnected_block_count ?? 0;
+  const disconnectedLabel = disconnected === 1 ? "disconnected block" : "disconnected blocks";
+  const disconnectedText = disconnected ? ` · ${disconnected} ${disconnectedLabel}` : "";
+  return ` · ${summary.basic_block_count ?? 0} blocks (${summary.entry_block_count ?? 0} entry/${summary.exit_block_count ?? 0} exit)${disconnectedText} · ${summary.edge_count ?? 0} edges${backEdgeText}${loopHeaderText} · ${summary.direct_call_count ?? 0} calls · ${summary.data_reference_count ?? 0} data refs · ${summary.import_count ?? 0} imports${unresolvedText}`;
 }
 
 function renderInspector() {
@@ -545,6 +548,8 @@ function renderAnalysisBlock(analysis) {
           ["Blocks", analysis.summary.basic_block_count],
           ["Entry Blocks", analysis.summary.entry_block_count ?? 0],
           ["Exit Blocks", analysis.summary.exit_block_count ?? 0],
+          ["Primary Reachable", analysis.summary.primary_entry_reachable_block_count ?? 0],
+          ["Disconnected Blocks", analysis.summary.disconnected_block_count ?? 0],
           ["Edges", analysis.summary.edge_count],
           ["Back Edges", analysis.summary.back_edge_count ?? 0],
           ["Loop Headers", analysis.summary.loop_header_count ?? 0],
@@ -830,6 +835,9 @@ function renderBlockRoleBadges(block) {
   }
   if (block.loop_header) {
     roles.push("loop");
+  }
+  if (block.primary_entry_reachable === false) {
+    roles.push("disconnected");
   }
   if (!roles.length) {
     return "";

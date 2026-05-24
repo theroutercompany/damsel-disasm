@@ -2540,6 +2540,8 @@ pub struct DisassemblySummary {
     pub basic_block_count: usize,
     pub entry_block_count: usize,
     pub exit_block_count: usize,
+    pub primary_entry_reachable_block_count: usize,
+    pub disconnected_block_count: usize,
     pub edge_count: usize,
     pub back_edge_count: usize,
     pub loop_header_count: usize,
