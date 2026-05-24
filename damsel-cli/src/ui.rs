@@ -8,7 +8,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use damsel_core::{BinaryImage, Section};
 use damsel_macho::{analyze_disassembly_with_image, load_bytes};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 use serde_json::json;
 use std::collections::HashMap;
 use std::io::{self, Write as _};
@@ -85,9 +85,13 @@ enum TargetKind {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DisasmWindow {
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
     from: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
     to: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_usize")]
     bytes: Option<usize>,
+    #[serde(default, deserialize_with = "deserialize_optional_usize")]
     limit: Option<usize>,
 }
 
@@ -466,4 +470,51 @@ fn json_body(status: StatusCode, body: String) -> Response {
 
 fn default_true() -> bool {
     true
+}
+
+fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    optional_u64_from_json(value).map_err(de::Error::custom)
+}
+
+fn deserialize_optional_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    optional_u64_from_json(value)
+        .map_err(de::Error::custom)?
+        .map(|value| {
+            usize::try_from(value)
+                .map_err(|_| format!("integer value {value} does not fit in usize"))
+        })
+        .transpose()
+        .map_err(de::Error::custom)
+}
+
+fn optional_u64_from_json(value: serde_json::Value) -> Result<Option<u64>, String> {
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(number) => number
+            .as_u64()
+            .ok_or_else(|| format!("integer value `{number}` is not an unsigned 64-bit integer"))
+            .map(Some),
+        serde_json::Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            parse_address(&trimmed.replace('_', "")).map(Some)
+        }
+        other => Err(format!(
+            "expected an unsigned integer or integer string, got {other}"
+        )),
+    }
 }

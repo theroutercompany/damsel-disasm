@@ -2883,7 +2883,10 @@ pub(crate) fn map_macho_error(error: damsel_macho::MachoError) -> CliRunError {
 
 pub(crate) fn parse_address(value: &str) -> Result<u64, String> {
     let value = value.trim();
-    if let Some(stripped) = value.strip_prefix("0x") {
+    if let Some(stripped) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         u64::from_str_radix(stripped, 16).map_err(|error| error.to_string())
     } else {
         value.parse::<u64>().map_err(|error| error.to_string())
@@ -3015,6 +3018,11 @@ mod tests {
             weak: false,
             section: Some("__text".to_string()),
         }
+    }
+
+    #[test]
+    fn parse_address_accepts_uppercase_hex_prefix() {
+        assert_eq!(parse_address("0X1000004b0"), Ok(0x1000004b0));
     }
 
     #[test]

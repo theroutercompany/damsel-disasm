@@ -182,6 +182,24 @@ fn ui_disasm_supports_section_symbol_and_address_targets() {
         address_json["instructions"][0]["address"].as_u64(),
         Some(first_address)
     );
+
+    let bounded_to = first_address + 0x10;
+    let bounded_response = client
+        .post(format!("{}/api/images/{image_id}/disasm", server.base_url))
+        .json(&serde_json::json!({
+            "target": { "kind": "section", "value": upload["defaultSection"] },
+            "window": {
+                "from": format!("0X{first_address:x}"),
+                "to": format!("0x{bounded_to:x}")
+            },
+            "options": { "includeAnnotations": true, "includeValueFlow": false },
+        }))
+        .send()
+        .expect("string window request");
+    assert!(bounded_response.status().is_success());
+    let bounded_json = parse_json(bounded_response);
+    assert_eq!(bounded_json["start_address"].as_u64(), Some(first_address));
+    assert_eq!(bounded_json["window_end"].as_u64(), Some(bounded_to));
 }
 
 #[test]
@@ -270,7 +288,11 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("includeAnalysis"));
     assert!(js.contains("parseOptionalInteger"));
     assert!(js.contains("decimal or hex integer"));
-    assert!(js.contains("JavaScript safe integer range"));
+    assert!(js.contains("unsigned 64-bit integer"));
+    assert!(js.contains("BigInt"));
+    assert!(js.contains("requestIntegerValue"));
+    assert!(!js.contains("Number(jumpButton.dataset.target)"));
+    assert!(!js.contains("Number(button.dataset.jumpTarget)"));
     assert!(js.contains("renderResultAnalysisMeta"));
     assert!(js.contains("renderAnalysisEdges"));
     assert!(js.contains("renderAnalysisTargetUses"));

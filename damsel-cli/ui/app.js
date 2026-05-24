@@ -104,51 +104,84 @@ function updateTargetControls() {
 }
 
 function formatAddress(value) {
-  if (value === null || value === undefined) {
+  const bigint = addressBigInt(value);
+  if (bigint === null) {
     return "n/a";
   }
 
-  const bigint = BigInt(value);
   return `0x${bigint.toString(16)}`;
+}
+
+function addressBigInt(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "bigint") {
+    return value >= 0n ? value : null;
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isInteger(value) || value < 0) {
+      return null;
+    }
+    return BigInt(value);
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().replaceAll("_", "");
+  if (!/^0x[0-9a-f]+$/i.test(normalized) && !/^[0-9]+$/.test(normalized)) {
+    return null;
+  }
+
+  const bigint = BigInt(normalized);
+  return bigint <= 0xffff_ffff_ffff_ffffn ? bigint : null;
 }
 
 function parseOptionalInteger(input, label) {
   const rawValue = input.value.trim();
   if (!rawValue) {
-    return { value: null, error: null };
+    return { value: null, bigint: null, error: null };
   }
 
   const normalized = rawValue.replaceAll("_", "");
   const isHex = /^0x[0-9a-f]+$/i.test(normalized);
   const isDecimal = /^[0-9]+$/.test(normalized);
   if (!isHex && !isDecimal) {
-    return { value: null, error: `${label} must be a decimal or hex integer.` };
+    return { value: null, bigint: null, error: `${label} must be a decimal or hex integer.` };
   }
 
-  const value = Number.parseInt(normalized, isHex ? 16 : 10);
-  if (!Number.isSafeInteger(value)) {
-    return { value: null, error: `${label} is outside the JavaScript safe integer range.` };
+  const bigint = BigInt(normalized);
+  if (bigint > 0xffff_ffff_ffff_ffffn) {
+    return { value: null, bigint: null, error: `${label} must fit in an unsigned 64-bit integer.` };
   }
 
-  return { value, error: null };
+  return { value: normalized, bigint, error: null };
 }
 
-function numericValue(input) {
+function requestIntegerValue(input) {
   return parseOptionalInteger(input, "Value").value;
+}
+
+function parsedIntegerValue(input) {
+  return parseOptionalInteger(input, "Value").bigint;
 }
 
 function currentStartAddressHint(targetKind) {
   if (targetKind === "address" && elements.addressInput.value.trim()) {
-    return numericValue(elements.addressInput);
+    return parsedIntegerValue(elements.addressInput);
   }
 
   if (targetKind === "section") {
     const section = state.sections.find((entry) => entry.name === elements.sectionSelect.value);
-    return section ? Number(section.address) : null;
+    return section ? addressBigInt(section.address) : null;
   }
 
   if (elements.fromInput.value.trim()) {
-    return numericValue(elements.fromInput);
+    return parsedIntegerValue(elements.fromInput);
   }
 
   return null;
@@ -191,11 +224,11 @@ function validateInputs() {
     return "Enter a valid decimal or hex decode address.";
   }
 
-  if (bytes.value !== null && bytes.value <= 0) {
+  if (bytes.bigint !== null && bytes.bigint <= 0n) {
     return "Bytes must be greater than 0.";
   }
 
-  if (limit.value !== null && limit.value <= 0) {
+  if (limit.bigint !== null && limit.bigint <= 0n) {
     return "Limit must be greater than 0.";
   }
 
@@ -207,11 +240,11 @@ function validateInputs() {
     return "To cannot be combined with bytes or limit.";
   }
 
-  if (from.value !== null && to.value !== null && to.value <= from.value) {
+  if (from.bigint !== null && to.bigint !== null && to.bigint <= from.bigint) {
     return "To must be greater than from.";
   }
 
-  if (startHint !== null && to.value !== null && to.value <= startHint) {
+  if (startHint !== null && to.bigint !== null && to.bigint <= startHint) {
     return "To must be greater than the decode start.";
   }
 
@@ -221,17 +254,18 @@ function validateInputs() {
 function buildDisasmRequest() {
   const targetKind = currentTargetKind();
   const window = {
-    from: targetKind === "address" ? undefined : numericValue(elements.fromInput),
-    to: numericValue(elements.toInput),
-    bytes: numericValue(elements.bytesInput),
-    limit: numericValue(elements.limitInput),
+    from: targetKind === "address" ? undefined : requestIntegerValue(elements.fromInput),
+    to: requestIntegerValue(elements.toInput),
+    bytes: requestIntegerValue(elements.bytesInput),
+    limit: requestIntegerValue(elements.limitInput),
   };
+  const address = parseOptionalInteger(elements.addressInput, "Address");
   const value =
     targetKind === "section"
       ? elements.sectionSelect.value
       : targetKind === "symbol"
         ? elements.symbolInput.value.trim()
-        : elements.addressInput.value.trim();
+        : address.value;
 
   return {
     target: {
@@ -397,9 +431,7 @@ function renderDisasm() {
         (reference.type === "call" || reference.type === "branch") &&
         reference.target !== undefined,
     );
-    const jumpChip = targetRef
-      ? `<button class="instruction-target" type="button" data-target="${targetRef.target}">jump ${formatAddress(targetRef.target)}</button>`
-      : "";
+    const jumpChip = targetRef ? renderInstructionJumpChip(targetRef.target) : "";
 
     row.innerHTML = `
       <td class="instruction-address mono">${formatAddress(instruction.address)}</td>
@@ -416,7 +448,7 @@ function renderDisasm() {
     if (jumpButton) {
       jumpButton.addEventListener("click", async (event) => {
         event.stopPropagation();
-        await jumpToAddress(Number(jumpButton.dataset.target));
+        await jumpToAddress(jumpButton.dataset.target);
       });
     }
 
@@ -469,9 +501,18 @@ function renderInspector() {
     .querySelectorAll("[data-jump-target]")
     .forEach((button) => {
       button.addEventListener("click", async () => {
-        await jumpToAddress(Number(button.dataset.jumpTarget));
+        await jumpToAddress(button.dataset.jumpTarget);
       });
     });
+}
+
+function renderInstructionJumpChip(value) {
+  const label = formatAddress(value);
+  if (label === "n/a") {
+    return "";
+  }
+
+  return `<button class="instruction-target" type="button" data-target="${escapeHtml(label)}">jump ${escapeHtml(label)}</button>`;
 }
 
 function renderAnalysisBlock(analysis) {
@@ -945,19 +986,13 @@ function renderAnalysisObjcReferences(references) {
 }
 
 function renderJumpButton(value) {
-  if (value === null || value === undefined) {
-    return '<span class="mono">n/a</span>';
-  }
-
-  let label;
-  try {
-    label = formatAddress(value);
-  } catch {
+  const label = formatAddress(value);
+  if (label === "n/a") {
     return '<span class="mono">n/a</span>';
   }
 
   return `
-    <button class="jump-button mono" type="button" data-jump-target="${value}">
+    <button class="jump-button mono" type="button" data-jump-target="${escapeHtml(label)}">
       ${escapeHtml(label)}
     </button>
   `;
@@ -977,13 +1012,15 @@ function renderReferenceBlock(references) {
             const details = Object.entries(reference)
               .filter(([key]) => key !== "type")
               .map(([key, value]) => {
-                if ((key === "target" || key.endsWith("_address")) && typeof value === "number") {
+                const addressLabel = formatAddress(value);
+                if (
+                  (key === "target" || key.endsWith("_address")) &&
+                  addressLabel !== "n/a"
+                ) {
                   return `
                     <div class="detail-row">
                       <span class="detail-key">${escapeHtml(key)}</span>
-                      <button class="jump-button mono" type="button" data-jump-target="${value}">
-                        ${escapeHtml(formatAddress(value))}
-                      </button>
+                      ${renderJumpButton(value)}
                     </div>
                   `;
                 }
@@ -1052,12 +1089,19 @@ function renderEmptyBlock(title, message) {
 }
 
 async function jumpToAddress(target) {
+  const label = formatAddress(target);
+  const targetBigInt = addressBigInt(label);
+  if (targetBigInt === null) {
+    setBanner("Cannot jump to an invalid address.");
+    return;
+  }
+
   document.querySelector('input[name="target-kind"][value="address"]').checked = true;
   updateTargetControls();
-  elements.addressInput.value = formatAddress(target);
+  elements.addressInput.value = label;
   elements.fromInput.value = "";
-  const to = numericValue(elements.toInput);
-  if (to !== null && to <= target) {
+  const to = parsedIntegerValue(elements.toInput);
+  if (to !== null && to <= targetBigInt) {
     elements.toInput.value = "";
   }
   await runDisasm();
