@@ -2440,6 +2440,7 @@ fn add_immediate_inputs(instruction: &DecodedInstruction) -> Option<(Option<Stri
                 displacement
             };
             let destination = match destination {
+                Operand::Register(register) if is_zero_register(register) => return None,
                 Operand::Register(register) => Some(register.clone()),
                 _ => None,
             };
@@ -4217,6 +4218,43 @@ mod tests {
                 .references
                 .contains(&Reference::Data { target: 0x3004 }),
             "negative sub immediates must not be flipped into positive data references"
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_ignores_zero_destination_add_immediates() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "subs",
+                vec![
+                    Operand::Register("xzr".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.is_empty(),
+            "zero-destination add/sub forms discard their result and must not synthesize values"
+        );
+        assert!(
+            !instructions[1]
+                .references
+                .contains(&Reference::Data { target: 0x2ffc }),
+            "zero-destination compare forms must not produce synthetic data references"
         );
     }
 
