@@ -2242,6 +2242,12 @@ fn canonical_state_key(register: &str) -> Option<String> {
     if matches!(lower.as_str(), "xzr" | "wzr" | "sp" | "wsp") {
         return None;
     }
+    if lower == "fp" {
+        return Some("x29".to_string());
+    }
+    if lower == "lr" {
+        return Some("x30".to_string());
+    }
     if let Some(index) = lower.strip_prefix('x').or_else(|| lower.strip_prefix('w')) {
         if !index.is_empty() && index.chars().all(|ch| ch.is_ascii_digit()) {
             return Some(format!("x{index}"));
@@ -3832,6 +3838,64 @@ mod tests {
             instructions[2]
                 .references
                 .contains(&Reference::Call { target: 0x1238 })
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_fp_alias() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x29".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "add",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::Register("fp".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[1].recovered_values.iter().any(|value| {
+            value.register == "x0"
+                && value.value == 0x3004
+                && value.source == RecoveredValueSource::AdrpAdd
+        }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_lr_alias() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x30".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(0x1004, "blr", vec![Operand::Register("lr".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1]
+                .references
+                .contains(&Reference::Call { target: 0x1234 }),
+            "lr must resolve through the same state key as x30: {:?}",
+            instructions
         );
     }
 
