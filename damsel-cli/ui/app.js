@@ -464,7 +464,9 @@ function renderResultAnalysisMeta(analysis) {
   const summary = analysis.summary || {};
   const unresolved = summary.unresolved_indirect_count ?? 0;
   const unresolvedText = unresolved ? ` · ${unresolved} unresolved indirect` : "";
-  return ` · ${summary.basic_block_count ?? 0} blocks (${summary.entry_block_count ?? 0} entry/${summary.exit_block_count ?? 0} exit) · ${summary.edge_count ?? 0} edges · ${summary.direct_call_count ?? 0} calls · ${summary.data_reference_count ?? 0} data refs · ${summary.import_count ?? 0} imports${unresolvedText}`;
+  const backEdges = summary.back_edge_count ?? 0;
+  const backEdgeText = backEdges ? `, ${backEdges} back` : "";
+  return ` · ${summary.basic_block_count ?? 0} blocks (${summary.entry_block_count ?? 0} entry/${summary.exit_block_count ?? 0} exit) · ${summary.edge_count ?? 0} edges${backEdgeText} · ${summary.direct_call_count ?? 0} calls · ${summary.data_reference_count ?? 0} data refs · ${summary.import_count ?? 0} imports${unresolvedText}`;
 }
 
 function renderInspector() {
@@ -540,6 +542,7 @@ function renderAnalysisBlock(analysis) {
           ["Entry Blocks", analysis.summary.entry_block_count ?? 0],
           ["Exit Blocks", analysis.summary.exit_block_count ?? 0],
           ["Edges", analysis.summary.edge_count],
+          ["Back Edges", analysis.summary.back_edge_count ?? 0],
           ["Calls", analysis.summary.direct_call_count],
           ["Indirect Calls", analysis.summary.indirect_call_count],
           ["Branches", analysis.summary.branch_count],
@@ -929,6 +932,7 @@ function renderAnalysisEdges(edges, blockById = new Map()) {
                   : renderJumpButton(edge.target_address)
               }
               ${renderBlockLink(edge.to_block, blockById)}
+              ${edge.back_edge ? '<span class="block-role">back</span>' : ""}
             </div>
           `,
         )

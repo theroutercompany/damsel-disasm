@@ -2002,6 +2002,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "entry_block_count",
             "exit_block_count",
             "edge_count",
+            "back_edge_count",
             "direct_call_count",
             "indirect_call_count",
             "branch_count",
@@ -2036,6 +2037,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
     assert!(analysis["summary"]["entry_block_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["exit_block_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["edge_count"].as_u64().unwrap() > 0);
+    assert!(analysis["summary"]["back_edge_count"].as_u64().is_some());
     assert!(analysis["metrics"]["decoded_byte_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["reference_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["annotation_count"].as_u64().unwrap() > 0);
@@ -2098,6 +2100,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
         "expected at least one edge to resolve its target block"
     );
     for edge in edges {
+        assert!(edge["back_edge"].is_boolean());
         let from_block = edge["from_block"].as_u64().expect("edge from block");
         let from_block_json = blocks
             .iter()
@@ -2149,6 +2152,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "target_address",
                 "kind",
                 "via",
+                "back_edge",
             ],
         );
     }

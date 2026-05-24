@@ -2341,6 +2341,20 @@ pub struct ControlFlowEdge {
     pub via: Option<String>,
 }
 
+impl ControlFlowEdge {
+    pub fn is_back_edge(&self) -> bool {
+        let Some(to_block) = self.to_block else {
+            return false;
+        };
+        matches!(
+            self.kind,
+            ControlFlowEdgeKind::Branch
+                | ControlFlowEdgeKind::ConditionalBranch
+                | ControlFlowEdgeKind::IndirectBranch
+        ) && to_block <= self.from_block
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasicBlock {
     pub id: usize,
@@ -2527,6 +2541,7 @@ pub struct DisassemblySummary {
     pub entry_block_count: usize,
     pub exit_block_count: usize,
     pub edge_count: usize,
+    pub back_edge_count: usize,
     pub direct_call_count: usize,
     pub indirect_call_count: usize,
     pub branch_count: usize,

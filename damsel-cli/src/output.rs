@@ -1587,11 +1587,12 @@ pub(crate) fn print_disassembly(
 fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
     println!("analysis:");
     println!(
-        "  summary: blocks={} entries={} exits={} edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
+        "  summary: blocks={} entries={} exits={} edges={} back_edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
         analysis.summary.basic_block_count,
         analysis.summary.entry_block_count,
         analysis.summary.exit_block_count,
         analysis.summary.edge_count,
+        analysis.summary.back_edge_count,
         analysis.summary.direct_call_count,
         analysis.summary.indirect_call_count,
         analysis.summary.branch_count,
@@ -1644,7 +1645,7 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
                 .unwrap_or_else(|| "-".to_string());
             let via = edge.via.as_deref().unwrap_or("-");
             println!(
-                "    - block={} to_block={} source={:#x} kind={} target={} via={}",
+                "    - block={} to_block={} source={:#x} kind={} target={} via={} back_edge={}",
                 edge.from_block,
                 edge.to_block
                     .map(|value| value.to_string())
@@ -1652,7 +1653,8 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
                 edge.source_address,
                 edge.kind,
                 target,
-                via
+                via,
+                edge.is_back_edge()
             );
         }
     }
@@ -4826,6 +4828,10 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                     usize_num(analysis.summary.edge_count),
                 ),
                 (
+                    "back_edge_count".to_string(),
+                    usize_num(analysis.summary.back_edge_count),
+                ),
+                (
                     "direct_call_count".to_string(),
                     usize_num(analysis.summary.direct_call_count),
                 ),
@@ -4922,6 +4928,10 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                                     .as_ref()
                                     .map(|value| JsonValue::String(value.clone()))
                                     .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "back_edge".to_string(),
+                                JsonValue::Bool(edge.is_back_edge()),
                             ),
                         ])
                     })
@@ -7361,6 +7371,7 @@ mod tests {
                 entry_block_count: 1,
                 exit_block_count: 1,
                 edge_count: 1,
+                back_edge_count: 0,
                 direct_call_count: 0,
                 indirect_call_count: 0,
                 branch_count: 1,
