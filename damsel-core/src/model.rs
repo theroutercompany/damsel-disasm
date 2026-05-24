@@ -2542,6 +2542,7 @@ pub struct DisassemblySummary {
     pub exit_block_count: usize,
     pub edge_count: usize,
     pub back_edge_count: usize,
+    pub loop_header_count: usize,
     pub direct_call_count: usize,
     pub indirect_call_count: usize,
     pub branch_count: usize,

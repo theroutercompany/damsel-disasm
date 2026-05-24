@@ -1587,12 +1587,13 @@ pub(crate) fn print_disassembly(
 fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
     println!("analysis:");
     println!(
-        "  summary: blocks={} entries={} exits={} edges={} back_edges={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
+        "  summary: blocks={} entries={} exits={} edges={} back_edges={} loop_headers={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
         analysis.summary.basic_block_count,
         analysis.summary.entry_block_count,
         analysis.summary.exit_block_count,
         analysis.summary.edge_count,
         analysis.summary.back_edge_count,
+        analysis.summary.loop_header_count,
         analysis.summary.direct_call_count,
         analysis.summary.indirect_call_count,
         analysis.summary.branch_count,
@@ -1626,13 +1627,14 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         println!("  blocks:");
         for block in &analysis.basic_blocks {
             println!(
-                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={}",
+                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} loop_header={}",
                 block.id,
                 block.start_address,
                 block.end_address,
                 block.instruction_count,
                 block_edge_index.is_entry(block.id),
-                block_edge_index.is_exit(block.id)
+                block_edge_index.is_exit(block.id),
+                block_edge_index.is_loop_header(block.id)
             );
         }
     }
@@ -4832,6 +4834,10 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                     usize_num(analysis.summary.back_edge_count),
                 ),
                 (
+                    "loop_header_count".to_string(),
+                    usize_num(analysis.summary.loop_header_count),
+                ),
+                (
                     "direct_call_count".to_string(),
                     usize_num(analysis.summary.direct_call_count),
                 ),
@@ -5222,6 +5228,14 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
             JsonValue::Bool(edge_index.is_exit(block.id)),
         ),
         (
+            "loop_header".to_string(),
+            JsonValue::Bool(edge_index.is_loop_header(block.id)),
+        ),
+        (
+            "back_edge_predecessors".to_string(),
+            block_id_list_json(edge_index.back_edge_predecessors(block.id)),
+        ),
+        (
             "predecessors".to_string(),
             block_id_list_json(edge_index.predecessors(block.id)),
         ),
@@ -5248,6 +5262,7 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
 struct BasicBlockEdgeIndex<'a> {
     predecessors: BTreeMap<usize, BTreeSet<usize>>,
     successors: BTreeMap<usize, BTreeSet<usize>>,
+    back_edge_predecessors: BTreeMap<usize, BTreeSet<usize>>,
     external_successors: BTreeMap<usize, Vec<&'a ControlFlowEdge>>,
     returning_blocks: BTreeSet<usize>,
 }
@@ -5257,6 +5272,7 @@ impl<'a> BasicBlockEdgeIndex<'a> {
         let mut index = Self {
             predecessors: BTreeMap::new(),
             successors: BTreeMap::new(),
+            back_edge_predecessors: BTreeMap::new(),
             external_successors: BTreeMap::new(),
             returning_blocks: BTreeSet::new(),
         };
@@ -5272,6 +5288,13 @@ impl<'a> BasicBlockEdgeIndex<'a> {
                     .entry(edge.from_block)
                     .or_default()
                     .insert(to_block);
+                if edge.is_back_edge() {
+                    index
+                        .back_edge_predecessors
+                        .entry(to_block)
+                        .or_default()
+                        .insert(edge.from_block);
+                }
             } else if edge.kind == ControlFlowEdgeKind::Return {
                 index.returning_blocks.insert(edge.from_block);
             } else {
@@ -5295,6 +5318,17 @@ impl<'a> BasicBlockEdgeIndex<'a> {
 
     fn is_returning(&self, block_id: usize) -> bool {
         self.returning_blocks.contains(&block_id)
+    }
+
+    fn is_loop_header(&self, block_id: usize) -> bool {
+        self.back_edge_predecessors.contains_key(&block_id)
+    }
+
+    fn back_edge_predecessors(&self, block_id: usize) -> impl Iterator<Item = usize> + '_ {
+        self.back_edge_predecessors
+            .get(&block_id)
+            .into_iter()
+            .flat_map(|block_ids| block_ids.iter().copied())
     }
 
     fn predecessors(&self, block_id: usize) -> impl Iterator<Item = usize> + '_ {
@@ -7372,6 +7406,7 @@ mod tests {
                 exit_block_count: 1,
                 edge_count: 1,
                 back_edge_count: 0,
+                loop_header_count: 0,
                 direct_call_count: 0,
                 indirect_call_count: 0,
                 branch_count: 1,
@@ -7414,6 +7449,111 @@ mod tests {
         assert_eq!(
             json_object_field(&block, "terminal"),
             &JsonValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn basic_block_json_marks_loop_headers_from_back_edges() {
+        let analysis = DisassemblyAnalysis {
+            target: "synthetic-loop".to_string(),
+            start_address: 0x1000,
+            end_address: 0x1008,
+            instruction_count: 2,
+            metrics: damsel_core::DisassemblyMetrics {
+                decoded_byte_count: 0,
+                reference_count: 0,
+                annotation_count: 0,
+                max_instruction_reference_count: 0,
+                max_instruction_annotation_count: 0,
+                max_basic_block_instruction_count: 1,
+                intra_window_edge_count: 2,
+                external_target_edge_count: 0,
+                unresolved_target_edge_count: 0,
+            },
+            basic_blocks: vec![
+                BasicBlock {
+                    id: 0,
+                    start_address: 0x1000,
+                    end_address: 0x1004,
+                    instruction_count: 1,
+                },
+                BasicBlock {
+                    id: 1,
+                    start_address: 0x1004,
+                    end_address: 0x1008,
+                    instruction_count: 1,
+                },
+            ],
+            edges: vec![
+                ControlFlowEdge {
+                    from_block: 0,
+                    to_block: Some(1),
+                    source_address: 0x1000,
+                    target_address: Some(0x1004),
+                    kind: ControlFlowEdgeKind::Fallthrough,
+                    via: None,
+                },
+                ControlFlowEdge {
+                    from_block: 1,
+                    to_block: Some(0),
+                    source_address: 0x1004,
+                    target_address: Some(0x1000),
+                    kind: ControlFlowEdgeKind::ConditionalBranch,
+                    via: None,
+                },
+            ],
+            direct_calls: Vec::new(),
+            branch_targets: Vec::new(),
+            data_references: Vec::new(),
+            indirect_controls: Vec::new(),
+            imports: Vec::new(),
+            objc_references: Vec::new(),
+            cache_links: Vec::new(),
+            overview: damsel_core::DisassemblyOverview::default(),
+            recovered_values: Vec::new(),
+            jump_tables: Vec::new(),
+            summary: damsel_core::DisassemblySummary {
+                basic_block_count: 2,
+                entry_block_count: 0,
+                exit_block_count: 0,
+                edge_count: 2,
+                back_edge_count: 1,
+                loop_header_count: 1,
+                direct_call_count: 0,
+                indirect_call_count: 0,
+                branch_count: 1,
+                return_count: 0,
+                data_reference_count: 0,
+                import_count: 0,
+                objc_selector_count: 0,
+                objc_class_count: 0,
+                objc_method_list_count: 0,
+                objc_message_send_count: 0,
+                cache_link_count: 0,
+                recovered_value_count: 0,
+                jump_table_count: 0,
+                unresolved_indirect_count: 0,
+            },
+        };
+
+        let block_edge_index = BasicBlockEdgeIndex::new(&analysis);
+        let header = basic_block_json(&analysis.basic_blocks[0], &block_edge_index);
+        let non_header = basic_block_json(&analysis.basic_blocks[1], &block_edge_index);
+
+        assert_eq!(
+            json_object_field(&header, "loop_header"),
+            &JsonValue::Bool(true)
+        );
+        assert_eq!(
+            json_array_items(json_object_field(&header, "back_edge_predecessors")),
+            &[JsonValue::Number("1".to_string())]
+        );
+        assert_eq!(
+            json_object_field(&non_header, "loop_header"),
+            &JsonValue::Bool(false)
+        );
+        assert!(
+            json_array_items(json_object_field(&non_header, "back_edge_predecessors")).is_empty()
         );
     }
 

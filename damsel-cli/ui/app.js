@@ -465,8 +465,12 @@ function renderResultAnalysisMeta(analysis) {
   const unresolved = summary.unresolved_indirect_count ?? 0;
   const unresolvedText = unresolved ? ` · ${unresolved} unresolved indirect` : "";
   const backEdges = summary.back_edge_count ?? 0;
-  const backEdgeText = backEdges ? `, ${backEdges} back` : "";
-  return ` · ${summary.basic_block_count ?? 0} blocks (${summary.entry_block_count ?? 0} entry/${summary.exit_block_count ?? 0} exit) · ${summary.edge_count ?? 0} edges${backEdgeText} · ${summary.direct_call_count ?? 0} calls · ${summary.data_reference_count ?? 0} data refs · ${summary.import_count ?? 0} imports${unresolvedText}`;
+  const backEdgeLabel = backEdges === 1 ? "back edge" : "back edges";
+  const backEdgeText = backEdges ? `, ${backEdges} ${backEdgeLabel}` : "";
+  const loopHeaders = summary.loop_header_count ?? 0;
+  const loopHeaderLabel = loopHeaders === 1 ? "loop header" : "loop headers";
+  const loopHeaderText = loopHeaders ? ` · ${loopHeaders} ${loopHeaderLabel}` : "";
+  return ` · ${summary.basic_block_count ?? 0} blocks (${summary.entry_block_count ?? 0} entry/${summary.exit_block_count ?? 0} exit) · ${summary.edge_count ?? 0} edges${backEdgeText}${loopHeaderText} · ${summary.direct_call_count ?? 0} calls · ${summary.data_reference_count ?? 0} data refs · ${summary.import_count ?? 0} imports${unresolvedText}`;
 }
 
 function renderInspector() {
@@ -543,6 +547,7 @@ function renderAnalysisBlock(analysis) {
           ["Exit Blocks", analysis.summary.exit_block_count ?? 0],
           ["Edges", analysis.summary.edge_count],
           ["Back Edges", analysis.summary.back_edge_count ?? 0],
+          ["Loop Headers", analysis.summary.loop_header_count ?? 0],
           ["Calls", analysis.summary.direct_call_count],
           ["Indirect Calls", analysis.summary.indirect_call_count],
           ["Branches", analysis.summary.branch_count],
@@ -795,6 +800,14 @@ function renderAnalysisBlocks(blocks, blockById = buildBlockMap(blocks)) {
               ${renderBlockRoleBadges(block)}
               <span class="detail-key">pred</span>
               ${renderBlockLinks(block.predecessors || [], blockById)}
+              ${
+                block.loop_header
+                  ? `<span class="detail-key">back</span>${renderBlockLinks(
+                      block.back_edge_predecessors || [],
+                      blockById,
+                    )}`
+                  : ""
+              }
               <span class="detail-key">succ</span>
               ${renderBlockLinks(block.successors || [], blockById)}
               ${renderExternalSuccessors(block.external_successors || [])}
@@ -814,6 +827,9 @@ function renderBlockRoleBadges(block) {
   }
   if (block.exit) {
     roles.push("exit");
+  }
+  if (block.loop_header) {
+    roles.push("loop");
   }
   if (!roles.length) {
     return "";

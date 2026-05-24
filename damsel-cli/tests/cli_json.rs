@@ -2003,6 +2003,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "exit_block_count",
             "edge_count",
             "back_edge_count",
+            "loop_header_count",
             "direct_call_count",
             "indirect_call_count",
             "branch_count",
@@ -2038,6 +2039,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
     assert!(analysis["summary"]["exit_block_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["edge_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["back_edge_count"].as_u64().is_some());
+    assert!(analysis["summary"]["loop_header_count"].as_u64().is_some());
     assert!(analysis["metrics"]["decoded_byte_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["reference_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["annotation_count"].as_u64().unwrap() > 0);
@@ -2061,6 +2063,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 && block["instruction_count"].is_number()
                 && block["entry"].is_boolean()
                 && block["exit"].is_boolean()
+                && block["loop_header"].is_boolean()
+                && block["back_edge_predecessors"].is_array()
                 && block["predecessors"].is_array()
                 && block["successors"].is_array()
                 && block["external_successors"].is_array()
@@ -2080,6 +2084,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "instruction_count",
                 "entry",
                 "exit",
+                "loop_header",
+                "back_edge_predecessors",
                 "predecessors",
                 "successors",
                 "external_successors",
@@ -2158,6 +2164,9 @@ fn disasm_json_analysis_contract_is_opt_in() {
     }
     for block in blocks {
         let predecessors = block["predecessors"].as_array().expect("predecessors");
+        let back_edge_predecessors = block["back_edge_predecessors"]
+            .as_array()
+            .expect("back edge predecessors");
         let successors = block["successors"].as_array().expect("successors");
         assert_eq!(
             block["entry"].as_bool().expect("entry flag"),
@@ -2168,6 +2177,11 @@ fn disasm_json_analysis_contract_is_opt_in() {
             block["exit"].as_bool().expect("exit flag"),
             successors.is_empty(),
             "exit flag should match empty successor list"
+        );
+        assert_eq!(
+            block["loop_header"].as_bool().expect("loop header flag"),
+            !back_edge_predecessors.is_empty(),
+            "loop header flag should match non-empty back-edge predecessor list"
         );
         for successor in block["external_successors"]
             .as_array()

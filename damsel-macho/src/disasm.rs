@@ -316,7 +316,13 @@ fn analyze_disassembly_impl(
         .iter()
         .filter(|block| !outgoing_blocks.contains(&block.id))
         .count();
+    let back_edge_targets = edges
+        .iter()
+        .filter(|edge| edge.is_back_edge())
+        .filter_map(|edge| edge.to_block)
+        .collect::<BTreeSet<_>>();
     let back_edge_count = edges.iter().filter(|edge| edge.is_back_edge()).count();
+    let loop_header_count = back_edge_targets.len();
     let external_target_edge_count = edges
         .iter()
         .filter(|edge| edge.target_address.is_some() && edge.to_block.is_none())
@@ -390,6 +396,7 @@ fn analyze_disassembly_impl(
             exit_block_count,
             edge_count: edges.len(),
             back_edge_count,
+            loop_header_count,
             direct_call_count: direct_calls.len(),
             indirect_call_count,
             branch_count: branch_targets.len()
@@ -3542,6 +3549,7 @@ mod tests {
         assert_eq!(analysis.summary.basic_block_count, 2);
         assert_eq!(analysis.summary.edge_count, 3);
         assert_eq!(analysis.summary.back_edge_count, 1);
+        assert_eq!(analysis.summary.loop_header_count, 1);
         assert!(analysis.edges.iter().any(ControlFlowEdge::is_back_edge));
     }
 
@@ -3559,6 +3567,7 @@ mod tests {
             analyze_disassembly("synthetic-backward-call", 0x1000, 0x1008, &instructions);
 
         assert_eq!(analysis.summary.back_edge_count, 0);
+        assert_eq!(analysis.summary.loop_header_count, 0);
         assert!(!analysis.edges.iter().any(ControlFlowEdge::is_back_edge));
     }
 
