@@ -2471,7 +2471,6 @@ fn synthesize_register_add_value(
     };
     let source_register = match instruction.operands.get(2)? {
         Operand::Register(register) => register.clone(),
-        Operand::ShiftedRegister { register, .. } => register.clone(),
         _ => return None,
     };
 
@@ -4634,6 +4633,57 @@ mod tests {
                 .references
                 .contains(&Reference::Call { target: 0x3000 }),
             "sub must not inherit the add-pattern target as an indirect call"
+        );
+    }
+
+    #[test]
+    fn synthesize_relative_slot_shifted_add_does_not_resolve_unshifted_target() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldrsw",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ShiftedRegister {
+                        register: "x9".to_string(),
+                        shift: "lsl #2".to_string(),
+                    },
+                ],
+            ),
+            instruction(0x100c, "blr", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "relative table-slot targets must not ignore shifted add operands: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Call { target: 0x3000 }),
+            "shifted add must not inherit the unshifted relative-slot target"
         );
     }
 
