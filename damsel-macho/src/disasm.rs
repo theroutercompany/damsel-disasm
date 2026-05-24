@@ -102,7 +102,7 @@ fn analyze_disassembly_impl(
                     source_address: instruction.address,
                     target_address: None,
                     kind: ControlFlowEdgeKind::Return,
-                    via: None,
+                    via: non_default_return_register(instruction),
                 },
             );
         }
@@ -1360,6 +1360,15 @@ fn is_unconditional_transfer_mnemonic(mnemonic: &str) -> bool {
 
 fn is_return_mnemonic(mnemonic: &str) -> bool {
     matches!(mnemonic, "ret" | "retaa" | "retab" | "eret")
+}
+
+fn non_default_return_register(instruction: &DecodedInstruction) -> Option<String> {
+    let register = instruction
+        .operands
+        .first()
+        .and_then(register_operand_name)?;
+    let key = canonical_state_key(&register)?;
+    (key != "x30").then_some(register)
 }
 
 fn annotate_instructions(
@@ -3617,6 +3626,41 @@ mod tests {
         assert_eq!(analysis.summary.exit_block_count, 2);
         assert_eq!(analysis.summary.primary_entry_reachable_block_count, 1);
         assert_eq!(analysis.summary.disconnected_block_count, 1);
+    }
+
+    #[test]
+    fn analysis_reports_non_default_return_register() {
+        let instructions = vec![instruction(
+            0x1000,
+            "ret",
+            vec![Operand::Register("x8".to_string())],
+        )];
+
+        let analysis = analyze_disassembly("synthetic-ret-register", 0x1000, 0x1004, &instructions);
+
+        assert_eq!(analysis.summary.return_count, 1);
+        assert!(analysis.edges.iter().any(|edge| {
+            edge.kind == ControlFlowEdgeKind::Return
+                && edge.source_address == 0x1000
+                && edge.via.as_deref() == Some("x8")
+        }));
+    }
+
+    #[test]
+    fn analysis_omits_default_return_register() {
+        let instructions = vec![instruction(
+            0x1000,
+            "ret",
+            vec![Operand::Register("x30".to_string())],
+        )];
+
+        let analysis = analyze_disassembly("synthetic-ret-default", 0x1000, 0x1004, &instructions);
+
+        assert!(analysis.edges.iter().any(|edge| {
+            edge.kind == ControlFlowEdgeKind::Return
+                && edge.source_address == 0x1000
+                && edge.via.is_none()
+        }));
     }
 
     #[test]
