@@ -1011,7 +1011,7 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
     for (index, instruction) in instructions.iter().enumerate() {
         let lower = instruction.mnemonic.to_ascii_lowercase();
         for reference in &instruction.references {
-            if let Reference::Branch { target } = reference
+            if let Reference::Branch { target } | Reference::Call { target } = reference
                 && instruction_addresses.contains(target)
             {
                 leaders.insert(*target);
@@ -3284,6 +3284,48 @@ mod tests {
             references: Vec::new(),
             annotations: Vec::new(),
         }
+    }
+
+    #[test]
+    fn analysis_splits_basic_blocks_at_in_window_call_targets() {
+        let instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Call { target: 0x1010 }],
+                ..instruction(0x1000, "bl", vec![Operand::Label(0x1010)])
+            },
+            instruction(0x1004, "add", vec![]),
+            instruction(0x1008, "add", vec![]),
+            instruction(0x100c, "add", vec![]),
+            instruction(0x1010, "ret", vec![]),
+        ];
+
+        let analysis = analyze_disassembly("synthetic-call-target", 0x1000, 0x1014, &instructions);
+        let target_block = analysis
+            .basic_blocks
+            .iter()
+            .find(|block| block.start_address == 0x1010)
+            .expect("call target should start a block");
+
+        assert_eq!(target_block.end_address, 0x1014);
+        assert!(
+            analysis
+                .basic_blocks
+                .iter()
+                .all(|block| block.start_address == 0x1010
+                    || !(0x1010 > block.start_address && 0x1010 < block.end_address)),
+            "call target must not sit in the middle of a predecessor block: {:?}",
+            analysis.basic_blocks
+        );
+        assert!(
+            analysis.edges.iter().any(|edge| {
+                edge.source_address == 0x1000
+                    && edge.kind == ControlFlowEdgeKind::Call
+                    && edge.target_address == Some(0x1010)
+                    && edge.to_block == Some(target_block.id)
+            }),
+            "call edge should resolve to the block that starts at the call target: {:?}",
+            analysis.edges
+        );
     }
 
     #[test]
