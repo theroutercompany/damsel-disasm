@@ -2182,6 +2182,10 @@ fn page_reference_target(instruction: &DecodedInstruction) -> Option<u64> {
 }
 
 fn push_recovered_value(target: &mut Vec<RecoveredValue>, value: RecoveredValue) {
+    if canonical_state_key(&value.register).is_none() {
+        return;
+    }
+
     if !target.iter().any(|existing| {
         existing.register == value.register
             && existing.value == value.value
@@ -2448,7 +2452,7 @@ fn synthesize_simple_register_value(
             match instruction.operands.get(1)? {
                 Operand::Register(register) => Some((
                     destination,
-                    read_known_value(known_values, register)?.value,
+                    read_simple_register_value(known_values, register)?,
                     RecoveredValueSource::Other,
                 )),
                 Operand::ImmediateUnsigned(value) => {
@@ -2477,12 +2481,26 @@ fn synthesize_simple_register_value(
             };
             Some((
                 destination,
-                read_known_value(known_values, source)?.value & mask,
+                read_simple_register_value(known_values, source)? & mask,
                 RecoveredValueSource::Other,
             ))
         }
         _ => None,
     }
+}
+
+fn read_simple_register_value(
+    known_values: &BTreeMap<String, RecoveredValue>,
+    register: &str,
+) -> Option<u64> {
+    if is_zero_register(register) {
+        return Some(0);
+    }
+    read_known_value(known_values, register).map(|value| value.value)
+}
+
+fn is_zero_register(register: &str) -> bool {
+    matches!(register.to_ascii_lowercase().as_str(), "xzr" | "wzr")
 }
 
 fn parse_shift_bits(operand: &Operand) -> Option<u32> {
@@ -3522,6 +3540,47 @@ mod tests {
             instructions[2]
                 .references
                 .contains(&Reference::Call { target: 0x1238 })
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_reads_zero_register_as_literal_zero() {
+        let image = synthetic_image();
+        let mut instructions = vec![instruction(
+            0x1000,
+            "mov",
+            vec![
+                Operand::Register("x8".to_string()),
+                Operand::Register("xzr".to_string()),
+            ],
+        )];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[0].recovered_values.iter().any(|value| {
+            value.register == "x8"
+                && value.value == 0
+                && value.source == RecoveredValueSource::Other
+        }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_does_not_emit_zero_register_writes() {
+        let image = synthetic_image();
+        let mut instructions = vec![instruction(
+            0x1000,
+            "mov",
+            vec![
+                Operand::Register("xzr".to_string()),
+                Operand::ImmediateUnsigned(0x1234),
+            ],
+        )];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[0].recovered_values.is_empty(),
+            "writes to xzr/wzr are sinks and must not appear as recovered state"
         );
     }
 
