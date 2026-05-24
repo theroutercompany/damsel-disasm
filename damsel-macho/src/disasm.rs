@@ -2345,9 +2345,7 @@ fn indirect_control_kind(mnemonic: &str) -> String {
 }
 
 fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
-    is_unconditional_transfer_mnemonic(mnemonic)
-        || is_return_mnemonic(mnemonic)
-        || mnemonic.starts_with("b.")
+    is_cfg_boundary_mnemonic(mnemonic)
 }
 
 fn instruction_writes_destination(mnemonic: &str) -> bool {
@@ -3397,6 +3395,46 @@ mod tests {
         assert!(
             instructions[2].recovered_values.is_empty(),
             "instructions after an indirect branch must not inherit linear state: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_clears_state_after_register_conditional_branches() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(0x220),
+                ],
+            ),
+            DecodedInstruction {
+                references: vec![Reference::Branch { target: 0x1010 }],
+                ..instruction(
+                    0x1004,
+                    "cbz",
+                    vec![Operand::Register("x0".to_string()), Operand::Label(0x1010)],
+                )
+            },
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x20".to_string()),
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "instructions after a register conditional branch must not inherit linear state: {:?}",
             instructions
         );
     }
