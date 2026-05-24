@@ -386,7 +386,9 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
             .expect("basic blocks")
             .iter()
             .all(|block| {
-                block["predecessors"].is_array()
+                block["entry"].is_boolean()
+                    && block["exit"].is_boolean()
+                    && block["predecessors"].is_array()
                     && block["successors"].is_array()
                     && block["external_successors"].is_array()
                     && block["terminal"].is_boolean()

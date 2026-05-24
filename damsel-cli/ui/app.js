@@ -789,6 +789,7 @@ function renderAnalysisBlocks(blocks, blockById = buildBlockMap(blocks)) {
               ${renderJumpButton(block.start_address)}
               <span class="mono">${escapeHtml(formatAddress(block.end_address))}</span>
               <span class="mono">${escapeHtml(String(block.instruction_count))} insn</span>
+              ${renderBlockRoleBadges(block)}
               <span class="detail-key">pred</span>
               ${renderBlockLinks(block.predecessors || [], blockById)}
               <span class="detail-key">succ</span>
@@ -800,6 +801,27 @@ function renderAnalysisBlocks(blocks, blockById = buildBlockMap(blocks)) {
         )
         .join("")}
     </div>
+  `;
+}
+
+function renderBlockRoleBadges(block) {
+  const roles = [];
+  if (block.entry) {
+    roles.push("entry");
+  }
+  if (block.exit) {
+    roles.push("exit");
+  }
+  if (!roles.length) {
+    return "";
+  }
+
+  return `
+    <span class="block-role-list">
+      ${roles
+        .map((role) => `<span class="block-role">${escapeHtml(role)}</span>`)
+        .join("")}
+    </span>
   `;
 }
 

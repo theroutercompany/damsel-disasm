@@ -583,6 +583,24 @@ code,
   padding: 0 8px;
 }
 
+.block-role-list {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.block-role {
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 0.73rem;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
 .external-successor-list {
   display: inline-flex;
   flex-wrap: wrap;

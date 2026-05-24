@@ -2057,6 +2057,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 && block["start_address"].is_number()
                 && block["end_address"].is_number()
                 && block["instruction_count"].is_number()
+                && block["entry"].is_boolean()
+                && block["exit"].is_boolean()
                 && block["predecessors"].is_array()
                 && block["successors"].is_array()
                 && block["external_successors"].is_array()
@@ -2074,6 +2076,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "start_address",
                 "end_address",
                 "instruction_count",
+                "entry",
+                "exit",
                 "predecessors",
                 "successors",
                 "external_successors",
@@ -2149,6 +2153,18 @@ fn disasm_json_analysis_contract_is_opt_in() {
         );
     }
     for block in blocks {
+        let predecessors = block["predecessors"].as_array().expect("predecessors");
+        let successors = block["successors"].as_array().expect("successors");
+        assert_eq!(
+            block["entry"].as_bool().expect("entry flag"),
+            predecessors.is_empty(),
+            "entry flag should match empty predecessor list"
+        );
+        assert_eq!(
+            block["exit"].as_bool().expect("exit flag"),
+            successors.is_empty(),
+            "exit flag should match empty successor list"
+        );
         for successor in block["external_successors"]
             .as_array()
             .expect("external successors")

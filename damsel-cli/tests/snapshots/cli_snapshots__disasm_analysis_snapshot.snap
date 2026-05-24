@@ -41,10 +41,10 @@ analysis:
       - first=0x1000004e8 count=1 x9=0x100004048 kind=Address source=AdrpAdd
       - first=0x1000004ec count=1 x19=0x100004048 kind=Address source=AdrpLoad
   blocks:
-    - id=0 range=0x1000004b0..0x1000004c8 instructions=6
-    - id=1 range=0x1000004c8..0x1000004d4 instructions=3
-    - id=2 range=0x1000004d4..0x1000004d8 instructions=1
-    - id=3 range=0x1000004d8..0x1000004f0 instructions=6
+    - id=0 range=0x1000004b0..0x1000004c8 instructions=6 entry=true exit=false
+    - id=1 range=0x1000004c8..0x1000004d4 instructions=3 entry=false exit=false
+    - id=2 range=0x1000004d4..0x1000004d8 instructions=1 entry=false exit=false
+    - id=3 range=0x1000004d8..0x1000004f0 instructions=6 entry=false exit=true
   edges:
     - block=0 to_block=2 source=0x1000004c4 kind=conditional-branch target=0x1000004d4 via=-
     - block=1 to_block=- source=0x1000004cc kind=call target=0x100000590 via=-

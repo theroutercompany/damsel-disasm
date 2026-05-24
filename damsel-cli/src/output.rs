@@ -1623,8 +1623,13 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         println!("  blocks:");
         for block in &analysis.basic_blocks {
             println!(
-                "    - id={} range={:#x}..{:#x} instructions={}",
-                block.id, block.start_address, block.end_address, block.instruction_count
+                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={}",
+                block.id,
+                block.start_address,
+                block.end_address,
+                block.instruction_count,
+                block_is_entry(analysis, block),
+                block_is_exit(analysis, block)
             );
         }
     }
@@ -5196,6 +5201,14 @@ fn basic_block_json(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> JsonV
             usize_num(block.instruction_count),
         ),
         (
+            "entry".to_string(),
+            JsonValue::Bool(block_is_entry(analysis, block)),
+        ),
+        (
+            "exit".to_string(),
+            JsonValue::Bool(block_is_exit(analysis, block)),
+        ),
+        (
             "predecessors".to_string(),
             block_id_list_json(
                 analysis
@@ -5234,6 +5247,20 @@ fn basic_block_json(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> JsonV
             })),
         ),
     ])
+}
+
+fn block_is_entry(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> bool {
+    !analysis
+        .edges
+        .iter()
+        .any(|edge| edge.to_block == Some(block.id))
+}
+
+fn block_is_exit(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> bool {
+    !analysis
+        .edges
+        .iter()
+        .any(|edge| edge.from_block == block.id && edge.to_block.is_some())
 }
 
 fn block_id_list_json(block_ids: impl Iterator<Item = usize>) -> JsonValue {
