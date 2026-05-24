@@ -3,7 +3,7 @@ use crate::{
 };
 use capstone::arch;
 use capstone::arch::ArchDetail;
-use capstone::arch::arm64::{Arm64Operand, Arm64OperandType, Arm64Shift};
+use capstone::arch::arm64::{Arm64Extender, Arm64Operand, Arm64OperandType, Arm64Shift};
 use capstone::prelude::*;
 use thiserror::Error;
 
@@ -342,7 +342,7 @@ fn map_operand(
             let register = cs
                 .reg_name(register)
                 .unwrap_or_else(|| format!("{register:?}"));
-            if let Some(shift) = arm64_shift_text(operand.shift) {
+            if let Some(shift) = arm64_register_modifier_text(operand.shift, operand.ext) {
                 Operand::ShiftedRegister { register, shift }
             } else {
                 Operand::Register(register)
@@ -385,6 +385,16 @@ fn map_operand(
     }
 }
 
+fn arm64_register_modifier_text(shift: Arm64Shift, extender: Arm64Extender) -> Option<String> {
+    if let Some(kind) = arm64_extender_text(extender) {
+        return Some(match arm64_shift_amount(shift) {
+            Some(amount) => format!("{kind} #{amount}"),
+            None => kind.to_string(),
+        });
+    }
+    arm64_shift_text(shift)
+}
+
 fn arm64_shift_text(shift: Arm64Shift) -> Option<String> {
     let (kind, amount) = match shift {
         Arm64Shift::Invalid => return None,
@@ -395,6 +405,31 @@ fn arm64_shift_text(shift: Arm64Shift) -> Option<String> {
         Arm64Shift::Ror(amount) => ("ror", amount),
     };
     Some(format!("{kind} #{amount}"))
+}
+
+fn arm64_shift_amount(shift: Arm64Shift) -> Option<u32> {
+    match shift {
+        Arm64Shift::Invalid => None,
+        Arm64Shift::Lsl(amount)
+        | Arm64Shift::Msl(amount)
+        | Arm64Shift::Lsr(amount)
+        | Arm64Shift::Asr(amount)
+        | Arm64Shift::Ror(amount) => Some(amount),
+    }
+}
+
+fn arm64_extender_text(extender: Arm64Extender) -> Option<&'static str> {
+    match extender {
+        Arm64Extender::ARM64_EXT_INVALID => None,
+        Arm64Extender::ARM64_EXT_UXTB => Some("uxtb"),
+        Arm64Extender::ARM64_EXT_UXTH => Some("uxth"),
+        Arm64Extender::ARM64_EXT_UXTW => Some("uxtw"),
+        Arm64Extender::ARM64_EXT_UXTX => Some("uxtx"),
+        Arm64Extender::ARM64_EXT_SXTB => Some("sxtb"),
+        Arm64Extender::ARM64_EXT_SXTH => Some("sxth"),
+        Arm64Extender::ARM64_EXT_SXTW => Some("sxtw"),
+        Arm64Extender::ARM64_EXT_SXTX => Some("sxtx"),
+    }
 }
 
 fn opcode_from_bytes(bytes: &[u8]) -> u32 {
