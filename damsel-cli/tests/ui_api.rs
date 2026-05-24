@@ -292,8 +292,9 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("BigInt"));
     assert!(js.contains("requestIntegerValue"));
     assert!(js.contains("structuredOperandEntries"));
-    assert!(js.contains("formatBlockIds"));
+    assert!(js.contains("renderBlockLinks"));
     assert!(js.contains("renderExternalSuccessorCount"));
+    assert!(js.contains("block-jump"));
     assert!(!js.contains("Number(jumpButton.dataset.target)"));
     assert!(!js.contains("Number(button.dataset.jumpTarget)"));
     assert!(js.contains("renderResultAnalysisMeta"));
@@ -329,6 +330,15 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("ObjC Sends"));
     assert!(js.contains("Basic Blocks"));
     assert!(js.contains(">n/a<"));
+
+    let css = client
+        .get(format!("{}/styles.css", server.base_url))
+        .send()
+        .expect("fetch css")
+        .text()
+        .expect("css body");
+    assert!(css.contains(".block-link-list"));
+    assert!(css.contains(".block-jump"));
 
     let upload = upload_fixture(&client, &server, "semantic-switch");
     let image_id = upload["imageId"].as_str().expect("image id");

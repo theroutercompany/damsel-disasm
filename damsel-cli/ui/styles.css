@@ -571,6 +571,18 @@ code,
   color: var(--text-strong);
 }
 
+.block-link-list {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.block-jump {
+  min-height: 24px;
+  padding: 0 8px;
+}
+
 .result-meta {
   max-width: 22rem;
   text-align: right;

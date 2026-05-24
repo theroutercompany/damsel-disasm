@@ -774,6 +774,8 @@ function renderAnalysisBlocks(blocks) {
     return "";
   }
 
+  const blockById = new Map(blocks.map((block) => [String(block.id), block]));
+
   return `
     <div class="analysis-list">
       <div class="item-eyebrow">Basic Blocks</div>
@@ -786,9 +788,9 @@ function renderAnalysisBlocks(blocks) {
               <span class="mono">${escapeHtml(formatAddress(block.end_address))}</span>
               <span class="mono">${escapeHtml(String(block.instruction_count))} insn</span>
               <span class="detail-key">pred</span>
-              <span class="mono">${escapeHtml(formatBlockIds(block.predecessors || []))}</span>
+              ${renderBlockLinks(block.predecessors || [], blockById)}
               <span class="detail-key">succ</span>
-              <span class="mono">${escapeHtml(formatBlockIds(block.successors || []))}</span>
+              ${renderBlockLinks(block.successors || [], blockById)}
               ${renderExternalSuccessorCount(block.external_successors || [])}
               ${block.terminal ? '<span class="mono">return</span>' : ""}
             </div>
@@ -799,12 +801,41 @@ function renderAnalysisBlocks(blocks) {
   `;
 }
 
-function formatBlockIds(blockIds) {
+function renderBlockLinks(blockIds, blockById) {
   if (!blockIds.length) {
-    return "-";
+    return '<span class="mono">-</span>';
   }
 
-  return blockIds.map((id) => `#${id}`).join(", ");
+  return `
+    <span class="block-link-list">
+      ${blockIds
+        .map((id) => {
+          const block = blockById.get(String(id));
+          if (!block) {
+            return `<span class="mono">#${escapeHtml(id)}</span>`;
+          }
+
+          const target = formatAddress(block.start_address);
+          if (target === "n/a") {
+            return `<span class="mono">#${escapeHtml(id)}</span>`;
+          }
+
+          const label = `#${id}`;
+          return `
+            <button
+              class="jump-button block-jump mono"
+              type="button"
+              data-jump-target="${escapeHtml(target)}"
+              title="${escapeHtml(`${label} starts at ${target}`)}"
+              aria-label="${escapeHtml(`Jump to block ${label} at ${target}`)}"
+            >
+              ${escapeHtml(label)}
+            </button>
+          `;
+        })
+        .join("")}
+    </span>
+  `;
 }
 
 function renderExternalSuccessorCount(externalSuccessors) {
