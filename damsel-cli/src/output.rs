@@ -9,6 +9,7 @@ use damsel_core::{
     RecoveredValue, Reference, Relocation, Section, SliceDescriptor, StubEntry, StubHelperEntry,
     StubKind, Symbol,
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
@@ -1620,6 +1621,7 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
     );
     print_disassembly_overview_text(analysis);
     if !analysis.basic_blocks.is_empty() {
+        let block_edge_index = BasicBlockEdgeIndex::new(analysis);
         println!("  blocks:");
         for block in &analysis.basic_blocks {
             println!(
@@ -1628,8 +1630,8 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
                 block.start_address,
                 block.end_address,
                 block.instruction_count,
-                block_is_entry(analysis, block),
-                block_is_exit(analysis, block)
+                block_edge_index.is_entry(block.id),
+                block_edge_index.is_exit(block.id)
             );
         }
     }
@@ -4751,6 +4753,7 @@ impl JsonDto for DisasmJsonDto<'_> {
 }
 
 fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
+    let block_edge_index = BasicBlockEdgeIndex::new(analysis);
     JsonValue::Object(vec![
         (
             "target".to_string(),
@@ -4890,7 +4893,7 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                 analysis
                     .basic_blocks
                     .iter()
-                    .map(|block| basic_block_json(analysis, block))
+                    .map(|block| basic_block_json(block, &block_edge_index))
                     .collect(),
             ),
         ),
@@ -5191,7 +5194,7 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
     ])
 }
 
-fn basic_block_json(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> JsonValue {
+fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) -> JsonValue {
     JsonValue::Object(vec![
         ("id".to_string(), usize_num(block.id)),
         ("start_address".to_string(), u64_num(block.start_address)),
@@ -5202,65 +5205,111 @@ fn basic_block_json(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> JsonV
         ),
         (
             "entry".to_string(),
-            JsonValue::Bool(block_is_entry(analysis, block)),
+            JsonValue::Bool(edge_index.is_entry(block.id)),
         ),
         (
             "exit".to_string(),
-            JsonValue::Bool(block_is_exit(analysis, block)),
+            JsonValue::Bool(edge_index.is_exit(block.id)),
         ),
         (
             "predecessors".to_string(),
-            block_id_list_json(
-                analysis
-                    .edges
-                    .iter()
-                    .filter(|edge| edge.to_block == Some(block.id))
-                    .map(|edge| edge.from_block),
-            ),
+            block_id_list_json(edge_index.predecessors(block.id)),
         ),
         (
             "successors".to_string(),
-            block_id_list_json(
-                analysis
-                    .edges
-                    .iter()
-                    .filter(|edge| edge.from_block == block.id)
-                    .filter_map(|edge| edge.to_block),
-            ),
+            block_id_list_json(edge_index.successors(block.id)),
         ),
         (
             "external_successors".to_string(),
             JsonValue::Array(
-                analysis
-                    .edges
-                    .iter()
-                    .filter(|edge| edge.from_block == block.id && edge.to_block.is_none())
-                    .filter(|edge| edge.kind != ControlFlowEdgeKind::Return)
+                edge_index
+                    .external_successors(block.id)
                     .map(external_successor_json)
                     .collect(),
             ),
         ),
         (
             "terminal".to_string(),
-            JsonValue::Bool(analysis.edges.iter().any(|edge| {
-                edge.from_block == block.id && edge.kind == ControlFlowEdgeKind::Return
-            })),
+            JsonValue::Bool(edge_index.is_returning(block.id)),
         ),
     ])
 }
 
-fn block_is_entry(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> bool {
-    !analysis
-        .edges
-        .iter()
-        .any(|edge| edge.to_block == Some(block.id))
+struct BasicBlockEdgeIndex<'a> {
+    predecessors: BTreeMap<usize, BTreeSet<usize>>,
+    successors: BTreeMap<usize, BTreeSet<usize>>,
+    external_successors: BTreeMap<usize, Vec<&'a ControlFlowEdge>>,
+    returning_blocks: BTreeSet<usize>,
 }
 
-fn block_is_exit(analysis: &DisassemblyAnalysis, block: &BasicBlock) -> bool {
-    !analysis
-        .edges
-        .iter()
-        .any(|edge| edge.from_block == block.id && edge.to_block.is_some())
+impl<'a> BasicBlockEdgeIndex<'a> {
+    fn new(analysis: &'a DisassemblyAnalysis) -> Self {
+        let mut index = Self {
+            predecessors: BTreeMap::new(),
+            successors: BTreeMap::new(),
+            external_successors: BTreeMap::new(),
+            returning_blocks: BTreeSet::new(),
+        };
+        for edge in &analysis.edges {
+            if let Some(to_block) = edge.to_block {
+                index
+                    .predecessors
+                    .entry(to_block)
+                    .or_default()
+                    .insert(edge.from_block);
+                index
+                    .successors
+                    .entry(edge.from_block)
+                    .or_default()
+                    .insert(to_block);
+            } else if edge.kind == ControlFlowEdgeKind::Return {
+                index.returning_blocks.insert(edge.from_block);
+            } else {
+                index
+                    .external_successors
+                    .entry(edge.from_block)
+                    .or_default()
+                    .push(edge);
+            }
+        }
+        index
+    }
+
+    fn is_entry(&self, block_id: usize) -> bool {
+        !self.predecessors.contains_key(&block_id)
+    }
+
+    fn is_exit(&self, block_id: usize) -> bool {
+        !self.successors.contains_key(&block_id)
+    }
+
+    fn is_returning(&self, block_id: usize) -> bool {
+        self.returning_blocks.contains(&block_id)
+    }
+
+    fn predecessors(&self, block_id: usize) -> impl Iterator<Item = usize> + '_ {
+        self.predecessors
+            .get(&block_id)
+            .into_iter()
+            .flat_map(|block_ids| block_ids.iter().copied())
+    }
+
+    fn successors(&self, block_id: usize) -> impl Iterator<Item = usize> + '_ {
+        self.successors
+            .get(&block_id)
+            .into_iter()
+            .flat_map(|block_ids| block_ids.iter().copied())
+    }
+
+    fn external_successors(
+        &self,
+        block_id: usize,
+    ) -> impl Iterator<Item = &'a ControlFlowEdge> + '_ {
+        self.external_successors
+            .get(&block_id)
+            .into_iter()
+            .flat_map(|edges| edges.iter().copied())
+    }
 }
 
 fn block_id_list_json(block_ids: impl Iterator<Item = usize>) -> JsonValue {
@@ -7329,7 +7378,8 @@ mod tests {
             },
         };
 
-        let block = basic_block_json(&analysis, &analysis.basic_blocks[0]);
+        let block_edge_index = BasicBlockEdgeIndex::new(&analysis);
+        let block = basic_block_json(&analysis.basic_blocks[0], &block_edge_index);
         let external_successors =
             json_array_items(json_object_field(&block, "external_successors"));
 
