@@ -2040,9 +2040,13 @@ fn basic_block_join_addresses(instructions: &[DecodedInstruction]) -> BTreeSet<u
     for instruction in instructions {
         let from_block = block_id_for_address(&blocks, instruction.address).unwrap_or(0);
         for reference in &instruction.references {
-            if let Reference::Branch { target } = reference
+            if let Reference::Branch { target } | Reference::Call { target } = reference
                 && instruction_addresses.contains(target)
             {
+                let kind = match reference {
+                    Reference::Call { .. } => ControlFlowEdgeKind::Call,
+                    _ => ControlFlowEdgeKind::Branch,
+                };
                 push_edge(
                     &mut edges,
                     ControlFlowEdge {
@@ -2050,7 +2054,7 @@ fn basic_block_join_addresses(instructions: &[DecodedInstruction]) -> BTreeSet<u
                         to_block: block_id_for_address(&blocks, *target),
                         source_address: instruction.address,
                         target_address: Some(*target),
-                        kind: ControlFlowEdgeKind::Branch,
+                        kind,
                         via: None,
                     },
                 );
@@ -3325,6 +3329,49 @@ mod tests {
             }),
             "call edge should resolve to the block that starts at the call target: {:?}",
             analysis.edges
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_clears_state_at_in_window_call_target_joins() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(0x220),
+                ],
+            ),
+            DecodedInstruction {
+                references: vec![Reference::Call { target: 0x1010 }],
+                ..instruction(0x1004, "bl", vec![Operand::Label(0x1010)])
+            },
+            instruction(0x1008, "nop", vec![]),
+            instruction(0x100c, "nop", vec![]),
+            instruction(
+                0x1010,
+                "add",
+                vec![
+                    Operand::Register("x20".to_string()),
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions
+                .iter()
+                .find(|instruction| instruction.address == 0x1010)
+                .expect("call target instruction")
+                .recovered_values
+                .is_empty(),
+            "callee entry must not inherit caller layout state through x19: {:?}",
+            instructions
         );
     }
 
