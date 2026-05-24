@@ -68,7 +68,7 @@ Coverage expected from the checked-in corpus:
 
 | Area | Fixture or test | Expected evidence |
 | --- | --- | --- |
-| CFG and summary | `semantic-switch`, `damsel-macho/tests/disasm_matrix.rs` | Multiple basic blocks, direct edges, fallthrough edges with resolved `from_block`/`to_block` IDs, stable decode/reference/annotation telemetry, data refs, recovered values, jump-table summary |
+| CFG and summary | `semantic-switch`, `damsel-macho/tests/disasm_matrix.rs` | Multiple basic blocks, direct edges, fallthrough edges with resolved `from_block`/`to_block` IDs, stable decode/reference/annotation telemetry, data refs, recovered values, jump-table summary, and deduped overview rows for branch/data/value signals |
 | Cache links | `internal-linkage-arm64.cache`, `damsel-cli/tests/cli_json.rs` | Import rows resolve to provider images and stable `cache_links` JSON |
 | Value-flow safety | `damsel-macho` unit tests | Call-clobbered registers stop flowing past calls while callee-saved registers survive |
 | ObjC entrypoints and summary refs | `objc-sample`, `damsel-cli/tests/cli_json.rs`, `damsel-macho/tests/disasm_matrix.rs` | `--objc-owner` plus `--objc-selector` resolves to an implementation address, and `--analysis` reports selector/class/method-list/message-send reference counts plus stable reference rows with slot, resolved metadata addresses, message-send target symbols, and import dylib/symbol provenance when ObjC metadata, target symbols, or dyld bindings are present; imported class refs remain typed even when dyld has no concrete class metadata address |

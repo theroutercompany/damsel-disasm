@@ -470,12 +470,114 @@ function renderAnalysisBlock(analysis) {
           ["Unresolved Target Edges", metrics.unresolved_target_edge_count ?? 0],
         ])}
       </div>
+      ${renderAnalysisOverview(analysis.overview || {})}
       ${renderAnalysisBlocks(analysis.basic_blocks || [])}
       ${renderAnalysisEdges(analysis.edges || [])}
       ${renderAnalysisImports(analysis.imports || [], analysis.cache_links || [])}
       ${renderAnalysisObjcReferences(analysis.objc_references || [])}
     </section>
   `;
+}
+
+function renderAnalysisOverview(overview) {
+  const sections = [
+    renderOverviewTargets("Calls", overview.call_targets || []),
+    renderOverviewTargets("Branches", overview.branch_targets || []),
+    renderOverviewTargets("Data", overview.data_targets || []),
+    renderOverviewImports(overview.imports || []),
+    renderOverviewObjc(overview.objc_references || []),
+    renderOverviewValues(overview.recovered_values || []),
+  ].filter(Boolean);
+
+  if (!sections.length) {
+    return "";
+  }
+
+  return `
+    <div class="analysis-list">
+      <div class="item-eyebrow">Overview</div>
+      ${sections.join("")}
+    </div>
+  `;
+}
+
+function renderOverviewTargets(label, rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return rows
+    .map(
+      (entry) => `
+        <div class="analysis-row">
+          <span class="mono">${escapeHtml(label)}</span>
+          ${renderJumpButton(entry.first_instruction_address)}
+          ${renderJumpButton(entry.target_address)}
+          <span class="mono">${escapeHtml(String(entry.count))}x</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderOverviewImports(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return rows
+    .map(
+      (entry) => `
+        <div class="analysis-row">
+          <span class="mono">Import</span>
+          ${renderJumpButton(entry.first_instruction_address)}
+          <span class="mono">${escapeHtml(entry.dylib)}</span>
+          <span class="mono">${escapeHtml(entry.name)}</span>
+          <span class="mono">${escapeHtml(String(entry.count))}x</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderOverviewObjc(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return rows
+    .map(
+      (entry) => `
+        <div class="analysis-row">
+          <span class="mono">ObjC ${escapeHtml(entry.kind)}</span>
+          ${renderJumpButton(entry.first_instruction_address)}
+          ${renderJumpButton(entry.target_address)}
+          <span class="mono">${escapeHtml(entry.name ?? "-")}</span>
+          <span class="mono">${escapeHtml(String(entry.count))}x</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderOverviewValues(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  return rows
+    .map(
+      (entry) => `
+        <div class="analysis-row">
+          <span class="mono">${escapeHtml(entry.register)}</span>
+          ${renderJumpButton(entry.first_instruction_address)}
+          <span class="mono">${escapeHtml(formatAddress(entry.value))}</span>
+          <span class="mono">${escapeHtml(entry.kind)}</span>
+          <span class="mono">${escapeHtml(String(entry.count))}x</span>
+        </div>
+      `,
+    )
+    .join("");
 }
 
 function renderDetailBlock(title, rows) {

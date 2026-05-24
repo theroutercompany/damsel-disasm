@@ -426,6 +426,25 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
     assert!(analysis.summary.data_reference_count > 0);
     assert!(analysis.summary.recovered_value_count > 0);
     assert!(analysis.summary.jump_table_count > 0);
+    assert!(
+        !analysis.overview.branch_targets.is_empty(),
+        "overview should summarize branch targets"
+    );
+    assert!(
+        !analysis.overview.data_targets.is_empty(),
+        "overview should summarize data references"
+    );
+    assert!(
+        !analysis.overview.recovered_values.is_empty(),
+        "overview should summarize recovered values"
+    );
+    assert!(
+        analysis
+            .overview
+            .data_targets
+            .iter()
+            .all(|entry| entry.count > 0 && entry.first_instruction_address > 0)
+    );
 }
 
 #[test]
@@ -520,6 +539,15 @@ fn disasm_analysis_reports_objc_runtime_references_for_objc_fixture() {
                 && entry.resolved_address == Some(entry.target_address)
         }),
         "objc message-send target symbols should become navigable analysis references"
+    );
+    assert!(
+        analysis.overview.objc_references.iter().any(|entry| {
+            entry.kind == DisassemblyObjcReferenceKind::MessageSend
+                && entry.name.as_deref() == Some("title")
+                && entry.count > 0
+                && entry.first_instruction_address > 0
+        }),
+        "overview should summarize ObjC message sends"
     );
 }
 

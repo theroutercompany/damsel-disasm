@@ -142,6 +142,11 @@ fn ui_disasm_supports_section_symbol_and_address_targets() {
             .as_u64()
             .is_some_and(|count| count > 0)
     );
+    assert!(
+        section_json["analysis"]["overview"]["data_targets"]
+            .as_array()
+            .is_some()
+    );
 
     let symbol_response = client
         .post(format!("{}/api/images/{image_id}/disasm", server.base_url))
@@ -265,8 +270,11 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("resolved_address"));
     assert!(js.contains("import_dylib"));
     assert!(js.contains("import_symbol"));
+    assert!(js.contains("renderAnalysisOverview"));
+    assert!(js.contains("first_instruction_address"));
     assert!(js.contains("to_block"));
     assert!(js.contains("Intra-window Edges"));
+    assert!(js.contains("Overview"));
     assert!(js.contains("ObjC Selectors"));
     assert!(js.contains("ObjC Sends"));
     assert!(js.contains("Basic Blocks"));
@@ -293,5 +301,10 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         disasm_json["analysis"]["edges"]
             .as_array()
             .is_some_and(|edges| !edges.is_empty())
+    );
+    assert!(
+        disasm_json["analysis"]["overview"]["branch_targets"]
+            .as_array()
+            .is_some()
     );
 }

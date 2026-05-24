@@ -1,13 +1,15 @@
 use crate::errors::{MachoError, Result};
 use damsel_core::{
     Annotation, BasicBlock, BinaryImage, ControlFlowEdge, ControlFlowEdgeKind, DecodedInstruction,
-    DisassemblyAnalysis, DisassemblyImportUse, DisassemblyIndirectUse, DisassemblyJumpTableUse,
-    DisassemblyLimit, DisassemblyMetrics, DisassemblyObjcReferenceKind, DisassemblyObjcUse,
-    DisassemblyRecoveredValueUse, DisassemblyRequest, DisassemblyRequestV2, DisassemblyResult,
-    DisassemblyResultV2, DisassemblyStopReason, DisassemblySummary, DisassemblyTarget,
-    DisassemblyTargetUse, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
-    IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
-    Reference, Relocation, Section, StubHelperEntry, Symbol, TableSlotEncoding,
+    DisassemblyAnalysis, DisassemblyImportSummary, DisassemblyImportUse, DisassemblyIndirectUse,
+    DisassemblyJumpTableUse, DisassemblyLimit, DisassemblyMetrics, DisassemblyObjcReferenceKind,
+    DisassemblyObjcReferenceSummary, DisassemblyObjcUse, DisassemblyOverview,
+    DisassemblyRecoveredValueSummary, DisassemblyRecoveredValueUse, DisassemblyRequest,
+    DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2, DisassemblyStopReason,
+    DisassemblySummary, DisassemblyTarget, DisassemblyTargetSummary, DisassemblyTargetUse, Import,
+    ImportBindingKind, ImportBindingRecord, ImportBindingSource, IndirectTargetReason, Operand,
+    RecoveredValue, RecoveredValueKind, RecoveredValueSource, Reference, Relocation, Section,
+    StubHelperEntry, Symbol, TableSlotEncoding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -336,6 +338,14 @@ fn analyze_disassembly_impl(
         .iter()
         .filter(|entry| entry.kind == DisassemblyObjcReferenceKind::MessageSend)
         .count();
+    let overview = build_disassembly_overview(
+        &direct_calls,
+        &branch_targets,
+        &data_references,
+        &imports,
+        &objc_references,
+        &recovered_values,
+    );
 
     DisassemblyAnalysis {
         target: target.into(),
@@ -384,9 +394,204 @@ fn analyze_disassembly_impl(
         imports,
         objc_references,
         cache_links: Vec::new(),
+        overview,
         recovered_values,
         jump_tables,
     }
+}
+
+fn build_disassembly_overview(
+    direct_calls: &[DisassemblyTargetUse],
+    branch_targets: &[DisassemblyTargetUse],
+    data_references: &[DisassemblyTargetUse],
+    imports: &[DisassemblyImportUse],
+    objc_references: &[DisassemblyObjcUse],
+    recovered_values: &[DisassemblyRecoveredValueUse],
+) -> DisassemblyOverview {
+    DisassemblyOverview {
+        call_targets: summarize_target_uses(direct_calls),
+        branch_targets: summarize_target_uses(branch_targets),
+        data_targets: summarize_target_uses(data_references),
+        imports: summarize_import_uses(imports),
+        objc_references: summarize_objc_uses(objc_references),
+        recovered_values: summarize_recovered_value_uses(recovered_values),
+    }
+}
+
+fn summarize_target_uses(entries: &[DisassemblyTargetUse]) -> Vec<DisassemblyTargetSummary> {
+    let mut by_target: BTreeMap<u64, DisassemblyTargetSummary> = BTreeMap::new();
+    for entry in entries {
+        by_target
+            .entry(entry.target_address)
+            .and_modify(|summary| {
+                summary.count += 1;
+                summary.first_instruction_address = summary
+                    .first_instruction_address
+                    .min(entry.instruction_address);
+            })
+            .or_insert(DisassemblyTargetSummary {
+                target_address: entry.target_address,
+                count: 1,
+                first_instruction_address: entry.instruction_address,
+            });
+    }
+    let mut rows = by_target.into_values().collect::<Vec<_>>();
+    rows.sort_by_key(|row| (row.first_instruction_address, row.target_address));
+    rows
+}
+
+fn summarize_import_uses(entries: &[DisassemblyImportUse]) -> Vec<DisassemblyImportSummary> {
+    let mut by_import: BTreeMap<(String, String, Option<u64>), DisassemblyImportSummary> =
+        BTreeMap::new();
+    for entry in entries {
+        let key = (entry.dylib.clone(), entry.name.clone(), entry.address);
+        by_import
+            .entry(key)
+            .and_modify(|summary| {
+                summary.count += 1;
+                summary.first_instruction_address = summary
+                    .first_instruction_address
+                    .min(entry.instruction_address);
+            })
+            .or_insert(DisassemblyImportSummary {
+                dylib: entry.dylib.clone(),
+                name: entry.name.clone(),
+                address: entry.address,
+                count: 1,
+                first_instruction_address: entry.instruction_address,
+            });
+    }
+    let mut rows = by_import.into_values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        (
+            left.first_instruction_address,
+            left.dylib.as_str(),
+            left.name.as_str(),
+            left.address,
+        )
+            .cmp(&(
+                right.first_instruction_address,
+                right.dylib.as_str(),
+                right.name.as_str(),
+                right.address,
+            ))
+    });
+    rows
+}
+
+fn summarize_objc_uses(entries: &[DisassemblyObjcUse]) -> Vec<DisassemblyObjcReferenceSummary> {
+    let mut by_reference: BTreeMap<
+        (
+            DisassemblyObjcReferenceKind,
+            Option<String>,
+            u64,
+            Option<u64>,
+            Option<String>,
+            Option<String>,
+        ),
+        DisassemblyObjcReferenceSummary,
+    > = BTreeMap::new();
+    for entry in entries {
+        let key = (
+            entry.kind,
+            entry.name.clone(),
+            entry.target_address,
+            entry.resolved_address,
+            entry.import_dylib.clone(),
+            entry.import_symbol.clone(),
+        );
+        by_reference
+            .entry(key)
+            .and_modify(|summary| {
+                summary.count += 1;
+                summary.first_instruction_address = summary
+                    .first_instruction_address
+                    .min(entry.instruction_address);
+            })
+            .or_insert(DisassemblyObjcReferenceSummary {
+                kind: entry.kind,
+                name: entry.name.clone(),
+                target_address: entry.target_address,
+                resolved_address: entry.resolved_address,
+                import_dylib: entry.import_dylib.clone(),
+                import_symbol: entry.import_symbol.clone(),
+                count: 1,
+                first_instruction_address: entry.instruction_address,
+            });
+    }
+    let mut rows = by_reference.into_values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        (
+            left.first_instruction_address,
+            left.kind,
+            left.name.as_deref(),
+            left.target_address,
+            left.resolved_address,
+            left.import_dylib.as_deref(),
+            left.import_symbol.as_deref(),
+        )
+            .cmp(&(
+                right.first_instruction_address,
+                right.kind,
+                right.name.as_deref(),
+                right.target_address,
+                right.resolved_address,
+                right.import_dylib.as_deref(),
+                right.import_symbol.as_deref(),
+            ))
+    });
+    rows
+}
+
+fn summarize_recovered_value_uses(
+    entries: &[DisassemblyRecoveredValueUse],
+) -> Vec<DisassemblyRecoveredValueSummary> {
+    let mut by_value: BTreeMap<
+        (String, u64, RecoveredValueKind, RecoveredValueSource),
+        DisassemblyRecoveredValueSummary,
+    > = BTreeMap::new();
+    for entry in entries {
+        let key = (
+            entry.register.clone(),
+            entry.value,
+            entry.kind,
+            entry.source,
+        );
+        by_value
+            .entry(key)
+            .and_modify(|summary| {
+                summary.count += 1;
+                summary.first_instruction_address = summary
+                    .first_instruction_address
+                    .min(entry.instruction_address);
+            })
+            .or_insert(DisassemblyRecoveredValueSummary {
+                register: entry.register.clone(),
+                value: entry.value,
+                kind: entry.kind,
+                source: entry.source,
+                count: 1,
+                first_instruction_address: entry.instruction_address,
+            });
+    }
+    let mut rows = by_value.into_values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        (
+            left.first_instruction_address,
+            left.register.as_str(),
+            left.value,
+            left.kind,
+            left.source,
+        )
+            .cmp(&(
+                right.first_instruction_address,
+                right.register.as_str(),
+                right.value,
+                right.kind,
+                right.source,
+            ))
+    });
+    rows
 }
 
 fn disassemble_impl(

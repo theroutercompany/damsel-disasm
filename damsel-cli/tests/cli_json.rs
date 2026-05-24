@@ -1903,6 +1903,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "instruction_count",
             "metrics",
             "summary",
+            "overview",
             "basic_blocks",
             "edges",
             "direct_calls",
@@ -1949,6 +1950,17 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "recovered_value_count",
             "jump_table_count",
             "unresolved_indirect_count",
+        ],
+    );
+    assert_exact_object_keys(
+        &analysis["overview"],
+        &[
+            "call_targets",
+            "branch_targets",
+            "data_targets",
+            "imports",
+            "objc_references",
+            "recovered_values",
         ],
     );
     assert!(analysis["summary"]["basic_block_count"].as_u64().unwrap() > 1);
@@ -2006,6 +2018,25 @@ fn disasm_json_analysis_contract_is_opt_in() {
             .as_array()
             .is_some_and(|tables| !tables.is_empty())
     );
+    let overview = &analysis["overview"];
+    assert!(
+        overview["branch_targets"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+    assert!(
+        overview["data_targets"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+    for entry in overview["data_targets"].as_array().expect("data targets") {
+        assert_exact_object_keys(
+            entry,
+            &["target_address", "count", "first_instruction_address"],
+        );
+        assert!(entry["count"].as_u64().unwrap() > 0);
+        assert!(entry["first_instruction_address"].is_number());
+    }
     assert!(analysis["objc_references"].as_array().is_some());
 }
 
@@ -2028,6 +2059,9 @@ fn disasm_json_analysis_reports_objc_references_for_fixture() {
     let references = analysis["objc_references"]
         .as_array()
         .expect("objc reference array");
+    let overview_objc = analysis["overview"]["objc_references"]
+        .as_array()
+        .expect("objc overview array");
 
     assert!(
         analysis["summary"]["objc_selector_count"].as_u64().unwrap() > 0
@@ -2101,6 +2135,30 @@ fn disasm_json_analysis_reports_objc_references_for_fixture() {
                 && entry["import_symbol"].is_null()),
         "{out}"
     );
+    assert!(
+        overview_objc
+            .iter()
+            .any(|entry| entry["kind"] == "message-send"
+                && entry["name"] == "title"
+                && entry["count"].as_u64().is_some_and(|count| count > 0)
+                && entry["first_instruction_address"].is_number()),
+        "{out}"
+    );
+    for entry in overview_objc {
+        assert_exact_object_keys(
+            entry,
+            &[
+                "kind",
+                "name",
+                "target_address",
+                "resolved_address",
+                "import_dylib",
+                "import_symbol",
+                "count",
+                "first_instruction_address",
+            ],
+        );
+    }
     for entry in references {
         assert_exact_object_keys(
             entry,
@@ -2169,6 +2227,16 @@ fn cache_disasm_json_analysis_reports_objc_message_sends_from_target_symbols() {
             .any(|entry| entry["kind"] == "message-send"
                 && entry["name"] == "stringWithFormat:"
                 && entry["resolved_address"] == entry["target_address"]),
+        "{out}"
+    );
+    assert!(
+        analysis["overview"]["objc_references"]
+            .as_array()
+            .expect("objc overview")
+            .iter()
+            .any(|entry| entry["kind"] == "message-send"
+                && entry["name"] == "stringWithFormat:"
+                && entry["count"].as_u64().is_some_and(|count| count > 0)),
         "{out}"
     );
 }
@@ -2272,6 +2340,16 @@ fn cache_disasm_json_analysis_links_imports_to_cache_providers() {
     let analysis = &json["data"]["disassembly"]["analysis"];
     assert!(analysis["summary"]["import_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["cache_link_count"].as_u64().unwrap() > 0);
+    assert!(
+        analysis["overview"]["imports"]
+            .as_array()
+            .expect("import overview")
+            .iter()
+            .any(|entry| entry["name"] == "_puts"
+                && entry["dylib"] == "/usr/lib/libSystem.B.dylib"
+                && entry["count"].as_u64().is_some_and(|count| count > 0)
+                && entry["first_instruction_address"].is_number())
+    );
     assert_eq!(
         analysis["summary"]["cache_link_count"].as_u64(),
         analysis["cache_links"]

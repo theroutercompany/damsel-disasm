@@ -2388,7 +2388,7 @@ pub struct DisassemblyJumpTableUse {
     pub element_size: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DisassemblyObjcReferenceKind {
     Selector,
     Class,
@@ -2433,6 +2433,54 @@ pub struct DisassemblyCacheLinkUse {
     pub resolved_target_image_id: Option<String>,
     pub resolved_target_install_name: Option<String>,
     pub resolved_target_member_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyTargetSummary {
+    pub target_address: u64,
+    pub count: usize,
+    pub first_instruction_address: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyImportSummary {
+    pub dylib: String,
+    pub name: String,
+    pub address: Option<u64>,
+    pub count: usize,
+    pub first_instruction_address: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyObjcReferenceSummary {
+    pub kind: DisassemblyObjcReferenceKind,
+    pub name: Option<String>,
+    pub target_address: u64,
+    pub resolved_address: Option<u64>,
+    pub import_dylib: Option<String>,
+    pub import_symbol: Option<String>,
+    pub count: usize,
+    pub first_instruction_address: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisassemblyRecoveredValueSummary {
+    pub register: String,
+    pub value: u64,
+    pub kind: RecoveredValueKind,
+    pub source: RecoveredValueSource,
+    pub count: usize,
+    pub first_instruction_address: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DisassemblyOverview {
+    pub call_targets: Vec<DisassemblyTargetSummary>,
+    pub branch_targets: Vec<DisassemblyTargetSummary>,
+    pub data_targets: Vec<DisassemblyTargetSummary>,
+    pub imports: Vec<DisassemblyImportSummary>,
+    pub objc_references: Vec<DisassemblyObjcReferenceSummary>,
+    pub recovered_values: Vec<DisassemblyRecoveredValueSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2484,6 +2532,7 @@ pub struct DisassemblyAnalysis {
     pub imports: Vec<DisassemblyImportUse>,
     pub objc_references: Vec<DisassemblyObjcUse>,
     pub cache_links: Vec<DisassemblyCacheLinkUse>,
+    pub overview: DisassemblyOverview,
     pub recovered_values: Vec<DisassemblyRecoveredValueUse>,
     pub jump_tables: Vec<DisassemblyJumpTableUse>,
     pub summary: DisassemblySummary,
@@ -2603,7 +2652,7 @@ pub enum DisassemblyStopReason {
     TargetRangeEnd,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RecoveredValueKind {
     Address,
     CString,
@@ -2619,7 +2668,7 @@ pub enum RecoveredValueKind {
     UnknownData,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RecoveredValueSource {
     Adr,
     AdrpAdd,

@@ -1615,6 +1615,7 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         analysis.metrics.external_target_edge_count,
         analysis.metrics.unresolved_target_edge_count
     );
+    print_disassembly_overview_text(analysis);
     if !analysis.basic_blocks.is_empty() {
         println!("  blocks:");
         for block in &analysis.basic_blocks {
@@ -1698,6 +1699,83 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
                 link.resolved_target_install_name.as_deref().unwrap_or("-")
             );
         }
+    }
+}
+
+fn print_disassembly_overview_text(analysis: &DisassemblyAnalysis) {
+    let overview = &analysis.overview;
+    if overview.call_targets.is_empty()
+        && overview.branch_targets.is_empty()
+        && overview.data_targets.is_empty()
+        && overview.imports.is_empty()
+        && overview.objc_references.is_empty()
+        && overview.recovered_values.is_empty()
+    {
+        return;
+    }
+
+    println!("  overview:");
+    print_target_summary_text("calls", &overview.call_targets);
+    print_target_summary_text("branches", &overview.branch_targets);
+    print_target_summary_text("data", &overview.data_targets);
+    if !overview.imports.is_empty() {
+        println!("    imports:");
+        for entry in &overview.imports {
+            let address = entry
+                .address
+                .map(|value| format!("{value:#x}"))
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "      - first={:#x} count={} {}:{} address={}",
+                entry.first_instruction_address, entry.count, entry.dylib, entry.name, address
+            );
+        }
+    }
+    if !overview.objc_references.is_empty() {
+        println!("    objc:");
+        for entry in &overview.objc_references {
+            let resolved = entry
+                .resolved_address
+                .map(|value| format!("{value:#x}"))
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "      - first={:#x} count={} kind={} name={} target={:#x} resolved={}",
+                entry.first_instruction_address,
+                entry.count,
+                entry.kind,
+                entry.name.as_deref().unwrap_or("-"),
+                entry.target_address,
+                resolved
+            );
+        }
+    }
+    if !overview.recovered_values.is_empty() {
+        println!("    recovered_values:");
+        for entry in &overview.recovered_values {
+            println!(
+                "      - first={:#x} count={} {}={:#x} kind={:?} source={:?}",
+                entry.first_instruction_address,
+                entry.count,
+                entry.register,
+                entry.value,
+                entry.kind,
+                entry.source
+            );
+        }
+    }
+}
+
+fn print_target_summary_text(label: &str, entries: &[damsel_core::DisassemblyTargetSummary]) {
+    if entries.is_empty() {
+        return;
+    }
+
+    println!("    {label}:");
+    for entry in entries {
+        println!(
+            "      - first={:#x} count={} target={:#x}",
+            entry.first_instruction_address, entry.count, entry.target_address
+        );
     }
 }
 
@@ -4739,6 +4817,10 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
             ]),
         ),
         (
+            "overview".to_string(),
+            disassembly_overview_json(&analysis.overview),
+        ),
+        (
             "basic_blocks".to_string(),
             JsonValue::Array(
                 analysis
@@ -5051,6 +5133,161 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                     })
                     .collect(),
             ),
+        ),
+    ])
+}
+
+fn disassembly_overview_json(overview: &damsel_core::DisassemblyOverview) -> JsonValue {
+    JsonValue::Object(vec![
+        (
+            "call_targets".to_string(),
+            JsonValue::Array(
+                overview
+                    .call_targets
+                    .iter()
+                    .map(target_summary_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "branch_targets".to_string(),
+            JsonValue::Array(
+                overview
+                    .branch_targets
+                    .iter()
+                    .map(target_summary_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "data_targets".to_string(),
+            JsonValue::Array(
+                overview
+                    .data_targets
+                    .iter()
+                    .map(target_summary_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "imports".to_string(),
+            JsonValue::Array(
+                overview
+                    .imports
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            ("dylib".to_string(), JsonValue::String(entry.dylib.clone())),
+                            ("name".to_string(), JsonValue::String(entry.name.clone())),
+                            (
+                                "address".to_string(),
+                                entry.address.map(u64_num).unwrap_or(JsonValue::Null),
+                            ),
+                            ("count".to_string(), usize_num(entry.count)),
+                            (
+                                "first_instruction_address".to_string(),
+                                u64_num(entry.first_instruction_address),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "objc_references".to_string(),
+            JsonValue::Array(
+                overview
+                    .objc_references
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "kind".to_string(),
+                                JsonValue::String(entry.kind.to_string()),
+                            ),
+                            (
+                                "name".to_string(),
+                                entry
+                                    .name
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            ("target_address".to_string(), u64_num(entry.target_address)),
+                            (
+                                "resolved_address".to_string(),
+                                entry
+                                    .resolved_address
+                                    .map(u64_num)
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "import_dylib".to_string(),
+                                entry
+                                    .import_dylib
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            (
+                                "import_symbol".to_string(),
+                                entry
+                                    .import_symbol
+                                    .as_ref()
+                                    .map(|value| JsonValue::String(value.clone()))
+                                    .unwrap_or(JsonValue::Null),
+                            ),
+                            ("count".to_string(), usize_num(entry.count)),
+                            (
+                                "first_instruction_address".to_string(),
+                                u64_num(entry.first_instruction_address),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "recovered_values".to_string(),
+            JsonValue::Array(
+                overview
+                    .recovered_values
+                    .iter()
+                    .map(|entry| {
+                        JsonValue::Object(vec![
+                            (
+                                "register".to_string(),
+                                JsonValue::String(entry.register.clone()),
+                            ),
+                            ("value".to_string(), u64_num(entry.value)),
+                            (
+                                "kind".to_string(),
+                                JsonValue::String(format!("{:?}", entry.kind)),
+                            ),
+                            (
+                                "source".to_string(),
+                                JsonValue::String(format!("{:?}", entry.source)),
+                            ),
+                            ("count".to_string(), usize_num(entry.count)),
+                            (
+                                "first_instruction_address".to_string(),
+                                u64_num(entry.first_instruction_address),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+fn target_summary_json(entry: &damsel_core::DisassemblyTargetSummary) -> JsonValue {
+    JsonValue::Object(vec![
+        ("target_address".to_string(), u64_num(entry.target_address)),
+        ("count".to_string(), usize_num(entry.count)),
+        (
+            "first_instruction_address".to_string(),
+            u64_num(entry.first_instruction_address),
         ),
     ])
 }
