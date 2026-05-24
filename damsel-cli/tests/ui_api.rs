@@ -293,6 +293,8 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("requestIntegerValue"));
     assert!(js.contains("structuredOperandEntries"));
     assert!(js.contains("renderBlockLinks"));
+    assert!(js.contains("renderBlockLink(edge.from_block"));
+    assert!(js.contains("renderAnalysisEdges(analysis.edges || [], blockById)"));
     assert!(js.contains("renderExternalSuccessorCount"));
     assert!(js.contains("block-jump"));
     assert!(!js.contains("Number(jumpButton.dataset.target)"));

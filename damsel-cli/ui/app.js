@@ -529,6 +529,8 @@ function renderInstructionJumpChip(value) {
 
 function renderAnalysisBlock(analysis) {
   const metrics = analysis.metrics || {};
+  const blocks = analysis.basic_blocks || [];
+  const blockById = buildBlockMap(blocks);
   return `
     <section class="inspector-block analysis-block">
       <h3>Summary Graph</h3>
@@ -560,8 +562,8 @@ function renderAnalysisBlock(analysis) {
         ])}
       </div>
       ${renderAnalysisOverview(analysis.overview || {})}
-      ${renderAnalysisBlocks(analysis.basic_blocks || [])}
-      ${renderAnalysisEdges(analysis.edges || [])}
+      ${renderAnalysisBlocks(blocks, blockById)}
+      ${renderAnalysisEdges(analysis.edges || [], blockById)}
       ${renderAnalysisTargetUses("Direct Calls", analysis.direct_calls || [])}
       ${renderAnalysisTargetUses("Branch Targets", analysis.branch_targets || [])}
       ${renderAnalysisTargetUses("Data References", analysis.data_references || [])}
@@ -769,12 +771,10 @@ function renderDetailRows(rows) {
     .join("");
 }
 
-function renderAnalysisBlocks(blocks) {
+function renderAnalysisBlocks(blocks, blockById = buildBlockMap(blocks)) {
   if (!blocks.length) {
     return "";
   }
-
-  const blockById = new Map(blocks.map((block) => [String(block.id), block]));
 
   return `
     <div class="analysis-list">
@@ -801,6 +801,10 @@ function renderAnalysisBlocks(blocks) {
   `;
 }
 
+function buildBlockMap(blocks) {
+  return new Map(blocks.map((block) => [String(block.id), block]));
+}
+
 function renderBlockLinks(blockIds, blockById) {
   if (!blockIds.length) {
     return '<span class="mono">-</span>';
@@ -809,32 +813,38 @@ function renderBlockLinks(blockIds, blockById) {
   return `
     <span class="block-link-list">
       ${blockIds
-        .map((id) => {
-          const block = blockById.get(String(id));
-          if (!block) {
-            return `<span class="mono">#${escapeHtml(id)}</span>`;
-          }
-
-          const target = formatAddress(block.start_address);
-          if (target === "n/a") {
-            return `<span class="mono">#${escapeHtml(id)}</span>`;
-          }
-
-          const label = `#${id}`;
-          return `
-            <button
-              class="jump-button block-jump mono"
-              type="button"
-              data-jump-target="${escapeHtml(target)}"
-              title="${escapeHtml(`${label} starts at ${target}`)}"
-              aria-label="${escapeHtml(`Jump to block ${label} at ${target}`)}"
-            >
-              ${escapeHtml(label)}
-            </button>
-          `;
-        })
+        .map((id) => renderBlockLink(id, blockById))
         .join("")}
     </span>
+  `;
+}
+
+function renderBlockLink(id, blockById) {
+  if (id === null || id === undefined) {
+    return '<span class="mono">-</span>';
+  }
+
+  const label = `#${id}`;
+  const block = blockById.get(String(id));
+  if (!block) {
+    return `<span class="mono">${escapeHtml(label)}</span>`;
+  }
+
+  const target = formatAddress(block.start_address);
+  if (target === "n/a") {
+    return `<span class="mono">${escapeHtml(label)}</span>`;
+  }
+
+  return `
+    <button
+      class="jump-button block-jump mono"
+      type="button"
+      data-jump-target="${escapeHtml(target)}"
+      title="${escapeHtml(`${label} starts at ${target}`)}"
+      aria-label="${escapeHtml(`Jump to block ${label} at ${target}`)}"
+    >
+      ${escapeHtml(label)}
+    </button>
   `;
 }
 
@@ -849,7 +859,7 @@ function renderExternalSuccessorCount(externalSuccessors) {
   `;
 }
 
-function renderAnalysisEdges(edges) {
+function renderAnalysisEdges(edges, blockById = new Map()) {
   if (!edges.length) {
     return "";
   }
@@ -862,7 +872,7 @@ function renderAnalysisEdges(edges) {
           (edge) => `
             <div class="analysis-row">
               <span class="mono">${escapeHtml(edge.kind)}</span>
-              <span class="mono">#${escapeHtml(edge.from_block)}</span>
+              ${renderBlockLink(edge.from_block, blockById)}
               ${renderJumpButton(edge.source_address)}
               <span class="detail-key">to</span>
               ${
@@ -870,7 +880,7 @@ function renderAnalysisEdges(edges) {
                   ? '<span class="mono">return</span>'
                   : renderJumpButton(edge.target_address)
               }
-              <span class="mono">#${escapeHtml(edge.to_block ?? "-")}</span>
+              ${renderBlockLink(edge.to_block, blockById)}
             </div>
           `,
         )
