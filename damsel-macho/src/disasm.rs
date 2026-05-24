@@ -1817,7 +1817,9 @@ fn synthesize_analysis_references(
                             target: reference_target,
                         },
                     );
-                    if let Some(index_register) = index_register.clone() {
+                    if (lower.starts_with("ldr") || lower.starts_with("ldur"))
+                        && let Some(index_register) = index_register.clone()
+                    {
                         if let Some(jump_key) = destination
                             .as_deref()
                             .or(Some(base_register.as_str()))
@@ -4145,6 +4147,64 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "stale jump-table source must not override the current x10 value: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_does_not_create_jump_table_sources_for_stores() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1004, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "str",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "store source registers should keep resolving through their current value: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "indexed stores must not create jump-table source state: {:?}",
             instructions
         );
     }
