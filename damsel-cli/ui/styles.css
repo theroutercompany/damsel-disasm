@@ -583,6 +583,24 @@ code,
   padding: 0 8px;
 }
 
+.external-successor-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.external-successor {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.external-successor .jump-button {
+  min-height: 24px;
+  padding: 0 8px;
+}
+
 .result-meta {
   max-width: 22rem;
   text-align: right;

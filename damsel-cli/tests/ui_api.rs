@@ -295,7 +295,8 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("renderBlockLinks"));
     assert!(js.contains("renderBlockLink(edge.from_block"));
     assert!(js.contains("renderAnalysisEdges(analysis.edges || [], blockById)"));
-    assert!(js.contains("renderExternalSuccessorCount"));
+    assert!(js.contains("renderExternalSuccessors"));
+    assert!(js.contains("external-successor-list"));
     assert!(js.contains("block-jump"));
     assert!(!js.contains("Number(jumpButton.dataset.target)"));
     assert!(!js.contains("Number(button.dataset.jumpTarget)"));
@@ -341,6 +342,8 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
         .expect("css body");
     assert!(css.contains(".block-link-list"));
     assert!(css.contains(".block-jump"));
+    assert!(css.contains(".external-successor-list"));
+    assert!(css.contains(".external-successor"));
 
     let upload = upload_fixture(&client, &server, "semantic-switch");
     let image_id = upload["imageId"].as_str().expect("image id");

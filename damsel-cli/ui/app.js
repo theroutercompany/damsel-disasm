@@ -791,7 +791,7 @@ function renderAnalysisBlocks(blocks, blockById = buildBlockMap(blocks)) {
               ${renderBlockLinks(block.predecessors || [], blockById)}
               <span class="detail-key">succ</span>
               ${renderBlockLinks(block.successors || [], blockById)}
-              ${renderExternalSuccessorCount(block.external_successors || [])}
+              ${renderExternalSuccessors(block.external_successors || [])}
               ${block.terminal ? '<span class="mono">return</span>' : ""}
             </div>
           `,
@@ -848,14 +848,30 @@ function renderBlockLink(id, blockById) {
   `;
 }
 
-function renderExternalSuccessorCount(externalSuccessors) {
+function renderExternalSuccessors(externalSuccessors) {
   if (!externalSuccessors.length) {
     return "";
   }
 
   return `
     <span class="detail-key">external</span>
-    <span class="mono">${escapeHtml(String(externalSuccessors.length))}</span>
+    <span class="external-successor-list">
+      ${externalSuccessors
+        .map(
+          (successor) => `
+            <span class="external-successor">
+              <span class="mono">${escapeHtml(successor.kind ?? "edge")}</span>
+              ${renderJumpButton(successor.target_address)}
+              ${
+                successor.via
+                  ? `<span class="mono">via ${escapeHtml(successor.via)}</span>`
+                  : ""
+              }
+            </span>
+          `,
+        )
+        .join("")}
+    </span>
   `;
 }
 
