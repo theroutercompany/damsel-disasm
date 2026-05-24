@@ -276,6 +276,7 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
     assert!(js.contains("renderOverviewJumpTables"));
     assert!(js.contains("first_instruction_address"));
     assert!(js.contains("resolved_target"));
+    assert!(js.contains("entry.source"));
     assert!(js.contains("Jump Table"));
     assert!(js.contains("to_block"));
     assert!(js.contains("Intra-window Edges"));

@@ -642,6 +642,7 @@ function renderOverviewValues(rows) {
           ${renderJumpButton(entry.first_instruction_address)}
           <span class="mono">${escapeHtml(formatAddress(entry.value))}</span>
           <span class="mono">${escapeHtml(entry.kind)}</span>
+          <span class="mono">${escapeHtml(entry.source)}</span>
           <span class="mono">${escapeHtml(String(entry.count))}x</span>
         </div>
       `,
