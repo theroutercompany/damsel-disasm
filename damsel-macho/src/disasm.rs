@@ -2409,12 +2409,12 @@ fn add_immediate_inputs(instruction: &DecodedInstruction) -> Option<(Option<Stri
         {
             let displacement = match immediate {
                 Operand::ImmediateUnsigned(value) => i64::try_from(*value).ok()?,
-                Operand::ImmediateSigned(value) => *value,
+                Operand::ImmediateSigned(value) if *value >= 0 => *value,
                 Operand::Label(value) => i64::try_from(*value).ok()?,
                 _ => return None,
             };
             let displacement = if lower.starts_with("sub") {
-                displacement.saturating_neg()
+                displacement.checked_neg()?
             } else {
                 displacement
             };
@@ -3976,6 +3976,43 @@ mod tests {
                 .recovered_values
                 .iter()
                 .any(|value| { value.register == "x20" && value.value == 0x224 })
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_negative_sub_immediates() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "sub",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateSigned(-4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.is_empty(),
+            "negative sub immediates are malformed and must not synthesize values"
+        );
+        assert!(
+            !instructions[1]
+                .references
+                .contains(&Reference::Data { target: 0x3004 }),
+            "negative sub immediates must not be flipped into positive data references"
         );
     }
 
