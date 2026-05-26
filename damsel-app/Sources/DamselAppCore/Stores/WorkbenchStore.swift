@@ -42,6 +42,8 @@ public final class WorkbenchStore: ObservableObject {
     private let serverProcess: DamselServerProcess
     private var client: (any WorkbenchAPIClient)?
     private var bootstrapTask: Task<URL, Error>?
+    private var loadRequestID = 0
+    private var disassemblyRequestID = 0
 
     public init(serverProcess: DamselServerProcess = DamselServerProcess()) {
         self.serverProcess = serverProcess
@@ -181,6 +183,10 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func loadFile(_ url: URL) async {
+        loadRequestID += 1
+        disassemblyRequestID += 1
+        let requestID = loadRequestID
+
         await bootstrap()
         guard let client else {
             return
@@ -189,20 +195,33 @@ public final class WorkbenchStore: ObservableObject {
         isBusy = true
         bannerMessage = nil
         statusText = "Loading \(url.lastPathComponent)"
-        defer { isBusy = false }
+        defer {
+            if requestID == loadRequestID {
+                isBusy = false
+            }
+        }
 
         do {
             let upload = try await client.uploadImage(fileURL: url)
+            guard requestID == loadRequestID else {
+                return
+            }
             resetForLoadedImage(upload, url: url)
             statusText = "\(upload.fileName) · \(upload.architecture) · \(upload.sections.count) sections"
             try await runDisassembly()
         } catch {
+            guard requestID == loadRequestID else {
+                return
+            }
             bannerMessage = error.localizedDescription
             statusText = "Load failed"
         }
     }
 
     public func runDisassembly() async throws {
+        disassemblyRequestID += 1
+        let requestID = disassemblyRequestID
+
         await bootstrap()
         guard let client, let imageId = loadedImage?.imageId else {
             bannerMessage = "Load a Mach-O before requesting disassembly."
@@ -220,10 +239,17 @@ public final class WorkbenchStore: ObservableObject {
         isBusy = true
         bannerMessage = nil
         statusText = "Decoding \(request.target.value)"
-        defer { isBusy = false }
+        defer {
+            if requestID == disassemblyRequestID {
+                isBusy = false
+            }
+        }
 
         do {
             let payload = try await client.disassemble(imageId: imageId, request: request)
+            guard requestID == disassemblyRequestID, loadedImage?.imageId == imageId else {
+                return
+            }
             disassembly = payload
             if !payload.instructions.contains(where: { $0.address == selectedInstructionAddress }) {
                 selectedInstructionAddress = payload.instructions.first?.address
@@ -231,6 +257,9 @@ public final class WorkbenchStore: ObservableObject {
             reconcileSelectedInstructionWithFilter()
             statusText = resultSubtitle
         } catch {
+            guard requestID == disassemblyRequestID, loadedImage?.imageId == imageId else {
+                return
+            }
             bannerMessage = error.localizedDescription
             statusText = "Decode failed"
         }

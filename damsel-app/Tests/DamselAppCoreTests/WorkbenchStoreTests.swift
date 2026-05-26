@@ -86,10 +86,39 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(request?.target.value, "__TEXT:__text")
     }
 
-    private static func sampleDisassembly() throws -> DisassemblyResponse {
+    @MainActor
+    func testStaleDisassemblyCannotOverwriteNewerLoadedFile() async throws {
+        let client = LoadRaceClient()
+        let store = WorkbenchStore(client: client)
+
+        let oldURL = URL(fileURLWithPath: "/tmp/old-fixture")
+        let newURL = URL(fileURLWithPath: "/tmp/new-fixture")
+
+        let oldLoad = Task {
+            await store.loadFile(oldURL)
+        }
+
+        while await !client.didStartDisassembly(for: "old-fixture") {
+            await Task.yield()
+        }
+
+        let newLoad = Task {
+            await store.loadFile(newURL)
+        }
+
+        await oldLoad.value
+        await newLoad.value
+
+        XCTAssertEqual(store.loadedImage?.imageId, "new-fixture")
+        XCTAssertEqual(store.disassembly?.target, "target-new-fixture")
+        XCTAssertEqual(store.statusText, "1 rows · Limit")
+        XCTAssertFalse(store.isBusy)
+    }
+
+    fileprivate static func sampleDisassembly(target: String = "__TEXT:__text") throws -> DisassemblyResponse {
         let json = """
         {
-          "target": "__TEXT:__text",
+          "target": "\(target)",
           "start_address": 4294968496,
           "end_address": 4294968500,
           "instruction_count": 1,
@@ -108,10 +137,10 @@ final class WorkbenchStoreTests: XCTestCase {
         return try JSONDecoder().decode(DisassemblyResponse.self, from: Data(json.utf8))
     }
 
-    private static func sampleImage(imageId: String = "fixture") -> ImageUploadResponse {
+    fileprivate static func sampleImage(imageId: String = "fixture", fileName: String = "semantic-switch") -> ImageUploadResponse {
         ImageUploadResponse(
             imageId: imageId,
-            fileName: "semantic-switch",
+            fileName: fileName,
             architecture: "arm64",
             entryPoint: 0x1000004b0,
             sections: [
@@ -126,6 +155,31 @@ final class WorkbenchStoreTests: XCTestCase {
             ],
             defaultSection: "__TEXT:__text"
         )
+    }
+}
+
+private actor LoadRaceClient: WorkbenchAPIClient {
+    private var startedDisassemblyImageIDs: Set<String> = []
+
+    func uploadImage(fileURL: URL) async throws -> ImageUploadResponse {
+        let name = fileURL.lastPathComponent
+        return WorkbenchStoreTests.sampleImage(imageId: name, fileName: name)
+    }
+
+    func symbolSuggestions(imageId: String, query: String, limit: Int) async throws -> [String] {
+        []
+    }
+
+    func disassemble(imageId: String, request payload: DisasmAPIRequest) async throws -> DisassemblyResponse {
+        startedDisassemblyImageIDs.insert(imageId)
+        if imageId == "old-fixture" {
+            try await Task.sleep(nanoseconds: 30_000_000)
+        }
+        return try WorkbenchStoreTests.sampleDisassembly(target: "target-\(imageId)")
+    }
+
+    func didStartDisassembly(for imageID: String) -> Bool {
+        startedDisassemblyImageIDs.contains(imageID)
     }
 }
 
