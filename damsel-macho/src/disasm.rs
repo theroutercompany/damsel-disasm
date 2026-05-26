@@ -2408,7 +2408,7 @@ fn written_destination_registers(instruction: &DecodedInstruction, mnemonic: &st
         return Vec::new();
     }
 
-    if mnemonic.starts_with("ldp") || mnemonic.starts_with("ldnp") {
+    if load_pair_writes_two_destinations(mnemonic) {
         return instruction
             .operands
             .iter()
@@ -2427,6 +2427,12 @@ fn register_operand_name(operand: &Operand) -> Option<String> {
         Operand::SystemRegister(register) => Some(register.clone()),
         _ => None,
     }
+}
+
+fn load_pair_writes_two_destinations(mnemonic: &str) -> bool {
+    mnemonic.starts_with("ldp")
+        || mnemonic.starts_with("ldnp")
+        || matches!(mnemonic, "ldxp" | "ldaxp")
 }
 
 fn memory_writeback_base_registers(instruction: &DecodedInstruction) -> Vec<String> {
@@ -4746,6 +4752,49 @@ mod tests {
                     .references
                     .contains(&Reference::Call { target: 0x1234 }),
                 "conditional compare sources must keep their recovered values across {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_exclusive_pair_load_destinations() {
+        let image = synthetic_image();
+        for mnemonic in ["ldxp", "ldaxp"] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::ImmediateUnsigned(0x1234),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::Register("x9".to_string()),
+                        Operand::Memory {
+                            base: "sp".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(0x1008, "blr", vec![Operand::Register("x9".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                !instructions[2]
+                    .references
+                    .contains(&Reference::Call { target: 0x1234 }),
+                "exclusive pair loads must invalidate both destination registers across {mnemonic}: {:?}",
                 instructions
             );
         }
