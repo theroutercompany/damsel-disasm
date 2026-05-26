@@ -2138,8 +2138,12 @@ fn synthesize_analysis_references(
 
             let jump_table_source = canonical_state_key(&register)
                 .and_then(|key| jump_table_sources.get(&key).cloned());
-            let mut resolved_target = read_known_value(&known_values, register.as_str())
-                .map(|value| (value.value, indirect_target_reason(image, value.value)));
+            let mut resolved_target =
+                read_known_value(&known_values, register.as_str()).and_then(|value| {
+                    let reason = indirect_target_reason(image, value.value);
+                    should_resolve_indirect_target(value.value, reason)
+                        .then_some((value.value, reason))
+                });
 
             if let Some(jump_table_source) = jump_table_source.clone() {
                 if let Some(index_value) =
@@ -4823,6 +4827,22 @@ fn indirect_target_reason(image: &BinaryImage, target: u64) -> IndirectTargetRea
     }
 }
 
+fn should_resolve_indirect_target(target: u64, reason: IndirectTargetReason) -> bool {
+    if target == 0 {
+        return false;
+    }
+    if reason == IndirectTargetReason::RegisterState
+        && looks_like_sign_extended_negative_literal(target)
+    {
+        return false;
+    }
+    true
+}
+
+fn looks_like_sign_extended_negative_literal(target: u64) -> bool {
+    target >> 32 == u64::from(u32::MAX) || (target <= u64::from(u32::MAX) && target >> 16 == 0xffff)
+}
+
 fn is_executable_target(image: &BinaryImage, target: u64) -> bool {
     image
         .containing_section(target)
@@ -5969,6 +5989,60 @@ mod tests {
                 && value.kind == RecoveredValueKind::Literal
                 && value.source == RecoveredValueSource::MoveWide
         }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_does_not_resolve_sentinel_indirect_targets() {
+        let image = synthetic_image();
+        for (register, operand, target) in [
+            ("x8", Operand::ImmediateUnsigned(0), 0),
+            ("x8", Operand::ImmediateSigned(-1), u64::MAX),
+            ("x8", Operand::ImmediateSigned(-2), u64::MAX - 1),
+            ("w8", Operand::ImmediateSigned(-1), u64::from(u32::MAX)),
+        ] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![Operand::Register(register.to_string()), operand],
+                ),
+                instruction(0x1004, "br", vec![Operand::Register("x8".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[0]
+                    .recovered_values
+                    .iter()
+                    .any(|value| value.value == target),
+                "sentinel constants should still be visible as recovered values for {register}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::IndirectBranch {
+                        via: "x8".to_string()
+                    }),
+                "sentinel constants should still produce indirect control-flow references: {:?}",
+                instructions
+            );
+            assert!(
+                !instructions[1]
+                    .references
+                    .contains(&Reference::Branch { target }),
+                "sentinel constants must not fabricate concrete branch targets: {:?}",
+                instructions
+            );
+            assert!(
+                !instructions[1].annotations.iter().any(|annotation| {
+                    matches!(annotation, Annotation::IndirectTargetResolved { target: existing, .. } if *existing == target)
+                }),
+                "sentinel constants must not fabricate resolved-target annotations: {:?}",
+                instructions
+            );
+        }
     }
 
     #[test]
