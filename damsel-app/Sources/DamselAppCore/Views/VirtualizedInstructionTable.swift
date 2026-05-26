@@ -239,8 +239,7 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
         }
 
         private func rowText(for instruction: InstructionRow) -> String {
-            let opcode = DamselFormat.address(instruction.opcode)
-            return "\(DamselFormat.address(instruction.address))  \(opcode)  \(instruction.rendered)"
+            DamselFormat.instructionRow(instruction)
         }
 
         private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {

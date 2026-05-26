@@ -102,6 +102,23 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectedInstructionClipboardTextUsesCurrentSelection() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        XCTAssertFalse(store.canCopySelectedInstruction)
+        try await store.runDisassembly()
+
+        guard let instruction = store.selectedInstruction else {
+            return XCTFail("Expected disassembly to select the first instruction.")
+        }
+        XCTAssertTrue(store.canCopySelectedInstruction)
+        XCTAssertEqual(store.selectedInstructionClipboardText(.address), DamselFormat.address(instruction.address))
+        XCTAssertEqual(store.selectedInstructionClipboardText(.instruction), instruction.rendered)
+        XCTAssertEqual(store.selectedInstructionClipboardText(.row), DamselFormat.instructionRow(instruction))
+    }
+
+    @MainActor
     func testLoadingFileResetsFileScopedControlsBeforeAutoDisassembly() async throws {
         let loadedImage = Self.sampleImage(imageId: "new-fixture")
         let client = SuggestionClient(

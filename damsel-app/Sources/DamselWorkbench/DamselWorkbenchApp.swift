@@ -68,6 +68,10 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         case #selector(revealLoadedBinary(_:)),
              #selector(copyLoadedBinaryPath(_:)):
             return store.selectedFileURL != nil
+        case #selector(copySelectedInstructionAddress(_:)),
+             #selector(copySelectedInstructionText(_:)),
+             #selector(copySelectedInstructionRow(_:)):
+            return store.canCopySelectedInstruction
         default:
             return true
         }
@@ -113,6 +117,18 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.path, forType: .string)
+    }
+
+    @objc private func copySelectedInstructionAddress(_ sender: Any?) {
+        copySelectedInstruction(.address)
+    }
+
+    @objc private func copySelectedInstructionText(_ sender: Any?) {
+        copySelectedInstruction(.instruction)
+    }
+
+    @objc private func copySelectedInstructionRow(_ sender: Any?) {
+        copySelectedInstruction(.row)
     }
 
     @objc private func showAboutPanel(_ sender: Any?) {
@@ -198,6 +214,25 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         menu.addItem(.separator())
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
             .keyEquivalentModifierMask = [.command]
+        menu.addItem(.separator())
+        let copyAddress = menu.addItem(
+            withTitle: "Copy Selected Address",
+            action: #selector(copySelectedInstructionAddress(_:)),
+            keyEquivalent: ""
+        )
+        copyAddress.target = self
+        let copyInstruction = menu.addItem(
+            withTitle: "Copy Selected Instruction",
+            action: #selector(copySelectedInstructionText(_:)),
+            keyEquivalent: ""
+        )
+        copyInstruction.target = self
+        let copyRow = menu.addItem(
+            withTitle: "Copy Selected Row",
+            action: #selector(copySelectedInstructionRow(_:)),
+            keyEquivalent: ""
+        )
+        copyRow.target = self
         return menu
     }
 
@@ -241,6 +276,15 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.submenu = submenu
         return item
+    }
+
+    private func copySelectedInstruction(_ payload: InstructionClipboardPayload) {
+        guard let text = store.selectedInstructionClipboardText(payload) else {
+            NSSound.beep()
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func openMainWindow() {

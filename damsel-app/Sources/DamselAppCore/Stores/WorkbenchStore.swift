@@ -1,6 +1,12 @@
 import Combine
 import Foundation
 
+public enum InstructionClipboardPayload: Sendable {
+    case address
+    case instruction
+    case row
+}
+
 @MainActor
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var serverState: ServerState = .stopped
@@ -143,6 +149,10 @@ public final class WorkbenchStore: ObservableObject {
 
     public var canRunDisassembly: Bool {
         loadedImage != nil && !isBusy && decodeValidationMessage == nil
+    }
+
+    public var canCopySelectedInstruction: Bool {
+        selectedInstruction != nil
     }
 
     public var decodeValidationMessage: String? {
@@ -319,6 +329,21 @@ public final class WorkbenchStore: ObservableObject {
 
     public func selectInstruction(_ instruction: InstructionRow) {
         selectedInstructionAddress = instruction.address
+    }
+
+    public func selectedInstructionClipboardText(_ payload: InstructionClipboardPayload) -> String? {
+        guard let instruction = selectedInstruction else {
+            return nil
+        }
+
+        switch payload {
+        case .address:
+            return DamselFormat.address(instruction.address)
+        case .instruction:
+            return instruction.rendered
+        case .row:
+            return DamselFormat.instructionRow(instruction)
+        }
     }
 
     public func jump(to address: UInt64) async {

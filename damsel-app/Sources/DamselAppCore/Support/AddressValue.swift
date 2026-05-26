@@ -48,6 +48,11 @@ public enum DamselFormat {
         return AddressValue(value).displayString
     }
 
+    public static func instructionRow(_ instruction: InstructionRow) -> String {
+        let opcode = address(instruction.opcode)
+        return "\(address(instruction.address))  \(opcode)  \(instruction.rendered)"
+    }
+
     public static func shortCount(_ value: Int?) -> String {
         guard let value else {
             return "0"
