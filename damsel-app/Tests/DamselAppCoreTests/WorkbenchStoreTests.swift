@@ -131,7 +131,20 @@ final class WorkbenchStoreTests: XCTestCase {
 
         XCTAssertTrue(store.disassemblyNeedsRefresh)
         XCTAssertEqual(store.toolbarStatusText, "1 rows *")
+        XCTAssertTrue(store.toolbarStatusDetail.contains("Needs refresh"))
         XCTAssertTrue(store.resultSubtitle.contains("Needs refresh"))
+    }
+
+    @MainActor
+    func testToolbarStatusDetailPrefersFailureStatusWhenBannerIsVisible() async throws {
+        let client = DecodeFailureAfterFirstClient()
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        store.includeAnalysis = true
+        try await store.runDisassembly()
+
+        XCTAssertEqual(store.toolbarStatusDetail, "Decode failed")
     }
 
     @MainActor
@@ -362,6 +375,26 @@ private actor LoadRaceClient: WorkbenchAPIClient {
 
     func didStartDisassembly(for imageID: String) -> Bool {
         startedDisassemblyImageIDs.contains(imageID)
+    }
+}
+
+private actor DecodeFailureAfterFirstClient: WorkbenchAPIClient {
+    private var disassemblyCount = 0
+
+    func uploadImage(fileURL: URL) async throws -> ImageUploadResponse {
+        WorkbenchStoreTests.sampleImage()
+    }
+
+    func symbolSuggestions(imageId: String, query: String, limit: Int) async throws -> [String] {
+        []
+    }
+
+    func disassemble(imageId: String, request payload: DisasmAPIRequest) async throws -> DisassemblyResponse {
+        disassemblyCount += 1
+        if disassemblyCount > 1 {
+            throw WorkbenchValidationError("Decode exploded in test.")
+        }
+        return try WorkbenchStoreTests.sampleDisassembly()
     }
 }
 

@@ -140,6 +140,16 @@ public final class WorkbenchStore: ObservableObject {
         return disassemblyNeedsRefresh ? "\(rowText) *" : rowText
     }
 
+    public var toolbarStatusDetail: String {
+        if isBusy || bannerMessage != nil {
+            return statusText
+        }
+        if disassembly != nil {
+            return resultSubtitle
+        }
+        return statusText
+    }
+
     public var visibleInstructions: [InstructionRow] {
         guard let instructions = disassembly?.instructions else {
             return []

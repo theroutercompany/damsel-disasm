@@ -54,7 +54,7 @@ public struct ContentView: View {
             ToolbarItem(placement: .status) {
                 TitlebarStatusView(
                     text: store.toolbarStatusText,
-                    detail: store.statusText,
+                    detail: store.toolbarStatusDetail,
                     isBusy: store.isBusy
                 )
             }
