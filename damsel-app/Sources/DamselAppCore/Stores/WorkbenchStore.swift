@@ -104,6 +104,22 @@ public final class WorkbenchStore: ObservableObject {
         return instructions.filter { InstructionFilter.matches($0, query: filterText) }
     }
 
+    public var canRunDisassembly: Bool {
+        loadedImage != nil && !isBusy && decodeValidationMessage == nil
+    }
+
+    public var decodeValidationMessage: String? {
+        guard loadedImage != nil else {
+            return nil
+        }
+        do {
+            _ = try buildRequest()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     public func bootstrap() async {
         guard client == nil else {
             return
@@ -220,6 +236,20 @@ public final class WorkbenchStore: ObservableObject {
 
     public func clearBanner() {
         bannerMessage = nil
+    }
+
+    public func setBytesText(_ text: String) {
+        bytesText = IntegerTextInput.sanitize(text)
+        if !bytesText.isEmpty {
+            limitText = ""
+        }
+    }
+
+    public func setLimitText(_ text: String) {
+        limitText = IntegerTextInput.sanitize(text)
+        if !limitText.isEmpty {
+            bytesText = ""
+        }
     }
 
     public func shutdown() {

@@ -81,4 +81,17 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertTrue(InstructionFilter.matches(instruction, query: "0x100000000"))
         XCTAssertFalse(InstructionFilter.matches(instruction, query: "ret"))
     }
+
+    @MainActor
+    func testWindowSizeInputsStayMutuallyExclusive() {
+        let store = WorkbenchStore()
+
+        store.setBytesText("0x40")
+        XCTAssertEqual(store.bytesText, "0x40")
+        XCTAssertEqual(store.limitText, "")
+
+        store.setLimitText("256")
+        XCTAssertEqual(store.bytesText, "")
+        XCTAssertEqual(store.limitText, "256")
+    }
 }

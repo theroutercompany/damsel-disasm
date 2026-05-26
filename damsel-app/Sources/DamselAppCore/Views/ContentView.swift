@@ -49,7 +49,7 @@ public struct ContentView: View {
                     Label("Disassemble", systemImage: "play.fill")
                 }
                 .keyboardShortcut(.return, modifiers: [.command])
-                .disabled(store.loadedImage == nil || store.isBusy)
+                .disabled(!store.canRunDisassembly)
             }
 
             ToolbarItem(placement: .status) {
@@ -92,9 +92,6 @@ public struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .damselRunDisassemblyCommand)) { _ in
             Task { try? await store.runDisassembly() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-            store.shutdown()
         }
         .onChange(of: store.symbolText) { _, _ in
             symbolSuggestionTask?.cancel()

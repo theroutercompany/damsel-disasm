@@ -47,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.shutdown()
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
     private func openMainWindow() {
         let window: NSWindow
         if let existingWindow = mainWindow {

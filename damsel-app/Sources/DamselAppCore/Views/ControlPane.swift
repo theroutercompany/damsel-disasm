@@ -104,8 +104,16 @@ struct ControlPane: View {
             IntegerInputField("To", text: $store.toText)
 
             HStack {
-                IntegerInputField("Bytes", text: $store.bytesText)
-                IntegerInputField("Limit", text: $store.limitText)
+                IntegerInputField("Bytes", text: bytesBinding)
+                IntegerInputField("Limit", text: limitBinding)
+            }
+
+            if let validationMessage = store.decodeValidationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.triangle")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.orange)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -125,7 +133,7 @@ struct ControlPane: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(store.loadedImage == nil || store.isBusy)
+            .disabled(!store.canRunDisassembly)
         }
     }
 
@@ -137,6 +145,20 @@ struct ControlPane: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
         }
+    }
+
+    private var bytesBinding: Binding<String> {
+        Binding(
+            get: { store.bytesText },
+            set: { store.setBytesText($0) }
+        )
+    }
+
+    private var limitBinding: Binding<String> {
+        Binding(
+            get: { store.limitText },
+            set: { store.setLimitText($0) }
+        )
     }
 }
 
