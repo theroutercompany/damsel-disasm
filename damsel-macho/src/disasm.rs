@@ -2646,6 +2646,8 @@ fn synthesize_pair_load_values(
     let base = read_known_value(known_values, &base_register)?.value;
     let first_slot = add_signed(base, displacement)?;
     let second_slot = first_slot.checked_add(u64::try_from(first_width).ok()?)?;
+    recoverable_memory_load_range(image, first_slot, first_width)?;
+    recoverable_memory_load_range(image, second_slot, second_width)?;
     let first_value = read_memory_value(image, first_slot, first_width, first_signed)?;
     let second_value = read_memory_value(image, second_slot, second_width, second_signed)?;
 
@@ -2784,13 +2786,7 @@ fn synthesize_scalar_memory_load_value(
     address: u64,
 ) -> Option<RecoveredValue> {
     let (width, signed) = scalar_memory_load_width(register, lower)?;
-    let (section, _) = image.bytes_for_virtual_range(address, width)?;
-    if section.executable {
-        return None;
-    }
-    if unresolved_load_reference_kind(image, address).is_some() {
-        return None;
-    }
+    recoverable_memory_load_range(image, address, width)?;
     let value = read_memory_value(image, address, width, signed)?;
     Some(RecoveredValue {
         register: register.to_string(),
@@ -2798,6 +2794,17 @@ fn synthesize_scalar_memory_load_value(
         kind: classify_recovered_value(image, value, RecoveredValueKind::Literal),
         source: RecoveredValueSource::AdrpLoad,
     })
+}
+
+fn recoverable_memory_load_range(image: &BinaryImage, address: u64, width: usize) -> Option<()> {
+    let (section, _) = image.bytes_for_virtual_range(address, width)?;
+    if section.executable {
+        return None;
+    }
+    if unresolved_load_reference_kind(image, address).is_some() {
+        return None;
+    }
+    Some(())
 }
 
 fn scalar_memory_load_width(register: &str, mnemonic: &str) -> Option<(usize, bool)> {
@@ -12169,6 +12176,74 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "pair-loaded function pointers should feed indirect branch recovery: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_does_not_recover_pair_load_values_from_executable_sections() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldp",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x9".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x3000 }),
+            "known pair-load addresses should still emit data refs: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "pair loads from executable bytes must not synthesize values: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "unrecoverable pair loads must clear stale first-destination state: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0 }),
+            "pair loads from zero-filled executable bytes must not fabricate zero branch targets: {:?}",
             instructions
         );
     }
