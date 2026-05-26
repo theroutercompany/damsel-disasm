@@ -2813,6 +2813,27 @@ fn synthesize_simple_register_value(
             };
             Some((destination, value, RecoveredValueSource::Other))
         }
+        "add" | "sub" => {
+            let destination = match instruction.operands.first()? {
+                Operand::Register(register) => register.clone(),
+                _ => return None,
+            };
+            let base = match instruction.operands.get(1)? {
+                Operand::Register(register) => read_simple_register_value(known_values, register)?,
+                _ => return None,
+            };
+            let rhs = arithmetic_register_operand_value(
+                instruction.operands.get(2)?,
+                &destination,
+                known_values,
+            )?;
+            let value = match lower.as_str() {
+                "add" => add_arithmetic_operand(base, rhs)?,
+                "sub" => subtract_arithmetic_operand(base, rhs)?,
+                _ => return None,
+            };
+            Some((destination, value, RecoveredValueSource::Other))
+        }
         "lsl" | "lsr" | "asr" => {
             let destination = match instruction.operands.first()? {
                 Operand::Register(register) => register.clone(),
@@ -2834,6 +2855,102 @@ fn synthesize_simple_register_value(
             Some((destination, value, RecoveredValueSource::Other))
         }
         _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ArithmeticOperandValue {
+    Unsigned(u64),
+    Signed(i64),
+}
+
+fn arithmetic_register_operand_value(
+    operand: &Operand,
+    destination: &str,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<ArithmeticOperandValue> {
+    match operand {
+        Operand::Register(register) => Some(ArithmeticOperandValue::Unsigned(
+            read_simple_register_value(known_values, register)?,
+        )),
+        Operand::ShiftedRegister { register, shift } => {
+            let value = read_simple_register_value(known_values, register)?;
+            let destination_width = register_value_width(destination)?;
+            shifted_arithmetic_operand_value(register, value, shift, destination_width)
+        }
+        _ => None,
+    }
+}
+
+fn shifted_arithmetic_operand_value(
+    register: &str,
+    value: u64,
+    shift: &str,
+    destination_width: u32,
+) -> Option<ArithmeticOperandValue> {
+    let lower = shift.to_ascii_lowercase();
+    let op = shift_modifier_op(&lower)?;
+    let amount = parse_shift_text(&lower, Some(0))?;
+    let source_width = register_value_width(register).unwrap_or(destination_width);
+    match op {
+        "lsl" => {
+            if amount >= source_width {
+                return None;
+            }
+            Some(ArithmeticOperandValue::Unsigned(value.checked_shl(amount)?))
+        }
+        "lsr" => {
+            if amount >= source_width {
+                return None;
+            }
+            Some(ArithmeticOperandValue::Unsigned(value.checked_shr(amount)?))
+        }
+        "asr" => {
+            if amount >= source_width {
+                return None;
+            }
+            Some(ArithmeticOperandValue::Signed(
+                arithmetic_shift_right_signed(value, source_width, amount),
+            ))
+        }
+        "uxtb" => extend_arithmetic_operand_unsigned(value & 0xff, amount),
+        "uxth" => extend_arithmetic_operand_unsigned(value & 0xffff, amount),
+        "uxtw" => extend_arithmetic_operand_unsigned(u64::from(value as u32), amount),
+        "uxtx" => extend_arithmetic_operand_unsigned(value, amount),
+        "sxtb" => extend_arithmetic_operand_signed((value as u8 as i8) as i64, amount),
+        "sxth" => extend_arithmetic_operand_signed((value as u16 as i16) as i64, amount),
+        "sxtw" => extend_arithmetic_operand_signed((value as u32 as i32) as i64, amount),
+        "sxtx" => extend_arithmetic_operand_signed(i64::from_ne_bytes(value.to_ne_bytes()), amount),
+        _ => None,
+    }
+}
+
+fn extend_arithmetic_operand_unsigned(value: u64, shift: u32) -> Option<ArithmeticOperandValue> {
+    if shift > 4 {
+        return None;
+    }
+    Some(ArithmeticOperandValue::Unsigned(value.checked_shl(shift)?))
+}
+
+fn extend_arithmetic_operand_signed(value: i64, shift: u32) -> Option<ArithmeticOperandValue> {
+    if shift > 4 {
+        return None;
+    }
+    let scale = 1_i64.checked_shl(shift)?;
+    Some(ArithmeticOperandValue::Signed(value.checked_mul(scale)?))
+}
+
+fn add_arithmetic_operand(base: u64, operand: ArithmeticOperandValue) -> Option<u64> {
+    match operand {
+        ArithmeticOperandValue::Unsigned(value) => base.checked_add(value),
+        ArithmeticOperandValue::Signed(value) => add_signed(base, value),
+    }
+}
+
+fn subtract_arithmetic_operand(base: u64, operand: ArithmeticOperandValue) -> Option<u64> {
+    match operand {
+        ArithmeticOperandValue::Unsigned(value) => base.checked_sub(value),
+        ArithmeticOperandValue::Signed(value) => add_signed(base, value.checked_neg()?),
     }
 }
 
@@ -2859,10 +2976,14 @@ fn parse_bit_shift_amount(operand: &Operand, width: u32) -> Option<u32> {
 }
 
 fn arithmetic_shift_right(value: u64, width: u32, shift: u32) -> u64 {
+    arithmetic_shift_right_signed(value, width, shift) as u64
+}
+
+fn arithmetic_shift_right_signed(value: u64, width: u32, shift: u32) -> i64 {
     if width == 32 {
-        ((value as u32 as i32) >> shift) as u32 as u64
+        i64::from((value as u32 as i32) >> shift)
     } else {
-        ((value as i64) >> shift) as u64
+        (value as i64) >> shift
     }
 }
 
@@ -4727,6 +4848,215 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "the shifted index should resolve the indirect branch: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_shifted_register_add_table_addresses() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ShiftedRegister {
+                        register: "x9".to_string(),
+                        shift: "lsl #3".to_string(),
+                    },
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Memory {
+                        base: "x10".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x11".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x4008
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "shifted register add should recover the precomputed table address: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "loads through precomputed shifted table addresses should recover data refs: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "precomputed shifted table addresses should feed indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_signed_extended_register_add_offsets() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x4010),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "movn",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ShiftedRegister {
+                        register: "w9".to_string(),
+                        shift: "sxtw #3".to_string(),
+                    },
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Memory {
+                        base: "x10".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x11".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x4008
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "signed extended register adds should subtract negative scaled offsets: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "signed extended register add offsets should still resolve table targets: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_invalid_register_add_shifts() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x4008),
+                ],
+            ),
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1004, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ShiftedRegister {
+                        register: "x9".to_string(),
+                        shift: "lsl #64".to_string(),
+                    },
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ldr",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Memory {
+                        base: "x10".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x11".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.is_empty(),
+            "invalid shifted register add operands must not synthesize a value"
+        );
+        assert!(
+            !instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "invalid shifted register add operands must clear stale destination state: {:?}",
             instructions
         );
     }
