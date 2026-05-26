@@ -484,8 +484,36 @@ public final class WorkbenchStore: ObservableObject {
            size.uint64Value == 0 {
             return "Selected file is empty: \(url.lastPathComponent)"
         }
+        guard isSupportedBinaryHeader(url) else {
+            return "Selected file is not a Mach-O or universal binary: \(url.lastPathComponent)"
+        }
         return nil
     }
+
+    private func isSupportedBinaryHeader(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return false
+        }
+        defer {
+            try? handle.close()
+        }
+
+        guard let header = try? handle.read(upToCount: 4), header.count == 4 else {
+            return false
+        }
+        return Self.supportedBinaryMagics.contains([UInt8](header))
+    }
+
+    private static let supportedBinaryMagics: Set<[UInt8]> = [
+        [0xFE, 0xED, 0xFA, 0xCE],
+        [0xCE, 0xFA, 0xED, 0xFE],
+        [0xFE, 0xED, 0xFA, 0xCF],
+        [0xCF, 0xFA, 0xED, 0xFE],
+        [0xCA, 0xFE, 0xBA, 0xBE],
+        [0xBE, 0xBA, 0xFE, 0xCA],
+        [0xCA, 0xFE, 0xBA, 0xBF],
+        [0xBF, 0xBA, 0xFE, 0xCA],
+    ]
 
     private func buildRequest() throws -> DisasmAPIRequest {
         guard loadedImage != nil else {

@@ -40,7 +40,7 @@ public struct ContentView: View {
                 Button(action: openFile) {
                     Label("Open Binary", systemImage: "folder")
                 }
-                .help("Open a Mach-O binary")
+                .help("Open a Mach-O or universal binary")
 
                 Button {
                     Task { try? await store.runDisassembly() }
@@ -120,7 +120,7 @@ public struct ContentView: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.title = "Open Mach-O Binary"
-        panel.message = "Choose an Apple Silicon Mach-O binary for Damsel to inspect."
+        panel.message = "Choose an Apple Silicon Mach-O or universal binary for Damsel to inspect."
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return

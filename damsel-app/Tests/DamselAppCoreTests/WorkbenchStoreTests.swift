@@ -240,13 +240,37 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testNonMachoLocalFileFailsBeforeUpload() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let textFile = directory.appendingPathComponent("notes.txt")
+        try Data("not a Mach-O".utf8).write(to: textFile)
+        let client = SuggestionClient(
+            response: [],
+            uploadResponse: Self.sampleImage(imageId: "unexpected"),
+            disassemblyResponse: try Self.sampleDisassembly()
+        )
+        let store = WorkbenchStore(client: client, validatesLocalFiles: true)
+
+        await store.loadFile(textFile)
+
+        XCTAssertEqual(store.statusText, "Load failed")
+        XCTAssertEqual(store.bannerMessage, "Selected file is not a Mach-O or universal binary: notes.txt")
+        XCTAssertNil(store.loadedImage)
+        let uploadedFilePath = await client.uploadedFilePath
+        XCTAssertNil(uploadedFilePath)
+    }
+
+    @MainActor
     func testReadableLocalFileStillUploads() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let fileURL = directory.appendingPathComponent("fixture-binary")
-        try Data([0xCA, 0xFE]).write(to: fileURL)
+        try Data([0xCF, 0xFA, 0xED, 0xFE]).write(to: fileURL)
         let loadedImage = Self.sampleImage(imageId: "validated-fixture", fileName: "fixture-binary")
         let client = SuggestionClient(
             response: [],
