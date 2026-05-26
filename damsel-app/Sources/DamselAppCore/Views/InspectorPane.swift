@@ -19,11 +19,8 @@ struct InspectorPane: View {
                     }
                     .padding(18)
                 } else {
-                    Text("Select an instruction to inspect references and recovered values.")
-                        .font(.system(.callout, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                    InspectorEmptyState(message: emptyStateMessage)
                         .padding(18)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -44,6 +41,20 @@ struct InspectorPane: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
+    }
+
+    private var emptyStateMessage: String {
+        guard let disassembly = store.disassembly else {
+            return "Load a binary to inspect decoded instructions."
+        }
+        if disassembly.instructions.isEmpty {
+            return "Decoded target has no instructions to inspect."
+        }
+        if !store.instructionFilterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           store.visibleInstructions.isEmpty {
+            return "No instruction matches the current filter."
+        }
+        return "Select an instruction to inspect references and recovered values."
     }
 
     private func instructionSection(_ instruction: InstructionRow) -> some View {
@@ -162,6 +173,23 @@ private struct EmptyDetail: View {
         Text(text)
             .font(.system(.caption, design: .monospaced))
             .foregroundStyle(.secondary)
+    }
+}
+
+private struct InspectorEmptyState: View {
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: "sidebar.trailing")
+                .font(.system(size: 24))
+                .foregroundStyle(.secondary)
+            Text(message)
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

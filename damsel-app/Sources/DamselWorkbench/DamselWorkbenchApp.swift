@@ -101,6 +101,13 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
             .keyEquivalentModifierMask = [.command]
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(.separator())
+        let bringAll = windowMenu.addItem(
+            withTitle: "Bring All to Front",
+            action: #selector(NSApplication.arrangeInFront(_:)),
+            keyEquivalent: ""
+        )
+        bringAll.target = NSApp
         mainMenu.addItem(menu("Window", submenu: windowMenu))
         NSApp.windowsMenu = windowMenu
 
@@ -112,6 +119,17 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         menu.addItem(withTitle: "About Damsel Workbench", action: #selector(showAboutPanel(_:)), keyEquivalent: "")
             .target = self
         menu.addItem(.separator())
+        let services = NSMenu(title: "Services")
+        let servicesItem = menu.addItem(withTitle: "Services", action: nil, keyEquivalent: "")
+        servicesItem.submenu = services
+        NSApp.servicesMenu = services
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Hide Damsel Workbench", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+            .keyEquivalentModifierMask = [.command]
+        menu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+            .keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
         let quit = menu.addItem(withTitle: "Quit Damsel Workbench", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.keyEquivalentModifierMask = [.command]
         return menu
@@ -122,6 +140,9 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         let open = menu.addItem(withTitle: "Open Binary...", action: #selector(openBinary(_:)), keyEquivalent: "o")
         open.keyEquivalentModifierMask = [.command]
         open.target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+            .keyEquivalentModifierMask = [.command]
         return menu
     }
 

@@ -58,6 +58,8 @@ struct InstructionSurfaceView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
+                    .help("Clear instruction filter")
+                    .accessibilityLabel("Clear instruction filter")
                 }
             }
             .disabled(!hasInstructions)
