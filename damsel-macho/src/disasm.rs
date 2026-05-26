@@ -2635,6 +2635,17 @@ fn pair_memory_second_slot_target(
 }
 
 fn pair_memory_access_width(instruction: &DecodedInstruction, mnemonic: &str) -> Option<usize> {
+    if atomic_pair_compare_swap_writes_first_two_operands(mnemonic) {
+        let first_register = register_operand_name(instruction.operands.first()?)?;
+        let second_register = register_operand_name(instruction.operands.get(1)?)?;
+        let first_width = pair_store_width(&first_register)?;
+        let second_width = pair_store_width(&second_register)?;
+        if first_width == second_width {
+            return Some(first_width);
+        }
+        return None;
+    }
+
     if load_pair_writes_two_destinations(mnemonic) {
         let first_register = register_operand_name(instruction.operands.first()?)?;
         let second_register = register_operand_name(instruction.operands.get(1)?)?;
@@ -2846,7 +2857,11 @@ fn memory_base_index_displacement(
     instruction: &DecodedInstruction,
 ) -> Option<(String, Option<String>, i64, MemoryIndexTransform)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
-    if !(lower.starts_with("ld") || lower.starts_with("st") || is_prefetch_mnemonic(&lower)) {
+    if !(lower.starts_with("ld")
+        || lower.starts_with("st")
+        || is_atomic_compare_swap_mnemonic(&lower)
+        || is_prefetch_mnemonic(&lower))
+    {
         return None;
     }
 
@@ -2873,6 +2888,28 @@ fn memory_base_index_displacement(
 
 fn is_prefetch_mnemonic(mnemonic: &str) -> bool {
     matches!(mnemonic, "prfm" | "prfum")
+}
+
+fn is_atomic_compare_swap_mnemonic(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "cas"
+            | "casa"
+            | "casl"
+            | "casal"
+            | "casb"
+            | "casab"
+            | "caslb"
+            | "casalb"
+            | "cash"
+            | "casah"
+            | "caslh"
+            | "casalh"
+            | "casp"
+            | "caspa"
+            | "caspl"
+            | "caspal"
+    )
 }
 
 fn load_reads_destination_value(mnemonic: &str) -> bool {
@@ -12419,6 +12456,20 @@ mod tests {
                     },
                 ],
             ),
+            (
+                "cas",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
         ] {
             let mut instructions = vec![
                 instruction(
@@ -12542,6 +12593,113 @@ mod tests {
             assert!(
                 instructions[1].recovered_values.is_empty(),
                 "pair stores must not synthesize loaded values for {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_compare_swap_expected_registers() {
+        let image = synthetic_image();
+        for (mnemonic, expected_register, desired_register) in [
+            ("cas", "x9", "x10"),
+            ("casal", "x9", "x10"),
+            ("casb", "w9", "w10"),
+            ("casalh", "w9", "w10"),
+        ] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::ImmediateUnsigned(0x1234),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register(expected_register.to_string()),
+                        Operand::Register(desired_register.to_string()),
+                        Operand::Memory {
+                            base: "sp".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(0x1008, "blr", vec![Operand::Register("x9".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                !instructions[2]
+                    .references
+                    .contains(&Reference::Call { target: 0x1234 }),
+                "compare-and-swap instructions must invalidate the expected-value register across {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_emits_pair_compare_swap_slot_refs() {
+        let image = synthetic_literal_image(0x4000, &[0; 16]);
+        for (mnemonic, first_register, second_register, first_new, second_new, second_slot) in [
+            ("casp", "x9", "x10", "x11", "x12", 0x4008),
+            ("caspal", "w9", "w10", "w11", "w12", 0x4004),
+        ] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x4000),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register(first_register.to_string()),
+                        Operand::Register(second_register.to_string()),
+                        Operand::Register(first_new.to_string()),
+                        Operand::Register(second_new.to_string()),
+                        Operand::Memory {
+                            base: "x8".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::Data { target: 0x4000 }),
+                "pair compare-and-swap should record the first slot address for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].references.contains(&Reference::Data {
+                    target: second_slot
+                }),
+                "pair compare-and-swap should record the second slot address for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].recovered_values.is_empty(),
+                "pair compare-and-swap must not synthesize loaded values for {mnemonic}: {:?}",
                 instructions
             );
         }
