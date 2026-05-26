@@ -5302,6 +5302,56 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_accepts_unshifted_extended_memory_index_offsets() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("w9".to_string()),
+                        index_modifier: Some("uxtw".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "unshifted uxtw register offsets should default to byte stride: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "unshifted uxtw offsets should still resolve table loads"
+        );
+    }
+
+    #[test]
     fn synthesize_analysis_references_uses_shift_stride_for_modified_register_offsets() {
         let image = synthetic_table_image(0x3000);
         let mut instructions = vec![
