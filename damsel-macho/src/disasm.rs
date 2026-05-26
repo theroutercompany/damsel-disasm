@@ -2742,7 +2742,7 @@ fn memory_base_index_displacement(
     instruction: &DecodedInstruction,
 ) -> Option<(String, Option<String>, i64, MemoryIndexTransform)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
-    if !(lower.starts_with("ld") || lower.starts_with("st")) {
+    if !(lower.starts_with("ld") || lower.starts_with("st") || is_prefetch_mnemonic(&lower)) {
         return None;
     }
 
@@ -2765,6 +2765,10 @@ fn memory_base_index_displacement(
         }
     }
     None
+}
+
+fn is_prefetch_mnemonic(mnemonic: &str) -> bool {
+    matches!(mnemonic, "prfm" | "prfum")
 }
 
 fn load_reads_destination_value(mnemonic: &str) -> bool {
@@ -11772,6 +11776,70 @@ mod tests {
             "store source registers must keep their recovered values: {:?}",
             instructions
         );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_emits_data_refs_for_prefetch_operands() {
+        let image = synthetic_image();
+        for mnemonic in ["prfm", "prfum"] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x3000),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Other("PLDL1KEEP".to_string()),
+                        Operand::Memory {
+                            base: "x8".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 8,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(
+                    0x1008,
+                    "add",
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(4),
+                    ],
+                ),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::Data { target: 0x3008 }),
+                "known-base prefetch operands should emit data references for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].recovered_values.is_empty(),
+                "prefetch must not synthesize destination values for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[2].recovered_values.iter().any(|value| {
+                    value.register == "x9"
+                        && value.value == 0x3004
+                        && value.source == RecoveredValueSource::AdrpAdd
+                }),
+                "prefetch operands must not clobber the known base register for {mnemonic}: {:?}",
+                instructions
+            );
+        }
     }
 
     #[test]
