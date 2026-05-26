@@ -2579,14 +2579,25 @@ fn memory_writeback_base_registers(instruction: &DecodedInstruction) -> Vec<Stri
 
 fn add_immediate_inputs(instruction: &DecodedInstruction) -> Option<(Option<String>, String, i64)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
-    if lower.starts_with("add") || lower == "sub" || lower.starts_with("subs") {
+    if matches!(lower.as_str(), "add" | "adds" | "sub" | "subs") {
         if let [destination, Operand::Register(base), immediate, ..] =
             instruction.operands.as_slice()
         {
+            let optional_modifier = instruction.operands.get(3);
             let displacement = match immediate {
-                Operand::ImmediateUnsigned(value) => i64::try_from(*value).ok()?,
-                Operand::ImmediateSigned(value) if *value >= 0 => *value,
-                Operand::Label(value) => i64::try_from(*value).ok()?,
+                Operand::ImmediateUnsigned(value) => {
+                    i64::try_from(shifted_add_sub_immediate_value(*value, optional_modifier)?)
+                        .ok()?
+                }
+                Operand::ImmediateSigned(value) if *value >= 0 => {
+                    let value = u64::try_from(*value).ok()?;
+                    i64::try_from(shifted_add_sub_immediate_value(value, optional_modifier)?)
+                        .ok()?
+                }
+                Operand::Label(value) => {
+                    i64::try_from(shifted_add_sub_immediate_value(*value, optional_modifier)?)
+                        .ok()?
+                }
                 _ => return None,
             };
             let displacement = if lower.starts_with("sub") {
@@ -9364,6 +9375,186 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "precomputed shifted table addresses should feed indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_shifted_add_immediate_table_addresses() {
+        let mut bytes = vec![0u8; 8];
+        bytes.copy_from_slice(&0x3000_u64.to_le_bytes());
+        let image = synthetic_literal_image(0x5000, &bytes);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                    Operand::Other("lsl #12".to_string()),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Memory {
+                        base: "x10".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x11".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x5000
+                    && value.source == RecoveredValueSource::AdrpAdd
+            }),
+            "shifted add immediate should recover the scaled address: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x5000 }),
+            "loads through shifted add-immediate addresses should use the scaled target: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "shifted add-immediate table addresses should feed indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_shifted_sub_immediate_table_addresses() {
+        let mut bytes = vec![0u8; 8];
+        bytes.copy_from_slice(&0x3000_u64.to_le_bytes());
+        let image = synthetic_literal_image(0x4000, &bytes);
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x5000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "sub",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                    Operand::Other("lsl #12".to_string()),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Memory {
+                        base: "x10".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x11".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x4000
+                    && value.source == RecoveredValueSource::AdrpAdd
+            }),
+            "shifted sub immediate should recover the scaled address: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x4000 }),
+            "loads through shifted sub-immediate addresses should use the scaled target: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "shifted sub-immediate table addresses should feed indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_invalid_add_immediate_shifts() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                    Operand::Other("lsl #1".to_string()),
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "invalid add-immediate shifts must not synthesize values"
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "invalid add-immediate shifts must clear stale destination state: {:?}",
             instructions
         );
     }
