@@ -86,7 +86,9 @@ struct InstructionSurfaceView: View {
         } else if store.disassembly?.instructions.isEmpty == false {
             EmptyInstructionView(
                 systemImage: "line.3.horizontal.decrease.circle",
-                message: "No instructions match the current filter."
+                message: "No instructions match the current filter.",
+                actionTitle: "Clear Filter",
+                action: store.clearInstructionFilter
             )
         } else {
             EmptyInstructionView()
@@ -101,6 +103,8 @@ private enum FocusedField: Hashable {
 private struct EmptyInstructionView: View {
     var systemImage = "cpu"
     var message = "Load a binary to start decoding."
+    var actionTitle: String?
+    var action: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -110,6 +114,10 @@ private struct EmptyInstructionView: View {
             Text(message)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.secondary)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
