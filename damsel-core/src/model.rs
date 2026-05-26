@@ -2081,6 +2081,7 @@ pub enum Annotation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TableSlotEncoding {
+    Absolute32,
     Absolute64,
     Relative32,
 }
@@ -2088,6 +2089,7 @@ pub enum TableSlotEncoding {
 impl fmt::Display for TableSlotEncoding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let text = match self {
+            Self::Absolute32 => "absolute32",
             Self::Absolute64 => "absolute64",
             Self::Relative32 => "relative32",
         };

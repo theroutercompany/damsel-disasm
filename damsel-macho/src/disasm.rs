@@ -1986,6 +1986,11 @@ fn synthesize_analysis_references(
                                     index_register: index_register.clone(),
                                     element_size,
                                     index_transform,
+                                    slot_resolution: if load_reads_relative_table_offset(&lower) {
+                                        TableSlotResolution::RelativeOnly
+                                    } else {
+                                        TableSlotResolution::AbsoluteOnly
+                                    },
                                 },
                             );
                             jump_table_source_key = Some(jump_key);
@@ -1999,6 +2004,11 @@ fn synthesize_analysis_references(
                                     base_target,
                                     slot_address,
                                     element_size,
+                                    if load_reads_relative_table_offset(&lower) {
+                                        TableSlotResolution::RelativeOnly
+                                    } else {
+                                        TableSlotResolution::AbsoluteOnly
+                                    },
                                 )
                             });
                             if load_reads_relative_table_offset(&lower) {
@@ -2064,7 +2074,8 @@ fn synthesize_analysis_references(
                                 if let Some(slot) = resolved_slot {
                                     let value = slot.target;
                                     let source = match slot.encoding {
-                                        TableSlotEncoding::Absolute64 => {
+                                        TableSlotEncoding::Absolute32
+                                        | TableSlotEncoding::Absolute64 => {
                                             RecoveredValueSource::TableLoad
                                         }
                                         TableSlotEncoding::Relative32 => {
@@ -2204,6 +2215,7 @@ fn synthesize_analysis_references(
                         index_value,
                         jump_table_source.element_size,
                         jump_table_source.index_transform,
+                        jump_table_source.slot_resolution,
                     ) {
                         push_reference_if_missing(
                             &mut instruction.references,
@@ -4738,6 +4750,7 @@ struct JumpTableSource {
     index_register: String,
     element_size: u8,
     index_transform: MemoryIndexTransform,
+    slot_resolution: TableSlotResolution,
 }
 
 #[derive(Debug, Clone)]
@@ -4765,15 +4778,25 @@ struct ResolvedTableSlotReason {
     encoding: TableSlotEncoding,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TableSlotResolution {
+    AbsoluteOnly,
+    RelativeOnly,
+}
+
 fn resolve_table_slot_at_address(
     image: &BinaryImage,
     table_base: u64,
     slot_address: u64,
     element_size: u8,
+    resolution: TableSlotResolution,
 ) -> Option<ResolvedTableSlot> {
     let (_, bytes) = image.bytes_for_virtual_range(slot_address, usize::from(element_size))?;
 
     if element_size == 8 {
+        if resolution != TableSlotResolution::AbsoluteOnly {
+            return None;
+        }
         let raw_bytes: [u8; 8] = bytes.try_into().ok()?;
         let raw = match image.endianness() {
             Endianness::Little => u64::from_le_bytes(raw_bytes),
@@ -4799,21 +4822,24 @@ fn resolve_table_slot_at_address(
     }
 
     let raw_bytes: [u8; 4] = bytes.try_into().ok()?;
-    let relative = match image.endianness() {
-        Endianness::Little => i32::from_le_bytes(raw_bytes),
-        Endianness::Big => i32::from_be_bytes(raw_bytes),
-    } as i64;
-    let relative_target = add_signed(table_base, relative)?;
-    if is_executable_target(image, relative_target)
-        || image.dyld().export_by_address(relative_target).is_some()
-    {
-        return Some(ResolvedTableSlot {
-            slot_address,
-            target: relative_target,
-            kind: classify_recovered_value(image, relative_target, RecoveredValueKind::Address),
-            reason: indirect_target_reason(image, relative_target),
-            encoding: TableSlotEncoding::Relative32,
-        });
+    if resolution == TableSlotResolution::RelativeOnly {
+        let relative = match image.endianness() {
+            Endianness::Little => i32::from_le_bytes(raw_bytes),
+            Endianness::Big => i32::from_be_bytes(raw_bytes),
+        } as i64;
+        let relative_target = add_signed(table_base, relative)?;
+        if is_executable_target(image, relative_target)
+            || image.dyld().export_by_address(relative_target).is_some()
+        {
+            return Some(ResolvedTableSlot {
+                slot_address,
+                target: relative_target,
+                kind: classify_recovered_value(image, relative_target, RecoveredValueKind::Address),
+                reason: indirect_target_reason(image, relative_target),
+                encoding: TableSlotEncoding::Relative32,
+            });
+        }
+        return None;
     }
 
     let raw_u32 = match image.endianness() {
@@ -4823,17 +4849,18 @@ fn resolve_table_slot_at_address(
     let absolute = u64::from(raw_u32);
     let kind = classify_recovered_value(image, absolute, RecoveredValueKind::Address);
     if absolute != 0
-        && !matches!(
-            kind,
-            RecoveredValueKind::Address | RecoveredValueKind::CString
-        )
+        && (is_executable_target(image, absolute)
+            || !matches!(
+                kind,
+                RecoveredValueKind::Address | RecoveredValueKind::CString
+            ))
     {
         return Some(ResolvedTableSlot {
             slot_address,
             target: absolute,
             kind,
             reason: indirect_target_reason(image, absolute),
-            encoding: TableSlotEncoding::Absolute64,
+            encoding: TableSlotEncoding::Absolute32,
         });
     }
 
@@ -5047,6 +5074,7 @@ fn resolve_table_slot_target(
     index_value: u64,
     element_size: u8,
     index_transform: MemoryIndexTransform,
+    resolution: TableSlotResolution,
 ) -> Option<(u64, u64, ResolvedTableSlotReason)> {
     if element_size != 4 && element_size != 8 {
         return None;
@@ -5055,7 +5083,7 @@ fn resolve_table_slot_target(
         return None;
     }
     let slot_address = index_transform.apply(base, index_value)?;
-    let slot = resolve_table_slot_at_address(image, base, slot_address, element_size)?;
+    let slot = resolve_table_slot_at_address(image, base, slot_address, element_size, resolution)?;
     Some((
         slot.slot_address,
         slot.target,
@@ -5676,6 +5704,74 @@ mod tests {
                 },
             ],
             vec![],
+            vec![],
+            vec![],
+            ObjcMetadata::default(),
+            damsel_core::DyldMetadata::default(),
+            bytes,
+        )
+    }
+
+    fn synthetic_absolute32_table_image(absolute_target: u32, relative_target: u64) -> BinaryImage {
+        let mut bytes = vec![0u8; 68];
+        bytes[64..68].copy_from_slice(&absolute_target.to_le_bytes());
+        let bytes: Arc<[u8]> = bytes.into();
+        BinaryImage::from_memory_bytes(
+            Some("disasm-synthetic-absolute32-table".to_string()),
+            BinaryFormat::MachO,
+            Architecture::Arm64,
+            Endianness::Little,
+            None,
+            Some(Platform::unknown("macos")),
+            SliceInfo {
+                offset: 0,
+                size: 68,
+                is_universal: false,
+                cpu_subtype: 0,
+            },
+            vec![],
+            vec![
+                Section {
+                    segment_name: "__TEXT".to_string(),
+                    name: "__text".to_string(),
+                    address: u64::from(absolute_target),
+                    size: 64,
+                    file_offset: Some(0),
+                    file_size: 64,
+                    kind: "Text".to_string(),
+                    executable: true,
+                },
+                Section {
+                    segment_name: "__TEXT".to_string(),
+                    name: "__other_text".to_string(),
+                    address: relative_target,
+                    size: 64,
+                    file_offset: Some(0),
+                    file_size: 64,
+                    kind: "Text".to_string(),
+                    executable: true,
+                },
+                Section {
+                    segment_name: "__DATA_CONST".to_string(),
+                    name: "__const".to_string(),
+                    address: 0x4000,
+                    size: 4,
+                    file_offset: Some(64),
+                    file_size: 4,
+                    kind: "Data".to_string(),
+                    executable: false,
+                },
+            ],
+            vec![Symbol {
+                name: "_absolute32_dispatch_target".to_string(),
+                address: u64::from(absolute_target),
+                size: 16,
+                kind: SymbolKind::Text,
+                defined: true,
+                global: true,
+                weak: false,
+                section: Some("__text".to_string()),
+            }],
             vec![],
             vec![],
             ObjcMetadata::default(),
@@ -14558,6 +14654,78 @@ mod tests {
                 .contains(&Reference::Branch { target: 0x3000 }),
             "big-endian relative table slots should feed indirect branches: {:?}",
             relative_instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_absolute32_table_load_prefers_unsigned_absolute_target() {
+        let image = synthetic_absolute32_table_image(0x3000, 0x7000);
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "ldr",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1008, "br", vec![Operand::Register("x9".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "w9"
+                    && value.value == 0x3000
+                    && value.kind == RecoveredValueKind::FunctionPointer
+                    && value.source == RecoveredValueSource::TableLoad
+            }),
+            "unsigned word table loads should recover the absolute32 slot target: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[1].annotations.iter().any(|annotation| {
+                matches!(
+                    annotation,
+                    Annotation::TableSlotResolved {
+                        element_size: 4,
+                        encoding: TableSlotEncoding::Absolute32,
+                        target: 0x3000,
+                        ..
+                    }
+                )
+            }),
+            "unsigned word table loads should report absolute32 evidence: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "unsigned word table loads should feed the absolute target into indirect branches: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[2]
+                .references
+                .contains(&Reference::Branch { target: 0x7000 }),
+            "unsigned word table loads must not reinterpret the slot as relative32: {:?}",
+            instructions
         );
     }
 

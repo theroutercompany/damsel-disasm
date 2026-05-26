@@ -1857,7 +1857,11 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
         assert!(annotation["element_size"].is_number());
         assert!(annotation["encoding"].is_string());
         assert!(annotation["target"].is_number());
-        assert!(annotation["encoding"] == "absolute64" || annotation["encoding"] == "relative32");
+        assert!(
+            annotation["encoding"] == "absolute32"
+                || annotation["encoding"] == "absolute64"
+                || annotation["encoding"] == "relative32"
+        );
         assert_exact_object_keys(
             annotation,
             &[
