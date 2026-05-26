@@ -1711,7 +1711,7 @@ fn synthesize_analysis_references(
     include_annotations: bool,
 ) {
     let mut known_values = BTreeMap::<String, RecoveredValue>::new();
-    let mut jump_table_sources = BTreeMap::<String, (u64, String, u8)>::new();
+    let mut jump_table_sources = BTreeMap::<String, JumpTableSource>::new();
     let mut relative_slot_loads = BTreeMap::<String, TableSlotEvidence>::new();
     let join_addresses = basic_block_join_addresses(instructions);
 
@@ -1875,7 +1875,7 @@ fn synthesize_analysis_references(
         }
 
         let memory_inputs = memory_base_index_displacement(instruction);
-        if let Some((base_register, index_register, displacement)) = memory_inputs {
+        if let Some((base_register, index_register, displacement, index_stride)) = memory_inputs {
             if let Some(base) = read_known_value(&known_values, base_register.as_str()) {
                 if let Some(base_target) = add_signed(base.value, displacement) {
                     let element_size = jump_table_element_size(instruction);
@@ -1883,7 +1883,7 @@ fn synthesize_analysis_references(
                         base_target,
                         index_register.as_deref(),
                         &known_values,
-                        element_size,
+                        index_stride,
                     );
                     let reference_target = effective_target.unwrap_or(base_target);
                     let mut jump_table_source_key = None;
@@ -1903,7 +1903,12 @@ fn synthesize_analysis_references(
                         {
                             jump_table_sources.insert(
                                 jump_key.clone(),
-                                (base_target, index_register.clone(), element_size),
+                                JumpTableSource {
+                                    table_base: base_target,
+                                    index_register: index_register.clone(),
+                                    element_size,
+                                    index_stride,
+                                },
                             );
                             jump_table_source_key = Some(jump_key);
                         }
@@ -2061,13 +2066,18 @@ fn synthesize_analysis_references(
             let mut resolved_target = read_known_value(&known_values, register.as_str())
                 .map(|value| (value.value, indirect_target_reason(image, value.value)));
 
-            if let Some((base, index_register, element_size)) = jump_table_source.clone() {
-                if let Some(index_value) = read_known_value(&known_values, index_register.as_str())
-                    .map(|value| value.value)
+            if let Some(jump_table_source) = jump_table_source.clone() {
+                if let Some(index_value) =
+                    read_known_value(&known_values, jump_table_source.index_register.as_str())
+                        .map(|value| value.value)
                 {
-                    if let Some((slot_address, target, resolved_slot)) =
-                        resolve_table_slot_target(image, base, index_value, element_size)
-                    {
+                    if let Some((slot_address, target, resolved_slot)) = resolve_table_slot_target(
+                        image,
+                        jump_table_source.table_base,
+                        index_value,
+                        jump_table_source.element_size,
+                        jump_table_source.index_stride,
+                    ) {
                         push_reference_if_missing(
                             &mut instruction.references,
                             Reference::Data {
@@ -2079,10 +2089,10 @@ fn synthesize_analysis_references(
                             push_annotation(
                                 &mut instruction.annotations,
                                 Annotation::TableSlotResolved {
-                                    table_base: base,
+                                    table_base: jump_table_source.table_base,
                                     slot_address,
-                                    index_register: index_register.clone(),
-                                    element_size,
+                                    index_register: jump_table_source.index_register.clone(),
+                                    element_size: jump_table_source.element_size,
                                     encoding: resolved_slot.encoding,
                                     target,
                                 },
@@ -2094,9 +2104,9 @@ fn synthesize_analysis_references(
                     push_annotation(
                         &mut instruction.annotations,
                         Annotation::JumpTableCandidate {
-                            base,
-                            index_register,
-                            element_size,
+                            base: jump_table_source.table_base,
+                            index_register: jump_table_source.index_register,
+                            element_size: jump_table_source.element_size,
                         },
                     );
                 }
@@ -2229,7 +2239,7 @@ fn basic_block_join_addresses(instructions: &[DecodedInstruction]) -> BTreeSet<u
 
 fn clear_analysis_state(
     known_values: &mut BTreeMap<String, RecoveredValue>,
-    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    jump_table_sources: &mut BTreeMap<String, JumpTableSource>,
     relative_slot_loads: &mut BTreeMap<String, TableSlotEvidence>,
 ) {
     known_values.clear();
@@ -2239,7 +2249,7 @@ fn clear_analysis_state(
 
 fn clear_call_clobbered_state(
     known_values: &mut BTreeMap<String, RecoveredValue>,
-    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    jump_table_sources: &mut BTreeMap<String, JumpTableSource>,
     relative_slot_loads: &mut BTreeMap<String, TableSlotEvidence>,
 ) {
     for index in 0..=18 {
@@ -2314,7 +2324,7 @@ fn store_known_value(
 
 fn store_known_value_replacing_derived_state(
     known_values: &mut BTreeMap<String, RecoveredValue>,
-    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    jump_table_sources: &mut BTreeMap<String, JumpTableSource>,
     relative_slot_loads: &mut BTreeMap<String, TableSlotEvidence>,
     recovered: RecoveredValue,
 ) {
@@ -2325,7 +2335,7 @@ fn store_known_value_replacing_derived_state(
 
 fn remove_register_analysis_state(
     known_values: &mut BTreeMap<String, RecoveredValue>,
-    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    jump_table_sources: &mut BTreeMap<String, JumpTableSource>,
     relative_slot_loads: &mut BTreeMap<String, TableSlotEvidence>,
     register: &str,
 ) {
@@ -2341,7 +2351,7 @@ fn remove_known_value(known_values: &mut BTreeMap<String, RecoveredValue>, regis
 }
 
 fn remove_jump_table_source(
-    jump_table_sources: &mut BTreeMap<String, (u64, String, u8)>,
+    jump_table_sources: &mut BTreeMap<String, JumpTableSource>,
     register: &str,
 ) {
     if let Some(key) = canonical_state_key(register) {
@@ -2503,7 +2513,7 @@ fn synthesize_register_add_value(
 
 fn memory_base_index_displacement(
     instruction: &DecodedInstruction,
-) -> Option<(String, Option<String>, i64)> {
+) -> Option<(String, Option<String>, i64, u64)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
     if !(lower.starts_with("ldr")
         || lower.starts_with("ldp")
@@ -2524,35 +2534,25 @@ fn memory_base_index_displacement(
             ..
         } = operand
         {
-            if index_modifier.as_deref().is_some_and(|modifier| {
-                !memory_index_modifier_matches_element_size(
-                    modifier,
-                    jump_table_element_size(instruction),
-                )
-            }) {
-                return None;
-            }
-            return Some((base.clone(), index.clone(), *displacement));
+            let index_stride = index_modifier
+                .as_deref()
+                .map(memory_index_modifier_stride)
+                .unwrap_or(Some(1))?;
+            return Some((base.clone(), index.clone(), *displacement, index_stride));
         }
     }
     None
 }
 
-fn memory_index_modifier_matches_element_size(modifier: &str, element_size: u8) -> bool {
+fn memory_index_modifier_stride(modifier: &str) -> Option<u64> {
     let lower = modifier.to_ascii_lowercase();
     if !(lower.starts_with("lsl") || lower.starts_with("uxtw") || lower.starts_with("uxtx")) {
-        return false;
+        return None;
     }
     let Some(shift) = parse_optional_shift_from_text(&lower) else {
-        return false;
+        return None;
     };
-    match element_size {
-        1 => shift == 0,
-        2 => shift == 1,
-        4 => shift == 2,
-        8 => shift == 3,
-        _ => false,
-    }
+    1_u64.checked_shl(shift)
 }
 
 fn parse_optional_shift_from_text(text: &str) -> Option<u32> {
@@ -2783,14 +2783,22 @@ fn resolve_memory_effective_address(
     base_target: u64,
     index_register: Option<&str>,
     known_values: &BTreeMap<String, RecoveredValue>,
-    element_size: u8,
+    index_stride: u64,
 ) -> Option<u64> {
     let Some(index_register) = index_register else {
         return Some(base_target);
     };
     let index = read_known_value(known_values, index_register)?.value;
-    let slot_offset = index.checked_mul(u64::from(element_size))?;
+    let slot_offset = index.checked_mul(index_stride)?;
     base_target.checked_add(slot_offset)
+}
+
+#[derive(Debug, Clone)]
+struct JumpTableSource {
+    table_base: u64,
+    index_register: String,
+    element_size: u8,
+    index_stride: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -2975,6 +2983,7 @@ fn resolve_table_slot_target(
     base: u64,
     index_value: u64,
     element_size: u8,
+    index_stride: u64,
 ) -> Option<(u64, u64, ResolvedTableSlotReason)> {
     if element_size != 4 && element_size != 8 {
         return None;
@@ -2982,7 +2991,7 @@ fn resolve_table_slot_target(
     if index_value > 0x1000 {
         return None;
     }
-    let slot_offset = index_value.checked_mul(u64::from(element_size))?;
+    let slot_offset = index_value.checked_mul(index_stride)?;
     let slot_address = base.checked_add(slot_offset)?;
     let slot = resolve_table_slot_at_address(image, base, slot_address, element_size)?;
     Some((
@@ -5025,6 +5034,128 @@ mod tests {
                 .contains(&Reference::Branch { target: 0x3000 }),
             "indexed stores must not create jump-table source state: {:?}",
             instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_byte_stride_for_unmodified_register_offsets() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "unmodified register offsets are byte offsets, not element indexes: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x4040 }),
+            "unmodified register offsets must not be scaled by load width"
+        );
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x3000
+                    && value.kind == RecoveredValueKind::FunctionPointer
+                    && value.source == RecoveredValueSource::TableLoad
+            }),
+            "the load should read the 8-byte slot at base + byte offset: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "the indirect branch should resolve through the recovered slot target"
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x4040 }),
+            "the indirect branch must not resolve through a scaled-offset fabrication"
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_shift_stride_for_modified_register_offsets() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "shifted register offsets should scale by the encoded shift: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "the shifted offset should still resolve the table slot target"
         );
     }
 
