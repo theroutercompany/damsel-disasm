@@ -2566,13 +2566,7 @@ fn memory_base_index_displacement(
     instruction: &DecodedInstruction,
 ) -> Option<(String, Option<String>, i64, MemoryIndexTransform)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
-    if !(lower.starts_with("ldr")
-        || lower.starts_with("ldp")
-        || lower.starts_with("str")
-        || lower.starts_with("stp")
-        || lower.starts_with("ldur")
-        || lower.starts_with("stur"))
-    {
+    if !(lower.starts_with("ld") || lower.starts_with("st")) {
         return None;
     }
 
@@ -4783,6 +4777,76 @@ mod tests {
                     .references
                     .contains(&Reference::Call { target: 0x1234 }),
                 "conditional compare sources must keep their recovered values across {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_emits_data_refs_for_broader_load_store_family() {
+        let image = synthetic_image();
+        for (mnemonic, operands) in [
+            (
+                "ldar",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            (
+                "stxr",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            (
+                "ldadd",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+        ] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x3000),
+                    ],
+                ),
+                instruction(0x1004, mnemonic, operands),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::Data { target: 0x3000 }),
+                "load/store-family memory operands should recover known data references for {mnemonic}: {:?}",
                 instructions
             );
         }
