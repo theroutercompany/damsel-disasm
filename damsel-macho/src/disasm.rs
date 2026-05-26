@@ -1876,7 +1876,8 @@ fn synthesize_analysis_references(
         }
 
         let memory_inputs = memory_base_index_displacement(instruction);
-        if let Some((base_register, index_register, displacement, index_stride)) = memory_inputs {
+        if let Some((base_register, index_register, displacement, index_transform)) = memory_inputs
+        {
             if let Some(base) = read_known_value(&known_values, base_register.as_str()) {
                 if let Some(base_target) = add_signed(base.value, displacement) {
                     let element_size = jump_table_element_size(instruction);
@@ -1884,7 +1885,7 @@ fn synthesize_analysis_references(
                         base_target,
                         index_register.as_deref(),
                         &known_values,
-                        index_stride,
+                        index_transform,
                     );
                     let reference_target = effective_target.unwrap_or(base_target);
                     let mut jump_table_source_key = None;
@@ -1908,7 +1909,7 @@ fn synthesize_analysis_references(
                                     table_base: base_target,
                                     index_register: index_register.clone(),
                                     element_size,
-                                    index_stride,
+                                    index_transform,
                                 },
                             );
                             jump_table_source_key = Some(jump_key);
@@ -2077,7 +2078,7 @@ fn synthesize_analysis_references(
                         jump_table_source.table_base,
                         index_value,
                         jump_table_source.element_size,
-                        jump_table_source.index_stride,
+                        jump_table_source.index_transform,
                     ) {
                         push_reference_if_missing(
                             &mut instruction.references,
@@ -2514,7 +2515,7 @@ fn synthesize_register_add_value(
 
 fn memory_base_index_displacement(
     instruction: &DecodedInstruction,
-) -> Option<(String, Option<String>, i64, u64)> {
+) -> Option<(String, Option<String>, i64, MemoryIndexTransform)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
     if !(lower.starts_with("ldr")
         || lower.starts_with("ldp")
@@ -2535,33 +2536,41 @@ fn memory_base_index_displacement(
             ..
         } = operand
         {
-            let index_stride = index_modifier
+            let index_transform = index_modifier
                 .as_deref()
                 .map(|modifier| {
-                    memory_index_modifier_stride(modifier, jump_table_element_size(instruction))
+                    memory_index_modifier_transform(modifier, jump_table_element_size(instruction))
                 })
-                .unwrap_or(Some(1))?;
-            return Some((base.clone(), index.clone(), *displacement, index_stride));
+                .unwrap_or(Some(MemoryIndexTransform::unshifted_unsigned64()))?;
+            return Some((base.clone(), index.clone(), *displacement, index_transform));
         }
     }
     None
 }
 
-fn memory_index_modifier_stride(modifier: &str, element_size: u8) -> Option<u64> {
+fn memory_index_modifier_transform(
+    modifier: &str,
+    element_size: u8,
+) -> Option<MemoryIndexTransform> {
     let lower = modifier.to_ascii_lowercase();
-    if !(lower.starts_with("lsl") || lower.starts_with("uxtw") || lower.starts_with("uxtx")) {
+    let extension = if lower.starts_with("lsl") || lower.starts_with("uxtx") {
+        MemoryIndexExtension::Unsigned64
+    } else if lower.starts_with("uxtw") {
+        MemoryIndexExtension::Unsigned32
+    } else if lower.starts_with("sxtw") {
+        MemoryIndexExtension::Signed32
+    } else if lower.starts_with("sxtx") {
+        MemoryIndexExtension::Signed64
+    } else {
         return None;
-    }
+    };
     let Some(shift) = parse_optional_shift_from_text(&lower) else {
         return None;
     };
-    if shift == 0 {
-        Some(1)
-    } else if shift == memory_index_scaled_shift(element_size)? {
-        Some(u64::from(element_size))
-    } else {
-        None
+    if shift != 0 && shift != memory_index_scaled_shift(element_size)? {
+        return None;
     }
+    Some(MemoryIndexTransform { extension, shift })
 }
 
 fn memory_index_scaled_shift(element_size: u8) -> Option<u32> {
@@ -2799,14 +2808,72 @@ fn resolve_memory_effective_address(
     base_target: u64,
     index_register: Option<&str>,
     known_values: &BTreeMap<String, RecoveredValue>,
-    index_stride: u64,
+    index_transform: MemoryIndexTransform,
 ) -> Option<u64> {
     let Some(index_register) = index_register else {
         return Some(base_target);
     };
     let index = read_known_value(known_values, index_register)?.value;
-    let slot_offset = index.checked_mul(index_stride)?;
-    base_target.checked_add(slot_offset)
+    index_transform.apply(base_target, index)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MemoryIndexTransform {
+    extension: MemoryIndexExtension,
+    shift: u32,
+}
+
+impl MemoryIndexTransform {
+    fn unshifted_unsigned64() -> Self {
+        Self {
+            extension: MemoryIndexExtension::Unsigned64,
+            shift: 0,
+        }
+    }
+
+    fn apply(self, base: u64, index_value: u64) -> Option<u64> {
+        match self.extension {
+            MemoryIndexExtension::Unsigned32 => {
+                let offset = u64::from(index_value as u32).checked_shl(self.shift)?;
+                base.checked_add(offset)
+            }
+            MemoryIndexExtension::Unsigned64 => {
+                let offset = index_value.checked_shl(self.shift)?;
+                base.checked_add(offset)
+            }
+            MemoryIndexExtension::Signed32 => {
+                let index = i64::from((index_value as u32) as i32);
+                let scale = 1_i64.checked_shl(self.shift)?;
+                add_signed(base, index.checked_mul(scale)?)
+            }
+            MemoryIndexExtension::Signed64 => {
+                let index = i64::from_ne_bytes(index_value.to_ne_bytes());
+                let scale = 1_i64.checked_shl(self.shift)?;
+                add_signed(base, index.checked_mul(scale)?)
+            }
+        }
+    }
+
+    fn index_within_limit(self, index_value: u64, limit: u64) -> bool {
+        match self.extension {
+            MemoryIndexExtension::Unsigned32 => u64::from(index_value as u32) <= limit,
+            MemoryIndexExtension::Unsigned64 => index_value <= limit,
+            MemoryIndexExtension::Signed32 => {
+                i64::from((index_value as u32) as i32).unsigned_abs() <= limit
+            }
+            MemoryIndexExtension::Signed64 => {
+                i64::from_ne_bytes(index_value.to_ne_bytes()).unsigned_abs() <= limit
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MemoryIndexExtension {
+    Unsigned32,
+    Unsigned64,
+    Signed32,
+    Signed64,
 }
 
 #[derive(Debug, Clone)]
@@ -2814,7 +2881,7 @@ struct JumpTableSource {
     table_base: u64,
     index_register: String,
     element_size: u8,
-    index_stride: u64,
+    index_transform: MemoryIndexTransform,
 }
 
 #[derive(Debug, Clone)]
@@ -3056,16 +3123,15 @@ fn resolve_table_slot_target(
     base: u64,
     index_value: u64,
     element_size: u8,
-    index_stride: u64,
+    index_transform: MemoryIndexTransform,
 ) -> Option<(u64, u64, ResolvedTableSlotReason)> {
     if element_size != 4 && element_size != 8 {
         return None;
     }
-    if index_value > 0x1000 {
+    if !index_transform.index_within_limit(index_value, 0x1000) {
         return None;
     }
-    let slot_offset = index_value.checked_mul(index_stride)?;
-    let slot_address = base.checked_add(slot_offset)?;
+    let slot_address = index_transform.apply(base, index_value)?;
     let slot = resolve_table_slot_at_address(image, base, slot_address, element_size)?;
     Some((
         slot.slot_address,
@@ -5352,6 +5418,121 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_accepts_signed_extended_memory_index_offsets() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("w9".to_string()),
+                        index_modifier: Some("sxtw #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "positive sxtw offsets should scale by the encoded shift: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "positive sxtw offsets should resolve table loads"
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_sign_extends_negative_memory_index_offsets() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "add",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x10),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "movn",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("w9".to_string()),
+                        index_modifier: Some("sxtw #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "sxtw must treat 0xffffffff as -1 and subtract the scaled offset: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[3].references.contains(&Reference::Data {
+                target: 0x800004008
+            }),
+            "sxtw must not treat 0xffffffff as a huge unsigned index"
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "negative sxtw offsets should resolve table loads"
+        );
+    }
+
+    #[test]
     fn synthesize_analysis_references_uses_shift_stride_for_modified_register_offsets() {
         let image = synthetic_table_image(0x3000);
         let mut instructions = vec![
@@ -5693,7 +5874,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: Some("x9".to_string()),
-                        index_modifier: Some("sxtw #3".to_string()),
+                        index_modifier: Some("ror #3".to_string()),
                         displacement: 0,
                         writeback: None,
                     },
