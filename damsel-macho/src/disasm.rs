@@ -1120,7 +1120,10 @@ fn add_fallthrough_edges(
             continue;
         };
         let lower = last.mnemonic.to_ascii_lowercase();
-        if is_return_mnemonic(&lower) || is_unconditional_transfer_mnemonic(&lower) {
+        if is_return_mnemonic(&lower)
+            || is_unconditional_transfer_mnemonic(&lower)
+            || is_terminal_trap_mnemonic(&lower)
+        {
             continue;
         }
         let next_address = last.address.saturating_add(u64::from(last.size));
@@ -1346,6 +1349,7 @@ fn is_cfg_boundary_mnemonic(mnemonic: &str) -> bool {
     is_conditional_branch_mnemonic(mnemonic)
         || is_unconditional_transfer_mnemonic(mnemonic)
         || is_return_mnemonic(mnemonic)
+        || is_terminal_trap_mnemonic(mnemonic)
 }
 
 fn is_conditional_branch_mnemonic(mnemonic: &str) -> bool {
@@ -1366,6 +1370,10 @@ fn is_return_mnemonic(mnemonic: &str) -> bool {
         mnemonic,
         "ret" | "retaa" | "retab" | "eret" | "eretaa" | "eretab" | "drps"
     )
+}
+
+fn is_terminal_trap_mnemonic(mnemonic: &str) -> bool {
+    matches!(mnemonic, "brk" | "hlt" | "udf")
 }
 
 fn non_default_return_register(instruction: &DecodedInstruction) -> Option<String> {
@@ -2943,6 +2951,7 @@ fn instruction_writes_destination(mnemonic: &str) -> bool {
         || mnemonic == "ccmn"
         || mnemonic == "tst"
         || is_conditional_branch_mnemonic(mnemonic)
+        || is_terminal_trap_mnemonic(mnemonic)
         || mnemonic.starts_with("st")
         || is_unconditional_transfer_mnemonic(mnemonic)
         || is_call_mnemonic(mnemonic)
@@ -5779,6 +5788,43 @@ mod tests {
     }
 
     #[test]
+    fn analysis_treats_terminal_traps_as_boundary_exits() {
+        for mnemonic in ["brk", "hlt", "udf"] {
+            let instructions = vec![
+                instruction(0x1000, mnemonic, vec![]),
+                instruction(0x1004, "ret", vec![]),
+            ];
+
+            let analysis = analyze_disassembly(
+                format!("synthetic-{mnemonic}"),
+                0x1000,
+                0x1008,
+                &instructions,
+            );
+
+            assert_eq!(analysis.summary.basic_block_count, 2, "{mnemonic}");
+            assert_eq!(analysis.summary.entry_block_count, 2, "{mnemonic}");
+            assert_eq!(analysis.summary.exit_block_count, 2, "{mnemonic}");
+            assert_eq!(
+                analysis.summary.primary_entry_reachable_block_count, 1,
+                "{mnemonic}"
+            );
+            assert_eq!(analysis.summary.disconnected_block_count, 1, "{mnemonic}");
+            assert_eq!(
+                analysis.summary.edge_kind_counts.fallthrough_count, 0,
+                "{mnemonic}"
+            );
+            assert_eq!(
+                analysis.summary.edge_kind_counts.return_count, 1,
+                "{mnemonic}"
+            );
+            assert!(analysis.edges.iter().all(|edge| {
+                edge.source_address != 0x1000 || edge.kind != ControlFlowEdgeKind::Fallthrough
+            }));
+        }
+    }
+
+    #[test]
     fn analysis_reports_non_default_return_register() {
         let instructions = vec![instruction(
             0x1000,
@@ -5906,7 +5952,7 @@ mod tests {
     #[test]
     fn synthesize_analysis_references_clears_state_after_drps_boundaries() {
         let image = synthetic_image();
-        for mnemonic in ["drps", "eretaa", "eretab"] {
+        for mnemonic in ["drps", "eretaa", "eretab", "brk", "hlt", "udf"] {
             let mut instructions = vec![
                 instruction(
                     0x1000,

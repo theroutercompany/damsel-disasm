@@ -225,7 +225,7 @@ fn derive_references(
         push_reference(&mut references, reference);
     }
 
-    if references.is_empty() && is_control_flow && !is_return_like(&lower) {
+    if references.is_empty() && is_control_flow && !is_targetless_terminal(&lower) {
         push_note(
             &mut notes,
             format!("control-flow target unresolved ({mnemonic})"),
@@ -325,10 +325,10 @@ fn is_indirect_control(mnemonic: &str) -> bool {
     )
 }
 
-fn is_return_like(mnemonic: &str) -> bool {
+fn is_targetless_terminal(mnemonic: &str) -> bool {
     matches!(
         mnemonic,
-        "ret" | "eret" | "eretaa" | "eretab" | "drps" | "retaa" | "retab"
+        "ret" | "eret" | "eretaa" | "eretab" | "drps" | "retaa" | "retab" | "brk" | "hlt" | "udf"
     )
 }
 

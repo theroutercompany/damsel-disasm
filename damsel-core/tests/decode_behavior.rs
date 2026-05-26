@@ -136,6 +136,30 @@ fn decode_treats_authenticated_exception_returns_as_terminal() {
 }
 
 #[test]
+fn decode_treats_terminal_traps_as_targetless_boundaries() {
+    let bytes = [
+        0x20, 0x00, 0x20, 0xd4, // brk #1
+        0x00, 0x00, 0x40, 0xd4, // hlt #0
+        0x00, 0x00, 0x00, 0x00, // udf #0
+    ];
+    let instructions = decode(&bytes, 0x1000, None);
+
+    assert_eq!(instructions.len(), 3);
+    assert_eq!(instructions[0].mnemonic, "brk");
+    assert_eq!(instructions[1].mnemonic, "hlt");
+    assert_eq!(instructions[2].mnemonic, "udf");
+    assert!(instructions.iter().all(|instruction| {
+        instruction.references.is_empty()
+            && !instruction.annotations.iter().any(|annotation| {
+                matches!(
+                    annotation,
+                    Annotation::Note(note) if note.starts_with("control-flow target unresolved")
+                )
+            })
+    }));
+}
+
+#[test]
 fn decode_emits_first_class_indirect_control_references() {
     let bytes = [
         0x00, 0x00, 0x3f, 0xd6, // blr x0
