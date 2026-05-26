@@ -291,6 +291,7 @@ fn push_note(target: &mut Vec<String>, note: String) {
 fn is_relative_branch(mnemonic: &str) -> bool {
     mnemonic == "b"
         || mnemonic.starts_with("b.")
+        || mnemonic.starts_with("bc.")
         || mnemonic == "cbz"
         || mnemonic == "cbnz"
         || mnemonic == "tbz"

@@ -1349,7 +1349,9 @@ fn is_cfg_boundary_mnemonic(mnemonic: &str) -> bool {
 }
 
 fn is_conditional_branch_mnemonic(mnemonic: &str) -> bool {
-    mnemonic.starts_with("b.") || matches!(mnemonic, "cbz" | "cbnz" | "tbz" | "tbnz")
+    mnemonic.starts_with("b.")
+        || mnemonic.starts_with("bc.")
+        || matches!(mnemonic, "cbz" | "cbnz" | "tbz" | "tbnz")
 }
 
 fn is_unconditional_transfer_mnemonic(mnemonic: &str) -> bool {
@@ -2937,11 +2939,7 @@ fn instruction_writes_destination(mnemonic: &str) -> bool {
         || mnemonic == "ccmp"
         || mnemonic == "ccmn"
         || mnemonic == "tst"
-        || mnemonic == "tbz"
-        || mnemonic == "tbnz"
-        || mnemonic == "cbz"
-        || mnemonic == "cbnz"
-        || mnemonic.starts_with("b.")
+        || is_conditional_branch_mnemonic(mnemonic)
         || mnemonic.starts_with("st")
         || is_unconditional_transfer_mnemonic(mnemonic)
         || is_call_mnemonic(mnemonic)
@@ -5671,6 +5669,34 @@ mod tests {
     }
 
     #[test]
+    fn analysis_treats_bc_conditional_branches_as_splits() {
+        let instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Branch { target: 0x1008 }],
+                ..instruction(0x1000, "bc.eq", vec![Operand::Label(0x1008)])
+            },
+            instruction(0x1004, "ret", vec![]),
+            instruction(0x1008, "ret", vec![]),
+        ];
+
+        let analysis = analyze_disassembly("synthetic-bc-split", 0x1000, 0x100c, &instructions);
+
+        assert_eq!(analysis.summary.basic_block_count, 3);
+        assert_eq!(analysis.summary.entry_block_count, 1);
+        assert_eq!(analysis.summary.exit_block_count, 2);
+        assert_eq!(analysis.summary.edge_kind_counts.fallthrough_count, 1);
+        assert_eq!(
+            analysis.summary.edge_kind_counts.conditional_branch_count,
+            1
+        );
+        assert!(analysis.edges.iter().any(|edge| {
+            edge.source_address == 0x1000
+                && edge.target_address == Some(0x1008)
+                && edge.kind == ControlFlowEdgeKind::ConditionalBranch
+        }));
+    }
+
+    #[test]
     fn analysis_reports_multiple_entry_blocks_after_terminal_boundary() {
         let instructions = vec![
             instruction(0x1000, "ret", vec![]),
@@ -5903,41 +5929,45 @@ mod tests {
     #[test]
     fn synthesize_analysis_references_clears_state_after_register_conditional_branches() {
         let image = synthetic_image();
-        let mut instructions = vec![
-            instruction(
-                0x1000,
-                "mov",
-                vec![
-                    Operand::Register("x19".to_string()),
-                    Operand::ImmediateUnsigned(0x220),
-                ],
+        for (mnemonic, operands) in [
+            (
+                "cbz",
+                vec![Operand::Register("x0".to_string()), Operand::Label(0x1010)],
             ),
-            DecodedInstruction {
-                references: vec![Reference::Branch { target: 0x1010 }],
-                ..instruction(
-                    0x1004,
-                    "cbz",
-                    vec![Operand::Register("x0".to_string()), Operand::Label(0x1010)],
-                )
-            },
-            instruction(
-                0x1008,
-                "add",
-                vec![
-                    Operand::Register("x20".to_string()),
-                    Operand::Register("x19".to_string()),
-                    Operand::ImmediateUnsigned(4),
-                ],
-            ),
-        ];
+            ("bc.eq", vec![Operand::Label(0x1010)]),
+        ] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x19".to_string()),
+                        Operand::ImmediateUnsigned(0x220),
+                    ],
+                ),
+                DecodedInstruction {
+                    references: vec![Reference::Branch { target: 0x1010 }],
+                    ..instruction(0x1004, mnemonic, operands)
+                },
+                instruction(
+                    0x1008,
+                    "add",
+                    vec![
+                        Operand::Register("x20".to_string()),
+                        Operand::Register("x19".to_string()),
+                        Operand::ImmediateUnsigned(4),
+                    ],
+                ),
+            ];
 
-        synthesize_analysis_references(&image, &mut instructions, true);
+            synthesize_analysis_references(&image, &mut instructions, true);
 
-        assert!(
-            instructions[2].recovered_values.is_empty(),
-            "instructions after a register conditional branch must not inherit linear state: {:?}",
-            instructions
-        );
+            assert!(
+                instructions[2].recovered_values.is_empty(),
+                "instructions after a conditional branch must not inherit linear state for {mnemonic}: {:?}",
+                instructions
+            );
+        }
     }
 
     #[test]

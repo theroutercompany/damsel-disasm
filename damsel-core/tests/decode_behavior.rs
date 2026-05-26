@@ -90,6 +90,30 @@ fn decode_uses_final_immediate_for_test_bit_branch_targets() {
 }
 
 #[test]
+fn decode_labels_bc_conditional_branch_targets() {
+    let bytes = [0x50, 0x00, 0x00, 0x54]; // bc.eq #0x1008
+    let instructions = decode(&bytes, 0x1000, None);
+
+    assert_eq!(instructions.len(), 1);
+    assert_eq!(instructions[0].mnemonic, "bc.eq");
+    assert!(
+        instructions[0].references.iter().any(
+            |reference| matches!(reference, Reference::Branch { target } if *target == 0x1008)
+        ),
+        "bc.cond should recover its branch target, got {:?}",
+        instructions[0].references
+    );
+    assert!(
+        matches!(
+            instructions[0].operands.first(),
+            Some(Operand::Label(0x1008))
+        ),
+        "bc.cond branch destination should render as a label operand, got {:?}",
+        instructions[0].operands
+    );
+}
+
+#[test]
 fn decode_emits_first_class_indirect_control_references() {
     let bytes = [
         0x00, 0x00, 0x3f, 0xd6, // blr x0
