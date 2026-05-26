@@ -4847,15 +4847,15 @@ fn synthesize_literal_load(
     if !matches!(lower, "ldr" | "ldrsw") {
         return None;
     }
-    literal_load_target_operand(instruction)?;
+    let target = literal_load_target_operand(instruction)?;
     let register = destination_register(instruction)?;
-    let target = instruction
+    instruction
         .references
         .iter()
-        .find_map(|reference| match reference {
-            Reference::Data { target } => Some(*target),
-            _ => None,
-        })?;
+        .any(
+            |reference| matches!(reference, Reference::Data { target: data_target } if *data_target == target),
+        )
+        .then_some(())?;
     let value = read_literal_load_value(image, target, &register, lower)?;
     Some((
         target,
@@ -4868,7 +4868,7 @@ fn synthesize_literal_load(
     ))
 }
 
-fn literal_load_target_operand(instruction: &DecodedInstruction) -> Option<()> {
+fn literal_load_target_operand(instruction: &DecodedInstruction) -> Option<u64> {
     if instruction
         .operands
         .iter()
@@ -4877,8 +4877,8 @@ fn literal_load_target_operand(instruction: &DecodedInstruction) -> Option<()> {
         return None;
     }
     match instruction.operands.get(1)? {
-        Operand::ImmediateUnsigned(_) | Operand::Label(_) => Some(()),
-        Operand::ImmediateSigned(value) if *value >= 0 => Some(()),
+        Operand::ImmediateUnsigned(value) | Operand::Label(value) => Some(*value),
+        Operand::ImmediateSigned(value) if *value >= 0 => u64::try_from(*value).ok(),
         _ => None,
     }
 }
@@ -13999,6 +13999,37 @@ mod tests {
         assert!(
             instructions[0].recovered_values.is_empty(),
             "memory-form ldr must not recover a literal value just because a data reference is present"
+        );
+    }
+
+    #[test]
+    fn synthesize_literal_load_requires_operand_and_data_ref_to_match() {
+        let image = synthetic_literal_image(0x4000, &0x3000_u64.to_le_bytes());
+        let mut instructions = vec![DecodedInstruction {
+            references: vec![Reference::Data { target: 0x4000 }],
+            ..instruction(
+                0x1000,
+                "ldr",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(0x5000),
+                ],
+            )
+        }];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[0].recovered_values.is_empty(),
+            "literal loads must not recover through an unrelated data reference: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[0]
+                .references
+                .contains(&Reference::Data { target: 0x4000 }),
+            "existing unrelated data references should be preserved for other evidence: {:?}",
+            instructions
         );
     }
 
