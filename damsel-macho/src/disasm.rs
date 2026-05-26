@@ -2640,10 +2640,8 @@ fn synthesize_pair_load_values(
     lower: &str,
     known_values: &BTreeMap<String, RecoveredValue>,
 ) -> Option<(u64, u64, RecoveredValue, RecoveredValue)> {
-    if !(lower.starts_with("ldp") || lower.starts_with("ldnp")) {
-        return None;
-    }
-    if matches!(lower, "ldxp" | "ldaxp") {
+    if !(lower.starts_with("ldp") || lower.starts_with("ldnp") || matches!(lower, "ldxp" | "ldaxp"))
+    {
         return None;
     }
 
@@ -12757,6 +12755,104 @@ mod tests {
             "pair-loaded function pointers should feed indirect branch recovery: {:?}",
             instructions
         );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_exclusive_pair_load_values() {
+        for (first_register, second_register, literal, second_slot) in [
+            (
+                "x9",
+                "x10",
+                {
+                    let mut bytes = Vec::new();
+                    bytes.extend_from_slice(&0x2000_u64.to_le_bytes());
+                    bytes.extend_from_slice(&0x3000_u64.to_le_bytes());
+                    bytes
+                },
+                0x4008,
+            ),
+            (
+                "w9",
+                "w10",
+                {
+                    let mut bytes = Vec::new();
+                    bytes.extend_from_slice(&0x2000_u32.to_le_bytes());
+                    bytes.extend_from_slice(&0x3000_u32.to_le_bytes());
+                    bytes
+                },
+                0x4004,
+            ),
+        ] {
+            for mnemonic in ["ldxp", "ldaxp"] {
+                let image = synthetic_literal_image(0x4000, &literal);
+                let mut instructions = vec![
+                    DecodedInstruction {
+                        references: vec![Reference::Page { target: 0x4000 }],
+                        ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+                    },
+                    instruction(
+                        0x1004,
+                        mnemonic,
+                        vec![
+                            Operand::Register(first_register.to_string()),
+                            Operand::Register(second_register.to_string()),
+                            Operand::Memory {
+                                base: "x8".to_string(),
+                                index: None,
+                                index_modifier: None,
+                                displacement: 0,
+                                writeback: None,
+                            },
+                        ],
+                    ),
+                    instruction(0x1008, "br", vec![Operand::Register("x10".to_string())]),
+                ];
+
+                synthesize_analysis_references(&image, &mut instructions, true);
+
+                assert!(
+                    instructions[1]
+                        .references
+                        .contains(&Reference::Data { target: 0x4000 }),
+                    "exclusive pair loads should record the first slot address for {mnemonic} {first_register}: {:?}",
+                    instructions
+                );
+                assert!(
+                    instructions[1].references.contains(&Reference::Data {
+                        target: second_slot
+                    }),
+                    "exclusive pair loads should record the second slot address for {mnemonic} {second_register}: {:?}",
+                    instructions
+                );
+                assert!(
+                    instructions[1].recovered_values.iter().any(|value| {
+                        value.register == first_register
+                            && value.value == 0x2000
+                            && value.kind == RecoveredValueKind::ExportAddress
+                            && value.source == RecoveredValueSource::AdrpLoad
+                    }),
+                    "exclusive pair loads should recover the first slot for {mnemonic} {first_register}: {:?}",
+                    instructions
+                );
+                assert!(
+                    instructions[1].recovered_values.iter().any(|value| {
+                        value.register == second_register
+                            && value.value == 0x3000
+                            && value.kind == RecoveredValueKind::FunctionPointer
+                            && value.source == RecoveredValueSource::AdrpLoad
+                    }),
+                    "exclusive pair loads should recover the second slot for {mnemonic} {second_register}: {:?}",
+                    instructions
+                );
+                assert!(
+                    instructions[2]
+                        .references
+                        .contains(&Reference::Branch { target: 0x3000 }),
+                    "exclusive pair-loaded function pointers should feed indirect branch recovery for {mnemonic} {second_register}: {:?}",
+                    instructions
+                );
+            }
+        }
     }
 
     #[test]
