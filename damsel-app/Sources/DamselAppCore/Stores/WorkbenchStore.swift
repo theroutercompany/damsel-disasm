@@ -12,7 +12,14 @@ public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var statusText = "Awaiting local binary"
     @Published public var bannerMessage: String?
 
-    @Published public var targetKind: TargetKind = .section
+    @Published public var targetKind: TargetKind = .section {
+        didSet {
+            symbolSuggestionGeneration += 1
+            if targetKind != .symbol {
+                symbolSuggestions = []
+            }
+        }
+    }
     @Published public var selectedSection: String = ""
     @Published public var symbolText: String = "" {
         didSet {
@@ -44,6 +51,7 @@ public final class WorkbenchStore: ObservableObject {
     private var bootstrapTask: Task<URL, Error>?
     private var loadRequestID = 0
     private var disassemblyRequestID = 0
+    private var symbolSuggestionGeneration = 0
 
     public init(serverProcess: DamselServerProcess = DamselServerProcess()) {
         self.serverProcess = serverProcess
@@ -266,12 +274,18 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func fetchSymbolSuggestions() async {
+        guard targetKind == .symbol else {
+            symbolSuggestions = []
+            return
+        }
+
         guard let client, let imageId = loadedImage?.imageId else {
             symbolSuggestions = []
             return
         }
 
         let query = normalizedSymbolQuery
+        let suggestionGeneration = symbolSuggestionGeneration
         guard query.count >= 2 else {
             symbolSuggestions = []
             return
@@ -280,14 +294,19 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let suggestions = try await client.symbolSuggestions(imageId: imageId, query: query, limit: 30)
             guard !Task.isCancelled,
+                  targetKind == .symbol,
                   loadedImage?.imageId == imageId,
-                  normalizedSymbolQuery == query
+                  normalizedSymbolQuery == query,
+                  symbolSuggestionGeneration == suggestionGeneration
             else {
                 return
             }
             symbolSuggestions = suggestions
         } catch {
-            if loadedImage?.imageId == imageId, normalizedSymbolQuery == query {
+            if targetKind == .symbol,
+               loadedImage?.imageId == imageId,
+               normalizedSymbolQuery == query,
+               symbolSuggestionGeneration == suggestionGeneration {
                 symbolSuggestions = []
             }
         }

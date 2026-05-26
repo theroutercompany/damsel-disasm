@@ -7,6 +7,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let client = SuggestionClient(response: ["_main"])
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
 
+        store.targetKind = .symbol
         store.symbolText = "_ma"
         await store.fetchSymbolSuggestions()
 
@@ -18,6 +19,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let client = SuggestionClient(response: ["_malloc"], delayNanos: 20_000_000)
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
 
+        store.targetKind = .symbol
         store.symbolText = "_m"
         let task = Task {
             await store.fetchSymbolSuggestions()
@@ -34,10 +36,61 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSymbolSuggestionsClearWhenLeavingSymbolTarget() async {
+        let client = SuggestionClient(response: ["_main"])
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        store.targetKind = .symbol
+        store.symbolText = "_ma"
+        await store.fetchSymbolSuggestions()
+        XCTAssertEqual(store.symbolSuggestions, ["_main"])
+
+        store.targetKind = .section
+
+        XCTAssertEqual(store.symbolSuggestions, [])
+    }
+
+    @MainActor
+    func testSymbolSuggestionsAreIgnoredOutsideSymbolTarget() async {
+        let client = SuggestionClient(response: ["_main"])
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        store.symbolText = "_ma"
+        await store.fetchSymbolSuggestions()
+
+        let requestedQuery = await client.requestedQuery
+        XCTAssertNil(requestedQuery)
+        XCTAssertEqual(store.symbolSuggestions, [])
+    }
+
+    @MainActor
+    func testInFlightSymbolSuggestionsAreInvalidatedByTargetChanges() async {
+        let client = SuggestionClient(response: ["_main"], delayNanos: 20_000_000)
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        store.targetKind = .symbol
+        store.symbolText = "_ma"
+        let task = Task {
+            await store.fetchSymbolSuggestions()
+        }
+
+        while await client.requestedQuery == nil {
+            await Task.yield()
+        }
+
+        store.targetKind = .section
+        store.targetKind = .symbol
+        await task.value
+
+        XCTAssertEqual(store.symbolSuggestions, [])
+    }
+
+    @MainActor
     func testSelectingSymbolSuggestionDismissesSuggestionList() async {
         let client = SuggestionClient(response: ["_main"])
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
 
+        store.targetKind = .symbol
         store.symbolText = "_ma"
         await store.fetchSymbolSuggestions()
         XCTAssertEqual(store.symbolSuggestions, ["_main"])
