@@ -4787,7 +4787,7 @@ fn synthesize_literal_load(
     instruction: &DecodedInstruction,
     lower: &str,
 ) -> Option<(u64, RecoveredValue)> {
-    if !(lower.starts_with("ldr") || lower.starts_with("ldrsw")) {
+    if !matches!(lower, "ldr" | "ldrsw") {
         return None;
     }
     literal_load_target_operand(instruction)?;
@@ -4869,11 +4869,11 @@ fn read_memory_value(image: &BinaryImage, address: u64, width: usize, signed: bo
 
 fn literal_load_width(register: &str, mnemonic: &str) -> Option<(usize, bool)> {
     let register = register.to_ascii_lowercase();
-    if mnemonic.starts_with("ldrsw") && register.starts_with('x') {
+    if mnemonic == "ldrsw" && register.starts_with('x') {
         Some((4, true))
-    } else if register.starts_with('w') {
+    } else if mnemonic == "ldr" && register.starts_with('w') {
         Some((4, false))
-    } else if register.starts_with('x') {
+    } else if mnemonic == "ldr" && register.starts_with('x') {
         Some((8, false))
     } else {
         None
@@ -13797,6 +13797,32 @@ mod tests {
             instructions[0].recovered_values.is_empty(),
             "memory-form ldr must not recover a literal value just because a data reference is present"
         );
+    }
+
+    #[test]
+    fn synthesize_literal_load_ignores_non_literal_load_mnemonics() {
+        let image = synthetic_literal_image(0x4000, &0x3000_u64.to_le_bytes());
+        for mnemonic in ["ldrb", "ldrh", "ldrsh"] {
+            let mut instructions = vec![DecodedInstruction {
+                references: vec![Reference::Data { target: 0x4000 }],
+                ..instruction(
+                    0x1000,
+                    mnemonic,
+                    vec![
+                        Operand::Register("w0".to_string()),
+                        Operand::ImmediateUnsigned(0x4000),
+                    ],
+                )
+            }];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[0].recovered_values.is_empty(),
+                "only exact ldr/ldrsw literal forms should recover literal values for {mnemonic}: {:?}",
+                instructions
+            );
+        }
     }
 
     #[test]
