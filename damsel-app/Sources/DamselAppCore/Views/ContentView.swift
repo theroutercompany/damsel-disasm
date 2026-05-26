@@ -78,15 +78,38 @@ public struct ContentView: View {
             Task { try? await store.runDisassembly() }
         }
         .onChange(of: store.symbolText) { _, _ in
-            symbolSuggestionTask?.cancel()
-            symbolSuggestionTask = Task {
-                try? await Task.sleep(nanoseconds: 220_000_000)
-                guard !Task.isCancelled else {
-                    return
-                }
-                await store.fetchSymbolSuggestions()
+            scheduleSymbolSuggestionFetch()
+        }
+        .onChange(of: store.targetKind) { _, targetKind in
+            if targetKind == .symbol {
+                scheduleSymbolSuggestionFetch()
+            } else {
+                cancelSymbolSuggestionFetch()
             }
         }
+        .onDisappear {
+            cancelSymbolSuggestionFetch()
+        }
+    }
+
+    private func scheduleSymbolSuggestionFetch() {
+        cancelSymbolSuggestionFetch()
+        guard store.targetKind == .symbol else {
+            return
+        }
+
+        symbolSuggestionTask = Task {
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard !Task.isCancelled else {
+                return
+            }
+            await store.fetchSymbolSuggestions()
+        }
+    }
+
+    private func cancelSymbolSuggestionFetch() {
+        symbolSuggestionTask?.cancel()
+        symbolSuggestionTask = nil
     }
 
     private func openFile() {
