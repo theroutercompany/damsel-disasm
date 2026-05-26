@@ -2787,6 +2787,7 @@ fn is_prefetch_mnemonic(mnemonic: &str) -> bool {
 fn load_reads_destination_value(mnemonic: &str) -> bool {
     mnemonic.starts_with("ldr")
         || mnemonic.starts_with("ldur")
+        || mnemonic.starts_with("ldtr")
         || mnemonic.starts_with("ldar")
         || mnemonic.starts_with("ldapr")
         || mnemonic.starts_with("ldapur")
@@ -2797,6 +2798,7 @@ fn load_reads_destination_value(mnemonic: &str) -> bool {
 fn load_reads_relative_table_offset(mnemonic: &str) -> bool {
     mnemonic.starts_with("ldrsw")
         || mnemonic.starts_with("ldursw")
+        || mnemonic.starts_with("ldtrsw")
         || mnemonic.starts_with("ldapursw")
 }
 
@@ -2833,17 +2835,29 @@ fn scalar_memory_load_width(register: &str, mnemonic: &str) -> Option<(usize, bo
         return None;
     }
     let register = register.to_ascii_lowercase();
-    if mnemonic.starts_with("ldrsb") || mnemonic.starts_with("ldursb") {
+    if mnemonic.starts_with("ldrsb")
+        || mnemonic.starts_with("ldursb")
+        || mnemonic.starts_with("ldtrsb")
+    {
         Some((1, true))
-    } else if mnemonic.starts_with("ldrb") || mnemonic.starts_with("ldurb") {
+    } else if mnemonic.starts_with("ldrb")
+        || mnemonic.starts_with("ldurb")
+        || mnemonic.starts_with("ldtrb")
+    {
         Some((1, false))
-    } else if mnemonic.starts_with("ldrsh") || mnemonic.starts_with("ldursh") {
+    } else if mnemonic.starts_with("ldrsh")
+        || mnemonic.starts_with("ldursh")
+        || mnemonic.starts_with("ldtrsh")
+    {
         Some((2, true))
-    } else if mnemonic.starts_with("ldrh") || mnemonic.starts_with("ldurh") {
+    } else if mnemonic.starts_with("ldrh")
+        || mnemonic.starts_with("ldurh")
+        || mnemonic.starts_with("ldtrh")
+    {
         Some((2, false))
     } else if matches!(
         mnemonic,
-        "ldr" | "ldur" | "ldar" | "ldapr" | "ldapur" | "ldaxr" | "ldxr"
+        "ldr" | "ldur" | "ldtr" | "ldar" | "ldapr" | "ldapur" | "ldaxr" | "ldxr"
     ) {
         if register.starts_with('w') {
             Some((4, false))
@@ -4895,6 +4909,8 @@ fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
         || lower.starts_with("ldurb")
         || lower.starts_with("ldrsb")
         || lower.starts_with("ldursb")
+        || lower.starts_with("ldtrb")
+        || lower.starts_with("ldtrsb")
         || lower.starts_with("ldarb")
         || lower.starts_with("ldaprb")
         || lower.starts_with("ldapurb")
@@ -4909,6 +4925,8 @@ fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
         || lower.starts_with("ldurh")
         || lower.starts_with("ldrsh")
         || lower.starts_with("ldursh")
+        || lower.starts_with("ldtrh")
+        || lower.starts_with("ldtrsh")
         || lower.starts_with("ldarh")
         || lower.starts_with("ldaprh")
         || lower.starts_with("ldapurh")
@@ -4921,6 +4939,7 @@ fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
         2
     } else if lower.starts_with("ldrsw")
         || lower.starts_with("ldursw")
+        || lower.starts_with("ldtrsw")
         || lower.starts_with("ldapursw")
         || lower.starts_with("ldpsw")
     {
@@ -12061,6 +12080,119 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_recovers_values_for_unprivileged_loads() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x4008),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "ldtr",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1008, "blr", vec![Operand::Register("x9".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "unprivileged load should keep its data reference: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 0x3000
+                    && value.kind == RecoveredValueKind::FunctionPointer
+                    && value.source == RecoveredValueSource::TableLoad
+            }),
+            "unprivileged load should recover pointer table contents: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Call { target: 0x3000 }),
+            "recovered unprivileged load value should feed indirect calls: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_byte_half_unprivileged_loads() {
+        for (mnemonic, register, literal, expected) in [
+            ("ldtrb", "w9", vec![0x80], 0x80),
+            ("ldtrsb", "x9", vec![0x80], 0xffff_ffff_ffff_ff80),
+            ("ldtrh", "w9", vec![0x34, 0x12], 0x1234),
+            ("ldtrsh", "x9", vec![0x00, 0x80], 0xffff_ffff_ffff_8000),
+        ] {
+            let image = synthetic_literal_image(0x4000, &literal);
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x4000),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register(register.to_string()),
+                        Operand::Memory {
+                            base: "x8".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::Data { target: 0x4000 }),
+                "unprivileged byte/half load should keep its data reference for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].recovered_values.iter().any(|value| {
+                    value.register == register
+                        && value.value == expected
+                        && value.kind == RecoveredValueKind::Literal
+                        && value.source == RecoveredValueSource::AdrpLoad
+                }),
+                "unprivileged byte/half load should recover signedness for {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
     fn synthesize_analysis_references_emits_data_refs_for_broader_load_store_family() {
         let image = synthetic_image();
         for (mnemonic, operands) in [
@@ -13313,7 +13445,7 @@ mod tests {
     #[test]
     fn synthesize_relative_slot_recovers_unscaled_signed_word_loads() {
         let image = synthetic_table_image(0x3000);
-        for mnemonic in ["ldursw", "ldapursw"] {
+        for mnemonic in ["ldursw", "ldtrsw", "ldapursw"] {
             let mut instructions = vec![
                 DecodedInstruction {
                     references: vec![Reference::Page { target: 0x4000 }],
