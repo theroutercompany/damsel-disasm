@@ -2113,6 +2113,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 && block["start_address"].is_number()
                 && block["end_address"].is_number()
                 && block["instruction_count"].is_number()
+                && block["terminator_address"].is_number()
+                && block["terminator_mnemonic"].is_string()
                 && block["entry"].is_boolean()
                 && block["exit"].is_boolean()
                 && block["primary_entry_reachable"].is_boolean()
@@ -2135,6 +2137,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "start_address",
                 "end_address",
                 "instruction_count",
+                "terminator_address",
+                "terminator_mnemonic",
                 "entry",
                 "exit",
                 "primary_entry_reachable",
@@ -2230,6 +2234,22 @@ fn disasm_json_analysis_contract_is_opt_in() {
             .as_array()
             .expect("back edge predecessors");
         let successors = block["successors"].as_array().expect("successors");
+        let start_address = block["start_address"].as_u64().expect("block start");
+        let end_address = block["end_address"].as_u64().expect("block end");
+        let terminator_address = block["terminator_address"]
+            .as_u64()
+            .expect("terminator address");
+        assert!(
+            terminator_address >= start_address && terminator_address < end_address,
+            "terminator address should sit inside the block range"
+        );
+        assert!(
+            !block["terminator_mnemonic"]
+                .as_str()
+                .expect("terminator mnemonic")
+                .is_empty(),
+            "terminator mnemonic should be useful for graph labels"
+        );
         assert_eq!(
             block["entry"].as_bool().expect("entry flag"),
             block["id"].as_u64() == Some(first_block_id) || predecessors.is_empty(),

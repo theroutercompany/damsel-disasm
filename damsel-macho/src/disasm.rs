@@ -1077,6 +1077,8 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
     let mut current_end = instructions[0]
         .address
         .saturating_add(u64::from(instructions[0].size));
+    let mut current_terminator_address = instructions[0].address;
+    let mut current_terminator_mnemonic = instructions[0].mnemonic.clone();
     let mut current_count = 0;
 
     for instruction in instructions {
@@ -1086,6 +1088,8 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
                 start_address: current_start,
                 end_address: current_end,
                 instruction_count: current_count,
+                terminator_address: current_terminator_address,
+                terminator_mnemonic: current_terminator_mnemonic,
             });
             current_start = instruction.address;
             current_count = 0;
@@ -1093,6 +1097,8 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
         current_end = instruction
             .address
             .saturating_add(u64::from(instruction.size));
+        current_terminator_address = instruction.address;
+        current_terminator_mnemonic = instruction.mnemonic.clone();
         current_count += 1;
     }
 
@@ -1101,6 +1107,8 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
         start_address: current_start,
         end_address: current_end,
         instruction_count: current_count,
+        terminator_address: current_terminator_address,
+        terminator_mnemonic: current_terminator_mnemonic,
     });
     blocks
 }
@@ -5965,12 +5973,16 @@ mod tests {
                 start_address: 0x1000,
                 end_address: 0x1008,
                 instruction_count: 2,
+                terminator_address: 0x1004,
+                terminator_mnemonic: "add".to_string(),
             },
             BasicBlock {
                 id: 1,
                 start_address: 0x1008,
                 end_address: 0x1010,
                 instruction_count: 2,
+                terminator_address: 0x100c,
+                terminator_mnemonic: "ret".to_string(),
             },
         ];
 
@@ -6003,6 +6015,8 @@ mod tests {
             .expect("call target should start a block");
 
         assert_eq!(target_block.end_address, 0x1014);
+        assert_eq!(target_block.terminator_address, 0x1010);
+        assert_eq!(target_block.terminator_mnemonic, "ret");
         assert!(
             analysis
                 .basic_blocks

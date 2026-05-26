@@ -1639,7 +1639,7 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         println!("  blocks:");
         for block in &analysis.basic_blocks {
             println!(
-                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} reachable={} loop_header={}",
+                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} reachable={} loop_header={} terminator={:#x}:{}",
                 block.id,
                 block.start_address,
                 block.end_address,
@@ -1647,7 +1647,9 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
                 block_edge_index.is_entry(block.id),
                 block_edge_index.is_exit(block.id),
                 block_edge_index.is_primary_entry_reachable(block.id),
-                block_edge_index.is_loop_header(block.id)
+                block_edge_index.is_loop_header(block.id),
+                block.terminator_address,
+                block.terminator_mnemonic
             );
         }
     }
@@ -5274,6 +5276,14 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
             usize_num(block.instruction_count),
         ),
         (
+            "terminator_address".to_string(),
+            u64_num(block.terminator_address),
+        ),
+        (
+            "terminator_mnemonic".to_string(),
+            JsonValue::String(block.terminator_mnemonic.clone()),
+        ),
+        (
             "entry".to_string(),
             JsonValue::Bool(edge_index.is_entry(block.id)),
         ),
@@ -7472,6 +7482,8 @@ mod tests {
                 start_address: 0x1000,
                 end_address: 0x1004,
                 instruction_count: 1,
+                terminator_address: 0x1000,
+                terminator_mnemonic: "br".to_string(),
             }],
             edges: vec![ControlFlowEdge {
                 from_block: 0,
@@ -7547,6 +7559,14 @@ mod tests {
             json_object_field(&block, "terminal"),
             &JsonValue::Bool(false)
         );
+        assert_eq!(
+            json_object_field(&block, "terminator_address"),
+            &JsonValue::Number("4096".to_string())
+        );
+        assert_eq!(
+            json_object_field(&block, "terminator_mnemonic"),
+            &JsonValue::String("br".to_string())
+        );
     }
 
     #[test]
@@ -7573,12 +7593,16 @@ mod tests {
                     start_address: 0x1000,
                     end_address: 0x1004,
                     instruction_count: 1,
+                    terminator_address: 0x1000,
+                    terminator_mnemonic: "b".to_string(),
                 },
                 BasicBlock {
                     id: 1,
                     start_address: 0x1004,
                     end_address: 0x1008,
                     instruction_count: 1,
+                    terminator_address: 0x1004,
+                    terminator_mnemonic: "b.eq".to_string(),
                 },
             ],
             edges: vec![
@@ -7690,12 +7714,16 @@ mod tests {
                     start_address: 0x1000,
                     end_address: 0x1004,
                     instruction_count: 1,
+                    terminator_address: 0x1000,
+                    terminator_mnemonic: "ret".to_string(),
                 },
                 BasicBlock {
                     id: 1,
                     start_address: 0x1004,
                     end_address: 0x1008,
                     instruction_count: 1,
+                    terminator_address: 0x1004,
+                    terminator_mnemonic: "ret".to_string(),
                 },
             ],
             edges: Vec::new(),

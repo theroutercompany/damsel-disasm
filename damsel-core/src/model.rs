@@ -2397,6 +2397,8 @@ pub struct BasicBlock {
     pub start_address: u64,
     pub end_address: u64,
     pub instruction_count: usize,
+    pub terminator_address: u64,
+    pub terminator_mnemonic: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
