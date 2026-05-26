@@ -1734,6 +1734,7 @@ fn synthesize_analysis_references(
                 instruction,
                 &lower,
                 &known_values,
+                known_flags,
             ))
         } else {
             None
@@ -3519,6 +3520,7 @@ fn synthesize_condition_flags(
     instruction: &DecodedInstruction,
     mnemonic: &str,
     known_values: &BTreeMap<String, RecoveredValue>,
+    known_flags: Option<NzcvFlags>,
 ) -> Option<NzcvFlags> {
     match mnemonic {
         "adds" | "subs" => {
@@ -3617,8 +3619,76 @@ fn synthesize_condition_flags(
             let rhs = logical_operand_value(instruction.operands.get(1)?, width, known_values)?;
             flags_for_logical_result(lhs & rhs, width)
         }
+        "ccmp" | "ccmn" => {
+            synthesize_conditional_compare_flags(mnemonic, instruction, known_values, known_flags)
+        }
         _ => None,
     }
+}
+
+fn synthesize_conditional_compare_flags(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+    known_flags: Option<NzcvFlags>,
+) -> Option<NzcvFlags> {
+    let lhs_register = match instruction.operands.first()? {
+        Operand::Register(register) => register,
+        _ => return None,
+    };
+    let width = register_value_width(lhs_register)?;
+    let fallback_flags = nzcv_flags_from_operand(instruction.operands.get(2)?)?;
+    let condition = condition_operand_text(instruction.operands.get(3)?)?;
+    if !condition_holds(condition, known_flags?)? {
+        return Some(fallback_flags);
+    }
+
+    let lhs = read_normalized_register_operand(instruction.operands.first()?, width, known_values)?;
+    let rhs = conditional_compare_operand_value(instruction.operands.get(1)?, width, known_values)?;
+    match mnemonic {
+        "ccmp" => flags_for_subtraction(lhs, rhs, width),
+        "ccmn" => flags_for_addition(lhs, rhs, width),
+        _ => None,
+    }
+}
+
+fn conditional_compare_operand_value(
+    operand: &Operand,
+    width: u32,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<u64> {
+    let value = match operand {
+        Operand::ImmediateUnsigned(value) if *value <= 31 => *value,
+        Operand::ImmediateSigned(value) if (0..=31).contains(value) => {
+            u64::try_from(*value).ok()?
+        }
+        Operand::Register(register) if register_value_width(register)? == width => {
+            read_normalized_register_operand(operand, width, known_values)?
+        }
+        _ => return None,
+    };
+    Some(normalize_value_for_width(value, width))
+}
+
+fn nzcv_flags_from_operand(operand: &Operand) -> Option<NzcvFlags> {
+    let value = match operand {
+        Operand::ImmediateUnsigned(value) => u8::try_from(*value).ok()?,
+        Operand::ImmediateSigned(value) if *value >= 0 => u8::try_from(*value).ok()?,
+        _ => return None,
+    };
+    nzcv_flags_from_immediate(value)
+}
+
+fn nzcv_flags_from_immediate(value: u8) -> Option<NzcvFlags> {
+    if value > 0b1111 {
+        return None;
+    }
+    Some(NzcvFlags {
+        n: value & 0b1000 != 0,
+        z: value & 0b0100 != 0,
+        c: value & 0b0010 != 0,
+        v: value & 0b0001 != 0,
+    })
 }
 
 fn arithmetic_operand_known_value(
@@ -3771,7 +3841,11 @@ fn conditional_select_false_value(
 }
 
 fn conditional_select_condition(instruction: &DecodedInstruction) -> Option<&str> {
-    match instruction.operands.get(3)? {
+    condition_operand_text(instruction.operands.get(3)?)
+}
+
+fn condition_operand_text(operand: &Operand) -> Option<&str> {
+    match operand {
         Operand::Condition(condition) | Operand::Name(condition) | Operand::Other(condition) => {
             Some(condition.trim())
         }
@@ -8617,6 +8691,243 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_recovers_selects_after_true_conditional_compares() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(5),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(5),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ccmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                    Operand::ImmediateUnsigned(0),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "csel",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("ne".to_string()),
+                ],
+            ),
+            instruction(0x1018, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-true ccmp should replace flags with the comparison result: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[6]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "ccmp-derived flags should feed indirect branch recovery: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_selects_after_false_conditional_compare_fallbacks() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ccmp",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::ImmediateUnsigned(31),
+                    Operand::ImmediateUnsigned(0b0100),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "csel",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x1018, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-false ccmp should use the NZCV fallback without reading compare operands: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[6]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "fallback flags should feed indirect branch recovery: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_selects_after_conditional_compare_negative() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(u64::MAX),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "cmp",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x8".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ccmn",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                    Operand::ImmediateUnsigned(0),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "csel",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x1018, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-true ccmn should replace flags with the addition result: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[6]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "ccmn-derived flags should feed indirect branch recovery: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
     fn synthesize_analysis_references_uses_prewrite_operands_for_flagged_self_updates() {
         let image = synthetic_image();
         let mut instructions = vec![
@@ -9011,6 +9322,177 @@ mod tests {
                     .references
                     .contains(&Reference::Branch { target: 0x4000 }),
             "unknown flag setters must not leave stale or fabricated csel branch targets: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_does_not_use_conditional_compare_fallback_with_unknown_flags()
+    {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ccmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(31),
+                    Operand::ImmediateUnsigned(0b0100),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "csel",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[4].recovered_values.is_empty(),
+            "ccmp fallback is only valid after a known input condition: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 })
+                && !instructions[5]
+                    .references
+                    .contains(&Reference::Branch { target: 0x3000 })
+                && !instructions[5]
+                    .references
+                    .contains(&Reference::Branch { target: 0x4000 }),
+            "unknown ccmp input flags must clear stale and fabricated csel targets: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_width_mismatched_conditional_compare_sources() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "mov",
+                vec![
+                    Operand::Register("w12".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1018,
+                "ccmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Register("w12".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x101c,
+                "csel",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x1020, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[7].recovered_values.is_empty(),
+            "width-mismatched ccmp sources must clear flags instead of comparing through aliases: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[8]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 })
+                && !instructions[8]
+                    .references
+                    .contains(&Reference::Branch { target: 0x3000 })
+                && !instructions[8]
+                    .references
+                    .contains(&Reference::Branch { target: 0x4000 }),
+            "invalid ccmp source width must not leave stale or fabricated csel targets: {:?}",
             instructions
         );
     }
