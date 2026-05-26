@@ -2813,7 +2813,10 @@ fn scalar_memory_load_width(register: &str, mnemonic: &str) -> Option<(usize, bo
         Some((2, true))
     } else if mnemonic.starts_with("ldrh") || mnemonic.starts_with("ldurh") {
         Some((2, false))
-    } else if mnemonic == "ldr" || mnemonic == "ldur" {
+    } else if matches!(
+        mnemonic,
+        "ldr" | "ldur" | "ldar" | "ldapr" | "ldapur" | "ldaxr" | "ldxr"
+    ) {
         if register.starts_with('w') {
             Some((4, false))
         } else if register.starts_with('x') {
@@ -12408,6 +12411,153 @@ mod tests {
                     && value.source == RecoveredValueSource::AdrpLoad
             }),
             "ldr x should recover readable 64-bit scalar contents: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_scalar_acquire_exclusive_load_values() {
+        let mut bytes = vec![0u8; 16];
+        bytes[0..4].copy_from_slice(&0x1122_3344_u32.to_le_bytes());
+        bytes[8..16].copy_from_slice(&0x1122_3344_5566_7788_u64.to_le_bytes());
+        let image = synthetic_literal_image(0x4000, &bytes);
+
+        for mnemonic in ["ldar", "ldapr", "ldapur", "ldaxr", "ldxr"] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x4000),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("w9".to_string()),
+                        Operand::Memory {
+                            base: "x8".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(
+                    0x1008,
+                    "add",
+                    vec![
+                        Operand::Register("x10".to_string()),
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(8),
+                    ],
+                ),
+                instruction(
+                    0x100c,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x11".to_string()),
+                        Operand::Memory {
+                            base: "x10".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::Data { target: 0x4000 }),
+                "known acquire/exclusive scalar load addresses should be emitted for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].recovered_values.iter().any(|value| {
+                    value.register == "w9"
+                        && value.value == 0x1122_3344
+                        && value.kind == RecoveredValueKind::Literal
+                        && value.source == RecoveredValueSource::AdrpLoad
+                }),
+                "w-register acquire/exclusive loads should recover scalar contents for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[3]
+                    .references
+                    .contains(&Reference::Data { target: 0x4008 }),
+                "known acquire/exclusive scalar load addresses should be emitted for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[3].recovered_values.iter().any(|value| {
+                    value.register == "x11"
+                        && value.value == 0x1122_3344_5566_7788
+                        && value.kind == RecoveredValueKind::Literal
+                        && value.source == RecoveredValueSource::AdrpLoad
+                }),
+                "x-register acquire/exclusive loads should recover scalar contents for {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_unreadable_acquire_load_destinations() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x5000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldar",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x9".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "unreadable acquire loads must not synthesize values"
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "unreadable acquire loads must clear stale destination state: {:?}",
             instructions
         );
     }
