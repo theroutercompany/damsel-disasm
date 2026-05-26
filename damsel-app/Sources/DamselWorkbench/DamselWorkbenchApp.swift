@@ -101,13 +101,6 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
             .keyEquivalentModifierMask = [.command]
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
-        windowMenu.addItem(.separator())
-        let bringAll = windowMenu.addItem(
-            withTitle: "Bring All to Front",
-            action: #selector(NSApplication.arrangeInFront(_:)),
-            keyEquivalent: ""
-        )
-        bringAll.target = NSApp
         mainMenu.addItem(menu("Window", submenu: windowMenu))
         NSApp.windowsMenu = windowMenu
 

@@ -40,14 +40,12 @@ public struct ContentView: View {
                 Button(action: openFile) {
                     Label("Open Binary", systemImage: "folder")
                 }
-                .keyboardShortcut("o", modifiers: [.command])
 
                 Button {
                     Task { try? await store.runDisassembly() }
                 } label: {
                     Label("Disassemble", systemImage: "play.fill")
                 }
-                .keyboardShortcut(.return, modifiers: [.command])
                 .disabled(!store.canRunDisassembly)
             }
 
