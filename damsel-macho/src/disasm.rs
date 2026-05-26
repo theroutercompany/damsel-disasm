@@ -2848,13 +2848,14 @@ fn synthesize_simple_register_value(
             synthesize_multiply_register_value(&lower, instruction, known_values)
         }
         "ubfx" | "sbfx" => synthesize_bitfield_extract_value(&lower, instruction, known_values),
+        "extr" => synthesize_extract_register_value(instruction, known_values),
         "mvn" | "neg" | "negs" | "uxtb" | "uxth" | "uxtw" | "sxtb" | "sxth" | "sxtw" => {
             synthesize_unary_register_value(&lower, instruction, known_values)
         }
         "csel" | "csinc" | "csinv" | "csneg" => {
             synthesize_conditional_select_value(&lower, instruction, known_values)
         }
-        "lsl" | "lsr" | "asr" => {
+        "lsl" | "lsr" | "asr" | "ror" => {
             let destination = match instruction.operands.first()? {
                 Operand::Register(register) => register.clone(),
                 _ => return None,
@@ -2870,12 +2871,49 @@ fn synthesize_simple_register_value(
                 "lsl" => source_value.checked_shl(shift)?,
                 "lsr" => source_value.checked_shr(shift)?,
                 "asr" => arithmetic_shift_right(source_value, width, shift),
+                "ror" => rotate_right_with_width(source_value, width, shift),
                 _ => return None,
             };
             Some((destination, value, RecoveredValueSource::Other))
         }
         _ => None,
     }
+}
+
+fn synthesize_extract_register_value(
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<(String, u64, RecoveredValueSource)> {
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    let width = register_value_width_for_write(&destination)?;
+    let high = match instruction.operands.get(1)? {
+        Operand::Register(register) => {
+            normalize_value_for_width(read_simple_register_value(known_values, register)?, width)
+        }
+        _ => return None,
+    };
+    let low = match instruction.operands.get(2)? {
+        Operand::Register(register) => {
+            normalize_value_for_width(read_simple_register_value(known_values, register)?, width)
+        }
+        _ => return None,
+    };
+    let shift = parse_bit_shift_amount(instruction.operands.get(3)?, width)?;
+    let value = extract_register_pair_value(high, low, width, shift)?;
+    Some((destination, value, RecoveredValueSource::Other))
+}
+
+fn extract_register_pair_value(high: u64, low: u64, width: u32, shift: u32) -> Option<u64> {
+    let mask = low_bit_mask(width)?;
+    if shift == 0 {
+        return Some(low & mask);
+    }
+    let high = (high & mask).checked_shl(width - shift)?;
+    let low = (low & mask).checked_shr(shift)?;
+    Some((high | low) & mask)
 }
 
 fn synthesize_bitfield_extract_value(
@@ -5763,6 +5801,223 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "out-of-range bitfield extracts must clear stale destination state: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_rotate_and_extract_values() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x10),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "ror",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0xa),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "extr",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "extr",
+                vec![
+                    Operand::Register("x13".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "ror should recover known rotate-immediate values: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4].recovered_values.iter().any(|value| {
+                value.register == "x12"
+                    && value.value == 0xa000_0000_0000_0000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "extr should combine operand1:operand2 before extracting: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x13"
+                    && value.value == 0x10
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "extr with shift zero should recover the low source register: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_rotate_for_table_indices() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x10),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ror",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "rotate-derived table indices should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "rotate-derived table indices should resolve slot addresses: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "rotate-derived table indices should resolve indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_invalid_extract_shifts() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "extr",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(64),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "invalid extr shifts must not synthesize values"
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "invalid extr shifts must clear stale destination state: {:?}",
             instructions
         );
     }
