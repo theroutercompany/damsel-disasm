@@ -6,7 +6,6 @@ public struct ContentView: View {
     @ObservedObject private var store: WorkbenchStore
     @State private var isDropTargeted = false
     @State private var symbolSuggestionTask: Task<Void, Never>?
-    @State private var openedLaunchFile = false
 
     public init(store: WorkbenchStore) {
         self.store = store
@@ -53,39 +52,18 @@ public struct ContentView: View {
             }
 
             ToolbarItem(placement: .status) {
-                HStack(spacing: 8) {
-                    if store.isBusy {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                    Text(store.toolbarStatusText)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-                        .truncationMode(.tail)
-                        .frame(width: 88, alignment: .center)
-                        .help(store.statusText)
-                        .accessibilityLabel(store.statusText)
-                }
-                .frame(width: 112, alignment: .center)
+                TitlebarStatusView(
+                    text: store.toolbarStatusText,
+                    detail: store.statusText,
+                    isBusy: store.isBusy
+                )
             }
         }
         .onAppear {
-            Task {
-                await store.bootstrap()
-                guard !openedLaunchFile, let url = Self.launchFileURL() else {
-                    return
-                }
-                openedLaunchFile = true
-                await store.loadFile(url)
-            }
+            Task { await store.bootstrap() }
         }
         .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
             openDroppedFile(providers)
-        }
-        .onOpenURL { url in
-            Task { await store.loadFile(url) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .damselOpenBinaryCommand)) { _ in
             openFile()
@@ -140,16 +118,36 @@ public struct ContentView: View {
 
         return true
     }
+}
 
-    private static func launchFileURL() -> URL? {
-        let arguments = ProcessInfo.processInfo.arguments.dropFirst()
-        for argument in arguments where !argument.hasPrefix("-") {
-            let url = URL(fileURLWithPath: argument)
-            if FileManager.default.isReadableFile(atPath: url.path) {
-                return url
+private struct TitlebarStatusView: View {
+    let text: String
+    let detail: String
+    let isBusy: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if isBusy {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 12, height: 12)
             }
+
+            Text(text)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .allowsTightening(true)
+                .minimumScaleFactor(0.74)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
-        return nil
+        .padding(.horizontal, 10)
+        .frame(width: 132, height: 26, alignment: .center)
+        .clipped()
+        .contentShape(Rectangle())
+        .help(detail)
+        .accessibilityLabel(detail)
     }
 }
 

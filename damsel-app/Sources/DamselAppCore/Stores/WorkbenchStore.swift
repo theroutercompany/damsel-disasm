@@ -35,6 +35,7 @@ public final class WorkbenchStore: ObservableObject {
 
     private let serverProcess: DamselServerProcess
     private var client: DamselAPIClient?
+    private var bootstrapTask: Task<URL, Error>?
 
     public init(serverProcess: DamselServerProcess = DamselServerProcess()) {
         self.serverProcess = serverProcess
@@ -81,7 +82,16 @@ public final class WorkbenchStore: ObservableObject {
 
     public var toolbarStatusText: String {
         guard let disassembly else {
-            return statusText
+            switch serverState {
+            case .stopped:
+                return "Idle"
+            case .starting:
+                return "Starting"
+            case .ready:
+                return loadedImage == nil ? "Ready" : "Loaded"
+            case .failed:
+                return "Error"
+            }
         }
 
         let filterText = normalizedInstructionFilter
@@ -124,10 +134,24 @@ public final class WorkbenchStore: ObservableObject {
         guard client == nil else {
             return
         }
+
+        if let bootstrapTask {
+            await finishBootstrap(bootstrapTask)
+            return
+        }
+
         serverState = .starting
         statusText = "Starting local Damsel analysis server"
+        let bootstrapTask = Task { @MainActor [serverProcess] in
+            try await serverProcess.start()
+        }
+        self.bootstrapTask = bootstrapTask
+        await finishBootstrap(bootstrapTask)
+    }
+
+    private func finishBootstrap(_ task: Task<URL, Error>) async {
         do {
-            let url = try await serverProcess.start()
+            let url = try await task.value
             client = DamselAPIClient(baseURL: url)
             serverState = .ready(url)
             statusText = loadedImage == nil ? "Awaiting local binary" : "Ready"
@@ -136,6 +160,7 @@ public final class WorkbenchStore: ObservableObject {
             bannerMessage = error.localizedDescription
             statusText = "Server unavailable"
         }
+        bootstrapTask = nil
     }
 
     public func loadFile(_ url: URL) async {
@@ -238,6 +263,10 @@ public final class WorkbenchStore: ObservableObject {
         bannerMessage = nil
     }
 
+    public func clearInstructionFilter() {
+        instructionFilterText = ""
+    }
+
     public func setBytesText(_ text: String) {
         bytesText = IntegerTextInput.sanitize(text)
         if !bytesText.isEmpty {
@@ -253,6 +282,8 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func shutdown() {
+        bootstrapTask?.cancel()
+        bootstrapTask = nil
         serverProcess.stop()
         serverState = .stopped
         client = nil

@@ -11,19 +11,36 @@ struct DamselWorkbenchApp: App {
             EmptyView()
         }
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("Open Binary...") {
-                    NotificationCenter.default.post(name: .damselOpenBinaryCommand, object: nil)
-                }
-                .keyboardShortcut("o", modifiers: [.command])
-            }
+            workbenchCommands
+        }
+    }
 
-            CommandMenu("Analyze") {
-                Button("Disassemble") {
-                    NotificationCenter.default.post(name: .damselRunDisassemblyCommand, object: nil)
-                }
-                .keyboardShortcut(.return, modifiers: [.command])
+    @CommandsBuilder
+    private var workbenchCommands: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("Open Binary...") {
+                NotificationCenter.default.post(name: .damselOpenBinaryCommand, object: nil)
             }
+            .keyboardShortcut("o", modifiers: [.command])
+        }
+
+        CommandMenu("Analyze") {
+            Button("Disassemble") {
+                NotificationCenter.default.post(name: .damselRunDisassemblyCommand, object: nil)
+            }
+            .keyboardShortcut(.return, modifiers: [.command])
+        }
+
+        CommandMenu("Navigate") {
+            Button("Find in Instructions") {
+                NotificationCenter.default.post(name: .damselFocusInstructionFilterCommand, object: nil)
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+
+            Button("Clear Instruction Filter") {
+                NotificationCenter.default.post(name: .damselClearInstructionFilterCommand, object: nil)
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
         }
     }
 }
@@ -32,15 +49,31 @@ struct DamselWorkbenchApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = WorkbenchStore()
     private var mainWindow: NSWindow?
+    private var openedLaunchFile = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
         openMainWindow()
+        openLaunchFileIfNeeded()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         openMainWindow()
         return true
+    }
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        guard let filename = filenames.first else {
+            sender.reply(toOpenOrPrint: .failure)
+            return
+        }
+
+        openMainWindow()
+        sender.reply(toOpenOrPrint: .success)
+        Task { await store.loadFile(URL(fileURLWithPath: filename)) }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -83,6 +116,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.toolbarStyle = .unified
         window.contentViewController = NSHostingController(rootView: rootView)
         return window
+    }
+
+    private func openLaunchFileIfNeeded() {
+        guard !openedLaunchFile, let url = Self.launchFileURL() else {
+            return
+        }
+        openedLaunchFile = true
+        Task { await store.loadFile(url) }
+    }
+
+    private static func launchFileURL() -> URL? {
+        let arguments = ProcessInfo.processInfo.arguments.dropFirst()
+        for argument in arguments where !argument.hasPrefix("-") {
+            let url = URL(fileURLWithPath: argument)
+            if FileManager.default.isReadableFile(atPath: url.path) {
+                return url
+            }
+        }
+        return nil
     }
 
     private func recenter(_ window: NSWindow) {

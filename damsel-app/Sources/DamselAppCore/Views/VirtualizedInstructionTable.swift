@@ -26,6 +26,9 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
         tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.28)
         tableView.backgroundColor = .textBackgroundColor
         tableView.setAccessibilityLabel("Instructions")
+        tableView.copySelection = {
+            context.coordinator.copySelectedRow()
+        }
 
         addColumn("address", title: "Address", width: 138, minWidth: 112, to: tableView)
         addColumn("opcode", title: "Opcode", width: 124, minWidth: 104, to: tableView)
@@ -198,8 +201,16 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
             guard let instruction = clickedInstruction else {
                 return
             }
-            let opcode = DamselFormat.address(instruction.opcode)
-            writePasteboard("\(DamselFormat.address(instruction.address))  \(opcode)  \(instruction.rendered)")
+            writePasteboard(rowText(for: instruction))
+        }
+
+        func copySelectedRow() {
+            guard let tableView,
+                  instructions.indices.contains(tableView.selectedRow)
+            else {
+                return
+            }
+            writePasteboard(rowText(for: instructions[tableView.selectedRow]))
         }
 
         private var clickedInstruction: InstructionRow? {
@@ -216,6 +227,11 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
         private func writePasteboard(_ value: String) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(value, forType: .string)
+        }
+
+        private func rowText(for instruction: InstructionRow) -> String {
+            let opcode = DamselFormat.address(instruction.opcode)
+            return "\(DamselFormat.address(instruction.address))  \(opcode)  \(instruction.rendered)"
         }
 
         private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
@@ -271,6 +287,12 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
 }
 
 private final class InstructionNSTableView: NSTableView {
+    var copySelection: (() -> Void)?
+
+    @objc func copy(_ sender: Any?) {
+        copySelection?()
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         let row = row(at: point)

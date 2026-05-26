@@ -2,6 +2,7 @@ import SwiftUI
 
 struct InstructionSurfaceView: View {
     @ObservedObject var store: WorkbenchStore
+    @FocusState private var focusedField: FocusedField?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -10,6 +11,15 @@ struct InstructionSurfaceView: View {
             instructionList
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .onReceive(NotificationCenter.default.publisher(for: .damselFocusInstructionFilterCommand)) { _ in
+            guard hasInstructions else {
+                return
+            }
+            focusedField = .filter
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .damselClearInstructionFilterCommand)) { _ in
+            store.clearInstructionFilter()
+        }
     }
 
     private var header: some View {
@@ -38,10 +48,11 @@ struct InstructionSurfaceView: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.caption, design: .monospaced))
                     .frame(width: 180)
+                    .focused($focusedField, equals: .filter)
 
                 if !store.instructionFilterText.isEmpty {
                     Button {
-                        store.instructionFilterText = ""
+                        store.clearInstructionFilter()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
@@ -49,11 +60,15 @@ struct InstructionSurfaceView: View {
                     .foregroundStyle(.secondary)
                 }
             }
-            .disabled(store.disassembly?.instructions.isEmpty ?? true)
+            .disabled(!hasInstructions)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
+    }
+
+    private var hasInstructions: Bool {
+        store.disassembly?.instructions.isEmpty == false
     }
 
     @ViewBuilder
@@ -75,6 +90,10 @@ struct InstructionSurfaceView: View {
             EmptyInstructionView()
         }
     }
+}
+
+private enum FocusedField: Hashable {
+    case filter
 }
 
 private struct EmptyInstructionView: View {
