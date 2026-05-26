@@ -58,7 +58,8 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
-        case #selector(runDisassembly(_:)):
+        case #selector(runDisassembly(_:)),
+             #selector(refreshDisassembly(_:)):
             return store.canRunDisassembly
         case #selector(focusInstructionFilter(_:)):
             return store.disassembly?.instructions.isEmpty == false
@@ -83,6 +84,10 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
             return
         }
         NotificationCenter.default.post(name: .damselRunDisassemblyCommand, object: nil)
+    }
+
+    @objc private func refreshDisassembly(_ sender: Any?) {
+        runDisassembly(sender)
     }
 
     @objc private func focusInstructionFilter(_ sender: Any?) {
@@ -201,6 +206,14 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         let disassemble = menu.addItem(withTitle: "Disassemble", action: #selector(runDisassembly(_:)), keyEquivalent: "\r")
         disassemble.keyEquivalentModifierMask = [.command]
         disassemble.target = self
+
+        let refresh = menu.addItem(
+            withTitle: "Refresh Disassembly",
+            action: #selector(refreshDisassembly(_:)),
+            keyEquivalent: "r"
+        )
+        refresh.keyEquivalentModifierMask = [.command]
+        refresh.target = self
         return menu
     }
 

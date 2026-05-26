@@ -48,7 +48,7 @@ public struct ContentView: View {
                     Label("Disassemble", systemImage: "play.fill")
                 }
                 .disabled(!store.canRunDisassembly)
-                .help(store.canRunDisassembly ? "Run disassembly" : "Load a binary and choose a valid range first")
+                .help(store.canRunDisassembly ? "Run or refresh disassembly" : "Load a binary and choose a valid range first")
             }
 
             ToolbarItem(placement: .status) {
