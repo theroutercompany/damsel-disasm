@@ -2834,6 +2834,25 @@ fn synthesize_simple_register_value(
             };
             Some((destination, value, RecoveredValueSource::Other))
         }
+        "csel" => {
+            let destination = match instruction.operands.first()? {
+                Operand::Register(register) => register.clone(),
+                _ => return None,
+            };
+            let true_value = match instruction.operands.get(1)? {
+                Operand::Register(register) => read_simple_register_value(known_values, register)?,
+                _ => return None,
+            };
+            let false_value = match instruction.operands.get(2)? {
+                Operand::Register(register) => read_simple_register_value(known_values, register)?,
+                _ => return None,
+            };
+            (true_value == false_value).then_some((
+                destination,
+                true_value,
+                RecoveredValueSource::Other,
+            ))
+        }
         "lsl" | "lsr" | "asr" => {
             let destination = match instruction.operands.first()? {
                 Operand::Register(register) => register.clone(),
@@ -4989,6 +5008,117 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "signed extended register add offsets should still resolve table targets: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_deterministic_conditional_selects() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "csel",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x1008, "br", vec![Operand::Register("x9".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "csel with equal source values is deterministic despite an unknown condition: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "deterministic csel values should feed indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_divergent_conditional_selects() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "csel",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.is_empty(),
+            "csel with different source values must not guess a condition outcome"
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "divergent csel must clear stale destination state: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 })
+                && !instructions[4]
+                    .references
+                    .contains(&Reference::Branch { target: 0x4000 }),
+            "divergent csel must not fabricate either possible target: {:?}",
             instructions
         );
     }
