@@ -2537,7 +2537,9 @@ fn memory_base_index_displacement(
         {
             let index_stride = index_modifier
                 .as_deref()
-                .map(memory_index_modifier_stride)
+                .map(|modifier| {
+                    memory_index_modifier_stride(modifier, jump_table_element_size(instruction))
+                })
                 .unwrap_or(Some(1))?;
             return Some((base.clone(), index.clone(), *displacement, index_stride));
         }
@@ -2545,7 +2547,7 @@ fn memory_base_index_displacement(
     None
 }
 
-fn memory_index_modifier_stride(modifier: &str) -> Option<u64> {
+fn memory_index_modifier_stride(modifier: &str, element_size: u8) -> Option<u64> {
     let lower = modifier.to_ascii_lowercase();
     if !(lower.starts_with("lsl") || lower.starts_with("uxtw") || lower.starts_with("uxtx")) {
         return None;
@@ -2553,7 +2555,20 @@ fn memory_index_modifier_stride(modifier: &str) -> Option<u64> {
     let Some(shift) = parse_optional_shift_from_text(&lower) else {
         return None;
     };
-    1_u64.checked_shl(shift)
+    if shift == 0 {
+        Some(1)
+    } else if shift == memory_index_scaled_shift(element_size)? {
+        Some(u64::from(element_size))
+    } else {
+        None
+    }
+}
+
+fn memory_index_scaled_shift(element_size: u8) -> Option<u32> {
+    match element_size {
+        1 | 2 | 4 | 8 => Some(element_size.trailing_zeros()),
+        _ => None,
+    }
 }
 
 fn parse_optional_shift_from_text(text: &str) -> Option<u32> {
@@ -5296,6 +5311,59 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "the shifted offset should still resolve the table slot target"
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_invalid_memory_index_shifts() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #4".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].references.is_empty(),
+            "invalid scaled register offsets must not synthesize a data reference: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "invalid scaled register offsets must not recover a value"
+        );
+        assert!(
+            instructions[3]
+                .annotations
+                .iter()
+                .all(|annotation| !matches!(annotation, Annotation::JumpTableCandidate { .. })),
+            "invalid scaled register offsets must not create jump-table provenance"
         );
     }
 
