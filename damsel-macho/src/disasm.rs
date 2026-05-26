@@ -2813,7 +2813,56 @@ fn synthesize_simple_register_value(
             };
             Some((destination, value, RecoveredValueSource::Other))
         }
+        "lsl" | "lsr" | "asr" => {
+            let destination = match instruction.operands.first()? {
+                Operand::Register(register) => register.clone(),
+                _ => return None,
+            };
+            let source = match instruction.operands.get(1)? {
+                Operand::Register(register) => register,
+                _ => return None,
+            };
+            let width = register_value_width(&destination)?;
+            let source_value = read_simple_register_value(known_values, source)?;
+            let shift = parse_bit_shift_amount(instruction.operands.get(2)?, width)?;
+            let value = match lower.as_str() {
+                "lsl" => source_value.checked_shl(shift)?,
+                "lsr" => source_value.checked_shr(shift)?,
+                "asr" => arithmetic_shift_right(source_value, width, shift),
+                _ => return None,
+            };
+            Some((destination, value, RecoveredValueSource::Other))
+        }
         _ => None,
+    }
+}
+
+fn register_value_width(register: &str) -> Option<u32> {
+    let lower = register.to_ascii_lowercase();
+    if lower.starts_with('w') {
+        Some(32)
+    } else if lower.starts_with('x') {
+        Some(64)
+    } else {
+        None
+    }
+}
+
+fn parse_bit_shift_amount(operand: &Operand, width: u32) -> Option<u32> {
+    let shift = match operand {
+        Operand::ImmediateUnsigned(value) => u32::try_from(*value).ok()?,
+        Operand::ImmediateSigned(value) if *value >= 0 => u32::try_from(*value).ok()?,
+        Operand::Other(text) | Operand::Name(text) => parse_shift_text(text, None)?,
+        _ => return None,
+    };
+    (shift < width).then_some(shift)
+}
+
+fn arithmetic_shift_right(value: u64, width: u32, shift: u32) -> u64 {
+    if width == 32 {
+        ((value as u32 as i32) >> shift) as u32 as u64
+    } else {
+        ((value as i64) >> shift) as u64
     }
 }
 
@@ -4537,6 +4586,206 @@ mod tests {
                 && value.value == 0b0110
                 && value.source == RecoveredValueSource::Other
         }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_shift_immediate_values() {
+        let image = synthetic_image();
+        for (mnemonic, source, shift, expected) in [
+            ("lsl", 0x3, 2, 0xc),
+            ("lsr", 0x40, 2, 0x10),
+            ("asr", (-16_i64) as u64, 2, (-4_i64) as u64),
+        ] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(source),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(shift),
+                    ],
+                ),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1].recovered_values.iter().any(|value| {
+                    value.register == "x9"
+                        && value.value == expected
+                        && value.source == RecoveredValueSource::Other
+                }),
+                "immediate shift should recover {expected:#x} for {mnemonic}: {:?}",
+                instructions
+            );
+        }
+
+        let mut instructions = vec![
+            instruction(
+                0x2000,
+                "mov",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(0xfffffff0),
+                ],
+            ),
+            instruction(
+                0x2004,
+                "asr",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(2),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "w9"
+                    && value.value == 0xfffffffc
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "32-bit arithmetic shifts should sign-extend within W-register width: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_shifted_table_indices() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "lsl",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(3),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 8
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "the shifted index register should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "the load should use the shifted byte offset: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "the shifted index should resolve the indirect branch: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_invalid_shift_immediates() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "lsl",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(64),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "invalid shifts must not synthesize wrapped register values"
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "invalid shifted indexes must not resolve through stale register state: {:?}",
+            instructions
+        );
     }
 
     #[test]
