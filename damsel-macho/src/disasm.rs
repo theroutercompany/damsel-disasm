@@ -2897,6 +2897,12 @@ fn synthesize_simple_register_value(
         "csel" | "csinc" | "csinv" | "csneg" => {
             synthesize_conditional_select_value(&lower, instruction, known_values, known_flags)
         }
+        "cset" | "csetm" | "cinc" | "cinv" | "cneg" => synthesize_conditional_select_alias_value(
+            &lower,
+            instruction,
+            known_values,
+            known_flags,
+        ),
         "lsl" | "lsr" | "asr" | "ror" => {
             let destination = match instruction.operands.first()? {
                 Operand::Register(register) => register.clone(),
@@ -3838,6 +3844,63 @@ fn conditional_select_false_value(
         _ => return None,
     };
     Some(normalize_value_for_width(false_value, width))
+}
+
+fn synthesize_conditional_select_alias_value(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+    known_flags: Option<NzcvFlags>,
+) -> Option<(String, u64, RecoveredValueSource)> {
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    let width = register_value_width_for_write(&destination)?;
+    let condition = conditional_select_alias_condition(mnemonic, instruction)?;
+    let condition_holds = condition_holds(condition, known_flags?)?;
+    let value = match mnemonic {
+        "cset" => u64::from(condition_holds),
+        "csetm" => {
+            if condition_holds {
+                low_bit_mask(width)?
+            } else {
+                0
+            }
+        }
+        "cinc" | "cinv" | "cneg" => {
+            let source = read_width_checked_register_operand(
+                instruction.operands.get(1)?,
+                width,
+                known_values,
+            )?;
+            match mnemonic {
+                "cinc" if condition_holds => source.wrapping_add(1),
+                "cinv" if condition_holds => !source,
+                "cneg" if condition_holds => 0_u64.wrapping_sub(source),
+                "cinc" | "cinv" | "cneg" => source,
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    Some((
+        destination,
+        normalize_value_for_width(value, width),
+        RecoveredValueSource::Other,
+    ))
+}
+
+fn conditional_select_alias_condition<'a>(
+    mnemonic: &str,
+    instruction: &'a DecodedInstruction,
+) -> Option<&'a str> {
+    let index = match mnemonic {
+        "cset" | "csetm" => 1,
+        "cinc" | "cinv" | "cneg" => 2,
+        _ => return None,
+    };
+    condition_operand_text(instruction.operands.get(index)?)
 }
 
 fn conditional_select_condition(instruction: &DecodedInstruction) -> Option<&str> {
@@ -8691,6 +8754,281 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_recovers_conditional_set_alias_values() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "cset",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "csetm",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Condition("ne".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "csetm",
+                vec![
+                    Operand::Register("w12".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "w9"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-true cset should recover 1: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-false csetm should recover 0: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4].recovered_values.iter().any(|value| {
+                value.register == "w12"
+                    && value.value == u64::from(u32::MAX)
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "32-bit known-true csetm should recover an all-ones W mask: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_conditional_transform_alias_values() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x2fff),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("w14".to_string()),
+                    Operand::ImmediateUnsigned(u64::from(u32::MAX)),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "cinc",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x1018,
+                "cinv",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("ne".to_string()),
+                ],
+            ),
+            instruction(
+                0x101c,
+                "cneg",
+                vec![
+                    Operand::Register("x13".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x1020,
+                "cinc",
+                vec![
+                    Operand::Register("w15".to_string()),
+                    Operand::Register("w14".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-true cinc should increment its source: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[6].recovered_values.iter().any(|value| {
+                value.register == "x12"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-false cinv should leave its source unchanged: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[7].recovered_values.iter().any(|value| {
+                value.register == "x13"
+                    && value.value == 0_u64.wrapping_sub(0x3000)
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-true cneg should negate its source: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[8].recovered_values.iter().any(|value| {
+                value.register == "w15"
+                    && value.value == 0
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "32-bit known-true cinc should wrap at W-register width: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_conditional_set_aliases_for_table_indices() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "cset",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known cset table indices should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "known cset table indices should resolve slot addresses: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "known cset table indices should resolve indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
     fn synthesize_analysis_references_recovers_selects_after_true_conditional_compares() {
         let image = synthetic_image();
         let mut instructions = vec![
@@ -9396,6 +9734,99 @@ mod tests {
                     .references
                     .contains(&Reference::Branch { target: 0x4000 }),
             "unknown ccmp input flags must clear stale and fabricated csel targets: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_conditional_aliases_with_unknown_flags() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "cset",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x1008, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.is_empty(),
+            "conditional aliases must not synthesize values with unknown flags"
+        );
+        assert!(
+            !instructions[2]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "conditional aliases with unknown flags must clear stale destination state: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_width_mismatched_conditional_alias_sources() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "cmp",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "cinc",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.is_empty(),
+            "conditional aliases must reject source registers that do not match destination width"
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "invalid conditional aliases must clear stale destination state: {:?}",
             instructions
         );
     }
