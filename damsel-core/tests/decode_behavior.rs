@@ -206,6 +206,73 @@ fn decode_emits_first_class_indirect_control_references() {
 }
 
 #[test]
+fn decode_uses_only_target_register_for_authenticated_indirect_controls() {
+    let bytes = [
+        0x01, 0x08, 0x3f, 0xd7, // blraa x0, x1
+        0x85, 0x08, 0x1f, 0xd7, // braa x4, x5
+        0x1f, 0x09, 0x3f, 0xd6, // blraaz x8
+        0x3f, 0x0d, 0x1f, 0xd6, // brabz x9
+    ];
+    let instructions = decode(&bytes, 0x1000, None);
+
+    assert_eq!(instructions.len(), 4);
+    assert_eq!(instructions[0].mnemonic, "blraa");
+    assert!(
+        instructions[0]
+            .references
+            .contains(&Reference::IndirectCall {
+                via: "x0".to_string()
+            }),
+        "authenticated indirect call should use the target register, got {:?}",
+        instructions[0].references
+    );
+    assert!(
+        !instructions[0]
+            .references
+            .contains(&Reference::IndirectCall {
+                via: "x1".to_string()
+            }),
+        "authenticated call modifier register must not become a call target: {:?}",
+        instructions[0].references
+    );
+
+    assert_eq!(instructions[1].mnemonic, "braa");
+    assert!(
+        instructions[1]
+            .references
+            .contains(&Reference::IndirectBranch {
+                via: "x4".to_string()
+            }),
+        "authenticated indirect branch should use the target register, got {:?}",
+        instructions[1].references
+    );
+    assert!(
+        !instructions[1]
+            .references
+            .contains(&Reference::IndirectBranch {
+                via: "x5".to_string()
+            }),
+        "authenticated branch modifier register must not become a branch target: {:?}",
+        instructions[1].references
+    );
+
+    assert!(
+        instructions[2]
+            .references
+            .contains(&Reference::IndirectCall {
+                via: "x8".to_string()
+            })
+    );
+    assert!(
+        instructions[3]
+            .references
+            .contains(&Reference::IndirectBranch {
+                via: "x9".to_string()
+            })
+    );
+}
+
+#[test]
 fn decode_does_not_misclassify_add_immediate_as_branch() {
     let bytes = [0x00, 0x04, 0x00, 0x91]; // add x0, x0, #1
     let instructions = decode(&bytes, 0x1000, None);

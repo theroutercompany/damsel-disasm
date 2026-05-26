@@ -161,58 +161,38 @@ fn derive_references(
             .map(|(_, target)| target);
 
     for operand in operands {
-        match operand.op_type {
-            Arm64OperandType::Imm(value) if value >= 0 && !is_control_flow => {
-                let target = value as u64;
-                if is_page_materialization {
-                    push_reference(&mut references, Reference::Page { target });
-                } else if is_literal_data_reference_mnemonic(&lower) {
-                    push_reference(&mut references, Reference::Data { target });
-                }
+        if let Arm64OperandType::Imm(value) = operand.op_type
+            && value >= 0
+            && !is_control_flow
+        {
+            let target = value as u64;
+            if is_page_materialization {
+                push_reference(&mut references, Reference::Page { target });
+            } else if is_literal_data_reference_mnemonic(&lower) {
+                push_reference(&mut references, Reference::Data { target });
             }
-            Arm64OperandType::Reg(register) if is_control_flow => {
-                if is_indirect_control(&lower) {
-                    let register = cs
-                        .reg_name(register)
-                        .unwrap_or_else(|| format!("{register:?}"));
-                    let reference = if is_call_like {
-                        Reference::IndirectCall {
-                            via: register.clone(),
-                        }
-                    } else {
-                        Reference::IndirectBranch {
-                            via: register.clone(),
-                        }
-                    };
-                    push_reference(&mut references, reference);
-                    let kind = if is_call_like {
-                        "indirect call"
-                    } else {
-                        "indirect branch"
-                    };
-                    push_note(&mut notes, format!("{kind} via {register}"));
-                }
-            }
-            Arm64OperandType::Mem(mem) if is_control_flow => {
-                if is_indirect_control(&lower) {
-                    let base = cs
-                        .reg_name(mem.base())
-                        .unwrap_or_else(|| format!("{:?}", mem.base()));
-                    let reference = if is_call_like {
-                        Reference::IndirectCall { via: base.clone() }
-                    } else {
-                        Reference::IndirectBranch { via: base.clone() }
-                    };
-                    push_reference(&mut references, reference);
-                    let kind = if is_call_like {
-                        "indirect call"
-                    } else {
-                        "indirect branch"
-                    };
-                    push_note(&mut notes, format!("{kind} via [{base}]"));
-                }
-            }
-            _ => {}
+        }
+    }
+
+    if is_control_flow
+        && is_indirect_control(&lower)
+        && let Some((via, memory_indirect)) = indirect_control_target_operand(cs, operands)
+    {
+        let reference = if is_call_like {
+            Reference::IndirectCall { via: via.clone() }
+        } else {
+            Reference::IndirectBranch { via: via.clone() }
+        };
+        push_reference(&mut references, reference);
+        let kind = if is_call_like {
+            "indirect call"
+        } else {
+            "indirect branch"
+        };
+        if memory_indirect {
+            push_note(&mut notes, format!("{kind} via [{via}]"));
+        } else {
+            push_note(&mut notes, format!("{kind} via {via}"));
         }
     }
 
@@ -233,6 +213,25 @@ fn derive_references(
     }
 
     ReferenceDerivation { references, notes }
+}
+
+fn indirect_control_target_operand(
+    cs: &Capstone,
+    operands: &[Arm64Operand],
+) -> Option<(String, bool)> {
+    operands.iter().find_map(|operand| match operand.op_type {
+        Arm64OperandType::Reg(register) => Some((
+            cs.reg_name(register)
+                .unwrap_or_else(|| format!("{register:?}")),
+            false,
+        )),
+        Arm64OperandType::Mem(mem) => Some((
+            cs.reg_name(mem.base())
+                .unwrap_or_else(|| format!("{:?}", mem.base())),
+            true,
+        )),
+        _ => None,
+    })
 }
 
 fn direct_control_target_operand_index(
