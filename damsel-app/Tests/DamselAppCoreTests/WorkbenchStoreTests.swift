@@ -119,6 +119,74 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testMissingLocalFileFailsBeforeUpload() async throws {
+        let client = SuggestionClient(
+            response: [],
+            uploadResponse: Self.sampleImage(imageId: "unexpected"),
+            disassemblyResponse: try Self.sampleDisassembly()
+        )
+        let missingURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("missing-binary")
+        let store = WorkbenchStore(client: client, validatesLocalFiles: true)
+
+        await store.loadFile(missingURL)
+
+        XCTAssertEqual(store.statusText, "Load failed")
+        XCTAssertEqual(store.bannerMessage, "Selected file does not exist: missing-binary")
+        XCTAssertNil(store.loadedImage)
+        let uploadedFilePath = await client.uploadedFilePath
+        XCTAssertNil(uploadedFilePath)
+    }
+
+    @MainActor
+    func testEmptyLocalFileFailsBeforeUpload() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let emptyFile = directory.appendingPathComponent("empty-binary")
+        try Data().write(to: emptyFile)
+        let client = SuggestionClient(
+            response: [],
+            uploadResponse: Self.sampleImage(imageId: "unexpected"),
+            disassemblyResponse: try Self.sampleDisassembly()
+        )
+        let store = WorkbenchStore(client: client, validatesLocalFiles: true)
+
+        await store.loadFile(emptyFile)
+
+        XCTAssertEqual(store.statusText, "Load failed")
+        XCTAssertEqual(store.bannerMessage, "Selected file is empty: empty-binary")
+        XCTAssertNil(store.loadedImage)
+        let uploadedFilePath = await client.uploadedFilePath
+        XCTAssertNil(uploadedFilePath)
+    }
+
+    @MainActor
+    func testReadableLocalFileStillUploads() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let fileURL = directory.appendingPathComponent("fixture-binary")
+        try Data([0xCA, 0xFE]).write(to: fileURL)
+        let loadedImage = Self.sampleImage(imageId: "validated-fixture", fileName: "fixture-binary")
+        let client = SuggestionClient(
+            response: [],
+            uploadResponse: loadedImage,
+            disassemblyResponse: try Self.sampleDisassembly()
+        )
+        let store = WorkbenchStore(client: client, validatesLocalFiles: true)
+
+        await store.loadFile(fileURL)
+
+        XCTAssertEqual(store.loadedImage?.imageId, "validated-fixture")
+        let uploadedFilePath = await client.uploadedFilePath
+        XCTAssertEqual(uploadedFilePath, fileURL.path)
+    }
+
+    @MainActor
     func testLoadingFileResetsFileScopedControlsBeforeAutoDisassembly() async throws {
         let loadedImage = Self.sampleImage(imageId: "new-fixture")
         let client = SuggestionClient(
@@ -259,6 +327,7 @@ private actor SuggestionClient: WorkbenchAPIClient {
     private let uploadResponse: ImageUploadResponse?
     private let disassemblyResponse: DisassemblyResponse?
     private(set) var requestedQuery: String?
+    private(set) var uploadedFilePath: String?
     private(set) var disassemblyRequests: [DisasmAPIRequest] = []
 
     init(
@@ -274,6 +343,7 @@ private actor SuggestionClient: WorkbenchAPIClient {
     }
 
     func uploadImage(fileURL: URL) async throws -> ImageUploadResponse {
+        uploadedFilePath = fileURL.path
         guard let uploadResponse else {
             throw WorkbenchValidationError("Unsupported in test.")
         }

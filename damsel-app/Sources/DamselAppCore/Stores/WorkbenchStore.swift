@@ -58,19 +58,23 @@ public final class WorkbenchStore: ObservableObject {
     private var loadRequestID = 0
     private var disassemblyRequestID = 0
     private var symbolSuggestionGeneration = 0
+    private let validatesLocalFiles: Bool
 
     public init(serverProcess: DamselServerProcess = DamselServerProcess()) {
         self.serverProcess = serverProcess
+        validatesLocalFiles = true
     }
 
     init(
         serverProcess: DamselServerProcess = DamselServerProcess(),
         client: (any WorkbenchAPIClient)?,
-        loadedImage: ImageUploadResponse? = nil
+        loadedImage: ImageUploadResponse? = nil,
+        validatesLocalFiles: Bool = false
     ) {
         self.serverProcess = serverProcess
         self.client = client
         self.loadedImage = loadedImage
+        self.validatesLocalFiles = validatesLocalFiles
         selectedSection = loadedImage?.defaultSection ?? loadedImage?.sections.first?.name ?? ""
     }
 
@@ -204,6 +208,13 @@ public final class WorkbenchStore: ObservableObject {
         loadRequestID += 1
         disassemblyRequestID += 1
         let requestID = loadRequestID
+
+        if let validationMessage = localFileValidationMessage(for: url) {
+            bannerMessage = validationMessage
+            statusText = "Load failed"
+            isBusy = false
+            return
+        }
 
         await bootstrap()
         guard let client else {
@@ -405,6 +416,31 @@ public final class WorkbenchStore: ObservableObject {
         instructionFilterText = ""
         disassembly = nil
         selectedInstructionAddress = nil
+    }
+
+    private func localFileValidationMessage(for url: URL) -> String? {
+        guard validatesLocalFiles else {
+            return nil
+        }
+
+        let path = url.path
+        let fileManager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return "Selected file does not exist: \(url.lastPathComponent)"
+        }
+        if isDirectory.boolValue {
+            return "Choose a Mach-O file, not a folder: \(url.lastPathComponent)"
+        }
+        guard fileManager.isReadableFile(atPath: path) else {
+            return "Selected file is not readable: \(url.lastPathComponent)"
+        }
+        if let attributes = try? fileManager.attributesOfItem(atPath: path),
+           let size = attributes[.size] as? NSNumber,
+           size.uint64Value == 0 {
+            return "Selected file is empty: \(url.lastPathComponent)"
+        }
+        return nil
     }
 
     private func buildRequest() throws -> DisasmAPIRequest {
