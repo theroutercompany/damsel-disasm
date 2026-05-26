@@ -1957,6 +1957,20 @@ fn synthesize_analysis_references(
                             target: reference_target,
                         },
                     );
+                    if let Some(second_target) = pair_memory_second_slot_target(
+                        instruction,
+                        &lower,
+                        reference_target,
+                        index_register.as_deref(),
+                        index_transform,
+                    ) {
+                        push_reference_if_missing(
+                            &mut instruction.references,
+                            Reference::Data {
+                                target: second_target,
+                            },
+                        );
+                    }
                     if load_reads_destination_value(&lower)
                         && let Some(index_register) = index_register.clone()
                     {
@@ -2577,6 +2591,64 @@ fn load_pair_writes_two_destinations(mnemonic: &str) -> bool {
     mnemonic.starts_with("ldp")
         || mnemonic.starts_with("ldnp")
         || matches!(mnemonic, "ldxp" | "ldaxp")
+}
+
+fn store_pair_writes_two_memory_slots(mnemonic: &str) -> bool {
+    mnemonic.starts_with("stp")
+        || mnemonic.starts_with("stnp")
+        || matches!(mnemonic, "stxp" | "stlxp")
+}
+
+fn pair_memory_second_slot_target(
+    instruction: &DecodedInstruction,
+    mnemonic: &str,
+    first_slot: u64,
+    index_register: Option<&str>,
+    index_transform: MemoryIndexTransform,
+) -> Option<u64> {
+    if index_register.is_some() || index_transform != MemoryIndexTransform::unshifted_unsigned64() {
+        return None;
+    }
+    let width = pair_memory_access_width(instruction, mnemonic)?;
+    first_slot.checked_add(u64::try_from(width).ok()?)
+}
+
+fn pair_memory_access_width(instruction: &DecodedInstruction, mnemonic: &str) -> Option<usize> {
+    if load_pair_writes_two_destinations(mnemonic) {
+        let first_register = register_operand_name(instruction.operands.first()?)?;
+        let second_register = register_operand_name(instruction.operands.get(1)?)?;
+        let (first_width, first_signed) = pair_load_width(&first_register, mnemonic)?;
+        let (second_width, second_signed) = pair_load_width(&second_register, mnemonic)?;
+        if first_width == second_width && first_signed == second_signed {
+            return Some(first_width);
+        }
+        return None;
+    }
+
+    if store_pair_writes_two_memory_slots(mnemonic) {
+        let first_index = if matches!(mnemonic, "stxp" | "stlxp") {
+            1
+        } else {
+            0
+        };
+        let first_register = register_operand_name(instruction.operands.get(first_index)?)?;
+        let second_register = register_operand_name(instruction.operands.get(first_index + 1)?)?;
+        let first_width = pair_store_width(&first_register)?;
+        let second_width = pair_store_width(&second_register)?;
+        if first_width == second_width {
+            return Some(first_width);
+        }
+    }
+
+    None
+}
+
+fn pair_store_width(register: &str) -> Option<usize> {
+    match register_value_width_for_write(register)? {
+        32 => Some(4),
+        64 => Some(8),
+        _ => None,
+    }
 }
 
 fn memory_writeback_base_registers(instruction: &DecodedInstruction) -> Vec<String> {
@@ -12337,6 +12409,109 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_emits_pair_store_slot_refs() {
+        let image = synthetic_literal_image(0x4000, &[0; 16]);
+        for (mnemonic, operands, second_slot) in [
+            (
+                "stp",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+                0x4008,
+            ),
+            (
+                "stnp",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("w10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+                0x4004,
+            ),
+            (
+                "stxp",
+                vec![
+                    Operand::Register("w11".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+                0x4008,
+            ),
+            (
+                "stlxp",
+                vec![
+                    Operand::Register("w11".to_string()),
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("w10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+                0x4004,
+            ),
+        ] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x4000),
+                    ],
+                ),
+                instruction(0x1004, mnemonic, operands),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::Data { target: 0x4000 }),
+                "pair stores should record the first slot address for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].references.contains(&Reference::Data {
+                    target: second_slot
+                }),
+                "pair stores should record the second slot address for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].recovered_values.is_empty(),
+                "pair stores must not synthesize loaded values for {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
     fn synthesize_analysis_references_invalidates_atomic_read_modify_write_destinations() {
         let image = synthetic_image();
         for mnemonic in ["swp", "swpal", "ldadd", "ldaddal"] {
@@ -12900,6 +13075,13 @@ mod tests {
                 .references
                 .contains(&Reference::Data { target: 0x3000 }),
             "known pair-load addresses should still emit data refs: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x3008 }),
+            "known pair-load addresses should emit the second slot even when value recovery is blocked: {:?}",
             instructions
         );
         assert!(
