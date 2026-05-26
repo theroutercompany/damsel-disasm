@@ -167,6 +167,37 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelCurrentDisassemblyIgnoresLateResult() async throws {
+        let client = SlowDisassemblyClient()
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        let task = Task {
+            try? await store.runDisassembly()
+        }
+
+        while !store.isBusy {
+            await Task.yield()
+        }
+
+        XCTAssertTrue(store.canCancelOperation)
+        XCTAssertTrue(store.canUseDisassemblyAction)
+        XCTAssertEqual(store.disassemblyActionTitle, "Cancel")
+        XCTAssertEqual(store.disassemblyActionSystemImage, "xmark.circle")
+        XCTAssertEqual(store.disassemblyActionHelp, "Cancel the current Damsel operation.")
+
+        store.cancelCurrentOperation()
+
+        XCTAssertFalse(store.isBusy)
+        XCTAssertFalse(store.canCancelOperation)
+        XCTAssertEqual(store.statusText, "Canceled")
+
+        await task.value
+
+        XCTAssertNil(store.disassembly)
+        XCTAssertEqual(store.statusText, "Canceled")
+    }
+
+    @MainActor
     func testInstructionFilterDoesNotMarkResultAsNeedingRefresh() async throws {
         let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
@@ -437,6 +468,21 @@ private actor DecodeFailureAfterFirstClient: WorkbenchAPIClient {
         if disassemblyCount > 1 {
             throw WorkbenchValidationError("Decode exploded in test.")
         }
+        return try WorkbenchStoreTests.sampleDisassembly()
+    }
+}
+
+private actor SlowDisassemblyClient: WorkbenchAPIClient {
+    func uploadImage(fileURL: URL) async throws -> ImageUploadResponse {
+        WorkbenchStoreTests.sampleImage()
+    }
+
+    func symbolSuggestions(imageId: String, query: String, limit: Int) async throws -> [String] {
+        []
+    }
+
+    func disassemble(imageId: String, request payload: DisasmAPIRequest) async throws -> DisassemblyResponse {
+        try await Task.sleep(nanoseconds: 20_000_000)
         return try WorkbenchStoreTests.sampleDisassembly()
     }
 }

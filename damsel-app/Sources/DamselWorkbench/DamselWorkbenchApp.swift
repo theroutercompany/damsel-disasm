@@ -61,6 +61,8 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         case #selector(runDisassembly(_:)),
              #selector(refreshDisassembly(_:)):
             return store.canRunDisassembly
+        case #selector(cancelOperation(_:)):
+            return store.canCancelOperation
         case #selector(focusInstructionFilter(_:)):
             return store.disassembly?.instructions.isEmpty == false
         case #selector(clearInstructionFilter(_:)):
@@ -92,6 +94,14 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
 
     @objc private func refreshDisassembly(_ sender: Any?) {
         runDisassembly(sender)
+    }
+
+    @objc private func cancelOperation(_ sender: Any?) {
+        guard store.canCancelOperation else {
+            NSSound.beep()
+            return
+        }
+        store.cancelCurrentOperation()
     }
 
     @objc private func focusInstructionFilter(_ sender: Any?) {
@@ -249,6 +259,14 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         )
         refresh.keyEquivalentModifierMask = [.command]
         refresh.target = self
+        menu.addItem(.separator())
+        let cancel = menu.addItem(
+            withTitle: "Cancel Analysis",
+            action: #selector(cancelOperation(_:)),
+            keyEquivalent: "."
+        )
+        cancel.keyEquivalentModifierMask = [.command]
+        cancel.target = self
         return menu
     }
 

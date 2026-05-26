@@ -167,17 +167,31 @@ public final class WorkbenchStore: ObservableObject {
         loadedImage != nil && !isBusy && decodeValidationMessage == nil
     }
 
+    public var canUseDisassemblyAction: Bool {
+        canRunDisassembly || canCancelOperation
+    }
+
+    public var canCancelOperation: Bool {
+        isBusy
+    }
+
     public var disassemblyActionTitle: String {
-        disassemblyNeedsRefresh ? "Update Disassembly" : "Disassemble"
+        if canCancelOperation {
+            return "Cancel"
+        }
+        return disassemblyNeedsRefresh ? "Update Disassembly" : "Disassemble"
     }
 
     public var disassemblyActionSystemImage: String {
-        disassemblyNeedsRefresh ? "arrow.clockwise" : "play.fill"
+        if canCancelOperation {
+            return "xmark.circle"
+        }
+        return disassemblyNeedsRefresh ? "arrow.clockwise" : "play.fill"
     }
 
     public var disassemblyActionHelp: String {
         if isBusy {
-            return "Wait for the current Damsel operation to finish."
+            return "Cancel the current Damsel operation."
         }
         guard loadedImage != nil else {
             return "Load a Mach-O binary before disassembling."
@@ -188,6 +202,16 @@ public final class WorkbenchStore: ObservableObject {
         return disassemblyNeedsRefresh
             ? "Refresh disassembly to apply the current controls."
             : "Run disassembly for the selected target."
+    }
+
+    public func cancelCurrentOperation() {
+        guard isBusy else {
+            return
+        }
+        loadRequestID += 1
+        disassemblyRequestID += 1
+        isBusy = false
+        statusText = "Canceled"
     }
 
     public var canCopySelectedInstruction: Bool {

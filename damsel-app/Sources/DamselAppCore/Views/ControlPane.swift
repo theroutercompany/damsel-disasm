@@ -133,7 +133,7 @@ struct ControlPane: View {
             Toggle("Summary graph", isOn: $store.includeAnalysis)
 
             Button {
-                Task { try? await store.runDisassembly() }
+                activateDisassemblyAction()
             } label: {
                 Label(
                     store.disassemblyActionTitle,
@@ -142,7 +142,7 @@ struct ControlPane: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!store.canRunDisassembly)
+            .disabled(!store.canUseDisassemblyAction)
             .help(store.disassemblyActionHelp)
             .accessibilityHint(store.disassemblyActionHelp)
         }
@@ -170,6 +170,14 @@ struct ControlPane: View {
             get: { store.limitText },
             set: { store.setLimitText($0) }
         )
+    }
+
+    private func activateDisassemblyAction() {
+        if store.canCancelOperation {
+            store.cancelCurrentOperation()
+        } else {
+            Task { try? await store.runDisassembly() }
+        }
     }
 }
 

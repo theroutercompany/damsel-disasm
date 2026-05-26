@@ -43,11 +43,11 @@ public struct ContentView: View {
                 .help("Open a Mach-O or universal binary")
 
                 Button {
-                    Task { try? await store.runDisassembly() }
+                    activateDisassemblyAction()
                 } label: {
                     Label(store.disassemblyActionTitle, systemImage: store.disassemblyActionSystemImage)
                 }
-                .disabled(!store.canRunDisassembly)
+                .disabled(!store.canUseDisassemblyAction)
                 .help(store.disassemblyActionHelp)
                 .accessibilityLabel(store.disassemblyActionTitle)
                 .accessibilityHint(store.disassemblyActionHelp)
@@ -112,6 +112,14 @@ public struct ContentView: View {
     private func cancelSymbolSuggestionFetch() {
         symbolSuggestionTask?.cancel()
         symbolSuggestionTask = nil
+    }
+
+    private func activateDisassemblyAction() {
+        if store.canCancelOperation {
+            store.cancelCurrentOperation()
+        } else {
+            Task { try? await store.runDisassembly() }
+        }
     }
 
     private func openFile() {
