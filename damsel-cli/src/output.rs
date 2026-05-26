@@ -1,8 +1,8 @@
 use damsel_core::{
-    Annotation, BasicBlock, BinaryImage, CapabilityStatus, CompatibilityCapability,
-    CompatibilityIssue, CompatibilityPolicy, CompatibilityToolRequirement, ControlFlowEdge,
-    ControlFlowEdgeKind, DecodedInstruction, DisassemblyAnalysis, ExportFlagName, ExportKind,
-    HostArchitecture, HostPlatform, Import, ImportBindingKind, ImportBindingRecord,
+    Annotation, BasicBlock, BasicBlockTerminatorKind, BinaryImage, CapabilityStatus,
+    CompatibilityCapability, CompatibilityIssue, CompatibilityPolicy, CompatibilityToolRequirement,
+    ControlFlowEdge, ControlFlowEdgeKind, DecodedInstruction, DisassemblyAnalysis, ExportFlagName,
+    ExportKind, HostArchitecture, HostPlatform, Import, ImportBindingKind, ImportBindingRecord,
     ImportBindingSource, ObjcCategoryRecord, ObjcCategoryRecordSource, ObjcClassRecord,
     ObjcIvarRecord, ObjcMethodOwnerKind, ObjcMethodRecord, ObjcNameSource, ObjcPointerKind,
     ObjcPointerRef, ObjcPropertyRecord, ObjcProtocolRecord, ObjcSelectorSource, Operand,
@@ -1657,7 +1657,7 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         println!("  blocks:");
         for block in &analysis.basic_blocks {
             println!(
-                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} reachable={} loop_header={} terminator={:#x}:{} kind={}",
+                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} reachable={} loop_header={} terminal={} terminator={:#x}:{} kind={}",
                 block.id,
                 block.start_address,
                 block.end_address,
@@ -1666,6 +1666,7 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
                 block_edge_index.is_exit(block.id),
                 block_edge_index.is_primary_entry_reachable(block.id),
                 block_edge_index.is_loop_header(block.id),
+                is_terminal_block(block),
                 block.terminator_address,
                 block.terminator_mnemonic,
                 block.terminator_kind
@@ -5396,9 +5397,16 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
         ),
         (
             "terminal".to_string(),
-            JsonValue::Bool(edge_index.is_returning(block.id)),
+            JsonValue::Bool(is_terminal_block(block)),
         ),
     ])
+}
+
+fn is_terminal_block(block: &BasicBlock) -> bool {
+    matches!(
+        block.terminator_kind,
+        BasicBlockTerminatorKind::Return | BasicBlockTerminatorKind::Trap
+    )
 }
 
 struct BasicBlockEdgeIndex<'a> {
@@ -5408,7 +5416,6 @@ struct BasicBlockEdgeIndex<'a> {
     successors: BTreeMap<usize, BTreeSet<usize>>,
     back_edge_predecessors: BTreeMap<usize, BTreeSet<usize>>,
     external_successors: BTreeMap<usize, Vec<&'a ControlFlowEdge>>,
-    returning_blocks: BTreeSet<usize>,
 }
 
 impl<'a> BasicBlockEdgeIndex<'a> {
@@ -5420,7 +5427,6 @@ impl<'a> BasicBlockEdgeIndex<'a> {
             successors: BTreeMap::new(),
             back_edge_predecessors: BTreeMap::new(),
             external_successors: BTreeMap::new(),
-            returning_blocks: BTreeSet::new(),
         };
         for edge in &analysis.edges {
             if let Some(to_block) = edge.to_block {
@@ -5441,9 +5447,7 @@ impl<'a> BasicBlockEdgeIndex<'a> {
                         .or_default()
                         .insert(edge.from_block);
                 }
-            } else if edge.kind == ControlFlowEdgeKind::Return {
-                index.returning_blocks.insert(edge.from_block);
-            } else {
+            } else if edge.kind != ControlFlowEdgeKind::Return {
                 index
                     .external_successors
                     .entry(edge.from_block)
@@ -5481,10 +5485,6 @@ impl<'a> BasicBlockEdgeIndex<'a> {
 
     fn is_primary_entry_reachable(&self, block_id: usize) -> bool {
         self.primary_entry_reachable_blocks.contains(&block_id)
-    }
-
-    fn is_returning(&self, block_id: usize) -> bool {
-        self.returning_blocks.contains(&block_id)
     }
 
     fn is_loop_header(&self, block_id: usize) -> bool {
@@ -7877,6 +7877,85 @@ mod tests {
             json_object_field(&disconnected, "entry"),
             &JsonValue::Bool(true)
         );
+    }
+
+    #[test]
+    fn basic_block_json_marks_trap_blocks_as_terminal() {
+        let analysis = DisassemblyAnalysis {
+            target: "synthetic-trap".to_string(),
+            start_address: 0x1000,
+            end_address: 0x1004,
+            instruction_count: 1,
+            metrics: damsel_core::DisassemblyMetrics {
+                decoded_byte_count: 0,
+                reference_count: 0,
+                annotation_count: 0,
+                max_instruction_reference_count: 0,
+                max_instruction_annotation_count: 0,
+                max_basic_block_instruction_count: 1,
+                intra_window_edge_count: 0,
+                external_target_edge_count: 0,
+                unresolved_target_edge_count: 0,
+            },
+            basic_blocks: vec![BasicBlock {
+                id: 0,
+                start_address: 0x1000,
+                end_address: 0x1004,
+                instruction_count: 1,
+                terminator_address: 0x1000,
+                terminator_mnemonic: "brk".to_string(),
+                terminator_kind: BasicBlockTerminatorKind::Trap,
+            }],
+            edges: Vec::new(),
+            direct_calls: Vec::new(),
+            branch_targets: Vec::new(),
+            data_references: Vec::new(),
+            indirect_controls: Vec::new(),
+            imports: Vec::new(),
+            objc_references: Vec::new(),
+            cache_links: Vec::new(),
+            overview: damsel_core::DisassemblyOverview::default(),
+            recovered_values: Vec::new(),
+            jump_tables: Vec::new(),
+            summary: damsel_core::DisassemblySummary {
+                basic_block_count: 1,
+                entry_block_count: 1,
+                exit_block_count: 1,
+                primary_entry_reachable_block_count: 1,
+                disconnected_block_count: 0,
+                edge_count: 0,
+                back_edge_count: 0,
+                loop_header_count: 0,
+                edge_kind_counts: damsel_core::ControlFlowEdgeKindCounts::default(),
+                terminator_kind_counts: damsel_core::BasicBlockTerminatorKindCounts {
+                    trap_count: 1,
+                    ..damsel_core::BasicBlockTerminatorKindCounts::default()
+                },
+                direct_call_count: 0,
+                indirect_call_count: 0,
+                branch_count: 0,
+                return_count: 0,
+                data_reference_count: 0,
+                import_count: 0,
+                objc_selector_count: 0,
+                objc_class_count: 0,
+                objc_method_list_count: 0,
+                objc_message_send_count: 0,
+                cache_link_count: 0,
+                recovered_value_count: 0,
+                jump_table_count: 0,
+                unresolved_indirect_count: 0,
+            },
+        };
+
+        let block_edge_index = BasicBlockEdgeIndex::new(&analysis);
+        let block = basic_block_json(&analysis.basic_blocks[0], &block_edge_index);
+
+        assert_eq!(
+            json_object_field(&block, "terminal"),
+            &JsonValue::Bool(true)
+        );
+        assert_eq!(json_object_field(&block, "exit"), &JsonValue::Bool(true));
     }
 
     #[test]

@@ -42,10 +42,10 @@ analysis:
       - first=0x1000004e4 count=1 x9=0x100004000 kind=ImportPointer source=Adr
       - first=0x1000004e8 count=1 x9=0x100004048 kind=Address source=AdrpAdd
   blocks:
-    - id=0 range=0x1000004b0..0x1000004c8 instructions=6 entry=true exit=false reachable=true loop_header=false terminator=0x1000004c4:b.lt kind=conditional-branch
-    - id=1 range=0x1000004c8..0x1000004d4 instructions=3 entry=false exit=false reachable=true loop_header=false terminator=0x1000004d0:b kind=branch
-    - id=2 range=0x1000004d4..0x1000004d8 instructions=1 entry=false exit=false reachable=true loop_header=false terminator=0x1000004d4:mov kind=fallthrough
-    - id=3 range=0x1000004d8..0x1000004f0 instructions=6 entry=false exit=true reachable=true loop_header=false terminator=0x1000004ec:ldr kind=unknown
+    - id=0 range=0x1000004b0..0x1000004c8 instructions=6 entry=true exit=false reachable=true loop_header=false terminal=false terminator=0x1000004c4:b.lt kind=conditional-branch
+    - id=1 range=0x1000004c8..0x1000004d4 instructions=3 entry=false exit=false reachable=true loop_header=false terminal=false terminator=0x1000004d0:b kind=branch
+    - id=2 range=0x1000004d4..0x1000004d8 instructions=1 entry=false exit=false reachable=true loop_header=false terminal=false terminator=0x1000004d4:mov kind=fallthrough
+    - id=3 range=0x1000004d8..0x1000004f0 instructions=6 entry=false exit=true reachable=true loop_header=false terminal=false terminator=0x1000004ec:ldr kind=unknown
   edges:
     - block=0 to_block=2 source=0x1000004c4 kind=conditional-branch target=0x1000004d4 via=- back_edge=false
     - block=1 to_block=- source=0x1000004cc kind=call target=0x100000590 via=- back_edge=false
