@@ -119,6 +119,50 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testChangingDecodeControlsMarksResultAsNeedingRefresh() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        XCTAssertFalse(store.disassemblyNeedsRefresh)
+        XCTAssertEqual(store.toolbarStatusText, "1 rows")
+
+        store.includeAnalysis = true
+
+        XCTAssertTrue(store.disassemblyNeedsRefresh)
+        XCTAssertEqual(store.toolbarStatusText, "1 rows *")
+        XCTAssertTrue(store.resultSubtitle.contains("Needs refresh"))
+    }
+
+    @MainActor
+    func testInstructionFilterDoesNotMarkResultAsNeedingRefresh() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        store.instructionFilterText = "ret"
+
+        XCTAssertFalse(store.disassemblyNeedsRefresh)
+        XCTAssertFalse(store.resultSubtitle.contains("Needs refresh"))
+    }
+
+    @MainActor
+    func testRefreshingDisassemblyClearsStaleState() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        store.includeAnalysis = true
+        XCTAssertTrue(store.disassemblyNeedsRefresh)
+
+        try await store.runDisassembly()
+
+        XCTAssertFalse(store.disassemblyNeedsRefresh)
+        let requests = await client.disassemblyRequests
+        XCTAssertEqual(requests.map(\.options.includeAnalysis), [false, true])
+    }
+
+    @MainActor
     func testMissingLocalFileFailsBeforeUpload() async throws {
         let client = SuggestionClient(
             response: [],

@@ -135,7 +135,10 @@ struct ControlPane: View {
             Button {
                 Task { try? await store.runDisassembly() }
             } label: {
-                Label("Disassemble", systemImage: "play.fill")
+                Label(
+                    store.disassemblyNeedsRefresh ? "Update Disassembly" : "Disassemble",
+                    systemImage: store.disassemblyNeedsRefresh ? "arrow.clockwise" : "play.fill"
+                )
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)

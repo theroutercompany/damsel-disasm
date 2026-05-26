@@ -58,6 +58,7 @@ public final class WorkbenchStore: ObservableObject {
     private var loadRequestID = 0
     private var disassemblyRequestID = 0
     private var symbolSuggestionGeneration = 0
+    private var lastDisassemblyRequest: DisasmAPIRequest?
     private let validatesLocalFiles: Bool
 
     public init(serverProcess: DamselServerProcess = DamselServerProcess()) {
@@ -109,12 +110,13 @@ public final class WorkbenchStore: ObservableObject {
             let summary = analysis.summary
             return " · \(summary.basicBlockCount ?? 0) blocks · \(summary.edgeCount ?? 0) edges · \(summary.dataReferenceCount ?? 0) data refs"
         } ?? ""
+        let freshnessText = disassemblyNeedsRefresh ? " · Needs refresh" : ""
 
         let filterText = normalizedInstructionFilter
         let rowText = filterText.isEmpty
             ? "\(disassembly.instructionCount) rows"
             : "\(visibleInstructions.count) of \(disassembly.instructionCount) rows"
-        return "\(rowText) · \(DamselFormat.stopReason(disassembly.stopReason))\(analysisText)"
+        return "\(rowText) · \(DamselFormat.stopReason(disassembly.stopReason))\(analysisText)\(freshnessText)"
     }
 
     public var toolbarStatusText: String {
@@ -135,7 +137,7 @@ public final class WorkbenchStore: ObservableObject {
         let rowText = filterText.isEmpty
             ? "\(disassembly.instructionCount) rows"
             : "\(visibleInstructions.count)/\(disassembly.instructionCount) rows"
-        return rowText
+        return disassemblyNeedsRefresh ? "\(rowText) *" : rowText
     }
 
     public var visibleInstructions: [InstructionRow] {
@@ -157,6 +159,13 @@ public final class WorkbenchStore: ObservableObject {
 
     public var canCopySelectedInstruction: Bool {
         selectedInstruction != nil
+    }
+
+    public var disassemblyNeedsRefresh: Bool {
+        guard disassembly != nil, let lastDisassemblyRequest else {
+            return false
+        }
+        return (try? buildRequest()) != lastDisassemblyRequest
     }
 
     public var decodeValidationMessage: String? {
@@ -280,6 +289,7 @@ public final class WorkbenchStore: ObservableObject {
                 return
             }
             disassembly = payload
+            lastDisassemblyRequest = request
             if !payload.instructions.contains(where: { $0.address == selectedInstructionAddress }) {
                 selectedInstructionAddress = payload.instructions.first?.address
             }
@@ -415,6 +425,7 @@ public final class WorkbenchStore: ObservableObject {
         symbolSuggestions = []
         instructionFilterText = ""
         disassembly = nil
+        lastDisassemblyRequest = nil
         selectedInstructionAddress = nil
     }
 
