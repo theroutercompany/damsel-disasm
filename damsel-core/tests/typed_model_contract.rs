@@ -1,9 +1,9 @@
 use damsel_core::{
-    Annotation, Architecture, BasicBlockTerminatorKind, BinaryFormat, BinaryImage,
-    BinaryImageValidationError, DisassemblyLimit, DisassemblyOptions, DisassemblyRequest,
-    DisassemblyRequestV2, DisassemblyTarget, Endianness, ImportBindingKind, ImportBindingRecord,
-    ImportBindingSource, ObjcNameSource, ObjcSelectorSource, Reference, Relocation,
-    SliceDescriptor, SliceInfo, StubKind,
+    Annotation, Architecture, BasicBlock, BasicBlockTerminatorKind, BasicBlockTerminatorKindCounts,
+    BinaryFormat, BinaryImage, BinaryImageValidationError, DisassemblyLimit, DisassemblyOptions,
+    DisassemblyRequest, DisassemblyRequestV2, DisassemblyTarget, Endianness, ImportBindingKind,
+    ImportBindingRecord, ImportBindingSource, ObjcNameSource, ObjcSelectorSource, Reference,
+    Relocation, SliceDescriptor, SliceInfo, StubKind,
 };
 use std::ptr;
 use std::sync::Arc;
@@ -508,6 +508,48 @@ fn basic_block_terminator_kind_display_is_stable() {
 
     for (kind, expected) in cases {
         assert_eq!(kind.to_string(), expected);
+    }
+}
+
+#[test]
+fn basic_block_terminator_kind_counts_cover_all_kinds() {
+    let blocks = [
+        block_with_terminator(BasicBlockTerminatorKind::Fallthrough),
+        block_with_terminator(BasicBlockTerminatorKind::Branch),
+        block_with_terminator(BasicBlockTerminatorKind::ConditionalBranch),
+        block_with_terminator(BasicBlockTerminatorKind::Call),
+        block_with_terminator(BasicBlockTerminatorKind::IndirectCall),
+        block_with_terminator(BasicBlockTerminatorKind::IndirectBranch),
+        block_with_terminator(BasicBlockTerminatorKind::Return),
+        block_with_terminator(BasicBlockTerminatorKind::Trap),
+        block_with_terminator(BasicBlockTerminatorKind::Unknown),
+    ];
+
+    assert_eq!(
+        BasicBlockTerminatorKindCounts::from_blocks(&blocks),
+        BasicBlockTerminatorKindCounts {
+            fallthrough_count: 1,
+            branch_count: 1,
+            conditional_branch_count: 1,
+            call_count: 1,
+            indirect_call_count: 1,
+            indirect_branch_count: 1,
+            return_count: 1,
+            trap_count: 1,
+            unknown_count: 1,
+        }
+    );
+}
+
+fn block_with_terminator(terminator_kind: BasicBlockTerminatorKind) -> BasicBlock {
+    BasicBlock {
+        id: 0,
+        start_address: 0x1000,
+        end_address: 0x1004,
+        instruction_count: 1,
+        terminator_address: 0x1000,
+        terminator_mnemonic: terminator_kind.to_string(),
+        terminator_kind,
     }
 }
 

@@ -2432,6 +2432,41 @@ pub struct BasicBlock {
     pub terminator_kind: BasicBlockTerminatorKind,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BasicBlockTerminatorKindCounts {
+    pub fallthrough_count: usize,
+    pub branch_count: usize,
+    pub conditional_branch_count: usize,
+    pub call_count: usize,
+    pub indirect_call_count: usize,
+    pub indirect_branch_count: usize,
+    pub return_count: usize,
+    pub trap_count: usize,
+    pub unknown_count: usize,
+}
+
+impl BasicBlockTerminatorKindCounts {
+    pub fn from_blocks(blocks: &[BasicBlock]) -> Self {
+        let mut counts = Self::default();
+        for block in blocks {
+            match block.terminator_kind {
+                BasicBlockTerminatorKind::Fallthrough => counts.fallthrough_count += 1,
+                BasicBlockTerminatorKind::Branch => counts.branch_count += 1,
+                BasicBlockTerminatorKind::ConditionalBranch => {
+                    counts.conditional_branch_count += 1;
+                }
+                BasicBlockTerminatorKind::Call => counts.call_count += 1,
+                BasicBlockTerminatorKind::IndirectCall => counts.indirect_call_count += 1,
+                BasicBlockTerminatorKind::IndirectBranch => counts.indirect_branch_count += 1,
+                BasicBlockTerminatorKind::Return => counts.return_count += 1,
+                BasicBlockTerminatorKind::Trap => counts.trap_count += 1,
+                BasicBlockTerminatorKind::Unknown => counts.unknown_count += 1,
+            }
+        }
+        counts
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisassemblyTargetUse {
     pub instruction_address: u64,
@@ -2615,6 +2650,7 @@ pub struct DisassemblySummary {
     pub back_edge_count: usize,
     pub loop_header_count: usize,
     pub edge_kind_counts: ControlFlowEdgeKindCounts,
+    pub terminator_kind_counts: BasicBlockTerminatorKindCounts,
     pub direct_call_count: usize,
     pub indirect_call_count: usize,
     pub branch_count: usize,

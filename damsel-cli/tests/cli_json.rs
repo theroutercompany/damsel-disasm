@@ -2013,6 +2013,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
             "back_edge_count",
             "loop_header_count",
             "edge_kind_counts",
+            "terminator_kind_counts",
             "direct_call_count",
             "indirect_call_count",
             "branch_count",
@@ -2092,6 +2093,42 @@ fn disasm_json_analysis_contract_is_opt_in() {
         edge_kind_total,
         analysis["summary"]["edge_count"].as_u64().unwrap()
     );
+    assert_exact_object_keys(
+        &analysis["summary"]["terminator_kind_counts"],
+        &[
+            "fallthrough_count",
+            "branch_count",
+            "conditional_branch_count",
+            "call_count",
+            "indirect_call_count",
+            "indirect_branch_count",
+            "return_count",
+            "trap_count",
+            "unknown_count",
+        ],
+    );
+    let terminator_kind_total = [
+        "fallthrough_count",
+        "branch_count",
+        "conditional_branch_count",
+        "call_count",
+        "indirect_call_count",
+        "indirect_branch_count",
+        "return_count",
+        "trap_count",
+        "unknown_count",
+    ]
+    .iter()
+    .map(|key| {
+        analysis["summary"]["terminator_kind_counts"][*key]
+            .as_u64()
+            .expect("terminator kind count")
+    })
+    .sum::<u64>();
+    assert_eq!(
+        terminator_kind_total,
+        analysis["summary"]["basic_block_count"].as_u64().unwrap()
+    );
     assert!(analysis["metrics"]["decoded_byte_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["reference_count"].as_u64().unwrap() > 0);
     assert!(analysis["metrics"]["annotation_count"].as_u64().unwrap() > 0);
@@ -2130,6 +2167,29 @@ fn disasm_json_analysis_contract_is_opt_in() {
     let blocks = analysis["basic_blocks"]
         .as_array()
         .expect("analysis blocks");
+    for (summary_key, block_kind) in [
+        ("fallthrough_count", "fallthrough"),
+        ("branch_count", "branch"),
+        ("conditional_branch_count", "conditional-branch"),
+        ("call_count", "call"),
+        ("indirect_call_count", "indirect-call"),
+        ("indirect_branch_count", "indirect-branch"),
+        ("return_count", "return"),
+        ("trap_count", "trap"),
+        ("unknown_count", "unknown"),
+    ] {
+        let block_count = blocks
+            .iter()
+            .filter(|block| block["terminator_kind"] == block_kind)
+            .count() as u64;
+        assert_eq!(
+            analysis["summary"]["terminator_kind_counts"][summary_key]
+                .as_u64()
+                .expect("terminator summary count"),
+            block_count,
+            "terminator summary {summary_key} should match block terminator kinds"
+        );
+    }
     for block in blocks {
         assert_exact_object_keys(
             block,
