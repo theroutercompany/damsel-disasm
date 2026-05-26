@@ -193,11 +193,7 @@ public final class WorkbenchStore: ObservableObject {
 
         do {
             let upload = try await client.uploadImage(fileURL: url)
-            selectedFileURL = url
-            loadedImage = upload
-            selectedSection = upload.defaultSection ?? upload.sections.first?.name ?? ""
-            disassembly = nil
-            selectedInstructionAddress = nil
+            resetForLoadedImage(upload, url: url)
             statusText = "\(upload.fileName) · \(upload.architecture) · \(upload.sections.count) sections"
             try await runDisassembly()
         } catch {
@@ -319,6 +315,23 @@ public final class WorkbenchStore: ObservableObject {
         serverState = .stopped
         client = nil
         statusText = "Server stopped"
+    }
+
+    private func resetForLoadedImage(_ upload: ImageUploadResponse, url: URL) {
+        selectedFileURL = url
+        loadedImage = upload
+        targetKind = .section
+        selectedSection = upload.defaultSection ?? upload.sections.first?.name ?? ""
+        symbolText = ""
+        addressText = ""
+        fromText = ""
+        toText = ""
+        bytesText = ""
+        limitText = "1000"
+        symbolSuggestions = []
+        instructionFilterText = ""
+        disassembly = nil
+        selectedInstructionAddress = nil
     }
 
     private func buildRequest() throws -> DisasmAPIRequest {
