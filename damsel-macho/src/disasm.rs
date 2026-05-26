@@ -1360,7 +1360,7 @@ fn is_unconditional_transfer_mnemonic(mnemonic: &str) -> bool {
 }
 
 fn is_return_mnemonic(mnemonic: &str) -> bool {
-    matches!(mnemonic, "ret" | "retaa" | "retab" | "eret")
+    matches!(mnemonic, "ret" | "retaa" | "retab" | "eret" | "drps")
 }
 
 fn non_default_return_register(instruction: &DecodedInstruction) -> Option<String> {
@@ -5683,6 +5683,29 @@ mod tests {
     }
 
     #[test]
+    fn analysis_treats_drps_as_terminal_return_boundary() {
+        let instructions = vec![
+            instruction(0x1000, "drps", vec![]),
+            instruction(0x1004, "ret", vec![]),
+        ];
+
+        let analysis = analyze_disassembly("synthetic-drps", 0x1000, 0x1008, &instructions);
+
+        assert_eq!(analysis.summary.basic_block_count, 2);
+        assert_eq!(analysis.summary.entry_block_count, 2);
+        assert_eq!(analysis.summary.exit_block_count, 2);
+        assert_eq!(analysis.summary.primary_entry_reachable_block_count, 1);
+        assert_eq!(analysis.summary.disconnected_block_count, 1);
+        assert_eq!(analysis.summary.return_count, 2);
+        assert_eq!(analysis.summary.edge_kind_counts.return_count, 2);
+        assert!(analysis.edges.iter().any(|edge| {
+            edge.kind == ControlFlowEdgeKind::Return
+                && edge.source_address == 0x1000
+                && edge.via.is_none()
+        }));
+    }
+
+    #[test]
     fn analysis_reports_non_default_return_register() {
         let instructions = vec![instruction(
             0x1000,
@@ -5803,6 +5826,39 @@ mod tests {
                 .recovered_values
                 .is_empty(),
             "callee entry must not inherit caller layout state through x19: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_clears_state_after_drps_boundaries() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(0x220),
+                ],
+            ),
+            instruction(0x1004, "drps", vec![]),
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x20".to_string()),
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "instructions after drps must not inherit linear register state: {:?}",
             instructions
         );
     }
