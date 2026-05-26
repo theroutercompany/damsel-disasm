@@ -5396,6 +5396,24 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
             ),
         ),
         (
+            "call_successors".to_string(),
+            JsonValue::Array(
+                edge_index
+                    .call_successors(block.id)
+                    .map(block_call_edge_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "call_predecessors".to_string(),
+            JsonValue::Array(
+                edge_index
+                    .call_predecessors(block.id)
+                    .map(block_call_edge_json)
+                    .collect(),
+            ),
+        ),
+        (
             "terminal".to_string(),
             JsonValue::Bool(is_terminal_block(block)),
         ),
@@ -5416,6 +5434,8 @@ struct BasicBlockEdgeIndex<'a> {
     successors: BTreeMap<usize, BTreeSet<usize>>,
     back_edge_predecessors: BTreeMap<usize, BTreeSet<usize>>,
     external_successors: BTreeMap<usize, Vec<&'a ControlFlowEdge>>,
+    call_successors: BTreeMap<usize, Vec<&'a ControlFlowEdge>>,
+    call_predecessors: BTreeMap<usize, Vec<&'a ControlFlowEdge>>,
 }
 
 impl<'a> BasicBlockEdgeIndex<'a> {
@@ -5427,6 +5447,8 @@ impl<'a> BasicBlockEdgeIndex<'a> {
             successors: BTreeMap::new(),
             back_edge_predecessors: BTreeMap::new(),
             external_successors: BTreeMap::new(),
+            call_successors: BTreeMap::new(),
+            call_predecessors: BTreeMap::new(),
         };
         for edge in &analysis.edges {
             if edge.kind.is_structural_successor() {
@@ -5452,6 +5474,19 @@ impl<'a> BasicBlockEdgeIndex<'a> {
                     index
                         .external_successors
                         .entry(edge.from_block)
+                        .or_default()
+                        .push(edge);
+                }
+            } else if edge.kind.is_call() {
+                index
+                    .call_successors
+                    .entry(edge.from_block)
+                    .or_default()
+                    .push(edge);
+                if let Some(to_block) = edge.to_block {
+                    index
+                        .call_predecessors
+                        .entry(to_block)
                         .or_default()
                         .push(edge);
                 }
@@ -5523,6 +5558,20 @@ impl<'a> BasicBlockEdgeIndex<'a> {
             .into_iter()
             .flat_map(|edges| edges.iter().copied())
     }
+
+    fn call_successors(&self, block_id: usize) -> impl Iterator<Item = &'a ControlFlowEdge> + '_ {
+        self.call_successors
+            .get(&block_id)
+            .into_iter()
+            .flat_map(|edges| edges.iter().copied())
+    }
+
+    fn call_predecessors(&self, block_id: usize) -> impl Iterator<Item = &'a ControlFlowEdge> + '_ {
+        self.call_predecessors
+            .get(&block_id)
+            .into_iter()
+            .flat_map(|edges| edges.iter().copied())
+    }
 }
 
 fn block_id_list_json(block_ids: impl Iterator<Item = usize>) -> JsonValue {
@@ -5537,6 +5586,29 @@ fn block_id_list_json(block_ids: impl Iterator<Item = usize>) -> JsonValue {
 
 fn external_successor_json(edge: &ControlFlowEdge) -> JsonValue {
     JsonValue::Object(vec![
+        ("kind".to_string(), JsonValue::String(edge.kind.to_string())),
+        ("source_address".to_string(), u64_num(edge.source_address)),
+        (
+            "target_address".to_string(),
+            edge.target_address.map(u64_num).unwrap_or(JsonValue::Null),
+        ),
+        (
+            "via".to_string(),
+            edge.via
+                .as_ref()
+                .map(|value| JsonValue::String(value.clone()))
+                .unwrap_or(JsonValue::Null),
+        ),
+    ])
+}
+
+fn block_call_edge_json(edge: &ControlFlowEdge) -> JsonValue {
+    JsonValue::Object(vec![
+        ("from_block".to_string(), usize_num(edge.from_block)),
+        (
+            "to_block".to_string(),
+            edge.to_block.map(usize_num).unwrap_or(JsonValue::Null),
+        ),
         ("kind".to_string(), JsonValue::String(edge.kind.to_string())),
         ("source_address".to_string(), u64_num(edge.source_address)),
         (
@@ -8058,6 +8130,19 @@ mod tests {
         assert!(json_array_items(json_object_field(&caller, "successors")).is_empty());
         assert!(json_array_items(json_object_field(&callee, "predecessors")).is_empty());
         assert_eq!(json_object_field(&callee, "entry"), &JsonValue::Bool(true));
+        let caller_calls = json_array_items(json_object_field(&caller, "call_successors"));
+        let callee_callers = json_array_items(json_object_field(&callee, "call_predecessors"));
+
+        assert_eq!(caller_calls.len(), 1);
+        assert_eq!(callee_callers.len(), 1);
+        assert_eq!(
+            json_object_field(&caller_calls[0], "to_block"),
+            &JsonValue::Number("1".to_string())
+        );
+        assert_eq!(
+            json_object_field(&callee_callers[0], "from_block"),
+            &JsonValue::Number("0".to_string())
+        );
     }
 
     #[test]

@@ -2161,6 +2161,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 && block["predecessors"].is_array()
                 && block["successors"].is_array()
                 && block["external_successors"].is_array()
+                && block["call_successors"].is_array()
+                && block["call_predecessors"].is_array()
                 && block["terminal"].is_boolean()
         })
     }));
@@ -2209,6 +2211,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "predecessors",
                 "successors",
                 "external_successors",
+                "call_successors",
+                "call_predecessors",
                 "terminal",
             ],
         );
@@ -2262,6 +2266,12 @@ fn disasm_json_analysis_contract_is_opt_in() {
                     "to block should expose structural predecessor"
                 );
             } else {
+                let from_call_successors = from_block_json["call_successors"]
+                    .as_array()
+                    .expect("call successors");
+                let to_call_predecessors = to_block_json["call_predecessors"]
+                    .as_array()
+                    .expect("call predecessors");
                 assert!(
                     !from_successors
                         .iter()
@@ -2273,6 +2283,24 @@ fn disasm_json_analysis_contract_is_opt_in() {
                         .iter()
                         .any(|predecessor| predecessor.as_u64() == Some(from_block)),
                     "call-like edges should not become structural predecessors"
+                );
+                assert!(
+                    from_call_successors.iter().any(|successor| {
+                        successor["source_address"] == edge["source_address"]
+                            && successor["target_address"] == edge["target_address"]
+                            && successor["to_block"] == edge["to_block"]
+                            && successor["kind"] == edge["kind"]
+                    }),
+                    "from block should expose call edge separately"
+                );
+                assert!(
+                    to_call_predecessors.iter().any(|predecessor| {
+                        predecessor["source_address"] == edge["source_address"]
+                            && predecessor["target_address"] == edge["target_address"]
+                            && predecessor["from_block"] == edge["from_block"]
+                            && predecessor["kind"] == edge["kind"]
+                    }),
+                    "to block should expose call predecessor separately"
                 );
             }
         } else if edge["target_address"].is_number() && structural_successor {
@@ -2289,6 +2317,9 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "from block should expose external structural successor"
             );
         } else if edge["target_address"].is_number() {
+            let from_call_successors = from_block_json["call_successors"]
+                .as_array()
+                .expect("call successors");
             assert!(
                 !from_block_json["external_successors"]
                     .as_array()
@@ -2300,6 +2331,15 @@ fn disasm_json_analysis_contract_is_opt_in() {
                             && successor["kind"] == edge["kind"]
                     ),
                 "call-like external edges should not become block successors"
+            );
+            assert!(
+                from_call_successors.iter().any(|successor| {
+                    successor["source_address"] == edge["source_address"]
+                        && successor["target_address"] == edge["target_address"]
+                        && successor["to_block"] == Value::Null
+                        && successor["kind"] == edge["kind"]
+                }),
+                "from block should expose external call edge separately"
             );
         } else if edge["kind"] == "return" {
             assert_eq!(from_block_json["terminal"], true);
@@ -2384,6 +2424,29 @@ fn disasm_json_analysis_contract_is_opt_in() {
             assert_exact_object_keys(
                 successor,
                 &["kind", "source_address", "target_address", "via"],
+            );
+        }
+        for call_edge in block["call_successors"]
+            .as_array()
+            .expect("call successors")
+            .iter()
+            .chain(
+                block["call_predecessors"]
+                    .as_array()
+                    .expect("call predecessors")
+                    .iter(),
+            )
+        {
+            assert_exact_object_keys(
+                call_edge,
+                &[
+                    "from_block",
+                    "to_block",
+                    "kind",
+                    "source_address",
+                    "target_address",
+                    "via",
+                ],
             );
         }
     }
