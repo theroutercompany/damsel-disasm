@@ -1714,6 +1714,7 @@ fn synthesize_analysis_references(
     let mut known_values = BTreeMap::<String, RecoveredValue>::new();
     let mut jump_table_sources = BTreeMap::<String, JumpTableSource>::new();
     let mut relative_slot_loads = BTreeMap::<String, TableSlotEvidence>::new();
+    let mut known_flags: Option<NzcvFlags> = None;
     let join_addresses = basic_block_join_addresses(instructions);
 
     for instruction in instructions {
@@ -1725,8 +1726,18 @@ fn synthesize_analysis_references(
                 &mut known_values,
                 &mut jump_table_sources,
                 &mut relative_slot_loads,
+                &mut known_flags,
             );
         }
+        let flag_update = if instruction_updates_condition_flags(&lower) {
+            Some(synthesize_condition_flags(
+                instruction,
+                &lower,
+                &known_values,
+            ))
+        } else {
+            None
+        };
 
         if lower == "adrp" || lower == "adr" {
             if let (Some(target), Some(register)) =
@@ -1775,7 +1786,7 @@ fn synthesize_analysis_references(
         }
 
         if let Some((register, value, source)) =
-            synthesize_simple_register_value(instruction, &known_values)
+            synthesize_simple_register_value(instruction, &known_values, known_flags)
         {
             let value = normalize_value_for_write(&register, value);
             let recovered = RecoveredValue {
@@ -2167,6 +2178,9 @@ fn synthesize_analysis_references(
                 &base,
             );
         }
+        if let Some(flags) = flag_update {
+            known_flags = flags;
+        }
 
         if is_call_mnemonic(&lower) {
             clear_call_clobbered_state(
@@ -2174,10 +2188,12 @@ fn synthesize_analysis_references(
                 &mut jump_table_sources,
                 &mut relative_slot_loads,
             );
+            known_flags = None;
         } else if is_hard_control_flow_boundary(&lower) {
             known_values.clear();
             jump_table_sources.clear();
             relative_slot_loads.clear();
+            known_flags = None;
         }
     }
 }
@@ -2243,10 +2259,12 @@ fn clear_analysis_state(
     known_values: &mut BTreeMap<String, RecoveredValue>,
     jump_table_sources: &mut BTreeMap<String, JumpTableSource>,
     relative_slot_loads: &mut BTreeMap<String, TableSlotEvidence>,
+    known_flags: &mut Option<NzcvFlags>,
 ) {
     known_values.clear();
     jump_table_sources.clear();
     relative_slot_loads.clear();
+    *known_flags = None;
 }
 
 fn clear_call_clobbered_state(
@@ -2266,6 +2284,14 @@ fn clear_call_clobbered_state(
     known_values.remove("lr");
     jump_table_sources.remove("lr");
     relative_slot_loads.remove("lr");
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NzcvFlags {
+    n: bool,
+    z: bool,
+    c: bool,
+    v: bool,
 }
 
 fn canonical_state_key(register: &str) -> Option<String> {
@@ -2773,6 +2799,7 @@ fn synthesize_mov_wide_value(
 fn synthesize_simple_register_value(
     instruction: &DecodedInstruction,
     known_values: &BTreeMap<String, RecoveredValue>,
+    known_flags: Option<NzcvFlags>,
 ) -> Option<(String, u64, RecoveredValueSource)> {
     let lower = instruction.mnemonic.to_ascii_lowercase();
     match lower.as_str() {
@@ -2867,7 +2894,7 @@ fn synthesize_simple_register_value(
             synthesize_unary_register_value(&lower, instruction, known_values)
         }
         "csel" | "csinc" | "csinv" | "csneg" => {
-            synthesize_conditional_select_value(&lower, instruction, known_values)
+            synthesize_conditional_select_value(&lower, instruction, known_values, known_flags)
         }
         "lsl" | "lsr" | "asr" | "ror" => {
             let destination = match instruction.operands.first()? {
@@ -3469,20 +3496,266 @@ fn extend_register_alias_value(mnemonic: &str, value: u64) -> Option<u64> {
     }
 }
 
+fn instruction_updates_condition_flags(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "adds"
+            | "adcs"
+            | "cmn"
+            | "subs"
+            | "sbcs"
+            | "cmp"
+            | "negs"
+            | "ngcs"
+            | "ands"
+            | "bics"
+            | "tst"
+            | "ccmp"
+            | "ccmn"
+    )
+}
+
+fn synthesize_condition_flags(
+    instruction: &DecodedInstruction,
+    mnemonic: &str,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<NzcvFlags> {
+    match mnemonic {
+        "adds" | "subs" => {
+            let destination = match instruction.operands.first()? {
+                Operand::Register(register) => register,
+                _ => return None,
+            };
+            let width = register_value_width_for_write(destination)?;
+            let lhs = read_normalized_register_operand(
+                instruction.operands.get(1)?,
+                width,
+                known_values,
+            )?;
+            let rhs = arithmetic_operand_known_value(
+                instruction.operands.get(2)?,
+                instruction.operands.get(3),
+                destination,
+                width,
+                known_values,
+            )?;
+            match mnemonic {
+                "adds" => flags_for_addition(lhs, rhs, width),
+                "subs" => flags_for_subtraction(lhs, rhs, width),
+                _ => None,
+            }
+        }
+        "cmn" | "cmp" => {
+            let lhs_register = match instruction.operands.first()? {
+                Operand::Register(register) => register,
+                _ => return None,
+            };
+            let width = register_value_width(lhs_register)?;
+            let lhs = read_normalized_register_operand(
+                instruction.operands.first()?,
+                width,
+                known_values,
+            )?;
+            let rhs = arithmetic_operand_known_value(
+                instruction.operands.get(1)?,
+                instruction.operands.get(2),
+                lhs_register,
+                width,
+                known_values,
+            )?;
+            match mnemonic {
+                "cmn" => flags_for_addition(lhs, rhs, width),
+                "cmp" => flags_for_subtraction(lhs, rhs, width),
+                _ => None,
+            }
+        }
+        "negs" => {
+            let destination = match instruction.operands.first()? {
+                Operand::Register(register) => register,
+                _ => return None,
+            };
+            let width = register_value_width_for_write(destination)?;
+            let rhs = arithmetic_operand_known_value(
+                instruction.operands.get(1)?,
+                instruction.operands.get(2),
+                destination,
+                width,
+                known_values,
+            )?;
+            flags_for_subtraction(0, rhs, width)
+        }
+        "ands" | "bics" => {
+            let destination = match instruction.operands.first()? {
+                Operand::Register(register) => register,
+                _ => return None,
+            };
+            let width = register_value_width_for_write(destination)?;
+            let lhs = read_normalized_register_operand(
+                instruction.operands.get(1)?,
+                width,
+                known_values,
+            )?;
+            let rhs = logical_operand_value(instruction.operands.get(2)?, width, known_values)?;
+            let result = if mnemonic == "bics" {
+                lhs & !rhs
+            } else {
+                lhs & rhs
+            };
+            flags_for_logical_result(result, width)
+        }
+        "tst" => {
+            let lhs_register = match instruction.operands.first()? {
+                Operand::Register(register) => register,
+                _ => return None,
+            };
+            let width = register_value_width(lhs_register)?;
+            let lhs = read_normalized_register_operand(
+                instruction.operands.first()?,
+                width,
+                known_values,
+            )?;
+            let rhs = logical_operand_value(instruction.operands.get(1)?, width, known_values)?;
+            flags_for_logical_result(lhs & rhs, width)
+        }
+        _ => None,
+    }
+}
+
+fn arithmetic_operand_known_value(
+    operand: &Operand,
+    optional_modifier: Option<&Operand>,
+    reference_register: &str,
+    width: u32,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<u64> {
+    let value = match operand {
+        Operand::ImmediateUnsigned(value) => {
+            shifted_add_sub_immediate_value(*value, optional_modifier)?
+        }
+        Operand::ImmediateSigned(value) if *value >= 0 => {
+            shifted_add_sub_immediate_value(u64::try_from(*value).ok()?, optional_modifier)?
+        }
+        Operand::Label(value) => shifted_add_sub_immediate_value(*value, optional_modifier)?,
+        Operand::Register(_) | Operand::ShiftedRegister { .. } => {
+            arithmetic_operand_wrapping_value(arithmetic_register_operand_value(
+                operand,
+                reference_register,
+                known_values,
+            )?)
+        }
+        _ => return None,
+    };
+    Some(normalize_value_for_width(value, width))
+}
+
+fn shifted_add_sub_immediate_value(value: u64, optional_modifier: Option<&Operand>) -> Option<u64> {
+    let shift = match optional_modifier {
+        None => 0,
+        Some(Operand::Other(text)) | Some(Operand::Name(text)) => {
+            let lower = text.to_ascii_lowercase();
+            if shift_modifier_op(&lower)? != "lsl" {
+                return None;
+            }
+            parse_shift_text(&lower, None)?
+        }
+        Some(_) => return None,
+    };
+    if !matches!(shift, 0 | 12) {
+        return None;
+    }
+    value.checked_shl(shift)
+}
+
+fn flags_for_addition(lhs: u64, rhs: u64, width: u32) -> Option<NzcvFlags> {
+    let mask = low_bit_mask(width)?;
+    let lhs = lhs & mask;
+    let rhs = rhs & mask;
+    let sum = u128::from(lhs) + u128::from(rhs);
+    let result = (sum & u128::from(mask)) as u64;
+    let carry = sum > u128::from(mask);
+    let sign = 1_u64.checked_shl(width.checked_sub(1)?)?;
+    let overflow = ((lhs ^ result) & (rhs ^ result) & sign) != 0;
+    flags_for_result(result, width, carry, overflow)
+}
+
+fn flags_for_subtraction(lhs: u64, rhs: u64, width: u32) -> Option<NzcvFlags> {
+    let mask = low_bit_mask(width)?;
+    let lhs = lhs & mask;
+    let rhs = rhs & mask;
+    let result = lhs.wrapping_sub(rhs) & mask;
+    let carry = lhs >= rhs;
+    let sign = 1_u64.checked_shl(width.checked_sub(1)?)?;
+    let overflow = ((lhs ^ rhs) & (lhs ^ result) & sign) != 0;
+    flags_for_result(result, width, carry, overflow)
+}
+
+fn flags_for_logical_result(value: u64, width: u32) -> Option<NzcvFlags> {
+    flags_for_result(value, width, false, false)
+}
+
+fn flags_for_result(value: u64, width: u32, c: bool, v: bool) -> Option<NzcvFlags> {
+    let value = normalize_value_for_width(value, width);
+    let sign = 1_u64.checked_shl(width.checked_sub(1)?)?;
+    Some(NzcvFlags {
+        n: value & sign != 0,
+        z: value == 0,
+        c,
+        v,
+    })
+}
+
 fn synthesize_conditional_select_value(
     mnemonic: &str,
     instruction: &DecodedInstruction,
     known_values: &BTreeMap<String, RecoveredValue>,
+    known_flags: Option<NzcvFlags>,
 ) -> Option<(String, u64, RecoveredValueSource)> {
     let destination = match instruction.operands.first()? {
         Operand::Register(register) => register.clone(),
         _ => return None,
     };
     let width = register_value_width_for_write(&destination)?;
-    let true_value = match instruction.operands.get(1)? {
-        Operand::Register(register) => read_simple_register_value(known_values, register)?,
-        _ => return None,
+    let condition_outcome = known_flags.and_then(|flags| {
+        conditional_select_condition(instruction)
+            .and_then(|condition| condition_holds(condition, flags))
+    });
+    let selected_value = match condition_outcome {
+        Some(true) => conditional_select_true_value(instruction, width, known_values)?,
+        Some(false) => conditional_select_false_value(mnemonic, instruction, width, known_values)?,
+        None => {
+            let true_value = conditional_select_true_value(instruction, width, known_values)?;
+            let false_value =
+                conditional_select_false_value(mnemonic, instruction, width, known_values)?;
+            if true_value != false_value {
+                return None;
+            }
+            true_value
+        }
     };
+
+    Some((destination, selected_value, RecoveredValueSource::Other))
+}
+
+fn conditional_select_true_value(
+    instruction: &DecodedInstruction,
+    width: u32,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<u64> {
+    match instruction.operands.get(1)? {
+        Operand::Register(register) => Some(normalize_value_for_width(
+            read_simple_register_value(known_values, register)?,
+            width,
+        )),
+        _ => None,
+    }
+}
+
+fn conditional_select_false_value(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    width: u32,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<u64> {
     let false_source = match instruction.operands.get(2)? {
         Operand::Register(register) => read_simple_register_value(known_values, register)?,
         _ => return None,
@@ -3494,9 +3767,38 @@ fn synthesize_conditional_select_value(
         "csneg" => 0_u64.wrapping_sub(false_source),
         _ => return None,
     };
-    let true_value = normalize_value_for_width(true_value, width);
-    let false_value = normalize_value_for_width(false_value, width);
-    (true_value == false_value).then_some((destination, true_value, RecoveredValueSource::Other))
+    Some(normalize_value_for_width(false_value, width))
+}
+
+fn conditional_select_condition(instruction: &DecodedInstruction) -> Option<&str> {
+    match instruction.operands.get(3)? {
+        Operand::Condition(condition) | Operand::Name(condition) | Operand::Other(condition) => {
+            Some(condition.trim())
+        }
+        _ => None,
+    }
+}
+
+fn condition_holds(condition: &str, flags: NzcvFlags) -> Option<bool> {
+    let condition = condition.trim_start_matches('.').to_ascii_lowercase();
+    match condition.as_str() {
+        "eq" => Some(flags.z),
+        "ne" => Some(!flags.z),
+        "cs" | "hs" => Some(flags.c),
+        "cc" | "lo" => Some(!flags.c),
+        "mi" => Some(flags.n),
+        "pl" => Some(!flags.n),
+        "vs" => Some(flags.v),
+        "vc" => Some(!flags.v),
+        "hi" => Some(flags.c && !flags.z),
+        "ls" => Some(!flags.c || flags.z),
+        "ge" => Some(flags.n == flags.v),
+        "lt" => Some(flags.n != flags.v),
+        "gt" => Some(!flags.z && flags.n == flags.v),
+        "le" => Some(flags.z || flags.n != flags.v),
+        "al" => Some(true),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -8062,6 +8364,338 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_recovers_conditional_selects_from_known_flags() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(5),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(5),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "csel",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "csel",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("ne".to_string()),
+                ],
+            ),
+            instruction(0x1018, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[4].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known equal flags should select the true csel source: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x12"
+                    && value.value == 0x4000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known equal flags should reject ne and select the false csel source: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[6]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "known-flag csel values should feed indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_known_selects_with_unknown_unchosen_arm() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "csel",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x12".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "csel",
+                vec![
+                    Operand::Register("x13".to_string()),
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("ne".to_string()),
+                ],
+            ),
+            instruction(0x1018, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[4].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-true csel should not require the unknown false source: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x13"
+                    && value.value == 0x4000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-false csel should not require the unknown true source: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[6]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "known select with an unknown unchosen arm should still feed branch recovery: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_known_select_variant_false_arms() {
+        let cases = [
+            ("csinc", 0x2fff, 0x3000, "increment"),
+            ("csinv", !0x3000_u64, 0x3000, "invert"),
+            ("csneg", 0_u64.wrapping_sub(0x3000), 0x3000, "negate"),
+        ];
+
+        for (mnemonic, false_input, expected, operation) in cases {
+            let image = synthetic_image();
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x5000),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    "mov",
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::ImmediateUnsigned(false_input),
+                    ],
+                ),
+                instruction(
+                    0x1008,
+                    "mov",
+                    vec![
+                        Operand::Register("x11".to_string()),
+                        Operand::ImmediateUnsigned(1),
+                    ],
+                ),
+                instruction(
+                    0x100c,
+                    "cmp",
+                    vec![
+                        Operand::Register("x11".to_string()),
+                        Operand::ImmediateUnsigned(2),
+                    ],
+                ),
+                instruction(
+                    0x1010,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x10".to_string()),
+                        Operand::Register("x8".to_string()),
+                        Operand::Register("x9".to_string()),
+                        Operand::Condition("eq".to_string()),
+                    ],
+                ),
+                instruction(0x1014, "br", vec![Operand::Register("x10".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[4].recovered_values.iter().any(|value| {
+                    value.register == "x10"
+                        && value.value == expected
+                        && value.source == RecoveredValueSource::Other
+                }),
+                "{mnemonic} should recover the false arm after known-false eq and {operation}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[5]
+                    .references
+                    .contains(&Reference::Branch { target: expected }),
+                "{mnemonic} known-flag false arm should feed indirect branches: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_prewrite_operands_for_flagged_self_updates() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x20".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x21".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "subs",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "csel",
+                vec![
+                    Operand::Register("x22".to_string()),
+                    Operand::Register("x20".to_string()),
+                    Operand::Register("x21".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x22".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x8"
+                    && value.value == 0
+                    && value.source == RecoveredValueSource::AdrpAdd
+            }),
+            "subs should still recover its written destination value: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4].recovered_values.iter().any(|value| {
+                value.register == "x22"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "flags must be computed from the original self-update operand: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "self-update flags should feed indirect branch recovery: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
     fn synthesize_analysis_references_recovers_deterministic_conditional_select_variants() {
         let cases = [
             ("csinc", 0x2fff, 0x3000, "increment"),
@@ -8292,6 +8926,189 @@ mod tests {
             "divergent csel must not fabricate either possible target: {:?}",
             instructions
         );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_clears_known_flags_after_unknown_flag_setter() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "cmp",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1018,
+                "csel",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+            instruction(0x101c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[6].recovered_values.is_empty(),
+            "unknown later compare must clear known flags before csel: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[7]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 })
+                && !instructions[7]
+                    .references
+                    .contains(&Reference::Branch { target: 0x3000 })
+                && !instructions[7]
+                    .references
+                    .contains(&Reference::Branch { target: 0x4000 }),
+            "unknown flag setters must not leave stale or fabricated csel branch targets: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_clears_known_flags_across_calls() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x20".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x21".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x22".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "cmp",
+                vec![
+                    Operand::Register("x22".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(0x1010, "bl", vec![Operand::Label(0x2000)]),
+            instruction(
+                0x1014,
+                "csel",
+                vec![
+                    Operand::Register("x23".to_string()),
+                    Operand::Register("x20".to_string()),
+                    Operand::Register("x21".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[5].recovered_values.is_empty(),
+            "calls must clear known flags even when callee-saved source registers survive: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn condition_holds_evaluates_aarch64_conditions() {
+        let greater_unsigned_and_signed = NzcvFlags {
+            n: false,
+            z: false,
+            c: true,
+            v: false,
+        };
+        assert_eq!(
+            condition_holds("hi", greater_unsigned_and_signed),
+            Some(true)
+        );
+        assert_eq!(
+            condition_holds("ls", greater_unsigned_and_signed),
+            Some(false)
+        );
+        assert_eq!(
+            condition_holds("gt", greater_unsigned_and_signed),
+            Some(true)
+        );
+        assert_eq!(
+            condition_holds("le", greater_unsigned_and_signed),
+            Some(false)
+        );
+
+        let signed_less = NzcvFlags {
+            n: true,
+            z: false,
+            c: false,
+            v: false,
+        };
+        assert_eq!(condition_holds("lt", signed_less), Some(true));
+        assert_eq!(condition_holds("ge", signed_less), Some(false));
+        assert_eq!(condition_holds(".mi", signed_less), Some(true));
+        assert_eq!(condition_holds("al", signed_less), Some(true));
+        assert_eq!(condition_holds("nv", signed_less), None);
     }
 
     #[test]
