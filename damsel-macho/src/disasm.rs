@@ -1895,7 +1895,7 @@ fn synthesize_analysis_references(
                             target: reference_target,
                         },
                     );
-                    if (lower.starts_with("ldr") || lower.starts_with("ldur"))
+                    if load_reads_destination_value(&lower)
                         && let Some(index_register) = index_register.clone()
                     {
                         if let Some(jump_key) = destination
@@ -1916,7 +1916,7 @@ fn synthesize_analysis_references(
                         }
                     }
                     if let Some(dest) = destination.as_ref() {
-                        if lower.starts_with("ldr") || lower.starts_with("ldur") {
+                        if load_reads_destination_value(&lower) {
                             let resolved_slot = effective_target.and_then(|slot_address| {
                                 resolve_table_slot_at_address(
                                     image,
@@ -2591,6 +2591,15 @@ fn memory_base_index_displacement(
     None
 }
 
+fn load_reads_destination_value(mnemonic: &str) -> bool {
+    mnemonic.starts_with("ldr")
+        || mnemonic.starts_with("ldur")
+        || mnemonic.starts_with("ldar")
+        || mnemonic.starts_with("ldapr")
+        || mnemonic.starts_with("ldaxr")
+        || mnemonic.starts_with("ldxr")
+}
+
 fn memory_index_modifier_transform(
     modifier: &str,
     element_size: u8,
@@ -3219,6 +3228,10 @@ fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
         || lower.starts_with("ldurb")
         || lower.starts_with("ldrsb")
         || lower.starts_with("ldursb")
+        || lower.starts_with("ldarb")
+        || lower.starts_with("ldaprb")
+        || lower.starts_with("ldaxrb")
+        || lower.starts_with("ldxrb")
         || lower.starts_with("strb")
         || lower.starts_with("sturb")
     {
@@ -3227,6 +3240,10 @@ fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
         || lower.starts_with("ldurh")
         || lower.starts_with("ldrsh")
         || lower.starts_with("ldursh")
+        || lower.starts_with("ldarh")
+        || lower.starts_with("ldaprh")
+        || lower.starts_with("ldaxrh")
+        || lower.starts_with("ldxrh")
         || lower.starts_with("strh")
         || lower.starts_with("sturh")
     {
@@ -4777,6 +4794,65 @@ mod tests {
                     .references
                     .contains(&Reference::Call { target: 0x1234 }),
                 "conditional compare sources must keep their recovered values across {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_values_for_acquire_exclusive_loads() {
+        let image = synthetic_table_image(0x3000);
+        for mnemonic in ["ldar", "ldapr", "ldaxr", "ldxr"] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x4008),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::Memory {
+                            base: "x8".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(0x1008, "blr", vec![Operand::Register("x9".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::Data { target: 0x4008 }),
+                "acquire/exclusive load should keep its data reference for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].recovered_values.iter().any(|value| {
+                    value.register == "x9"
+                        && value.value == 0x3000
+                        && value.kind == RecoveredValueKind::FunctionPointer
+                        && value.source == RecoveredValueSource::TableLoad
+                }),
+                "acquire/exclusive loads should recover pointer table contents for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[2]
+                    .references
+                    .contains(&Reference::Call { target: 0x3000 }),
+                "recovered acquire/exclusive load values should feed indirect calls for {mnemonic}: {:?}",
                 instructions
             );
         }
