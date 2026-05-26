@@ -3,59 +3,26 @@ import DamselAppCore
 import SwiftUI
 
 @main
-struct DamselWorkbenchApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-
-    var body: some Scene {
-        Settings {
-            EmptyView()
-        }
-        .commands {
-            workbenchCommands
-        }
-    }
-
-    @CommandsBuilder
-    private var workbenchCommands: some Commands {
-        CommandGroup(replacing: .newItem) {
-            Button("Open Binary...") {
-                NotificationCenter.default.post(name: .damselOpenBinaryCommand, object: nil)
-            }
-            .keyboardShortcut("o", modifiers: [.command])
-        }
-
-        CommandMenu("Analyze") {
-            Button("Disassemble") {
-                NotificationCenter.default.post(name: .damselRunDisassemblyCommand, object: nil)
-            }
-            .keyboardShortcut(.return, modifiers: [.command])
-        }
-
-        CommandMenu("Navigate") {
-            Button("Find in Instructions") {
-                NotificationCenter.default.post(name: .damselFocusInstructionFilterCommand, object: nil)
-            }
-            .keyboardShortcut("f", modifiers: [.command])
-
-            Button("Clear Instruction Filter") {
-                NotificationCenter.default.post(name: .damselClearInstructionFilterCommand, object: nil)
-            }
-            .keyboardShortcut("f", modifiers: [.command, .shift])
-        }
-    }
-}
-
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+    private static var retainedDelegate: DamselWorkbenchApplication?
+
     private let store = WorkbenchStore()
-    private var mainWindow: NSWindow?
+    private var mainWindowController: NSWindowController?
     private var openedLaunchFile = false
 
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = DamselWorkbenchApplication()
+        retainedDelegate = delegate
+        application.delegate = delegate
+        application.setActivationPolicy(.regular)
+        application.finishLaunching()
+        application.run()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installMainMenu()
         openMainWindow()
         openLaunchFileIfNeeded()
     }
@@ -84,21 +51,153 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(runDisassembly(_:)):
+            return store.canRunDisassembly
+        case #selector(focusInstructionFilter(_:)):
+            return store.disassembly?.instructions.isEmpty == false
+        case #selector(clearInstructionFilter(_:)):
+            return !store.instructionFilterText.isEmpty
+        default:
+            return true
+        }
+    }
+
+    @objc private func openBinary(_ sender: Any?) {
+        openMainWindow()
+        NotificationCenter.default.post(name: .damselOpenBinaryCommand, object: nil)
+    }
+
+    @objc private func runDisassembly(_ sender: Any?) {
+        guard store.canRunDisassembly else {
+            NSSound.beep()
+            return
+        }
+        NotificationCenter.default.post(name: .damselRunDisassemblyCommand, object: nil)
+    }
+
+    @objc private func focusInstructionFilter(_ sender: Any?) {
+        NotificationCenter.default.post(name: .damselFocusInstructionFilterCommand, object: nil)
+    }
+
+    @objc private func clearInstructionFilter(_ sender: Any?) {
+        NotificationCenter.default.post(name: .damselClearInstructionFilterCommand, object: nil)
+    }
+
+    @objc private func showAboutPanel(_ sender: Any?) {
+        NSApp.orderFrontStandardAboutPanel(sender)
+    }
+
+    private func installMainMenu() {
+        let mainMenu = NSMenu()
+        mainMenu.addItem(menu("Damsel Workbench", submenu: appMenu()))
+        mainMenu.addItem(menu("File", submenu: fileMenu()))
+        mainMenu.addItem(menu("Edit", submenu: editMenu()))
+        mainMenu.addItem(menu("Analyze", submenu: analyzeMenu()))
+        mainMenu.addItem(menu("Navigate", submenu: navigateMenu()))
+
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
+            .keyEquivalentModifierMask = [.command]
+        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
+        mainMenu.addItem(menu("Window", submenu: windowMenu))
+        NSApp.windowsMenu = windowMenu
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    private func appMenu() -> NSMenu {
+        let menu = NSMenu(title: "Damsel Workbench")
+        menu.addItem(withTitle: "About Damsel Workbench", action: #selector(showAboutPanel(_:)), keyEquivalent: "")
+            .target = self
+        menu.addItem(.separator())
+        let quit = menu.addItem(withTitle: "Quit Damsel Workbench", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.keyEquivalentModifierMask = [.command]
+        return menu
+    }
+
+    private func fileMenu() -> NSMenu {
+        let menu = NSMenu(title: "File")
+        let open = menu.addItem(withTitle: "Open Binary...", action: #selector(openBinary(_:)), keyEquivalent: "o")
+        open.keyEquivalentModifierMask = [.command]
+        open.target = self
+        return menu
+    }
+
+    private func editMenu() -> NSMenu {
+        let menu = NSMenu(title: "Edit")
+        menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+            .keyEquivalentModifierMask = [.command]
+        menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+            .keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+            .keyEquivalentModifierMask = [.command]
+        menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+            .keyEquivalentModifierMask = [.command]
+        menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+            .keyEquivalentModifierMask = [.command]
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+            .keyEquivalentModifierMask = [.command]
+        return menu
+    }
+
+    private func analyzeMenu() -> NSMenu {
+        let menu = NSMenu(title: "Analyze")
+        let disassemble = menu.addItem(withTitle: "Disassemble", action: #selector(runDisassembly(_:)), keyEquivalent: "\r")
+        disassemble.keyEquivalentModifierMask = [.command]
+        disassemble.target = self
+        return menu
+    }
+
+    private func navigateMenu() -> NSMenu {
+        let menu = NSMenu(title: "Navigate")
+        let find = menu.addItem(
+            withTitle: "Find in Instructions",
+            action: #selector(focusInstructionFilter(_:)),
+            keyEquivalent: "f"
+        )
+        find.keyEquivalentModifierMask = [.command]
+        find.target = self
+
+        let clear = menu.addItem(
+            withTitle: "Clear Instruction Filter",
+            action: #selector(clearInstructionFilter(_:)),
+            keyEquivalent: "f"
+        )
+        clear.keyEquivalentModifierMask = [.command, .shift]
+        clear.target = self
+        return menu
+    }
+
+    private func menu(_ title: String, submenu: NSMenu) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.submenu = submenu
+        return item
+    }
+
     private func openMainWindow() {
-        let window: NSWindow
-        if let existingWindow = mainWindow {
-            window = existingWindow
+        let controller: NSWindowController
+        if let existingController = mainWindowController {
+            controller = existingController
         } else {
-            window = makeMainWindow()
-            mainWindow = window
+            controller = makeMainWindowController()
+            mainWindowController = controller
         }
 
-        recenter(window)
+        controller.showWindow(nil)
+        guard let window = controller.window else {
+            return
+        }
+
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func makeMainWindow() -> NSWindow {
+    private func makeMainWindowController() -> NSWindowController {
         let rootView = ContentView(store: store)
             .frame(minWidth: 1_100, minHeight: 680)
             .preferredColorScheme(.dark)
@@ -115,7 +214,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unified
         window.contentViewController = NSHostingController(rootView: rootView)
-        return window
+        recenter(window)
+        return NSWindowController(window: window)
     }
 
     private func openLaunchFileIfNeeded() {
@@ -138,13 +238,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func recenter(_ window: NSWindow) {
-        if let visibleFrame = NSScreen.main?.visibleFrame {
-            let frame = window.frame
-            let origin = NSPoint(
-                x: visibleFrame.midX - frame.width / 2,
-                y: visibleFrame.midY - frame.height / 2
-            )
-            window.setFrameOrigin(origin)
+        guard let visibleFrame = NSScreen.main?.visibleFrame else {
+            return
         }
+        let frame = window.frame
+        let origin = NSPoint(
+            x: visibleFrame.midX - frame.width / 2,
+            y: visibleFrame.midY - frame.height / 2
+        )
+        window.setFrameOrigin(origin)
     }
 }

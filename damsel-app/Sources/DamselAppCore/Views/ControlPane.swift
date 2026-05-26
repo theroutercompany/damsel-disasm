@@ -91,7 +91,7 @@ struct ControlPane: View {
                     }
                 }
             case .address:
-                IntegerInputField("0x100000460", text: $store.addressText)
+                IntegerInputField("Address", placeholder: "0x100000460", text: $store.addressText)
             }
         }
     }
@@ -205,27 +205,41 @@ struct SectionTitle: View {
 }
 
 private struct IntegerInputField: View {
+    let label: String
     let placeholder: String
     @Binding var text: String
     var disabled = false
 
-    init(_ placeholder: String, text: Binding<String>, disabled: Bool = false) {
-        self.placeholder = placeholder
+    init(_ label: String, placeholder: String? = nil, text: Binding<String>, disabled: Bool = false) {
+        self.label = label
+        self.placeholder = placeholder ?? label
         _text = text
         self.disabled = disabled
     }
 
     var body: some View {
-        FilteredIntegerTextField(
-            placeholder: placeholder,
-            text: $text,
-            disabled: disabled
-        )
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(disabled ? .tertiary : .secondary)
+                .lineLimit(1)
+
+            FilteredIntegerTextField(
+                placeholder: placeholder,
+                accessibilityLabel: label,
+                text: $text,
+                disabled: disabled
+            )
+            .frame(height: 28)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct FilteredIntegerTextField: NSViewRepresentable {
     let placeholder: String
+    let accessibilityLabel: String
     @Binding var text: String
     var disabled: Bool
 
@@ -239,6 +253,7 @@ private struct FilteredIntegerTextField: NSViewRepresentable {
         field.drawsBackground = true
         field.lineBreakMode = .byTruncatingTail
         field.delegate = context.coordinator
+        field.setAccessibilityLabel(accessibilityLabel)
         context.coordinator.field = field
         return field
     }
@@ -246,6 +261,7 @@ private struct FilteredIntegerTextField: NSViewRepresentable {
     func updateNSView(_ field: NSTextField, context: Context) {
         context.coordinator.text = $text
         field.placeholderString = placeholder
+        field.setAccessibilityLabel(accessibilityLabel)
         field.isEnabled = !disabled
         field.textColor = disabled ? .disabledControlTextColor : .labelColor
         if field.currentEditor() == nil, field.stringValue != text {
