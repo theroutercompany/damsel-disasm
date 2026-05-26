@@ -2515,8 +2515,8 @@ fn relative_slot_add_source_register(operand: &Operand) -> Option<String> {
         Operand::Register(register) => Some(register.clone()),
         Operand::ShiftedRegister { register, shift } => {
             let lower = shift.to_ascii_lowercase();
-            if !(lower.starts_with("lsl") || lower.starts_with("sxtw") || lower.starts_with("sxtx"))
-            {
+            let modifier = shift_modifier_op(&lower)?;
+            if !matches!(modifier, "lsl" | "sxtw" | "sxtx") {
                 return None;
             }
             (parse_optional_shift_from_text(&lower)? == 0).then(|| register.clone())
@@ -2565,16 +2565,12 @@ fn memory_index_modifier_transform(
     element_size: u8,
 ) -> Option<MemoryIndexTransform> {
     let lower = modifier.to_ascii_lowercase();
-    let extension = if lower.starts_with("lsl") || lower.starts_with("uxtx") {
-        MemoryIndexExtension::Unsigned64
-    } else if lower.starts_with("uxtw") {
-        MemoryIndexExtension::Unsigned32
-    } else if lower.starts_with("sxtw") {
-        MemoryIndexExtension::Signed32
-    } else if lower.starts_with("sxtx") {
-        MemoryIndexExtension::Signed64
-    } else {
-        return None;
+    let extension = match shift_modifier_op(&lower)? {
+        "lsl" | "uxtx" => MemoryIndexExtension::Unsigned64,
+        "uxtw" => MemoryIndexExtension::Unsigned32,
+        "sxtw" => MemoryIndexExtension::Signed32,
+        "sxtx" => MemoryIndexExtension::Signed64,
+        _ => return None,
     };
     let Some(shift) = parse_optional_shift_from_text(&lower) else {
         return None;
@@ -2593,15 +2589,7 @@ fn memory_index_scaled_shift(element_size: u8) -> Option<u32> {
 }
 
 fn parse_optional_shift_from_text(text: &str) -> Option<u32> {
-    let digits = text
-        .chars()
-        .filter(|ch| ch.is_ascii_digit())
-        .collect::<String>();
-    if digits.is_empty() {
-        Some(0)
-    } else {
-        digits.parse::<u32>().ok()
-    }
+    parse_shift_text(text, Some(0))
 }
 
 fn add_signed(base: u64, delta: i64) -> Option<u64> {
@@ -2806,14 +2794,40 @@ fn parse_mov_wide_shift_bits(destination: &str, operand: &Operand) -> Option<u32
 }
 
 fn parse_shift_from_text(text: &str) -> Option<u32> {
-    let digits = text
-        .chars()
-        .filter(|ch| ch.is_ascii_digit())
-        .collect::<String>();
-    if digits.is_empty() {
+    let lower = text.to_ascii_lowercase();
+    if shift_modifier_op(&lower)? != "lsl" {
         return None;
     }
-    digits.parse::<u32>().ok()
+    parse_shift_text(text, None)
+}
+
+fn parse_shift_text(text: &str, default_without_shift: Option<u32>) -> Option<u32> {
+    let text = text.trim();
+    let Some((_, suffix)) = text.split_once('#') else {
+        return if text.chars().all(|ch| ch.is_ascii_alphabetic()) {
+            default_without_shift
+        } else {
+            None
+        };
+    };
+    let suffix = suffix.trim();
+    if suffix.is_empty() || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    suffix.parse::<u32>().ok()
+}
+
+fn shift_modifier_op(text: &str) -> Option<&str> {
+    let prefix = match text.trim().split_once('#') {
+        Some((prefix, _)) => prefix.trim(),
+        None => text.trim(),
+    };
+    let mut parts = prefix.split_ascii_whitespace();
+    let op = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(op)
 }
 
 fn resolve_memory_effective_address(
@@ -4489,6 +4503,29 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_ignores_malformed_mov_wide_shift_text() {
+        let image = synthetic_image();
+        for shift in ["lsl #-16", "ror #16", "lsl #16 trailing"] {
+            let mut instructions = vec![instruction(
+                0x1000,
+                "movz",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                    Operand::Other(shift.to_string()),
+                ],
+            )];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[0].recovered_values.is_empty(),
+                "malformed shift text must not be scraped into a valid mov-wide lane: {shift}"
+            );
+        }
+    }
+
+    #[test]
     fn synthesize_analysis_references_invalidates_call_clobbered_registers() {
         let image = synthetic_image();
         let mut instructions = vec![
@@ -5748,6 +5785,60 @@ mod tests {
                 .all(|annotation| !matches!(annotation, Annotation::JumpTableCandidate { .. })),
             "invalid scaled register offsets must not create jump-table provenance"
         );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_malformed_memory_index_shift_text() {
+        let image = synthetic_table_image(0x3000);
+        for modifier in ["lsl #-3", "lsl junk", "uxtw junk #0"] {
+            let mut instructions = vec![
+                DecodedInstruction {
+                    references: vec![Reference::Page { target: 0x4000 }],
+                    ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+                },
+                instruction(
+                    0x1004,
+                    "mov",
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::ImmediateUnsigned(1),
+                    ],
+                ),
+                instruction(
+                    0x1008,
+                    "ldr",
+                    vec![
+                        Operand::Register("x10".to_string()),
+                        Operand::Memory {
+                            base: "x8".to_string(),
+                            index: Some("x9".to_string()),
+                            index_modifier: Some(modifier.to_string()),
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[2].references.is_empty(),
+                "malformed shift text must not be scraped into a valid memory index: {modifier}"
+            );
+            assert!(
+                instructions[2].recovered_values.is_empty(),
+                "malformed memory-index shifts must not recover a table value: {modifier}"
+            );
+            assert!(
+                instructions[3]
+                    .annotations
+                    .iter()
+                    .all(|annotation| !matches!(annotation, Annotation::JumpTableCandidate { .. })),
+                "malformed memory-index shifts must not create jump-table provenance: {modifier}"
+            );
+        }
     }
 
     #[test]
