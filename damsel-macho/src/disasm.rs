@@ -2189,7 +2189,7 @@ fn synthesize_analysis_references(
             let mut resolved_target =
                 read_known_value(&known_values, register.as_str()).and_then(|value| {
                     let reason = indirect_target_reason(image, value.value);
-                    should_resolve_indirect_target(value.value, reason)
+                    should_resolve_indirect_target(image, value.value, reason)
                         .then_some((value.value, reason))
                 });
 
@@ -5010,9 +5010,16 @@ fn indirect_target_reason(image: &BinaryImage, target: u64) -> IndirectTargetRea
     }
 }
 
-fn should_resolve_indirect_target(target: u64, reason: IndirectTargetReason) -> bool {
+fn should_resolve_indirect_target(
+    image: &BinaryImage,
+    target: u64,
+    reason: IndirectTargetReason,
+) -> bool {
     if target == 0 {
         return false;
+    }
+    if is_executable_target(image, target) {
+        return true;
     }
     if reason == IndirectTargetReason::RegisterState
         && looks_like_sign_extended_negative_literal(target)
@@ -5588,6 +5595,41 @@ mod tests {
                 }],
                 ..damsel_core::DyldMetadata::default()
             },
+            bytes,
+        )
+    }
+
+    fn synthetic_high_half_executable_image() -> BinaryImage {
+        let bytes: Arc<[u8]> = vec![0u8; 64].into();
+        BinaryImage::from_memory_bytes(
+            Some("disasm-synthetic-high-half".to_string()),
+            BinaryFormat::MachO,
+            Architecture::Arm64,
+            Endianness::Little,
+            None,
+            Some(Platform::unknown("macos")),
+            SliceInfo {
+                offset: 0,
+                size: 64,
+                is_universal: false,
+                cpu_subtype: 0,
+            },
+            vec![],
+            vec![Section {
+                segment_name: "__TEXT".to_string(),
+                name: "__text".to_string(),
+                address: 0xffff_ffff_ffff_f000,
+                size: 64,
+                file_offset: Some(0),
+                file_size: 64,
+                kind: "Text".to_string(),
+                executable: true,
+            }],
+            vec![],
+            vec![],
+            vec![],
+            ObjcMetadata::default(),
+            damsel_core::DyldMetadata::default(),
             bytes,
         )
     }
@@ -6398,6 +6440,47 @@ mod tests {
                 instructions
             );
         }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_resolves_high_half_executable_register_targets() {
+        let image = synthetic_high_half_executable_image();
+        let target = 0xffff_ffff_ffff_f010;
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(target),
+                ],
+            ),
+            instruction(0x1004, "br", vec![Operand::Register("x8".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1]
+                .references
+                .contains(&Reference::Branch { target }),
+            "mapped high-half executable addresses must resolve through register state: {:?}",
+            instructions[1].references
+        );
+        assert!(
+            instructions[1].annotations.iter().any(|annotation| {
+                matches!(
+                    annotation,
+                    Annotation::IndirectTargetResolved {
+                        via,
+                        target: existing,
+                        reason: IndirectTargetReason::RegisterState,
+                    } if via == "x8" && *existing == target
+                )
+            }),
+            "high-half register targets should keep a resolved-target annotation: {:?}",
+            instructions[1].annotations
+        );
     }
 
     #[test]
