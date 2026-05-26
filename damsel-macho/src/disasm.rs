@@ -2301,6 +2301,14 @@ fn normalize_value_for_write(register: &str, value: u64) -> u64 {
     }
 }
 
+fn normalize_value_for_width(value: u64, width: u32) -> u64 {
+    if width == 32 {
+        value & u64::from(u32::MAX)
+    } else {
+        value
+    }
+}
+
 fn read_known_value(
     known_values: &BTreeMap<String, RecoveredValue>,
     register: &str,
@@ -2834,24 +2842,8 @@ fn synthesize_simple_register_value(
             };
             Some((destination, value, RecoveredValueSource::Other))
         }
-        "csel" => {
-            let destination = match instruction.operands.first()? {
-                Operand::Register(register) => register.clone(),
-                _ => return None,
-            };
-            let true_value = match instruction.operands.get(1)? {
-                Operand::Register(register) => read_simple_register_value(known_values, register)?,
-                _ => return None,
-            };
-            let false_value = match instruction.operands.get(2)? {
-                Operand::Register(register) => read_simple_register_value(known_values, register)?,
-                _ => return None,
-            };
-            (true_value == false_value).then_some((
-                destination,
-                true_value,
-                RecoveredValueSource::Other,
-            ))
+        "csel" | "csinc" | "csinv" | "csneg" => {
+            synthesize_conditional_select_value(&lower, instruction, known_values)
         }
         "lsl" | "lsr" | "asr" => {
             let destination = match instruction.operands.first()? {
@@ -2875,6 +2867,36 @@ fn synthesize_simple_register_value(
         }
         _ => None,
     }
+}
+
+fn synthesize_conditional_select_value(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<(String, u64, RecoveredValueSource)> {
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    let width = register_value_width_for_write(&destination)?;
+    let true_value = match instruction.operands.get(1)? {
+        Operand::Register(register) => read_simple_register_value(known_values, register)?,
+        _ => return None,
+    };
+    let false_source = match instruction.operands.get(2)? {
+        Operand::Register(register) => read_simple_register_value(known_values, register)?,
+        _ => return None,
+    };
+    let false_value = match mnemonic {
+        "csel" => false_source,
+        "csinc" => false_source.wrapping_add(1),
+        "csinv" => !false_source,
+        "csneg" => 0_u64.wrapping_sub(false_source),
+        _ => return None,
+    };
+    let true_value = normalize_value_for_width(true_value, width);
+    let false_value = normalize_value_for_width(false_value, width);
+    (true_value == false_value).then_some((destination, true_value, RecoveredValueSource::Other))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2982,6 +3004,13 @@ fn register_value_width(register: &str) -> Option<u32> {
     } else {
         None
     }
+}
+
+fn register_value_width_for_write(register: &str) -> Option<u32> {
+    register_value_width(register).or_else(|| {
+        let key = canonical_state_key(register)?;
+        register_value_width(&key)
+    })
 }
 
 fn parse_bit_shift_amount(operand: &Operand, width: u32) -> Option<u32> {
@@ -5055,6 +5084,173 @@ mod tests {
             "deterministic csel values should feed indirect branches: {:?}",
             instructions
         );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_deterministic_conditional_select_variants() {
+        let cases = [
+            ("csinc", 0x2fff, 0x3000, "increment"),
+            ("csinv", !0x3000_u64, 0x3000, "invert"),
+            ("csneg", 0_u64.wrapping_sub(0x3000), 0x3000, "negate"),
+        ];
+
+        for (mnemonic, false_input, expected, operation) in cases {
+            let image = synthetic_image();
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(expected),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    "mov",
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::ImmediateUnsigned(false_input),
+                    ],
+                ),
+                instruction(
+                    0x1008,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x10".to_string()),
+                        Operand::Register("x8".to_string()),
+                        Operand::Register("x9".to_string()),
+                        Operand::Condition("eq".to_string()),
+                    ],
+                ),
+                instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[2].recovered_values.iter().any(|value| {
+                    value.register == "x10"
+                        && value.value == expected
+                        && value.source == RecoveredValueSource::Other
+                }),
+                "{mnemonic} should recover when the false arm after {operation} matches the true arm: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[3]
+                    .references
+                    .contains(&Reference::Branch { target: expected }),
+                "{mnemonic} deterministic values should feed indirect branches: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_normalizes_conditional_select_variant_widths() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateUnsigned(u64::from(u32::MAX)),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "csinc",
+                vec![
+                    Operand::Register("w10".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("w9".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "w10"
+                    && value.value == 0
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "32-bit csinc should wrap and compare at W-register width: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_divergent_conditional_select_variants() {
+        for mnemonic in ["csinc", "csinv", "csneg"] {
+            let image = synthetic_image();
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x10".to_string()),
+                        Operand::ImmediateUnsigned(0x1234),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x3000),
+                    ],
+                ),
+                instruction(
+                    0x1008,
+                    "mov",
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::ImmediateUnsigned(0x4000),
+                    ],
+                ),
+                instruction(
+                    0x100c,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x10".to_string()),
+                        Operand::Register("x8".to_string()),
+                        Operand::Register("x9".to_string()),
+                        Operand::Condition("eq".to_string()),
+                    ],
+                ),
+                instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[3].recovered_values.is_empty(),
+                "{mnemonic} with different possible values must not guess a condition outcome"
+            );
+            assert!(
+                !instructions[4]
+                    .references
+                    .contains(&Reference::Branch { target: 0x1234 })
+                    && !instructions[4]
+                        .references
+                        .contains(&Reference::Branch { target: 0x3000 }),
+                "divergent {mnemonic} must clear stale concrete targets: {:?}",
+                instructions
+            );
+        }
     }
 
     #[test]
