@@ -1925,7 +1925,7 @@ fn synthesize_analysis_references(
                                     element_size,
                                 )
                             });
-                            if lower.starts_with("ldrsw") {
+                            if load_reads_relative_table_offset(&lower) {
                                 if let Some(slot) = resolved_slot
                                     .filter(|slot| slot.encoding == TableSlotEncoding::Relative32)
                                 {
@@ -2596,8 +2596,15 @@ fn load_reads_destination_value(mnemonic: &str) -> bool {
         || mnemonic.starts_with("ldur")
         || mnemonic.starts_with("ldar")
         || mnemonic.starts_with("ldapr")
+        || mnemonic.starts_with("ldapur")
         || mnemonic.starts_with("ldaxr")
         || mnemonic.starts_with("ldxr")
+}
+
+fn load_reads_relative_table_offset(mnemonic: &str) -> bool {
+    mnemonic.starts_with("ldrsw")
+        || mnemonic.starts_with("ldursw")
+        || mnemonic.starts_with("ldapursw")
 }
 
 fn memory_index_modifier_transform(
@@ -3241,6 +3248,8 @@ fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
         || lower.starts_with("ldursb")
         || lower.starts_with("ldarb")
         || lower.starts_with("ldaprb")
+        || lower.starts_with("ldapurb")
+        || lower.starts_with("ldapursb")
         || lower.starts_with("ldaxrb")
         || lower.starts_with("ldxrb")
         || lower.starts_with("strb")
@@ -3253,6 +3262,8 @@ fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
         || lower.starts_with("ldursh")
         || lower.starts_with("ldarh")
         || lower.starts_with("ldaprh")
+        || lower.starts_with("ldapurh")
+        || lower.starts_with("ldapursh")
         || lower.starts_with("ldaxrh")
         || lower.starts_with("ldxrh")
         || lower.starts_with("strh")
@@ -3261,6 +3272,7 @@ fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
         2
     } else if lower.starts_with("ldrsw")
         || lower.starts_with("ldursw")
+        || lower.starts_with("ldapursw")
         || lower.starts_with("ldpsw")
     {
         4
@@ -4828,7 +4840,7 @@ mod tests {
     #[test]
     fn synthesize_analysis_references_recovers_values_for_acquire_exclusive_loads() {
         let image = synthetic_table_image(0x3000);
-        for mnemonic in ["ldar", "ldapr", "ldaxr", "ldxr"] {
+        for mnemonic in ["ldar", "ldapr", "ldapur", "ldaxr", "ldxr"] {
             let mut instructions = vec![
                 instruction(
                     0x1000,
@@ -5482,6 +5494,122 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn synthesize_relative_slot_recovers_unscaled_signed_word_loads() {
+        let image = synthetic_table_image(0x3000);
+        for mnemonic in ["ldursw", "ldapursw"] {
+            let mut instructions = vec![
+                DecodedInstruction {
+                    references: vec![Reference::Page { target: 0x4000 }],
+                    ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+                },
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::Memory {
+                            base: "x8".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(
+                    0x1008,
+                    "add",
+                    vec![
+                        Operand::Register("x10".to_string()),
+                        Operand::Register("x8".to_string()),
+                        Operand::Register("x9".to_string()),
+                    ],
+                ),
+                instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1].recovered_values.is_empty(),
+                "signed word table loads should keep relative-slot evidence for add, not recover a direct target for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[2].recovered_values.iter().any(|value| {
+                    value.register == "x10"
+                        && value.value == 0x3000
+                        && value.kind == RecoveredValueKind::FunctionPointer
+                        && value.source == RecoveredValueSource::RelativeTableLoad
+                }),
+                "unscaled signed word table loads should recover the add-derived target for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[3]
+                    .references
+                    .contains(&Reference::Branch { target: 0x3000 }),
+                "unscaled signed word table loads should feed indirect branches for {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_does_not_promote_unscaled_acquire_byte_half_loads() {
+        let image = synthetic_table_image(0x3000);
+        for mnemonic in ["ldapurb", "ldapursb", "ldapurh", "ldapursh"] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x4000),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("w9".to_string()),
+                        Operand::Memory {
+                            base: "x8".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(0x1008, "br", vec![Operand::Register("x9".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::Data { target: 0x4000 }),
+                "known unscaled acquire load addresses should still be emitted for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].recovered_values.is_empty(),
+                "byte/half unscaled acquire loads must not be promoted to 32-bit table slots for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                !instructions[2]
+                    .references
+                    .contains(&Reference::Branch { target: 0x3000 }),
+                "byte/half unscaled acquire loads must not fabricate branch targets for {mnemonic}: {:?}",
+                instructions
+            );
+        }
     }
 
     #[test]
