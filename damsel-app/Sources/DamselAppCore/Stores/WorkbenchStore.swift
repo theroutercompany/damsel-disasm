@@ -14,7 +14,13 @@ public final class WorkbenchStore: ObservableObject {
 
     @Published public var targetKind: TargetKind = .section
     @Published public var selectedSection: String = ""
-    @Published public var symbolText: String = ""
+    @Published public var symbolText: String = "" {
+        didSet {
+            if normalizedSymbolQuery.count < 2 {
+                symbolSuggestions = []
+            }
+        }
+    }
     @Published public var addressText: String = ""
     @Published public var fromText: String = ""
     @Published public var toText: String = ""
@@ -34,11 +40,22 @@ public final class WorkbenchStore: ObservableObject {
     @Published public var selectedInstructionAddress: UInt64?
 
     private let serverProcess: DamselServerProcess
-    private var client: DamselAPIClient?
+    private var client: (any WorkbenchAPIClient)?
     private var bootstrapTask: Task<URL, Error>?
 
     public init(serverProcess: DamselServerProcess = DamselServerProcess()) {
         self.serverProcess = serverProcess
+    }
+
+    init(
+        serverProcess: DamselServerProcess = DamselServerProcess(),
+        client: (any WorkbenchAPIClient)?,
+        loadedImage: ImageUploadResponse? = nil
+    ) {
+        self.serverProcess = serverProcess
+        self.client = client
+        self.loadedImage = loadedImage
+        selectedSection = loadedImage?.defaultSection ?? loadedImage?.sections.first?.name ?? ""
     }
 
     deinit {
@@ -229,17 +246,31 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
 
-        let query = symbolText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = normalizedSymbolQuery
         guard query.count >= 2 else {
             symbolSuggestions = []
             return
         }
 
         do {
-            symbolSuggestions = try await client.symbolSuggestions(imageId: imageId, query: query)
+            let suggestions = try await client.symbolSuggestions(imageId: imageId, query: query, limit: 30)
+            guard !Task.isCancelled,
+                  loadedImage?.imageId == imageId,
+                  normalizedSymbolQuery == query
+            else {
+                return
+            }
+            symbolSuggestions = suggestions
         } catch {
-            symbolSuggestions = []
+            if loadedImage?.imageId == imageId, normalizedSymbolQuery == query {
+                symbolSuggestions = []
+            }
         }
+    }
+
+    public func selectSymbolSuggestion(_ symbol: String) {
+        symbolText = symbol
+        symbolSuggestions = []
     }
 
     public func selectInstruction(_ instruction: InstructionRow) {
@@ -390,6 +421,10 @@ public final class WorkbenchStore: ObservableObject {
 
     private var normalizedInstructionFilter: String {
         instructionFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedSymbolQuery: String {
+        symbolText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reconcileSelectedInstructionWithFilter() {

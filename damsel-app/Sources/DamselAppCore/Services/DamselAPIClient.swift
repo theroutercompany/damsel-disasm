@@ -1,5 +1,11 @@
 import Foundation
 
+protocol WorkbenchAPIClient: AnyObject {
+    func uploadImage(fileURL: URL) async throws -> ImageUploadResponse
+    func symbolSuggestions(imageId: String, query: String, limit: Int) async throws -> [String]
+    func disassemble(imageId: String, request payload: DisasmAPIRequest) async throws -> DisassemblyResponse
+}
+
 public enum DamselClientError: LocalizedError, Equatable, Sendable {
     case invalidResponse
     case httpStatus(Int, DamselAPIErrorResponse?)
@@ -114,6 +120,8 @@ public final class DamselAPIClient {
         return sanitized.isEmpty ? "uploaded-macho" : sanitized
     }
 }
+
+extension DamselAPIClient: WorkbenchAPIClient {}
 
 private extension Data {
     mutating func appendUTF8(_ value: String) {

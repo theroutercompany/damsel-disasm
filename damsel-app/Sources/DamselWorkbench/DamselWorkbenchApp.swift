@@ -23,8 +23,13 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu()
-        openMainWindow()
-        openLaunchFileIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            self.openMainWindow()
+            self.openLaunchFileIfNeeded()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

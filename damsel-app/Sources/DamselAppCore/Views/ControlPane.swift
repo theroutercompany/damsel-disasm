@@ -175,7 +175,7 @@ private struct SymbolSuggestionList: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(store.symbolSuggestions.prefix(8), id: \.self) { symbol in
                 Button {
-                    store.symbolText = symbol
+                    store.selectSymbolSuggestion(symbol)
                 } label: {
                     Text(symbol)
                         .font(.system(.caption, design: .monospaced))
