@@ -441,10 +441,11 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
     }));
     assert!(analysis.metrics.intra_window_edge_count > 0);
     assert!(analysis.metrics.external_target_edge_count > 0);
-    assert_eq!(analysis.metrics.unresolved_target_edge_count, 0);
+    assert!(analysis.metrics.unresolved_target_edge_count > 0);
     assert!(analysis.summary.data_reference_count > 0);
     assert!(analysis.summary.recovered_value_count > 0);
     assert!(analysis.summary.jump_table_count > 0);
+    assert!(analysis.summary.unresolved_indirect_count > 0);
     assert!(
         !analysis.indirect_controls.is_empty(),
         "analysis should retain raw indirect controls"
@@ -626,7 +627,7 @@ fn disasm_analysis_reports_objc_runtime_references_for_objc_fixture() {
 }
 
 #[test]
-fn disasm_emits_indirect_target_resolved_for_semantic_fixture_when_present() {
+fn disasm_keeps_unresolved_jump_table_candidate_for_semantic_fixture_when_present() {
     let path = fixture("semantic-switch");
     if !path.exists() {
         eprintln!("semantic-switch fixture not present; skipping");
@@ -647,7 +648,24 @@ fn disasm_emits_indirect_target_resolved_for_semantic_fixture_when_present() {
         instruction
             .annotations
             .iter()
-            .any(|annotation| matches!(annotation, Annotation::IndirectTargetResolved { .. }))
+            .any(|annotation| matches!(annotation, Annotation::JumpTableCandidate { .. }))
+    }));
+    assert!(result.instructions.iter().any(|instruction| {
+        instruction.annotations.iter().any(|annotation| {
+            matches!(
+                annotation,
+                Annotation::IndirectControlFlow {
+                    kind,
+                    via
+                } if kind == "call" && via == "x8"
+            )
+        })
+    }));
+    assert!(result.instructions.iter().all(|instruction| {
+        instruction
+            .annotations
+            .iter()
+            .all(|annotation| !matches!(annotation, Annotation::IndirectTargetResolved { .. }))
     }));
 }
 
@@ -949,12 +967,12 @@ fn disasm_authenticated_annotations_present_without_value_flow() {
 
 #[test]
 fn disasm_indirect_target_resolved_reasons_are_bounded_when_present() {
-    let path = fixture("semantic-switch");
+    let path = fixture("indirect-dispatch");
     if !path.exists() {
-        eprintln!("semantic-switch fixture not present; skipping");
+        eprintln!("indirect-dispatch fixture not present; skipping");
         return;
     }
-    let image = load(path).expect("load semantic fixture");
+    let image = load(path).expect("load indirect-dispatch fixture");
     let request = DisassemblyRequestV2 {
         target: DisassemblyTarget::Section("__text".to_string()),
         range: None,
@@ -964,7 +982,7 @@ fn disasm_indirect_target_resolved_reasons_are_bounded_when_present() {
             include_value_flow: true,
         },
     };
-    let result = disassemble_v2(&image, &request).expect("disassemble semantic fixture");
+    let result = disassemble_v2(&image, &request).expect("disassemble indirect-dispatch fixture");
     let mut saw_reason = false;
     for instruction in &result.instructions {
         for annotation in &instruction.annotations {
