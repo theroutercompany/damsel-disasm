@@ -1010,6 +1010,14 @@ fn determine_stop_reason(
         };
     }
 
+    if matches!(request.limit, DisassemblyLimit::Bytes(_))
+        && window.request_limited
+        && instruction_count > 0
+        && decoded_bytes < window.bytes.len()
+    {
+        return DisassemblyStopReason::ByteLimitReached;
+    }
+
     if instruction_count == 0 || decoded_bytes == 0 || decoded_bytes < window.bytes.len() {
         return DisassemblyStopReason::DecodeHalt;
     }

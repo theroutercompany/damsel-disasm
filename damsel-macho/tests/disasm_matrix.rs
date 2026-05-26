@@ -172,6 +172,26 @@ fn disasm_v2_reports_byte_limit_reached() {
 }
 
 #[test]
+fn disasm_v2_reports_byte_limit_for_partial_instruction_tail_created_by_limit() {
+    let image = load(fixture("arm64-symbolized")).expect("load fixture");
+    let main_symbol = image.symbol_by_name("_main").expect("main symbol exists");
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Address(main_symbol.address),
+        range: None,
+        limit: DisassemblyLimit::Bytes(5),
+        options: DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: true,
+        },
+    };
+    let result = disassemble_v2(&image, &request).expect("disassemble with unaligned byte limit");
+
+    assert_eq!(result.instruction_count, 1);
+    assert_eq!(result.decoded_bytes, 4);
+    assert_eq!(result.stop_reason, DisassemblyStopReason::ByteLimitReached);
+}
+
+#[test]
 fn disasm_v2_reports_input_exhausted_for_disjoint_range() {
     let image = load(fixture("arm64-symbolized")).expect("load fixture");
     let text = image
