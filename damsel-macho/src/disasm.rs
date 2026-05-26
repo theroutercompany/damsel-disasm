@@ -4781,10 +4781,11 @@ fn resolve_table_slot_at_address(
         };
         let kind = classify_recovered_value(image, raw, RecoveredValueKind::Address);
         if raw != 0
-            && !matches!(
-                kind,
-                RecoveredValueKind::Address | RecoveredValueKind::CString
-            )
+            && (is_executable_target(image, raw)
+                || !matches!(
+                    kind,
+                    RecoveredValueKind::Address | RecoveredValueKind::CString
+                ))
         {
             return Some(ResolvedTableSlot {
                 slot_address,
@@ -5625,6 +5626,55 @@ mod tests {
                 kind: "Text".to_string(),
                 executable: true,
             }],
+            vec![],
+            vec![],
+            vec![],
+            ObjcMetadata::default(),
+            damsel_core::DyldMetadata::default(),
+            bytes,
+        )
+    }
+
+    fn synthetic_stripped_absolute_table_image(text_base: u64, target: u64) -> BinaryImage {
+        let mut bytes = vec![0u8; 72];
+        bytes[64..72].copy_from_slice(&target.to_le_bytes());
+        let bytes: Arc<[u8]> = bytes.into();
+        BinaryImage::from_memory_bytes(
+            Some("disasm-synthetic-stripped-absolute-table".to_string()),
+            BinaryFormat::MachO,
+            Architecture::Arm64,
+            Endianness::Little,
+            None,
+            Some(Platform::unknown("macos")),
+            SliceInfo {
+                offset: 0,
+                size: 72,
+                is_universal: false,
+                cpu_subtype: 0,
+            },
+            vec![],
+            vec![
+                Section {
+                    segment_name: "__TEXT".to_string(),
+                    name: "__text".to_string(),
+                    address: text_base,
+                    size: 64,
+                    file_offset: Some(0),
+                    file_size: 64,
+                    kind: "Text".to_string(),
+                    executable: true,
+                },
+                Section {
+                    segment_name: "__DATA_CONST".to_string(),
+                    name: "__const".to_string(),
+                    address: 0x4000,
+                    size: 8,
+                    file_offset: Some(64),
+                    file_size: 8,
+                    kind: "Data".to_string(),
+                    executable: false,
+                },
+            ],
             vec![],
             vec![],
             vec![],
@@ -14335,7 +14385,7 @@ mod tests {
 
     #[test]
     fn synthesize_analysis_references_respects_table_slot_endianness() {
-        let image = synthetic_table_image_with_endianness(0x3000, Endianness::Big);
+        let big_endian_image = synthetic_table_image_with_endianness(0x3000, Endianness::Big);
         let mut absolute_instructions = vec![
             instruction(
                 0x1000,
@@ -14362,7 +14412,7 @@ mod tests {
             instruction(0x1008, "blr", vec![Operand::Register("x9".to_string())]),
         ];
 
-        synthesize_analysis_references(&image, &mut absolute_instructions, true);
+        synthesize_analysis_references(&big_endian_image, &mut absolute_instructions, true);
 
         assert!(
             absolute_instructions[1]
@@ -14383,6 +14433,77 @@ mod tests {
                 .contains(&Reference::Call { target: 0x3000 }),
             "big-endian absolute table slots should feed indirect calls: {:?}",
             absolute_instructions
+        );
+
+        let high_target = 0xffff_ffff_ffff_f010;
+        let high_image =
+            synthetic_stripped_absolute_table_image(0xffff_ffff_ffff_f000, high_target);
+        let mut stripped_high_instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "ldr",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1008, "br", vec![Operand::Register("x9".to_string())]),
+        ];
+
+        synthesize_analysis_references(&high_image, &mut stripped_high_instructions, true);
+
+        assert!(
+            stripped_high_instructions[1]
+                .recovered_values
+                .iter()
+                .any(|value| {
+                    value.register == "x9"
+                        && value.value == high_target
+                        && value.kind == RecoveredValueKind::Address
+                        && value.source == RecoveredValueSource::TableLoad
+                }),
+            "absolute table slots should recover stripped executable targets: {:?}",
+            stripped_high_instructions
+        );
+        assert!(
+            stripped_high_instructions[1]
+                .annotations
+                .iter()
+                .any(|annotation| {
+                    matches!(
+                        annotation,
+                        Annotation::TableSlotResolved {
+                            encoding: TableSlotEncoding::Absolute64,
+                            target,
+                            ..
+                        } if *target == high_target
+                    )
+                }),
+            "stripped executable table slots should keep table-slot evidence: {:?}",
+            stripped_high_instructions
+        );
+        assert!(
+            stripped_high_instructions[2]
+                .references
+                .contains(&Reference::Branch {
+                    target: high_target
+                }),
+            "stripped executable absolute slots should feed indirect branches: {:?}",
+            stripped_high_instructions
         );
 
         let mut relative_instructions = vec![
@@ -14416,7 +14537,7 @@ mod tests {
             instruction(0x200c, "br", vec![Operand::Register("x10".to_string())]),
         ];
 
-        synthesize_analysis_references(&image, &mut relative_instructions, true);
+        synthesize_analysis_references(&big_endian_image, &mut relative_instructions, true);
 
         assert!(
             relative_instructions[2]
