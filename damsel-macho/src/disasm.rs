@@ -1963,35 +1963,20 @@ fn synthesize_analysis_references(
                                     destination_updated = true;
                                 }
                             } else {
-                                let recovered_target = resolved_slot
-                                    .as_ref()
-                                    .map(|slot| slot.target)
-                                    .or(effective_target);
-                                if let Some(value) = recovered_target {
-                                    let source = resolved_slot
-                                        .as_ref()
-                                        .map(|slot| match slot.encoding {
-                                            TableSlotEncoding::Absolute64 => {
-                                                RecoveredValueSource::TableLoad
-                                            }
-                                            TableSlotEncoding::Relative32 => {
-                                                RecoveredValueSource::RelativeTableLoad
-                                            }
-                                        })
-                                        .unwrap_or(RecoveredValueSource::AdrpLoad);
+                                if let Some(slot) = resolved_slot {
+                                    let value = slot.target;
+                                    let source = match slot.encoding {
+                                        TableSlotEncoding::Absolute64 => {
+                                            RecoveredValueSource::TableLoad
+                                        }
+                                        TableSlotEncoding::Relative32 => {
+                                            RecoveredValueSource::RelativeTableLoad
+                                        }
+                                    };
                                     let recovered = RecoveredValue {
                                         register: dest.clone(),
                                         value: normalize_value_for_write(dest, value),
-                                        kind: resolved_slot
-                                            .as_ref()
-                                            .map(|slot| slot.kind)
-                                            .unwrap_or_else(|| {
-                                                classify_recovered_value(
-                                                    image,
-                                                    value,
-                                                    RecoveredValueKind::Address,
-                                                )
-                                            }),
+                                        kind: slot.kind,
                                         source,
                                     };
                                     if canonical_state_key(dest) == jump_table_source_key {
@@ -2011,26 +1996,41 @@ fn synthesize_analysis_references(
                                     );
                                     destination_updated = true;
                                     if include_annotations {
-                                        if let Some(slot) = resolved_slot {
-                                            push_annotation(
-                                                &mut instruction.annotations,
-                                                Annotation::TableSlotResolved {
-                                                    table_base: base_target,
-                                                    slot_address: slot.slot_address,
-                                                    index_register: index_register
-                                                        .clone()
-                                                        .unwrap_or_default(),
-                                                    element_size,
-                                                    encoding: slot.encoding,
-                                                    target: slot.target,
-                                                },
-                                            );
-                                        }
+                                        push_annotation(
+                                            &mut instruction.annotations,
+                                            Annotation::TableSlotResolved {
+                                                table_base: base_target,
+                                                slot_address: slot.slot_address,
+                                                index_register: index_register
+                                                    .clone()
+                                                    .unwrap_or_default(),
+                                                element_size,
+                                                encoding: slot.encoding,
+                                                target: slot.target,
+                                            },
+                                        );
                                     }
-                                } else if jump_table_source_key.is_some() {
-                                    remove_known_value(&mut known_values, dest);
-                                    remove_table_slot_evidence(&mut relative_slot_loads, dest);
-                                    destination_updated = true;
+                                } else {
+                                    if let Some(value) = effective_target
+                                        && dest.to_ascii_lowercase().starts_with('x')
+                                        && let Some(kind) =
+                                            unresolved_load_reference_kind(image, value)
+                                    {
+                                        push_recovered_value(
+                                            &mut instruction.recovered_values,
+                                            RecoveredValue {
+                                                register: dest.clone(),
+                                                value,
+                                                kind,
+                                                source: RecoveredValueSource::AdrpLoad,
+                                            },
+                                        );
+                                    }
+                                    if jump_table_source_key.is_some() {
+                                        remove_known_value(&mut known_values, dest);
+                                        remove_table_slot_evidence(&mut relative_slot_loads, dest);
+                                        destination_updated = true;
+                                    }
                                 }
                             }
                         }
@@ -3006,6 +3006,24 @@ fn classify_recovered_value(
         return RecoveredValueKind::Address;
     }
     fallback
+}
+
+fn unresolved_load_reference_kind(image: &BinaryImage, address: u64) -> Option<RecoveredValueKind> {
+    let kind = classify_recovered_value(image, address, RecoveredValueKind::Address);
+    if matches!(
+        kind,
+        RecoveredValueKind::ObjcSelector
+            | RecoveredValueKind::ObjcClass
+            | RecoveredValueKind::ObjcMethodList
+    ) || image.objc_selector_ref_at_address(address).is_some()
+        || image.objc_class_ref_at_address(address).is_some()
+        || image.objc_imported_class_name_at_address(address).is_some()
+        || image.objc_method_list_owner_at_address(address).is_some()
+    {
+        Some(kind)
+    } else {
+        None
+    }
 }
 
 fn indirect_target_reason(image: &BinaryImage, target: u64) -> IndirectTargetReason {
@@ -5330,6 +5348,57 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "the shifted offset should still resolve the table slot target"
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_does_not_recover_unresolved_load_addresses() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x3000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1008, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1]
+                .references
+                .contains(&Reference::Data { target: 0x3000 }),
+            "the known load address should still be emitted as a data reference: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[1].recovered_values.is_empty(),
+            "loads must not recover the address being read as the loaded value: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[2]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "indirect control flow must not resolve through the load address itself"
         );
     }
 
