@@ -2038,6 +2038,27 @@ fn synthesize_analysis_references(
                                         );
                                     }
                                     destination_updated = true;
+                                } else if let Some(value) = effective_target
+                                    && let Some(recovered) = synthesize_scalar_memory_load_value(
+                                        image, &lower, dest, value,
+                                    )
+                                {
+                                    if canonical_state_key(dest) == jump_table_source_key {
+                                        remove_table_slot_evidence(&mut relative_slot_loads, dest);
+                                        store_known_value(&mut known_values, recovered.clone());
+                                    } else {
+                                        store_known_value_replacing_derived_state(
+                                            &mut known_values,
+                                            &mut jump_table_sources,
+                                            &mut relative_slot_loads,
+                                            recovered.clone(),
+                                        );
+                                    }
+                                    push_recovered_value(
+                                        &mut instruction.recovered_values,
+                                        recovered,
+                                    );
+                                    destination_updated = true;
                                 }
                             } else {
                                 if let Some(slot) = resolved_slot {
@@ -2901,11 +2922,10 @@ fn recoverable_memory_load_range(image: &BinaryImage, address: u64, width: usize
 }
 
 fn scalar_memory_load_width(register: &str, mnemonic: &str) -> Option<(usize, bool)> {
-    if load_reads_relative_table_offset(mnemonic) {
-        return None;
-    }
     let register = register.to_ascii_lowercase();
-    if mnemonic.starts_with("ldrsb")
+    if load_reads_relative_table_offset(mnemonic) && register.starts_with('x') {
+        Some((4, true))
+    } else if mnemonic.starts_with("ldrsb")
         || mnemonic.starts_with("ldursb")
         || mnemonic.starts_with("ldtrsb")
         || mnemonic.starts_with("ldapursb")
@@ -13253,11 +13273,12 @@ mod tests {
 
     #[test]
     fn synthesize_analysis_references_recovers_scalar_memory_load_values() {
-        let mut bytes = vec![0u8; 16];
+        let mut bytes = vec![0u8; 20];
         bytes[0] = 0x80;
         bytes[2..4].copy_from_slice(&(-2_i16).to_le_bytes());
         bytes[4..8].copy_from_slice(&0x1122_3344_u32.to_le_bytes());
         bytes[8..16].copy_from_slice(&0x1122_3344_5566_7788_u64.to_le_bytes());
+        bytes[16..20].copy_from_slice(&(-4_i32).to_le_bytes());
         let image = synthetic_literal_image(0x4000, &bytes);
         let mut instructions = vec![
             DecodedInstruction {
@@ -13320,6 +13341,20 @@ mod tests {
                     },
                 ],
             ),
+            instruction(
+                0x1014,
+                "ldrsw",
+                vec![
+                    Operand::Register("x13".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 16,
+                        writeback: None,
+                    },
+                ],
+            ),
         ];
 
         synthesize_analysis_references(&image, &mut instructions, true);
@@ -13359,6 +13394,16 @@ mod tests {
                     && value.source == RecoveredValueSource::AdrpLoad
             }),
             "ldr x should recover readable 64-bit scalar contents: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x13"
+                    && value.value == ((-4_i64) as u64)
+                    && value.kind == RecoveredValueKind::Literal
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "ldrsw should recover sign-extended word contents when it is not a relative table slot: {:?}",
             instructions
         );
     }
