@@ -2509,14 +2509,52 @@ fn memory_base_index_displacement(
         if let Operand::Memory {
             base,
             index,
+            index_modifier,
             displacement,
             ..
         } = operand
         {
+            if index_modifier.as_deref().is_some_and(|modifier| {
+                !memory_index_modifier_matches_element_size(
+                    modifier,
+                    jump_table_element_size(instruction),
+                )
+            }) {
+                return None;
+            }
             return Some((base.clone(), index.clone(), *displacement));
         }
     }
     None
+}
+
+fn memory_index_modifier_matches_element_size(modifier: &str, element_size: u8) -> bool {
+    let lower = modifier.to_ascii_lowercase();
+    if !(lower.starts_with("lsl") || lower.starts_with("uxtw") || lower.starts_with("uxtx")) {
+        return false;
+    }
+    let Some(shift) = parse_optional_shift_from_text(&lower) else {
+        return false;
+    };
+    match element_size {
+        1 => shift == 0,
+        2 => shift == 1,
+        4 => shift == 2,
+        8 => shift == 3,
+        _ => false,
+    }
+}
+
+fn parse_optional_shift_from_text(text: &str) -> Option<u32> {
+    let digits = text
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        Some(0)
+    } else {
+        digits.parse::<u32>().ok()
+    }
 }
 
 fn add_signed(base: u64, delta: i64) -> Option<u64> {
@@ -4347,6 +4385,7 @@ mod tests {
                     Operand::Memory {
                         base: "sp".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4386,6 +4425,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 0,
                         writeback: Some(", #0x8".to_string()),
                     },
@@ -4399,6 +4439,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4455,6 +4496,7 @@ mod tests {
                     Operand::Memory {
                         base: "sp".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4590,6 +4632,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4659,6 +4702,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4711,6 +4755,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4759,6 +4804,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4818,6 +4864,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4877,6 +4924,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: Some("x9".to_string()),
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4943,6 +4991,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: Some("x9".to_string()),
+                        index_modifier: None,
                         displacement: 0,
                         writeback: None,
                     },
@@ -4970,6 +5019,58 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_ignores_modified_memory_index_offsets() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("sxtw #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].references.is_empty(),
+            "unsupported modified register-offset memory operands must not synthesize an unmodified data reference: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "unsupported modified register-offset memory operands must not recover a value with unmodified index semantics"
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "unsupported modified register-offset memory operands must not create jump-table state"
+        );
+    }
+
+    #[test]
     fn synthesize_constant_slot_dispatch_does_not_emit_jump_table_candidate() {
         let image = synthetic_table_image(0x3000);
         let mut instructions = vec![
@@ -4985,6 +5086,7 @@ mod tests {
                     Operand::Memory {
                         base: "x8".to_string(),
                         index: None,
+                        index_modifier: None,
                         displacement: 8,
                         writeback: None,
                     },

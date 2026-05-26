@@ -1809,6 +1809,7 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
         .expect("stp should expose a structured memory operand");
     assert_eq!(memory_operand["base"], "sp");
     assert_eq!(memory_operand["index"], serde_json::Value::Null);
+    assert_eq!(memory_operand["index_modifier"], serde_json::Value::Null);
     assert_eq!(memory_operand["displacement"].as_i64(), Some(0x20));
     assert_eq!(memory_operand["displacement_hex"], "0x20");
     assert_eq!(memory_operand["writeback"], false);
@@ -1820,6 +1821,7 @@ fn disasm_json_contract_has_window_and_analysis_fields() {
             "display",
             "base",
             "index",
+            "index_modifier",
             "displacement",
             "displacement_hex",
             "writeback",

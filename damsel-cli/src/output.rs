@@ -6287,6 +6287,7 @@ fn operand_json(operand: &Operand) -> JsonValue {
         Operand::Memory {
             base,
             index,
+            index_modifier,
             displacement,
             writeback,
         } => JsonValue::Object(vec![
@@ -6296,6 +6297,13 @@ fn operand_json(operand: &Operand) -> JsonValue {
             (
                 "index".to_string(),
                 index
+                    .as_ref()
+                    .map(|value| JsonValue::String(value.clone()))
+                    .unwrap_or(JsonValue::Null),
+            ),
+            (
+                "index_modifier".to_string(),
+                index_modifier
                     .as_ref()
                     .map(|value| JsonValue::String(value.clone()))
                     .unwrap_or(JsonValue::Null),

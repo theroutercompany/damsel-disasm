@@ -169,6 +169,45 @@ fn decode_preserves_extended_register_operands() {
 }
 
 #[test]
+fn decode_preserves_memory_index_modifiers() {
+    let shifted = decode(&[0x20, 0x78, 0x62, 0xf8], 0x1000, None); // ldr x0, [x1, x2, lsl #3]
+    assert_eq!(shifted.len(), 1);
+    assert_eq!(
+        shifted[0].operands,
+        vec![
+            Operand::Register("x0".to_string()),
+            Operand::Memory {
+                base: "x1".to_string(),
+                index: Some("x2".to_string()),
+                index_modifier: Some("lsl #3".to_string()),
+                displacement: 0,
+                writeback: None,
+            },
+        ],
+        "memory index shifts must stay separate from the raw index register"
+    );
+    assert_eq!(shifted[0].render(), "ldr x0, [x1, x2, lsl #3]");
+
+    let extended = decode(&[0x20, 0x58, 0x62, 0xf8], 0x1000, None); // ldr x0, [x1, w2, uxtw #3]
+    assert_eq!(extended.len(), 1);
+    assert_eq!(
+        extended[0].operands,
+        vec![
+            Operand::Register("x0".to_string()),
+            Operand::Memory {
+                base: "x1".to_string(),
+                index: Some("w2".to_string()),
+                index_modifier: Some("uxtw #3".to_string()),
+                displacement: 0,
+                writeback: None,
+            },
+        ],
+        "memory index extenders must stay separate from the raw index register"
+    );
+    assert_eq!(extended[0].render(), "ldr x0, [x1, w2, uxtw #3]");
+}
+
+#[test]
 fn decode_rejects_truncated_instruction_stream() {
     let bytes = [0x00, 0x00, 0x00];
     match decode_aarch64(&bytes, 0x1000, None) {

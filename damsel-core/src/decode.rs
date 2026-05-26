@@ -367,6 +367,9 @@ fn map_operand(
                 .reg_name(mem.base())
                 .unwrap_or_else(|| format!("{:?}", mem.base())),
             index: cs.reg_name(mem.index()),
+            index_modifier: cs
+                .reg_name(mem.index())
+                .and_then(|_| arm64_register_modifier_text(operand.shift, operand.ext)),
             displacement: i64::from(mem.disp()),
             writeback: writeback.then(|| "!".to_string()),
         },

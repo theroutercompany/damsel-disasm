@@ -1881,6 +1881,7 @@ pub enum Operand {
     Memory {
         base: String,
         index: Option<String>,
+        index_modifier: Option<String>,
         displacement: i64,
         writeback: Option<String>,
     },
@@ -1910,12 +1911,16 @@ impl fmt::Display for Operand {
             Self::Memory {
                 base,
                 index,
+                index_modifier,
                 displacement,
                 writeback,
             } => {
                 write!(f, "[{base}")?;
                 if let Some(index) = index {
                     write!(f, ", {index}")?;
+                    if let Some(index_modifier) = index_modifier {
+                        write!(f, ", {index_modifier}")?;
+                    }
                 }
                 if *displacement != 0 {
                     write!(f, ", #{displacement:#x}")?;
