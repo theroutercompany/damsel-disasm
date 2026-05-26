@@ -3012,7 +3012,7 @@ fn synthesize_simple_register_value(
                 Operand::ImmediateUnsigned(value) => {
                     Some((destination, *value, RecoveredValueSource::MoveWide))
                 }
-                Operand::ImmediateSigned(value) if *value >= 0 => {
+                Operand::ImmediateSigned(value) => {
                     Some((destination, *value as u64, RecoveredValueSource::MoveWide))
                 }
                 _ => None,
@@ -5917,6 +5917,58 @@ mod tests {
                 .references
                 .contains(&Reference::Call { target: 0x1238 })
         );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_signed_mov_immediates() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateSigned(-1),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateSigned(-2),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateSigned(42),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[0].recovered_values.iter().any(|value| {
+            value.register == "x8"
+                && value.value == u64::MAX
+                && value.kind == RecoveredValueKind::Literal
+                && value.source == RecoveredValueSource::MoveWide
+        }));
+        assert!(instructions[1].recovered_values.iter().any(|value| {
+            value.register == "w9"
+                && value.value == u64::from((-2_i32) as u32)
+                && value.kind == RecoveredValueKind::Literal
+                && value.source == RecoveredValueSource::MoveWide
+        }));
+        assert!(instructions[2].recovered_values.iter().any(|value| {
+            value.register == "x10"
+                && value.value == 42
+                && value.kind == RecoveredValueKind::Literal
+                && value.source == RecoveredValueSource::MoveWide
+        }));
     }
 
     #[test]
