@@ -2847,6 +2847,12 @@ fn synthesize_simple_register_value(
         "mul" | "madd" | "msub" | "mneg" => {
             synthesize_multiply_register_value(&lower, instruction, known_values)
         }
+        "umaddl" | "smaddl" | "umsubl" | "smsubl" | "umull" | "smull" | "umnegl" | "smnegl" => {
+            synthesize_long_multiply_register_value(&lower, instruction, known_values)
+        }
+        "umulh" | "smulh" => {
+            synthesize_high_multiply_register_value(&lower, instruction, known_values)
+        }
         "udiv" | "sdiv" => synthesize_divide_register_value(&lower, instruction, known_values),
         "clz" | "cls" => synthesize_count_register_value(&lower, instruction, known_values),
         "ubfx" | "sbfx" => synthesize_bitfield_extract_value(&lower, instruction, known_values),
@@ -3027,6 +3033,70 @@ fn synthesize_multiply_register_value(
     ))
 }
 
+fn synthesize_long_multiply_register_value(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<(String, u64, RecoveredValueSource)> {
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    if register_value_width_for_write(&destination)? != 64 {
+        return None;
+    }
+    let signed = mnemonic.starts_with('s');
+    let lhs = read_width_checked_register_operand(instruction.operands.get(1)?, 32, known_values)?;
+    let rhs = read_width_checked_register_operand(instruction.operands.get(2)?, 32, known_values)?;
+    let product = long_multiply_product(lhs, rhs, signed);
+    let value = match mnemonic {
+        "umaddl" | "smaddl" => {
+            read_width_checked_register_operand(instruction.operands.get(3)?, 64, known_values)?
+                .wrapping_add(product)
+        }
+        "umsubl" | "smsubl" => {
+            read_width_checked_register_operand(instruction.operands.get(3)?, 64, known_values)?
+                .wrapping_sub(product)
+        }
+        "umull" | "smull" => product,
+        "umnegl" | "smnegl" => 0_u64.wrapping_sub(product),
+        _ => return None,
+    };
+    Some((destination, value, RecoveredValueSource::Other))
+}
+
+fn long_multiply_product(lhs: u64, rhs: u64, signed: bool) -> u64 {
+    if signed {
+        let lhs = i128::from((lhs as u32) as i32);
+        let rhs = i128::from((rhs as u32) as i32);
+        lhs.wrapping_mul(rhs) as u64
+    } else {
+        u64::from(lhs as u32).wrapping_mul(u64::from(rhs as u32))
+    }
+}
+
+fn synthesize_high_multiply_register_value(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<(String, u64, RecoveredValueSource)> {
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    if register_value_width_for_write(&destination)? != 64 {
+        return None;
+    }
+    let lhs = read_width_checked_register_operand(instruction.operands.get(1)?, 64, known_values)?;
+    let rhs = read_width_checked_register_operand(instruction.operands.get(2)?, 64, known_values)?;
+    let value = match mnemonic {
+        "umulh" => ((u128::from(lhs) * u128::from(rhs)) >> 64) as u64,
+        "smulh" => (((lhs as i64 as i128) * (rhs as i64 as i128)) >> 64) as u64,
+        _ => return None,
+    };
+    Some((destination, value, RecoveredValueSource::Other))
+}
+
 fn synthesize_divide_register_value(
     mnemonic: &str,
     instruction: &DecodedInstruction,
@@ -3188,6 +3258,19 @@ fn read_normalized_register_operand(
         Operand::Register(register) => {
             let value = read_simple_register_value(known_values, register)?;
             Some(normalize_value_for_width(value, width))
+        }
+        _ => None,
+    }
+}
+
+fn read_width_checked_register_operand(
+    operand: &Operand,
+    width: u32,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<u64> {
+    match operand {
+        Operand::Register(register) if register_value_width(register)? == width => {
+            read_normalized_register_operand(operand, width, known_values)
         }
         _ => None,
     }
@@ -5767,6 +5850,437 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "unknown multiply operands must clear stale destination state: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_long_and_high_multiply_values() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(0xffff_fffe),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateUnsigned(3),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x20".to_string()),
+                    Operand::ImmediateUnsigned(10),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "umaddl",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("x20".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "smaddl",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("x20".to_string()),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "umsubl",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("x20".to_string()),
+                ],
+            ),
+            instruction(
+                0x1018,
+                "smsubl",
+                vec![
+                    Operand::Register("x13".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("x20".to_string()),
+                ],
+            ),
+            instruction(
+                0x101c,
+                "umull",
+                vec![
+                    Operand::Register("x14".to_string()),
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("w9".to_string()),
+                ],
+            ),
+            instruction(
+                0x1020,
+                "smull",
+                vec![
+                    Operand::Register("x15".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("w9".to_string()),
+                ],
+            ),
+            instruction(
+                0x1024,
+                "umnegl",
+                vec![
+                    Operand::Register("x16".to_string()),
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("w9".to_string()),
+                ],
+            ),
+            instruction(
+                0x1028,
+                "smnegl",
+                vec![
+                    Operand::Register("x17".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("w9".to_string()),
+                ],
+            ),
+            instruction(
+                0x102c,
+                "mov",
+                vec![
+                    Operand::Register("x18".to_string()),
+                    Operand::ImmediateUnsigned(0x8000_0000_0000_0000),
+                ],
+            ),
+            instruction(
+                0x1030,
+                "mov",
+                vec![
+                    Operand::Register("x19".to_string()),
+                    Operand::ImmediateUnsigned(2),
+                ],
+            ),
+            instruction(
+                0x1034,
+                "umulh",
+                vec![
+                    Operand::Register("x21".to_string()),
+                    Operand::Register("x18".to_string()),
+                    Operand::Register("x19".to_string()),
+                ],
+            ),
+            instruction(
+                0x1038,
+                "mov",
+                vec![
+                    Operand::Register("x22".to_string()),
+                    Operand::ImmediateUnsigned((-2_i64) as u64),
+                ],
+            ),
+            instruction(
+                0x103c,
+                "mov",
+                vec![
+                    Operand::Register("x23".to_string()),
+                    Operand::ImmediateUnsigned(0x4000_0000_0000_0000),
+                ],
+            ),
+            instruction(
+                0x1040,
+                "smulh",
+                vec![
+                    Operand::Register("x24".to_string()),
+                    Operand::Register("x22".to_string()),
+                    Operand::Register("x23".to_string()),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[3].recovered_values.iter().any(|value| {
+            value.register == "x10"
+                && value.value == 0x3_0000_0004
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[4].recovered_values.iter().any(|value| {
+            value.register == "x11"
+                && value.value == 4
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[5].recovered_values.iter().any(|value| {
+            value.register == "x12"
+                && value.value == 10_u64.wrapping_sub(0x2_ffff_fffa)
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[6].recovered_values.iter().any(|value| {
+            value.register == "x13"
+                && value.value == 16
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[7].recovered_values.iter().any(|value| {
+            value.register == "x14"
+                && value.value == 9
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[8].recovered_values.iter().any(|value| {
+            value.register == "x15"
+                && value.value == ((-6_i64) as u64)
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[9].recovered_values.iter().any(|value| {
+            value.register == "x16"
+                && value.value == 0_u64.wrapping_sub(9)
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[10].recovered_values.iter().any(|value| {
+            value.register == "x17"
+                && value.value == 6
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[13].recovered_values.iter().any(|value| {
+            value.register == "x21"
+                && value.value == 1
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[16].recovered_values.iter().any(|value| {
+            value.register == "x24"
+                && value.value == u64::MAX
+                && value.source == RecoveredValueSource::Other
+        }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_long_multiply_for_table_addresses() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("w11".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "umaddl",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("w11".to_string()),
+                    Operand::Register("x8".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ldr",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Memory {
+                        base: "x10".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x12".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x4008
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "long multiply-add table addresses should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "loads through long multiply-add table addresses should resolve data refs: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "long multiply-add table addresses should feed indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_high_multiply_for_table_indices() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x8000_0000_0000_0000),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(2),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "umulh",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x11".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "high-multiply-derived table indices should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "high-multiply-derived table indices should resolve slot addresses: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "high-multiply-derived table indices should resolve indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_unknown_long_multiply_operands() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("w11".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "umaddl",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("w12".to_string()),
+                    Operand::Register("w11".to_string()),
+                    Operand::Register("x8".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.is_empty(),
+            "unknown long multiply operands must not synthesize values"
+        );
+        assert!(
+            !instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "unknown long multiply operands must clear stale destination state: {:?}",
             instructions
         );
     }
