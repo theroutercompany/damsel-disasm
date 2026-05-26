@@ -2492,10 +2492,7 @@ fn synthesize_register_add_value(
         Operand::Register(register) => register.clone(),
         _ => return None,
     };
-    let source_register = match instruction.operands.get(2)? {
-        Operand::Register(register) => register.clone(),
-        _ => return None,
-    };
+    let source_register = relative_slot_add_source_register(instruction.operands.get(2)?)?;
 
     let source_key = canonical_state_key(&source_register)?;
     let slot_evidence = relative_slot_loads.get(&source_key)?.clone();
@@ -2511,6 +2508,21 @@ fn synthesize_register_add_value(
         source: RecoveredValueSource::RelativeTableLoad,
     };
     Some((recovered, slot_evidence))
+}
+
+fn relative_slot_add_source_register(operand: &Operand) -> Option<String> {
+    match operand {
+        Operand::Register(register) => Some(register.clone()),
+        Operand::ShiftedRegister { register, shift } => {
+            let lower = shift.to_ascii_lowercase();
+            if !(lower.starts_with("lsl") || lower.starts_with("sxtw") || lower.starts_with("sxtx"))
+            {
+                return None;
+            }
+            (parse_optional_shift_from_text(&lower)? == 0).then(|| register.clone())
+        }
+        _ => None,
+    }
 }
 
 fn memory_base_index_displacement(
@@ -4961,6 +4973,58 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn synthesize_relative_slot_recovers_unshifted_extended_add_target() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldrsw",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x1008,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ShiftedRegister {
+                        register: "w9".to_string(),
+                        shift: "sxtw".to_string(),
+                    },
+                ],
+            ),
+            instruction(0x100c, "blr", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[2].recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::FunctionPointer
+                && value.source == RecoveredValueSource::RelativeTableLoad
+                && value.value == 0x3000
+        }));
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Call { target: 0x3000 }),
+            "unshifted sign-extended add operands should resolve relative table targets"
+        );
     }
 
     #[test]
