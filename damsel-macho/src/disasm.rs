@@ -2856,6 +2856,9 @@ fn synthesize_simple_register_value(
         "udiv" | "sdiv" => synthesize_divide_register_value(&lower, instruction, known_values),
         "clz" | "cls" => synthesize_count_register_value(&lower, instruction, known_values),
         "ubfx" | "sbfx" => synthesize_bitfield_extract_value(&lower, instruction, known_values),
+        "ubfiz" | "sbfiz" | "bfi" | "bfxil" | "bfc" => {
+            synthesize_bitfield_insert_value(&lower, instruction, known_values)
+        }
         "extr" => synthesize_extract_register_value(instruction, known_values),
         "rbit" | "rev" | "rev16" | "rev32" => {
             synthesize_reverse_register_value(&lower, instruction, known_values)
@@ -2959,6 +2962,87 @@ fn synthesize_bitfield_extract_value(
         normalize_value_for_width(value, width),
         RecoveredValueSource::Other,
     ))
+}
+
+fn synthesize_bitfield_insert_value(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<(String, u64, RecoveredValueSource)> {
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    let width = register_value_width_for_write(&destination)?;
+    let (source_value, lsb, field_width) = if mnemonic == "bfc" {
+        (
+            0,
+            parse_bitfield_immediate(instruction.operands.get(1)?)?,
+            parse_bitfield_immediate(instruction.operands.get(2)?)?,
+        )
+    } else {
+        let source = match instruction.operands.get(1)? {
+            Operand::Register(register) => register,
+            _ => return None,
+        };
+        (
+            normalize_value_for_width(read_simple_register_value(known_values, source)?, width),
+            parse_bitfield_immediate(instruction.operands.get(2)?)?,
+            parse_bitfield_immediate(instruction.operands.get(3)?)?,
+        )
+    };
+    let field_mask = bitfield_range_mask(lsb, field_width, width)?;
+    let value = match mnemonic {
+        "ubfiz" => ((source_value & low_bit_mask(field_width)?) << lsb) & low_bit_mask(width)?,
+        "sbfiz" => sign_fill_inserted_bitfield(source_value, lsb, field_width, width)?,
+        "bfi" => {
+            let previous = read_simple_register_value(known_values, &destination)?;
+            let inserted = (source_value & low_bit_mask(field_width)?) << lsb;
+            (previous & !field_mask) | inserted
+        }
+        "bfxil" => {
+            let previous = read_simple_register_value(known_values, &destination)?;
+            let inserted = (source_value >> lsb) & low_bit_mask(field_width)?;
+            (previous & !low_bit_mask(field_width)?) | inserted
+        }
+        "bfc" => {
+            let previous = read_simple_register_value(known_values, &destination)?;
+            previous & !field_mask
+        }
+        _ => return None,
+    };
+    Some((
+        destination,
+        normalize_value_for_width(value, width),
+        RecoveredValueSource::Other,
+    ))
+}
+
+fn bitfield_range_mask(lsb: u32, field_width: u32, register_width: u32) -> Option<u64> {
+    if field_width == 0
+        || field_width > register_width
+        || lsb.checked_add(field_width)? > register_width
+    {
+        return None;
+    }
+    low_bit_mask(field_width)?.checked_shl(lsb)
+}
+
+fn sign_fill_inserted_bitfield(
+    source_value: u64,
+    lsb: u32,
+    field_width: u32,
+    register_width: u32,
+) -> Option<u64> {
+    let inserted = (source_value & low_bit_mask(field_width)?) << lsb;
+    let sign_bit = 1_u64.checked_shl(field_width - 1)?;
+    let high_start = lsb.checked_add(field_width)?;
+    let high_fill = if source_value & sign_bit == 0 || high_start == register_width {
+        0
+    } else {
+        low_bit_mask(register_width)? & !low_bit_mask(high_start)?
+    };
+    Some((inserted | high_fill) & low_bit_mask(register_width)?)
 }
 
 fn parse_bitfield_immediate(operand: &Operand) -> Option<u32> {
@@ -6281,6 +6365,316 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "unknown long multiply operands must clear stale destination state: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_bitfield_insert_values() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(0xabcd),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "ubfiz",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("w10".to_string()),
+                    Operand::ImmediateUnsigned(0xff),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "sbfiz",
+                vec![
+                    Operand::Register("w11".to_string()),
+                    Operand::Register("w10".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "mov",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::ImmediateUnsigned(0xffff_0000),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "mov",
+                vec![
+                    Operand::Register("x13".to_string()),
+                    Operand::ImmediateUnsigned(0xabc),
+                ],
+            ),
+            instruction(
+                0x1018,
+                "bfi",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("x13".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x101c,
+                "bfxil",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("x13".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1020,
+                "bfc",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[1].recovered_values.iter().any(|value| {
+            value.register == "w9"
+                && value.value == 0xcd0
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[3].recovered_values.iter().any(|value| {
+            value.register == "w11"
+                && value.value == 0xffff_fff0
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[6].recovered_values.iter().any(|value| {
+            value.register == "x12"
+                && value.value == 0xffff_bc00
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[7].recovered_values.iter().any(|value| {
+            value.register == "x12"
+                && value.value == 0xffff_bcab
+                && value.source == RecoveredValueSource::Other
+        }));
+        assert!(instructions[8].recovered_values.iter().any(|value| {
+            value.register == "x12"
+                && value.value == 0xffff_00ab
+                && value.source == RecoveredValueSource::Other
+        }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_bitfield_insert_for_table_indices() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "bfi",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "bitfield-insert-derived table indices should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "bitfield-insert-derived table indices should resolve slot addresses: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "bitfield-insert-derived table indices should resolve indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_invalid_bitfield_insert_ranges() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ubfiz",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(63),
+                    Operand::ImmediateUnsigned(2),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "out-of-range bitfield inserts must not synthesize values"
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "out-of-range bitfield inserts must clear stale destination state: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_unknown_bitfield_insert_operands() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "bfi",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x12".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "unknown bitfield insert operands must not synthesize values"
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "unknown bitfield insert operands must clear stale destination state: {:?}",
             instructions
         );
     }
