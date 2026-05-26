@@ -2644,6 +2644,10 @@ fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
 }
 
 fn instruction_writes_destination(mnemonic: &str) -> bool {
+    if store_exclusive_writes_status(mnemonic) {
+        return true;
+    }
+
     !(mnemonic == "cmp"
         || mnemonic == "cmn"
         || mnemonic == "ccmp"
@@ -2658,6 +2662,13 @@ fn instruction_writes_destination(mnemonic: &str) -> bool {
         || is_unconditional_transfer_mnemonic(mnemonic)
         || is_call_mnemonic(mnemonic)
         || is_return_mnemonic(mnemonic))
+}
+
+fn store_exclusive_writes_status(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "stxr" | "stxrb" | "stxrh" | "stlxr" | "stlxrb" | "stlxrh" | "stxp" | "stlxp"
+    )
 }
 
 fn is_call_mnemonic(mnemonic: &str) -> bool {
@@ -4735,6 +4746,50 @@ mod tests {
                     .references
                     .contains(&Reference::Call { target: 0x1234 }),
                 "conditional compare sources must keep their recovered values across {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_exclusive_store_status_registers() {
+        let image = synthetic_image();
+        for mnemonic in ["stxr", "stxp"] {
+            let mut store_operands = vec![
+                Operand::Register("w8".to_string()),
+                Operand::Register("x9".to_string()),
+            ];
+            if mnemonic == "stxp" {
+                store_operands.push(Operand::Register("x10".to_string()));
+            }
+            store_operands.push(Operand::Memory {
+                base: "sp".to_string(),
+                index: None,
+                index_modifier: None,
+                displacement: 0,
+                writeback: None,
+            });
+
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x1234),
+                    ],
+                ),
+                instruction(0x1004, mnemonic, store_operands),
+                instruction(0x1008, "blr", vec![Operand::Register("x8".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                !instructions[2]
+                    .references
+                    .contains(&Reference::Call { target: 0x1234 }),
+                "exclusive-store status writes must invalidate stale register values across {mnemonic}: {:?}",
                 instructions
             );
         }
