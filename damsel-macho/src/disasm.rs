@@ -1,17 +1,17 @@
 use crate::errors::{MachoError, Result};
 use damsel_core::{
-    Annotation, BasicBlock, BinaryImage, ControlFlowEdge, ControlFlowEdgeKind,
-    ControlFlowEdgeKindCounts, DecodedInstruction, DisassemblyAnalysis, DisassemblyImportSummary,
-    DisassemblyImportUse, DisassemblyIndirectControlSummary, DisassemblyIndirectUse,
-    DisassemblyJumpTableSummary, DisassemblyJumpTableUse, DisassemblyLimit, DisassemblyMetrics,
-    DisassemblyObjcReferenceKind, DisassemblyObjcReferenceSummary, DisassemblyObjcUse,
-    DisassemblyOverview, DisassemblyRecoveredValueSummary, DisassemblyRecoveredValueUse,
-    DisassemblyRequest, DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2,
-    DisassemblyStopReason, DisassemblySummary, DisassemblyTarget, DisassemblyTargetSummary,
-    DisassemblyTargetUse, Endianness, Import, ImportBindingKind, ImportBindingRecord,
-    ImportBindingSource, IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind,
-    RecoveredValueSource, Reference, Relocation, Section, StubHelperEntry, Symbol,
-    TableSlotEncoding,
+    Annotation, BasicBlock, BasicBlockTerminatorKind, BinaryImage, ControlFlowEdge,
+    ControlFlowEdgeKind, ControlFlowEdgeKindCounts, DecodedInstruction, DisassemblyAnalysis,
+    DisassemblyImportSummary, DisassemblyImportUse, DisassemblyIndirectControlSummary,
+    DisassemblyIndirectUse, DisassemblyJumpTableSummary, DisassemblyJumpTableUse, DisassemblyLimit,
+    DisassemblyMetrics, DisassemblyObjcReferenceKind, DisassemblyObjcReferenceSummary,
+    DisassemblyObjcUse, DisassemblyOverview, DisassemblyRecoveredValueSummary,
+    DisassemblyRecoveredValueUse, DisassemblyRequest, DisassemblyRequestV2, DisassemblyResult,
+    DisassemblyResultV2, DisassemblyStopReason, DisassemblySummary, DisassemblyTarget,
+    DisassemblyTargetSummary, DisassemblyTargetUse, Endianness, Import, ImportBindingKind,
+    ImportBindingRecord, ImportBindingSource, IndirectTargetReason, Operand, RecoveredValue,
+    RecoveredValueKind, RecoveredValueSource, Reference, Relocation, Section, StubHelperEntry,
+    Symbol, TableSlotEncoding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1079,6 +1079,7 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
         .saturating_add(u64::from(instructions[0].size));
     let mut current_terminator_address = instructions[0].address;
     let mut current_terminator_mnemonic = instructions[0].mnemonic.clone();
+    let mut current_terminator_kind = terminator_kind(&instructions[0].mnemonic);
     let mut current_count = 0;
 
     for instruction in instructions {
@@ -1090,6 +1091,7 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
                 instruction_count: current_count,
                 terminator_address: current_terminator_address,
                 terminator_mnemonic: current_terminator_mnemonic,
+                terminator_kind: current_terminator_kind,
             });
             current_start = instruction.address;
             current_count = 0;
@@ -1099,6 +1101,7 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
             .saturating_add(u64::from(instruction.size));
         current_terminator_address = instruction.address;
         current_terminator_mnemonic = instruction.mnemonic.clone();
+        current_terminator_kind = terminator_kind(&instruction.mnemonic);
         current_count += 1;
     }
 
@@ -1109,8 +1112,33 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
         instruction_count: current_count,
         terminator_address: current_terminator_address,
         terminator_mnemonic: current_terminator_mnemonic,
+        terminator_kind: current_terminator_kind,
     });
     blocks
+}
+
+fn terminator_kind(mnemonic: &str) -> BasicBlockTerminatorKind {
+    let lower = mnemonic.to_ascii_lowercase();
+    if is_return_mnemonic(&lower) {
+        BasicBlockTerminatorKind::Return
+    } else if is_terminal_trap_mnemonic(&lower) {
+        BasicBlockTerminatorKind::Trap
+    } else if is_conditional_branch_mnemonic(&lower) {
+        BasicBlockTerminatorKind::ConditionalBranch
+    } else if matches!(lower.as_str(), "br" | "braa" | "braaz" | "brab" | "brabz") {
+        BasicBlockTerminatorKind::IndirectBranch
+    } else if is_unconditional_transfer_mnemonic(&lower) {
+        BasicBlockTerminatorKind::Branch
+    } else if matches!(
+        lower.as_str(),
+        "blr" | "blraa" | "blraaz" | "blrab" | "blrabz"
+    ) {
+        BasicBlockTerminatorKind::IndirectCall
+    } else if is_call_mnemonic(&lower) {
+        BasicBlockTerminatorKind::Call
+    } else {
+        BasicBlockTerminatorKind::Fallthrough
+    }
 }
 
 fn block_id_for_address(blocks: &[BasicBlock], address: u64) -> Option<usize> {
@@ -5975,6 +6003,7 @@ mod tests {
                 instruction_count: 2,
                 terminator_address: 0x1004,
                 terminator_mnemonic: "add".to_string(),
+                terminator_kind: BasicBlockTerminatorKind::Fallthrough,
             },
             BasicBlock {
                 id: 1,
@@ -5983,6 +6012,7 @@ mod tests {
                 instruction_count: 2,
                 terminator_address: 0x100c,
                 terminator_mnemonic: "ret".to_string(),
+                terminator_kind: BasicBlockTerminatorKind::Return,
             },
         ];
 
@@ -6017,6 +6047,10 @@ mod tests {
         assert_eq!(target_block.end_address, 0x1014);
         assert_eq!(target_block.terminator_address, 0x1010);
         assert_eq!(target_block.terminator_mnemonic, "ret");
+        assert_eq!(
+            target_block.terminator_kind,
+            BasicBlockTerminatorKind::Return
+        );
         assert!(
             analysis
                 .basic_blocks
@@ -6036,6 +6070,39 @@ mod tests {
             "call edge should resolve to the block that starts at the call target: {:?}",
             analysis.edges
         );
+    }
+
+    #[test]
+    fn analysis_classifies_basic_block_terminator_kinds() {
+        let cases = [
+            ("add", BasicBlockTerminatorKind::Fallthrough),
+            ("bl", BasicBlockTerminatorKind::Call),
+            ("blr", BasicBlockTerminatorKind::IndirectCall),
+            ("b", BasicBlockTerminatorKind::Branch),
+            ("br", BasicBlockTerminatorKind::IndirectBranch),
+            ("b.eq", BasicBlockTerminatorKind::ConditionalBranch),
+            ("cbz", BasicBlockTerminatorKind::ConditionalBranch),
+            ("ret", BasicBlockTerminatorKind::Return),
+            ("eret", BasicBlockTerminatorKind::Return),
+            ("brk", BasicBlockTerminatorKind::Trap),
+        ];
+
+        for (mnemonic, expected) in cases {
+            let instructions = vec![instruction(0x1000, mnemonic, vec![])];
+            let analysis = analyze_disassembly(
+                format!("synthetic-{mnemonic}"),
+                0x1000,
+                0x1004,
+                &instructions,
+            );
+
+            assert_eq!(
+                analysis.basic_blocks[0].terminator_kind, expected,
+                "{mnemonic}"
+            );
+            assert_eq!(analysis.basic_blocks[0].terminator_address, 0x1000);
+            assert_eq!(analysis.basic_blocks[0].terminator_mnemonic, mnemonic);
+        }
     }
 
     #[test]

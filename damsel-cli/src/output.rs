@@ -1639,7 +1639,7 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         println!("  blocks:");
         for block in &analysis.basic_blocks {
             println!(
-                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} reachable={} loop_header={} terminator={:#x}:{}",
+                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} reachable={} loop_header={} terminator={:#x}:{} kind={}",
                 block.id,
                 block.start_address,
                 block.end_address,
@@ -1649,7 +1649,8 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
                 block_edge_index.is_primary_entry_reachable(block.id),
                 block_edge_index.is_loop_header(block.id),
                 block.terminator_address,
-                block.terminator_mnemonic
+                block.terminator_mnemonic,
+                block.terminator_kind
             );
         }
     }
@@ -5284,6 +5285,10 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
             JsonValue::String(block.terminator_mnemonic.clone()),
         ),
         (
+            "terminator_kind".to_string(),
+            JsonValue::String(block.terminator_kind.to_string()),
+        ),
+        (
             "entry".to_string(),
             JsonValue::Bool(edge_index.is_entry(block.id)),
         ),
@@ -7383,6 +7388,7 @@ fn evaluate_doctor_check(report: &DoctorReport, request: DoctorCheckRequest) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use damsel_core::BasicBlockTerminatorKind;
 
     fn missing_tool() -> ToolStatus {
         ToolStatus {
@@ -7484,6 +7490,7 @@ mod tests {
                 instruction_count: 1,
                 terminator_address: 0x1000,
                 terminator_mnemonic: "br".to_string(),
+                terminator_kind: BasicBlockTerminatorKind::IndirectBranch,
             }],
             edges: vec![ControlFlowEdge {
                 from_block: 0,
@@ -7567,6 +7574,10 @@ mod tests {
             json_object_field(&block, "terminator_mnemonic"),
             &JsonValue::String("br".to_string())
         );
+        assert_eq!(
+            json_object_field(&block, "terminator_kind"),
+            &JsonValue::String("indirect-branch".to_string())
+        );
     }
 
     #[test]
@@ -7595,6 +7606,7 @@ mod tests {
                     instruction_count: 1,
                     terminator_address: 0x1000,
                     terminator_mnemonic: "b".to_string(),
+                    terminator_kind: BasicBlockTerminatorKind::Branch,
                 },
                 BasicBlock {
                     id: 1,
@@ -7603,6 +7615,7 @@ mod tests {
                     instruction_count: 1,
                     terminator_address: 0x1004,
                     terminator_mnemonic: "b.eq".to_string(),
+                    terminator_kind: BasicBlockTerminatorKind::ConditionalBranch,
                 },
             ],
             edges: vec![
@@ -7716,6 +7729,7 @@ mod tests {
                     instruction_count: 1,
                     terminator_address: 0x1000,
                     terminator_mnemonic: "ret".to_string(),
+                    terminator_kind: BasicBlockTerminatorKind::Return,
                 },
                 BasicBlock {
                     id: 1,
@@ -7724,6 +7738,7 @@ mod tests {
                     instruction_count: 1,
                     terminator_address: 0x1004,
                     terminator_mnemonic: "ret".to_string(),
+                    terminator_kind: BasicBlockTerminatorKind::Return,
                 },
             ],
             edges: Vec::new(),

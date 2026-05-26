@@ -1,9 +1,9 @@
 use damsel_core::{
-    Annotation, Architecture, BinaryFormat, BinaryImage, BinaryImageValidationError,
-    DisassemblyLimit, DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2,
-    DisassemblyTarget, Endianness, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
-    ObjcNameSource, ObjcSelectorSource, Reference, Relocation, SliceDescriptor, SliceInfo,
-    StubKind,
+    Annotation, Architecture, BasicBlockTerminatorKind, BinaryFormat, BinaryImage,
+    BinaryImageValidationError, DisassemblyLimit, DisassemblyOptions, DisassemblyRequest,
+    DisassemblyRequestV2, DisassemblyTarget, Endianness, ImportBindingKind, ImportBindingRecord,
+    ImportBindingSource, ObjcNameSource, ObjcSelectorSource, Reference, Relocation,
+    SliceDescriptor, SliceInfo, StubKind,
 };
 use std::ptr;
 use std::sync::Arc;
@@ -487,6 +487,28 @@ fn recovered_value_and_export_kind_variants_are_constructible() {
         export.flags_typed().flag_names().collect::<Vec<_>>(),
         Vec::<damsel_core::ExportFlagName>::new()
     );
+}
+
+#[test]
+fn basic_block_terminator_kind_display_is_stable() {
+    let cases = [
+        (BasicBlockTerminatorKind::Fallthrough, "fallthrough"),
+        (BasicBlockTerminatorKind::Branch, "branch"),
+        (
+            BasicBlockTerminatorKind::ConditionalBranch,
+            "conditional-branch",
+        ),
+        (BasicBlockTerminatorKind::Call, "call"),
+        (BasicBlockTerminatorKind::IndirectCall, "indirect-call"),
+        (BasicBlockTerminatorKind::IndirectBranch, "indirect-branch"),
+        (BasicBlockTerminatorKind::Return, "return"),
+        (BasicBlockTerminatorKind::Trap, "trap"),
+        (BasicBlockTerminatorKind::Unknown, "unknown"),
+    ];
+
+    for (kind, expected) in cases {
+        assert_eq!(kind.to_string(), expected);
+    }
 }
 
 #[test]

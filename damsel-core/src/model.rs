@@ -2391,6 +2391,36 @@ impl ControlFlowEdgeKindCounts {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BasicBlockTerminatorKind {
+    Fallthrough,
+    Branch,
+    ConditionalBranch,
+    Call,
+    IndirectCall,
+    IndirectBranch,
+    Return,
+    Trap,
+    Unknown,
+}
+
+impl fmt::Display for BasicBlockTerminatorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::Fallthrough => "fallthrough",
+            Self::Branch => "branch",
+            Self::ConditionalBranch => "conditional-branch",
+            Self::Call => "call",
+            Self::IndirectCall => "indirect-call",
+            Self::IndirectBranch => "indirect-branch",
+            Self::Return => "return",
+            Self::Trap => "trap",
+            Self::Unknown => "unknown",
+        };
+        f.write_str(text)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasicBlock {
     pub id: usize,
@@ -2399,6 +2429,7 @@ pub struct BasicBlock {
     pub instruction_count: usize,
     pub terminator_address: u64,
     pub terminator_mnemonic: String,
+    pub terminator_kind: BasicBlockTerminatorKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

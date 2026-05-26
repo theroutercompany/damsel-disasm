@@ -2115,6 +2115,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 && block["instruction_count"].is_number()
                 && block["terminator_address"].is_number()
                 && block["terminator_mnemonic"].is_string()
+                && block["terminator_kind"].is_string()
                 && block["entry"].is_boolean()
                 && block["exit"].is_boolean()
                 && block["primary_entry_reachable"].is_boolean()
@@ -2139,6 +2140,7 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "instruction_count",
                 "terminator_address",
                 "terminator_mnemonic",
+                "terminator_kind",
                 "entry",
                 "exit",
                 "primary_entry_reachable",
@@ -2249,6 +2251,21 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 .expect("terminator mnemonic")
                 .is_empty(),
             "terminator mnemonic should be useful for graph labels"
+        );
+        assert!(
+            matches!(
+                block["terminator_kind"].as_str().expect("terminator kind"),
+                "fallthrough"
+                    | "branch"
+                    | "conditional-branch"
+                    | "call"
+                    | "indirect-call"
+                    | "indirect-branch"
+                    | "return"
+                    | "trap"
+                    | "unknown"
+            ),
+            "terminator kind should be stable and machine-readable"
         );
         assert_eq!(
             block["entry"].as_bool().expect("entry flag"),
