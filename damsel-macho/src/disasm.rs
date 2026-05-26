@@ -2646,6 +2646,8 @@ fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
 fn instruction_writes_destination(mnemonic: &str) -> bool {
     !(mnemonic == "cmp"
         || mnemonic == "cmn"
+        || mnemonic == "ccmp"
+        || mnemonic == "ccmn"
         || mnemonic == "tst"
         || mnemonic == "tbz"
         || mnemonic == "tbnz"
@@ -4698,6 +4700,44 @@ mod tests {
             "store source registers must keep their recovered values: {:?}",
             instructions
         );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_preserves_register_values_across_conditional_compares() {
+        let image = synthetic_image();
+        for mnemonic in ["ccmp", "ccmn"] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x1234),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0),
+                        Operand::ImmediateUnsigned(0),
+                        Operand::Name("eq".to_string()),
+                    ],
+                ),
+                instruction(0x1008, "blr", vec![Operand::Register("x8".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[2]
+                    .references
+                    .contains(&Reference::Call { target: 0x1234 }),
+                "conditional compare sources must keep their recovered values across {mnemonic}: {:?}",
+                instructions
+            );
+        }
     }
 
     #[test]
