@@ -1721,6 +1721,7 @@ fn synthesize_analysis_references(
         let lower = instruction.mnemonic.to_ascii_lowercase();
         let destination = destination_register(instruction);
         let mut destination_updated = false;
+        let mut skip_memory_synthesis = false;
         if join_addresses.contains(&instruction.address) {
             clear_analysis_state(
                 &mut known_values,
@@ -1887,8 +1888,44 @@ fn synthesize_analysis_references(
             destination_updated = true;
         }
 
+        if let Some((first_slot, second_slot, first_value, second_value)) =
+            synthesize_pair_load_values(image, instruction, &lower, &known_values)
+        {
+            push_reference_if_missing(
+                &mut instruction.references,
+                Reference::Data { target: first_slot },
+            );
+            push_reference_if_missing(
+                &mut instruction.references,
+                Reference::Data {
+                    target: second_slot,
+                },
+            );
+            for recovered in [first_value, second_value] {
+                push_recovered_value(&mut instruction.recovered_values, recovered.clone());
+                store_known_value_replacing_derived_state(
+                    &mut known_values,
+                    &mut jump_table_sources,
+                    &mut relative_slot_loads,
+                    recovered,
+                );
+            }
+            destination_updated = true;
+            skip_memory_synthesis = true;
+            if include_annotations {
+                push_annotation(
+                    &mut instruction.annotations,
+                    Annotation::Note(format!(
+                        "pair load synthesis {first_slot:#x}, {second_slot:#x}"
+                    )),
+                );
+            }
+        }
+
         let memory_inputs = memory_base_index_displacement(instruction);
-        if let Some((base_register, index_register, displacement, index_transform)) = memory_inputs
+        if !skip_memory_synthesis
+            && let Some((base_register, index_register, displacement, index_transform)) =
+                memory_inputs
         {
             if let Some(base) = read_known_value(&known_values, base_register.as_str()) {
                 if let Some(base_target) = add_signed(base.value, displacement) {
@@ -2543,6 +2580,69 @@ fn add_immediate_inputs(instruction: &DecodedInstruction) -> Option<(Option<Stri
     }
 
     None
+}
+
+fn synthesize_pair_load_values(
+    image: &BinaryImage,
+    instruction: &DecodedInstruction,
+    lower: &str,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<(u64, u64, RecoveredValue, RecoveredValue)> {
+    if !(lower.starts_with("ldp") || lower.starts_with("ldnp")) {
+        return None;
+    }
+    if matches!(lower, "ldxp" | "ldaxp") {
+        return None;
+    }
+
+    let first_register = register_operand_name(instruction.operands.first()?)?;
+    let second_register = register_operand_name(instruction.operands.get(1)?)?;
+    let (first_width, first_signed) = pair_load_width(&first_register, lower)?;
+    let (second_width, second_signed) = pair_load_width(&second_register, lower)?;
+    if first_width != second_width || first_signed != second_signed {
+        return None;
+    }
+
+    let (base_register, index_register, displacement, index_transform) =
+        memory_base_index_displacement(instruction)?;
+    if index_register.is_some() || index_transform != MemoryIndexTransform::unshifted_unsigned64() {
+        return None;
+    }
+    let base = read_known_value(known_values, &base_register)?.value;
+    let first_slot = add_signed(base, displacement)?;
+    let second_slot = first_slot.checked_add(u64::try_from(first_width).ok()?)?;
+    let first_value = read_memory_value(image, first_slot, first_width, first_signed)?;
+    let second_value = read_memory_value(image, second_slot, second_width, second_signed)?;
+
+    Some((
+        first_slot,
+        second_slot,
+        RecoveredValue {
+            register: first_register,
+            value: first_value,
+            kind: classify_recovered_value(image, first_value, RecoveredValueKind::Literal),
+            source: RecoveredValueSource::AdrpLoad,
+        },
+        RecoveredValue {
+            register: second_register,
+            value: second_value,
+            kind: classify_recovered_value(image, second_value, RecoveredValueKind::Literal),
+            source: RecoveredValueSource::AdrpLoad,
+        },
+    ))
+}
+
+fn pair_load_width(register: &str, mnemonic: &str) -> Option<(usize, bool)> {
+    let register = register.to_ascii_lowercase();
+    if mnemonic.starts_with("ldpsw") && register.starts_with('x') {
+        Some((4, true))
+    } else if register.starts_with('w') {
+        Some((4, false))
+    } else if register.starts_with('x') {
+        Some((8, false))
+    } else {
+        None
+    }
 }
 
 fn synthesize_register_add_value(
@@ -4308,7 +4408,7 @@ fn resolve_memory_effective_address(
     index_transform.apply(base_target, index)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MemoryIndexTransform {
     extension: MemoryIndexExtension,
     shift: u32,
@@ -4359,7 +4459,7 @@ impl MemoryIndexTransform {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MemoryIndexExtension {
     Unsigned32,
     Unsigned64,
@@ -4509,6 +4609,10 @@ fn read_literal_load_value(
     mnemonic: &str,
 ) -> Option<u64> {
     let (width, signed) = literal_load_width(register, mnemonic)?;
+    read_memory_value(image, address, width, signed)
+}
+
+fn read_memory_value(image: &BinaryImage, address: u64, width: usize, signed: bool) -> Option<u64> {
     let (_, bytes) = image.bytes_for_virtual_range(address, width)?;
     match (width, signed, image.endianness()) {
         (4, true, Endianness::Little) => {
@@ -11714,6 +11818,208 @@ mod tests {
         assert!(
             instructions[4].recovered_values.is_empty(),
             "ldp must invalidate its second destination register: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_pair_load_values() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x2000_u64.to_le_bytes());
+        bytes.extend_from_slice(&0x3000_u64.to_le_bytes());
+        let image = synthetic_literal_image(0x4000, &bytes);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldp",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1008, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1]
+                .references
+                .contains(&Reference::Data { target: 0x4000 }),
+            "pair loads should record the first slot address: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[1]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "pair loads should record the second slot address: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 0x2000
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "pair loads should recover the first memory slot: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x3000
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "pair loads should recover the second memory slot: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "pair-loaded function pointers should feed indirect branch recovery: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_signed_pair_load_values() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(-4_i32).to_le_bytes());
+        bytes.extend_from_slice(&2_i32.to_le_bytes());
+        let image = synthetic_literal_image(0x4000, &bytes);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldpsw",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == ((-4_i64) as u64)
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "ldpsw should sign-extend the first 32-bit slot: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 2
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "ldpsw should sign-extend the second 32-bit slot: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_pair_load_values_for_table_indices() {
+        let mut bytes = vec![0u8; 32];
+        bytes[8..16].copy_from_slice(&0x3000_u64.to_le_bytes());
+        bytes[16..24].copy_from_slice(&0_u64.to_le_bytes());
+        bytes[24..32].copy_from_slice(&1_u64.to_le_bytes());
+        let image = synthetic_literal_image(0x4000, &bytes);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "add",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(16),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldp",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x12".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x10".to_string()),
+                        index_modifier: Some("lsl #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x11".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "pair-loaded table indices should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "pair-loaded table indices should resolve slot addresses: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "pair-loaded table indices should resolve indirect branches: {:?}",
             instructions
         );
     }
