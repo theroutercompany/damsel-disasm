@@ -2408,6 +2408,25 @@ fn written_destination_registers(instruction: &DecodedInstruction, mnemonic: &st
         return Vec::new();
     }
 
+    if atomic_read_modify_write_writes_second_operand(mnemonic) {
+        return instruction
+            .operands
+            .iter()
+            .skip(1)
+            .take(1)
+            .filter_map(register_operand_name)
+            .collect();
+    }
+
+    if atomic_pair_compare_swap_writes_first_two_operands(mnemonic) {
+        return instruction
+            .operands
+            .iter()
+            .take(2)
+            .filter_map(register_operand_name)
+            .collect();
+    }
+
     if load_pair_writes_two_destinations(mnemonic) {
         return instruction
             .operands
@@ -2427,6 +2446,18 @@ fn register_operand_name(operand: &Operand) -> Option<String> {
         Operand::SystemRegister(register) => Some(register.clone()),
         _ => None,
     }
+}
+
+fn atomic_read_modify_write_writes_second_operand(mnemonic: &str) -> bool {
+    [
+        "swp", "ldadd", "ldclr", "ldeor", "ldset", "ldsmax", "ldsmin", "ldumax", "ldumin",
+    ]
+    .iter()
+    .any(|prefix| mnemonic.starts_with(prefix))
+}
+
+fn atomic_pair_compare_swap_writes_first_two_operands(mnemonic: &str) -> bool {
+    matches!(mnemonic, "casp" | "caspa" | "caspl" | "caspal")
 }
 
 fn load_pair_writes_two_destinations(mnemonic: &str) -> bool {
@@ -4752,6 +4783,137 @@ mod tests {
                     .references
                     .contains(&Reference::Call { target: 0x1234 }),
                 "conditional compare sources must keep their recovered values across {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_atomic_read_modify_write_destinations() {
+        let image = synthetic_image();
+        for mnemonic in ["swp", "swpal", "ldadd", "ldaddal"] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x1234),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::Register("x8".to_string()),
+                        Operand::Memory {
+                            base: "sp".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(0x1008, "blr", vec![Operand::Register("x8".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                !instructions[2]
+                    .references
+                    .contains(&Reference::Call { target: 0x1234 }),
+                "atomic read-modify-write instructions must invalidate their load-result register across {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_preserves_atomic_read_modify_write_sources() {
+        let image = synthetic_image();
+        for mnemonic in ["swp", "swpal", "ldadd", "ldaddal"] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::ImmediateUnsigned(0x1234),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::Register("x8".to_string()),
+                        Operand::Memory {
+                            base: "sp".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(0x1008, "blr", vec![Operand::Register("x9".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[2]
+                    .references
+                    .contains(&Reference::Call { target: 0x1234 }),
+                "atomic read-modify-write source registers must keep their recovered values across {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_pair_compare_swap_expected_registers() {
+        let image = synthetic_image();
+        for mnemonic in ["casp", "caspal"] {
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x9".to_string()),
+                        Operand::ImmediateUnsigned(0x1234),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::Register("x9".to_string()),
+                        Operand::Register("x10".to_string()),
+                        Operand::Register("x11".to_string()),
+                        Operand::Memory {
+                            base: "sp".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+                instruction(0x1008, "blr", vec![Operand::Register("x9".to_string())]),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                !instructions[2]
+                    .references
+                    .contains(&Reference::Call { target: 0x1234 }),
+                "pair compare-and-swap instructions must invalidate both expected-value registers across {mnemonic}: {:?}",
                 instructions
             );
         }
