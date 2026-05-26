@@ -8,9 +8,10 @@ use damsel_core::{
     DisassemblyOverview, DisassemblyRecoveredValueSummary, DisassemblyRecoveredValueUse,
     DisassemblyRequest, DisassemblyRequestV2, DisassemblyResult, DisassemblyResultV2,
     DisassemblyStopReason, DisassemblySummary, DisassemblyTarget, DisassemblyTargetSummary,
-    DisassemblyTargetUse, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
-    IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
-    Reference, Relocation, Section, StubHelperEntry, Symbol, TableSlotEncoding,
+    DisassemblyTargetUse, Endianness, Import, ImportBindingKind, ImportBindingRecord,
+    ImportBindingSource, IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind,
+    RecoveredValueSource, Reference, Relocation, Section, StubHelperEntry, Symbol,
+    TableSlotEncoding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -2905,15 +2906,54 @@ fn synthesize_literal_load(
             Reference::Data { target } => Some(*target),
             _ => None,
         })?;
+    let value = read_literal_load_value(image, target, &register, lower)?;
     Some((
         target,
         RecoveredValue {
             register,
-            value: target,
-            kind: classify_recovered_value(image, target, RecoveredValueKind::Literal),
+            value,
+            kind: classify_recovered_value(image, value, RecoveredValueKind::Literal),
             source: RecoveredValueSource::LiteralLoad,
         },
     ))
+}
+
+fn read_literal_load_value(
+    image: &BinaryImage,
+    address: u64,
+    register: &str,
+    mnemonic: &str,
+) -> Option<u64> {
+    let (width, signed) = literal_load_width(register, mnemonic)?;
+    let (_, bytes) = image.bytes_for_virtual_range(address, width)?;
+    match (width, signed, image.endianness()) {
+        (4, true, Endianness::Little) => {
+            Some(i64::from(i32::from_le_bytes(bytes.try_into().ok()?)) as u64)
+        }
+        (4, true, Endianness::Big) => {
+            Some(i64::from(i32::from_be_bytes(bytes.try_into().ok()?)) as u64)
+        }
+        (4, false, Endianness::Little) => {
+            Some(u64::from(u32::from_le_bytes(bytes.try_into().ok()?)))
+        }
+        (4, false, Endianness::Big) => Some(u64::from(u32::from_be_bytes(bytes.try_into().ok()?))),
+        (8, false, Endianness::Little) => Some(u64::from_le_bytes(bytes.try_into().ok()?)),
+        (8, false, Endianness::Big) => Some(u64::from_be_bytes(bytes.try_into().ok()?)),
+        _ => None,
+    }
+}
+
+fn literal_load_width(register: &str, mnemonic: &str) -> Option<(usize, bool)> {
+    let register = register.to_ascii_lowercase();
+    if mnemonic.starts_with("ldrsw") && register.starts_with('x') {
+        Some((4, true))
+    } else if register.starts_with('w') {
+        Some((4, false))
+    } else if register.starts_with('x') {
+        Some((8, false))
+    } else {
+        None
+    }
 }
 
 fn classify_recovered_value(
@@ -3472,6 +3512,75 @@ mod tests {
                 kind: "Text".to_string(),
                 executable: true,
             }],
+            vec![Symbol {
+                name: "_dispatch_target".to_string(),
+                address: 0x3000,
+                size: 16,
+                kind: SymbolKind::Text,
+                defined: true,
+                global: true,
+                weak: false,
+                section: Some("__text".to_string()),
+            }],
+            vec![],
+            vec![],
+            ObjcMetadata::default(),
+            damsel_core::DyldMetadata {
+                exported_symbols: vec![damsel_core::ExportRecord {
+                    name: "_exported".to_string(),
+                    address: Some(0x2000),
+                    raw_flags: "Regular".to_string(),
+                    flags: ExportFlags::from_bits(0),
+                    kind: ExportKind::Regular,
+                    reexport_target: None,
+                    resolver_target: None,
+                }],
+                ..damsel_core::DyldMetadata::default()
+            },
+            bytes,
+        )
+    }
+
+    fn synthetic_literal_image(literal_address: u64, literal_bytes: &[u8]) -> BinaryImage {
+        let mut bytes = vec![0u8; 64 + literal_bytes.len()];
+        bytes[64..].copy_from_slice(literal_bytes);
+        let bytes: Arc<[u8]> = bytes.into();
+        BinaryImage::from_memory_bytes(
+            Some("disasm-synthetic-literal".to_string()),
+            BinaryFormat::MachO,
+            Architecture::Arm64,
+            Endianness::Little,
+            None,
+            Some(Platform::unknown("macos")),
+            SliceInfo {
+                offset: 0,
+                size: bytes.len() as u64,
+                is_universal: false,
+                cpu_subtype: 0,
+            },
+            vec![],
+            vec![
+                Section {
+                    segment_name: "__TEXT".to_string(),
+                    name: "__text".to_string(),
+                    address: 0x3000,
+                    size: 64,
+                    file_offset: Some(0),
+                    file_size: 64,
+                    kind: "Text".to_string(),
+                    executable: true,
+                },
+                Section {
+                    segment_name: "__DATA_CONST".to_string(),
+                    name: "__const".to_string(),
+                    address: literal_address,
+                    size: literal_bytes.len() as u64,
+                    file_offset: Some(64),
+                    file_size: literal_bytes.len() as u64,
+                    kind: "Data".to_string(),
+                    executable: false,
+                },
+            ],
             vec![Symbol {
                 name: "_dispatch_target".to_string(),
                 address: 0x3000,
@@ -4607,9 +4716,9 @@ mod tests {
 
     #[test]
     fn synthesize_literal_load_classifies_export_addresses() {
-        let image = synthetic_image();
+        let image = synthetic_literal_image(0x4000, &0x2000_u64.to_le_bytes());
         let mut instructions = vec![DecodedInstruction {
-            references: vec![Reference::Data { target: 0x2000 }],
+            references: vec![Reference::Data { target: 0x4000 }],
             ..instruction(0x1000, "ldr", vec![Operand::Register("x0".to_string())])
         }];
 
@@ -4622,9 +4731,9 @@ mod tests {
 
     #[test]
     fn synthesize_literal_load_classifies_function_pointers() {
-        let image = synthetic_image();
+        let image = synthetic_literal_image(0x4000, &0x3000_u64.to_le_bytes());
         let mut instructions = vec![DecodedInstruction {
-            references: vec![Reference::Data { target: 0x3000 }],
+            references: vec![Reference::Data { target: 0x4000 }],
             ..instruction(0x1000, "ldr", vec![Operand::Register("x0".to_string())])
         }];
 
@@ -4633,6 +4742,37 @@ mod tests {
         assert!(instructions[0].recovered_values.iter().any(|value| {
             value.kind == RecoveredValueKind::FunctionPointer && value.value == 0x3000
         }));
+    }
+
+    #[test]
+    fn synthesize_literal_load_reads_signed_word_contents() {
+        let image = synthetic_literal_image(0x4000, &(-4_i32).to_le_bytes());
+        let mut instructions = vec![DecodedInstruction {
+            references: vec![Reference::Data { target: 0x4000 }],
+            ..instruction(0x1000, "ldrsw", vec![Operand::Register("x0".to_string())])
+        }];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(instructions[0].recovered_values.iter().any(|value| {
+            value.kind == RecoveredValueKind::Literal && value.value == (-4_i64 as u64)
+        }));
+    }
+
+    #[test]
+    fn synthesize_literal_load_does_not_recover_unreadable_literal_addresses() {
+        let image = synthetic_image();
+        let mut instructions = vec![DecodedInstruction {
+            references: vec![Reference::Data { target: 0x2000 }],
+            ..instruction(0x1000, "ldr", vec![Operand::Register("x0".to_string())])
+        }];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[0].recovered_values.is_empty(),
+            "literal loads must read literal contents instead of treating the literal address as the loaded value"
+        );
     }
 
     #[test]
