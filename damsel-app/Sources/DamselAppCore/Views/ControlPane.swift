@@ -43,7 +43,9 @@ struct ControlPane: View {
                 Text(fileSummary)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .truncationMode(.middle)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -56,7 +58,7 @@ struct ControlPane: View {
         guard let image = store.loadedImage else {
             return "Awaiting local binary"
         }
-        return "\(image.architecture) · entry \(DamselFormat.address(image.entryPoint)) · \(image.sections.count) sections"
+        return "\(image.architecture) · \(DamselFormat.address(image.entryPoint)) · \(image.sections.count) sections"
     }
 
     private var targetSection: some View {
@@ -88,9 +90,7 @@ struct ControlPane: View {
                     }
                 }
             case .address:
-                TextField("0x100000460", text: $store.addressText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
+                IntegerInputField("0x100000460", text: $store.addressText)
             }
         }
     }
@@ -99,22 +99,13 @@ struct ControlPane: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionTitle("Range")
 
-            TextField("From", text: $store.fromText)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.body, design: .monospaced))
-                .disabled(store.targetKind == .address)
+            IntegerInputField("From", text: $store.fromText, disabled: store.targetKind == .address)
 
-            TextField("To", text: $store.toText)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.body, design: .monospaced))
+            IntegerInputField("To", text: $store.toText)
 
             HStack {
-                TextField("Bytes", text: $store.bytesText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-                TextField("Limit", text: $store.limitText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
+                IntegerInputField("Bytes", text: $store.bytesText)
+                IntegerInputField("Limit", text: $store.limitText)
             }
         }
     }
@@ -187,5 +178,33 @@ struct SectionTitle: View {
             .font(.system(.caption, design: .monospaced).weight(.semibold))
             .textCase(.uppercase)
             .foregroundStyle(.secondary)
+    }
+}
+
+private struct IntegerInputField: View {
+    let placeholder: String
+    @Binding var text: String
+    var disabled = false
+
+    init(_ placeholder: String, text: Binding<String>, disabled: Bool = false) {
+        self.placeholder = placeholder
+        _text = text
+        self.disabled = disabled
+    }
+
+    var body: some View {
+        TextField(placeholder, text: sanitizedText)
+            .textFieldStyle(.roundedBorder)
+            .font(.system(.body, design: .monospaced))
+            .lineLimit(1)
+            .autocorrectionDisabled(true)
+            .disabled(disabled)
+    }
+
+    private var sanitizedText: Binding<String> {
+        Binding(
+            get: { text },
+            set: { text = IntegerTextInput.sanitize($0) }
+        )
     }
 }

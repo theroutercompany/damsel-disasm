@@ -17,7 +17,12 @@ APP_BINARY="$APP_MACOS/$APP_NAME"
 CLI_BINARY="$ROOT_DIR/target/debug/damsel-cli"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+cleanup_existing_runs() {
+  pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  pkill -f "$APP_RESOURCES/damsel-cli ui --no-open --port" >/dev/null 2>&1 || true
+}
+
+cleanup_existing_runs
 
 cargo build -p damsel-cli
 swift build --package-path "$SWIFT_DIR"
@@ -79,9 +84,7 @@ open_app() {
 }
 
 open_app_with_fixture() {
-  open_app
-  sleep 1
-  /usr/bin/open -b "$BUNDLE_ID" "$ROOT_DIR/fixtures/bin/semantic-switch"
+  /usr/bin/open -n "$APP_BUNDLE" --args "$ROOT_DIR/fixtures/bin/semantic-switch"
 }
 
 case "$MODE" in

@@ -64,4 +64,21 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertEqual(payload.analysis?.summary.basicBlockCount, 1)
         XCTAssertEqual(payload.analysis?.metrics?.decodedByteCount, 8)
     }
+
+    func testInstructionFilterMatchesRenderedMnemonicAndAddress() throws {
+        let json = """
+        {
+          "address": 4294967296,
+          "opcode": 3506438144,
+          "mnemonic": "adrp",
+          "rendered": "adrp x0, 0x100004000"
+        }
+        """
+        let instruction = try JSONDecoder().decode(InstructionRow.self, from: Data(json.utf8))
+
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "x0"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "ADRP"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "0x100000000"))
+        XCTAssertFalse(InstructionFilter.matches(instruction, query: "ret"))
+    }
 }

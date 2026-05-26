@@ -3,12 +3,14 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 public struct ContentView: View {
-    @StateObject private var store = WorkbenchStore()
+    @ObservedObject private var store: WorkbenchStore
     @State private var isDropTargeted = false
     @State private var symbolSuggestionTask: Task<Void, Never>?
     @State private var openedLaunchFile = false
 
-    public init() {}
+    public init(store: WorkbenchStore) {
+        self.store = store
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -56,13 +58,17 @@ public struct ContentView: View {
                         ProgressView()
                             .controlSize(.small)
                     }
-                    Text(store.statusText)
+                    Text(store.toolbarStatusText)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 520, alignment: .trailing)
+                        .minimumScaleFactor(0.82)
+                        .truncationMode(.tail)
+                        .frame(width: 88, alignment: .center)
+                        .help(store.statusText)
+                        .accessibilityLabel(store.statusText)
                 }
+                .frame(width: 112, alignment: .center)
             }
         }
         .onAppear {
@@ -86,6 +92,9 @@ public struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .damselRunDisassemblyCommand)) { _ in
             Task { try? await store.runDisassembly() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            store.shutdown()
         }
         .onChange(of: store.symbolText) { _, _ in
             symbolSuggestionTask?.cancel()

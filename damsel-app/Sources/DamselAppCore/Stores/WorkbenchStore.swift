@@ -23,6 +23,14 @@ public final class WorkbenchStore: ObservableObject {
     @Published public var includeAnnotations = true
     @Published public var includeValueFlow = false
     @Published public var includeAnalysis = false
+    @Published public var instructionFilterText = "" {
+        didSet {
+            reconcileSelectedInstructionWithFilter()
+            if disassembly != nil {
+                statusText = resultSubtitle
+            }
+        }
+    }
     @Published public var selectedInstructionAddress: UInt64?
 
     private let serverProcess: DamselServerProcess
@@ -32,6 +40,10 @@ public final class WorkbenchStore: ObservableObject {
         self.serverProcess = serverProcess
     }
 
+    deinit {
+        serverProcess.stop()
+    }
+
     public var selectedInstruction: InstructionRow? {
         guard let instructions = disassembly?.instructions, !instructions.isEmpty else {
             return nil
@@ -39,6 +51,9 @@ public final class WorkbenchStore: ObservableObject {
         if let selectedInstructionAddress,
            let selected = instructions.first(where: { $0.address == selectedInstructionAddress }) {
             return selected
+        }
+        if !normalizedInstructionFilter.isEmpty {
+            return nil
         }
         return instructions.first
     }
@@ -57,7 +72,36 @@ public final class WorkbenchStore: ObservableObject {
             return " · \(summary.basicBlockCount ?? 0) blocks · \(summary.edgeCount ?? 0) edges · \(summary.dataReferenceCount ?? 0) data refs"
         } ?? ""
 
-        return "\(disassembly.instructionCount) rows · \(disassembly.stopReason)\(analysisText)"
+        let filterText = normalizedInstructionFilter
+        let rowText = filterText.isEmpty
+            ? "\(disassembly.instructionCount) rows"
+            : "\(visibleInstructions.count) of \(disassembly.instructionCount) rows"
+        return "\(rowText) · \(DamselFormat.stopReason(disassembly.stopReason))\(analysisText)"
+    }
+
+    public var toolbarStatusText: String {
+        guard let disassembly else {
+            return statusText
+        }
+
+        let filterText = normalizedInstructionFilter
+        let rowText = filterText.isEmpty
+            ? "\(disassembly.instructionCount) rows"
+            : "\(visibleInstructions.count)/\(disassembly.instructionCount) rows"
+        return rowText
+    }
+
+    public var visibleInstructions: [InstructionRow] {
+        guard let instructions = disassembly?.instructions else {
+            return []
+        }
+
+        let filterText = normalizedInstructionFilter
+        guard !filterText.isEmpty else {
+            return instructions
+        }
+
+        return instructions.filter { InstructionFilter.matches($0, query: filterText) }
     }
 
     public func bootstrap() async {
@@ -130,6 +174,7 @@ public final class WorkbenchStore: ObservableObject {
             if !payload.instructions.contains(where: { $0.address == selectedInstructionAddress }) {
                 selectedInstructionAddress = payload.instructions.first?.address
             }
+            reconcileSelectedInstructionWithFilter()
             statusText = resultSubtitle
         } catch {
             bannerMessage = error.localizedDescription
@@ -175,6 +220,13 @@ public final class WorkbenchStore: ObservableObject {
 
     public func clearBanner() {
         bannerMessage = nil
+    }
+
+    public func shutdown() {
+        serverProcess.stop()
+        serverState = .stopped
+        client = nil
+        statusText = "Server stopped"
     }
 
     private func buildRequest() throws -> DisasmAPIRequest {
@@ -273,6 +325,29 @@ public final class WorkbenchStore: ObservableObject {
             throw WorkbenchValidationError("\(label) must be greater than 0.")
         }
         return value
+    }
+
+    private var normalizedInstructionFilter: String {
+        instructionFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func reconcileSelectedInstructionWithFilter() {
+        guard let disassembly, !disassembly.instructions.isEmpty else {
+            selectedInstructionAddress = nil
+            return
+        }
+
+        let visible = visibleInstructions
+        guard !visible.isEmpty else {
+            selectedInstructionAddress = nil
+            return
+        }
+
+        if let selectedInstructionAddress,
+           visible.contains(where: { $0.address == selectedInstructionAddress }) {
+            return
+        }
+        selectedInstructionAddress = visible.first?.address
     }
 }
 
