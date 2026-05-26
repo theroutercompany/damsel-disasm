@@ -52,6 +52,30 @@ fn decode_classifies_branch_call_and_page_references() {
 }
 
 #[test]
+fn decode_labels_direct_call_targets() {
+    let bytes = [0x02, 0x00, 0x00, 0x94]; // bl #0x1008
+    let instructions = decode(&bytes, 0x1000, None);
+
+    assert_eq!(instructions.len(), 1);
+    assert!(
+        instructions[0]
+            .references
+            .iter()
+            .any(|reference| matches!(reference, Reference::Call { target } if *target == 0x1008)),
+        "direct calls should recover their target reference, got {:?}",
+        instructions[0].references
+    );
+    assert!(
+        matches!(
+            instructions[0].operands.first(),
+            Some(Operand::Label(0x1008))
+        ),
+        "direct call targets should render as label operands, got {:?}",
+        instructions[0].operands
+    );
+}
+
+#[test]
 fn decode_uses_final_immediate_for_test_bit_branch_targets() {
     let bytes = [0x28, 0x01, 0x00, 0x37]; // tbnz w8, #0, 0x10000053c
     let instructions = decode(&bytes, 0x100000518, None);

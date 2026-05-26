@@ -354,7 +354,8 @@ fn map_operand(
         }
         Arm64OperandType::Imm(value) => {
             let is_direct_control_target = direct_control_target_index == Some(operand_index);
-            if ((is_relative_branch(&lower) && is_direct_control_target)
+            if (((is_call_mnemonic(&lower) || is_relative_branch(&lower))
+                && is_direct_control_target)
                 || lower == "adr"
                 || lower == "adrp")
                 && value >= 0
