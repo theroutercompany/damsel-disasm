@@ -1,0 +1,255 @@
+import Foundation
+
+public struct DamselAPIErrorResponse: Decodable, Error, Equatable, Sendable {
+    public let code: String
+    public let message: String
+    public let details: JSONValue?
+}
+
+public struct ImageUploadResponse: Decodable, Equatable, Sendable {
+    public let imageId: String
+    public let fileName: String
+    public let architecture: String
+    public let entryPoint: UInt64?
+    public let sections: [SectionSummary]
+    public let defaultSection: String?
+}
+
+public struct SectionSummary: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String { name }
+
+    public let name: String
+    public let shortName: String
+    public let segmentName: String
+    public let address: UInt64
+    public let size: UInt64
+    public let executable: Bool
+}
+
+public struct SymbolSuggestionsResponse: Decodable, Equatable, Sendable {
+    public let symbols: [String]
+}
+
+public enum TargetKind: String, CaseIterable, Identifiable, Codable, Sendable {
+    case section
+    case symbol
+    case address
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .section:
+            return "Section"
+        case .symbol:
+            return "Symbol"
+        case .address:
+            return "Address"
+        }
+    }
+}
+
+public struct DisasmAPIRequest: Encodable, Equatable, Sendable {
+    public var target: DisasmTarget
+    public var window: DisasmWindow
+    public var options: DisasmOptions
+
+    public init(target: DisasmTarget, window: DisasmWindow, options: DisasmOptions) {
+        self.target = target
+        self.window = window
+        self.options = options
+    }
+}
+
+public struct DisasmTarget: Encodable, Equatable, Sendable {
+    public var kind: TargetKind
+    public var value: String
+}
+
+public struct DisasmWindow: Encodable, Equatable, Sendable {
+    public var from: String?
+    public var to: String?
+    public var bytes: String?
+    public var limit: String?
+
+    public init(from: String? = nil, to: String? = nil, bytes: String? = nil, limit: String? = nil) {
+        self.from = from
+        self.to = to
+        self.bytes = bytes
+        self.limit = limit
+    }
+}
+
+public struct DisasmOptions: Encodable, Equatable, Sendable {
+    public var includeAnnotations: Bool
+    public var includeValueFlow: Bool
+    public var includeAnalysis: Bool
+
+    public init(includeAnnotations: Bool, includeValueFlow: Bool, includeAnalysis: Bool) {
+        self.includeAnnotations = includeAnnotations
+        self.includeValueFlow = includeValueFlow
+        self.includeAnalysis = includeAnalysis
+    }
+}
+
+public struct DisassemblyResponse: Decodable, Equatable, Sendable {
+    public let target: String
+    public let startAddress: UInt64?
+    public let endAddress: UInt64?
+    public let windowEnd: UInt64?
+    public let instructionCount: Int
+    public let stopReason: String
+    public let instructions: [InstructionRow]
+    public let analysis: AnalysisPayload?
+
+    enum CodingKeys: String, CodingKey {
+        case target
+        case startAddress = "start_address"
+        case endAddress = "end_address"
+        case windowEnd = "window_end"
+        case instructionCount = "instruction_count"
+        case stopReason = "stop_reason"
+        case instructions
+        case analysis
+    }
+}
+
+public struct InstructionRow: Decodable, Equatable, Identifiable, Sendable {
+    public var id: UInt64 { address }
+
+    public let address: UInt64
+    public let opcode: UInt64?
+    public let mnemonic: String
+    public let rendered: String
+    public let operands: [String]?
+    public let structuredOperands: [JSONValue]?
+    public let references: [InstructionReference]
+    public let annotations: [JSONValue]
+    public let recoveredValues: [JSONValue]
+
+    enum CodingKeys: String, CodingKey {
+        case address
+        case opcode
+        case mnemonic
+        case rendered
+        case operands
+        case structuredOperands = "structured_operands"
+        case references
+        case annotations
+        case recoveredValues = "recovered_values"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        address = try container.decode(UInt64.self, forKey: .address)
+        opcode = try container.decodeIfPresent(UInt64.self, forKey: .opcode)
+        mnemonic = try container.decodeIfPresent(String.self, forKey: .mnemonic) ?? ""
+        rendered = try container.decodeIfPresent(String.self, forKey: .rendered) ?? mnemonic
+        operands = try container.decodeIfPresent([String].self, forKey: .operands)
+        structuredOperands = try container.decodeIfPresent([JSONValue].self, forKey: .structuredOperands)
+        references = try container.decodeIfPresent([InstructionReference].self, forKey: .references) ?? []
+        annotations = try container.decodeIfPresent([JSONValue].self, forKey: .annotations) ?? []
+        recoveredValues = try container.decodeIfPresent([JSONValue].self, forKey: .recoveredValues) ?? []
+    }
+}
+
+public struct InstructionReference: Decodable, Equatable, Sendable {
+    public let type: String?
+    public let target: UInt64?
+    public let symbol: String?
+    public let label: String?
+    public let kind: String?
+    public let value: JSONValue?
+}
+
+public struct AnalysisPayload: Decodable, Equatable, Sendable {
+    public let summary: AnalysisSummary
+    public let metrics: AnalysisMetrics?
+    public let overview: JSONValue?
+    public let basicBlocks: [BasicBlockSummary]
+
+    enum CodingKeys: String, CodingKey {
+        case summary
+        case metrics
+        case overview
+        case basicBlocks = "basic_blocks"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try container.decode(AnalysisSummary.self, forKey: .summary)
+        metrics = try container.decodeIfPresent(AnalysisMetrics.self, forKey: .metrics)
+        overview = try container.decodeIfPresent(JSONValue.self, forKey: .overview)
+        basicBlocks = try container.decodeIfPresent([BasicBlockSummary].self, forKey: .basicBlocks) ?? []
+    }
+}
+
+public struct AnalysisSummary: Decodable, Equatable, Sendable {
+    public let basicBlockCount: Int?
+    public let entryBlockCount: Int?
+    public let exitBlockCount: Int?
+    public let edgeCount: Int?
+    public let directCallCount: Int?
+    public let branchCount: Int?
+    public let dataReferenceCount: Int?
+    public let importCount: Int?
+    public let cacheLinkCount: Int?
+    public let recoveredValueCount: Int?
+    public let jumpTableCount: Int?
+    public let unresolvedIndirectCount: Int?
+    public let backEdgeCount: Int?
+    public let loopHeaderCount: Int?
+    public let disconnectedBlockCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case basicBlockCount = "basic_block_count"
+        case entryBlockCount = "entry_block_count"
+        case exitBlockCount = "exit_block_count"
+        case edgeCount = "edge_count"
+        case directCallCount = "direct_call_count"
+        case branchCount = "branch_count"
+        case dataReferenceCount = "data_reference_count"
+        case importCount = "import_count"
+        case cacheLinkCount = "cache_link_count"
+        case recoveredValueCount = "recovered_value_count"
+        case jumpTableCount = "jump_table_count"
+        case unresolvedIndirectCount = "unresolved_indirect_count"
+        case backEdgeCount = "back_edge_count"
+        case loopHeaderCount = "loop_header_count"
+        case disconnectedBlockCount = "disconnected_block_count"
+    }
+}
+
+public struct AnalysisMetrics: Decodable, Equatable, Sendable {
+    public let decodedByteCount: Int?
+    public let referenceCount: Int?
+    public let annotationCount: Int?
+    public let maxBasicBlockInstructionCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case decodedByteCount = "decoded_byte_count"
+        case referenceCount = "reference_count"
+        case annotationCount = "annotation_count"
+        case maxBasicBlockInstructionCount = "max_basic_block_instruction_count"
+    }
+}
+
+public struct BasicBlockSummary: Decodable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let startAddress: UInt64?
+    public let endAddress: UInt64?
+    public let instructionCount: Int?
+    public let entry: Bool?
+    public let exit: Bool?
+    public let loopHeader: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case startAddress = "start_address"
+        case endAddress = "end_address"
+        case instructionCount = "instruction_count"
+        case entry
+        case exit
+        case loopHeader = "loop_header"
+    }
+}
