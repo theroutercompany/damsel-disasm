@@ -40,6 +40,7 @@ public struct ContentView: View {
                 Button(action: openFile) {
                     Label("Open Binary", systemImage: "folder")
                 }
+                .help("Open a Mach-O binary")
 
                 Button {
                     Task { try? await store.runDisassembly() }
@@ -47,6 +48,7 @@ public struct ContentView: View {
                     Label("Disassemble", systemImage: "play.fill")
                 }
                 .disabled(!store.canRunDisassembly)
+                .help(store.canRunDisassembly ? "Run disassembly" : "Load a binary and choose a valid range first")
             }
 
             ToolbarItem(placement: .status) {

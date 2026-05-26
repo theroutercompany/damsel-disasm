@@ -35,6 +35,7 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
         addColumn("instruction", title: "Instruction", width: 520, minWidth: 260, to: tableView)
 
         let menu = NSMenu()
+        menu.delegate = context.coordinator
         let copyAddress = NSMenuItem(
             title: "Copy Address",
             action: #selector(Coordinator.copyAddress(_:)),
@@ -110,7 +111,7 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
         tableView.addTableColumn(column)
     }
 
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSMenuItemValidation {
         var instructions: [InstructionRow] = []
         var selectedAddress: UInt64?
         var onSelect: (InstructionRow) -> Void
@@ -202,6 +203,14 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
                 return
             }
             writePasteboard(rowText(for: instruction))
+        }
+
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            menu.items.forEach { $0.isEnabled = clickedInstruction != nil }
+        }
+
+        func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+            clickedInstruction != nil
         }
 
         func copySelectedRow() {
@@ -298,6 +307,8 @@ private final class InstructionNSTableView: NSTableView {
         let row = row(at: point)
         if row >= 0 {
             selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        } else if selectedRow == -1 {
+            return nil
         }
         return super.menu(for: event)
     }
