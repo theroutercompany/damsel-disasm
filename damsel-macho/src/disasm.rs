@@ -2906,26 +2906,8 @@ fn synthesize_simple_register_value(
             known_values,
             known_flags,
         ),
-        "lsl" | "lsr" | "asr" | "ror" => {
-            let destination = match instruction.operands.first()? {
-                Operand::Register(register) => register.clone(),
-                _ => return None,
-            };
-            let source = match instruction.operands.get(1)? {
-                Operand::Register(register) => register,
-                _ => return None,
-            };
-            let width = register_value_width(&destination)?;
-            let source_value = read_simple_register_value(known_values, source)?;
-            let shift = parse_bit_shift_amount(instruction.operands.get(2)?, width)?;
-            let value = match lower.as_str() {
-                "lsl" => source_value.checked_shl(shift)?,
-                "lsr" => source_value.checked_shr(shift)?,
-                "asr" => arithmetic_shift_right(source_value, width, shift),
-                "ror" => rotate_right_with_width(source_value, width, shift),
-                _ => return None,
-            };
-            Some((destination, value, RecoveredValueSource::Other))
+        "lsl" | "lsr" | "asr" | "ror" | "lslv" | "lsrv" | "asrv" | "rorv" => {
+            synthesize_shift_register_value(&lower, instruction, known_values)
         }
         _ => None,
     }
@@ -2965,6 +2947,69 @@ fn extract_register_pair_value(high: u64, low: u64, width: u32, shift: u32) -> O
     let high = (high & mask).checked_shl(width - shift)?;
     let low = (low & mask).checked_shr(shift)?;
     Some((high | low) & mask)
+}
+
+fn synthesize_shift_register_value(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<(String, u64, RecoveredValueSource)> {
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    let width = register_value_width_for_write(&destination)?;
+    let variable_shift =
+        mnemonic.ends_with('v') || matches!(instruction.operands.get(2)?, Operand::Register(_));
+    let source_value = if variable_shift {
+        read_width_checked_register_operand(instruction.operands.get(1)?, width, known_values)?
+    } else {
+        match instruction.operands.get(1)? {
+            Operand::Register(register) => read_simple_register_value(known_values, register)?,
+            _ => return None,
+        }
+    };
+    let shift = if variable_shift {
+        parse_variable_shift_amount(instruction.operands.get(2)?, width, known_values)?
+    } else {
+        parse_bit_shift_amount(instruction.operands.get(2)?, width)?
+    };
+    let value = match shift_operation(mnemonic)? {
+        "lsl" => source_value.checked_shl(shift)?,
+        "lsr" => source_value.checked_shr(shift)?,
+        "asr" => arithmetic_shift_right(source_value, width, shift),
+        "ror" => rotate_right_with_width(source_value, width, shift),
+        _ => return None,
+    };
+    Some((
+        destination,
+        normalize_value_for_width(value, width),
+        RecoveredValueSource::Other,
+    ))
+}
+
+fn shift_operation(mnemonic: &str) -> Option<&'static str> {
+    match mnemonic {
+        "lsl" | "lslv" => Some("lsl"),
+        "lsr" | "lsrv" => Some("lsr"),
+        "asr" | "asrv" => Some("asr"),
+        "ror" | "rorv" => Some("ror"),
+        _ => None,
+    }
+}
+
+fn parse_variable_shift_amount(
+    operand: &Operand,
+    width: u32,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<u32> {
+    let raw = match operand {
+        Operand::Register(register) if register_value_width(register)? == width => {
+            read_simple_register_value(known_values, register)?
+        }
+        _ => return None,
+    };
+    Some((raw % u64::from(width)) as u32)
 }
 
 fn synthesize_bitfield_extract_value(
@@ -8688,6 +8733,307 @@ mod tests {
                     && value.source == RecoveredValueSource::Other
             }),
             "32-bit arithmetic shifts should sign-extend within W-register width: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_register_shift_values() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(65),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "lsl",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "lsrv",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "mov",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::ImmediateUnsigned((-4_i64) as u64),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "asrv",
+                vec![
+                    Operand::Register("x13".to_string()),
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(
+                0x1018,
+                "mov",
+                vec![
+                    Operand::Register("w14".to_string()),
+                    Operand::ImmediateUnsigned(0x8000_0001),
+                ],
+            ),
+            instruction(
+                0x101c,
+                "mov",
+                vec![
+                    Operand::Register("w15".to_string()),
+                    Operand::ImmediateUnsigned(33),
+                ],
+            ),
+            instruction(
+                0x1020,
+                "rorv",
+                vec![
+                    Operand::Register("w16".to_string()),
+                    Operand::Register("w14".to_string()),
+                    Operand::Register("w15".to_string()),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 2
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "register-count lsl should use count modulo X-register width: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x11"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "explicit lsrv should recover known register-count shifts: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x13"
+                    && value.value == ((-2_i64) as u64)
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "asrv should sign-extend after applying a modulo register count: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[8].recovered_values.iter().any(|value| {
+                value.register == "w16"
+                    && value.value == 0xc000_0000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "32-bit rorv should use count modulo W-register width: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_register_shifts_for_table_indices() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(8),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(3),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "lsrv",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x11".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "register-shifted table indices should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "register-shifted table indices should resolve slot addresses: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "register-shifted table indices should resolve indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_register_shifts_with_unknown_counts() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "lslv",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "register shifts must not synthesize values with unknown shift counts"
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "register shifts with unknown counts must clear stale destination state: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_width_mismatched_register_shift_sources() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "lslv",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.is_empty(),
+            "register shifts must reject source registers that do not match destination width"
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "invalid register shifts must clear stale destination state: {:?}",
             instructions
         );
     }
