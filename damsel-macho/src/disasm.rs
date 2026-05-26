@@ -4790,6 +4790,7 @@ fn synthesize_literal_load(
     if !(lower.starts_with("ldr") || lower.starts_with("ldrsw")) {
         return None;
     }
+    literal_load_target_operand(instruction)?;
     let register = destination_register(instruction)?;
     let target = instruction
         .references
@@ -4808,6 +4809,21 @@ fn synthesize_literal_load(
             source: RecoveredValueSource::LiteralLoad,
         },
     ))
+}
+
+fn literal_load_target_operand(instruction: &DecodedInstruction) -> Option<()> {
+    if instruction
+        .operands
+        .iter()
+        .any(|operand| matches!(operand, Operand::Memory { .. }))
+    {
+        return None;
+    }
+    match instruction.operands.get(1)? {
+        Operand::ImmediateUnsigned(_) | Operand::Label(_) => Some(()),
+        Operand::ImmediateSigned(value) if *value >= 0 => Some(()),
+        _ => None,
+    }
 }
 
 fn read_literal_load_value(
@@ -13670,7 +13686,14 @@ mod tests {
         let image = synthetic_literal_image(0x4000, &0x2000_u64.to_le_bytes());
         let mut instructions = vec![DecodedInstruction {
             references: vec![Reference::Data { target: 0x4000 }],
-            ..instruction(0x1000, "ldr", vec![Operand::Register("x0".to_string())])
+            ..instruction(
+                0x1000,
+                "ldr",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            )
         }];
 
         synthesize_analysis_references(&image, &mut instructions, true);
@@ -13685,7 +13708,14 @@ mod tests {
         let image = synthetic_literal_image(0x4000, &0x3000_u64.to_le_bytes());
         let mut instructions = vec![DecodedInstruction {
             references: vec![Reference::Data { target: 0x4000 }],
-            ..instruction(0x1000, "ldr", vec![Operand::Register("x0".to_string())])
+            ..instruction(
+                0x1000,
+                "ldr",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            )
         }];
 
         synthesize_analysis_references(&image, &mut instructions, true);
@@ -13700,7 +13730,14 @@ mod tests {
         let image = synthetic_literal_image(0x4000, &(-4_i32).to_le_bytes());
         let mut instructions = vec![DecodedInstruction {
             references: vec![Reference::Data { target: 0x4000 }],
-            ..instruction(0x1000, "ldrsw", vec![Operand::Register("x0".to_string())])
+            ..instruction(
+                0x1000,
+                "ldrsw",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            )
         }];
 
         synthesize_analysis_references(&image, &mut instructions, true);
@@ -13715,7 +13752,14 @@ mod tests {
         let image = synthetic_image();
         let mut instructions = vec![DecodedInstruction {
             references: vec![Reference::Data { target: 0x2000 }],
-            ..instruction(0x1000, "ldr", vec![Operand::Register("x0".to_string())])
+            ..instruction(
+                0x1000,
+                "ldr",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::ImmediateUnsigned(0x2000),
+                ],
+            )
         }];
 
         synthesize_analysis_references(&image, &mut instructions, true);
@@ -13723,6 +13767,35 @@ mod tests {
         assert!(
             instructions[0].recovered_values.is_empty(),
             "literal loads must read literal contents instead of treating the literal address as the loaded value"
+        );
+    }
+
+    #[test]
+    fn synthesize_literal_load_ignores_memory_form_data_refs() {
+        let image = synthetic_literal_image(0x4000, &0x3000_u64.to_le_bytes());
+        let mut instructions = vec![DecodedInstruction {
+            references: vec![Reference::Data { target: 0x4000 }],
+            ..instruction(
+                0x1000,
+                "ldr",
+                vec![
+                    Operand::Register("x0".to_string()),
+                    Operand::Memory {
+                        base: "x1".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            )
+        }];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[0].recovered_values.is_empty(),
+            "memory-form ldr must not recover a literal value just because a data reference is present"
         );
     }
 
