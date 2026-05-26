@@ -3061,7 +3061,26 @@ fn resolve_table_slot_target(
 
 fn jump_table_element_size(instruction: &DecodedInstruction) -> u8 {
     let lower = instruction.mnemonic.to_ascii_lowercase();
-    if lower.starts_with("ldrsw") {
+    if lower.starts_with("ldrb")
+        || lower.starts_with("ldurb")
+        || lower.starts_with("ldrsb")
+        || lower.starts_with("ldursb")
+        || lower.starts_with("strb")
+        || lower.starts_with("sturb")
+    {
+        1
+    } else if lower.starts_with("ldrh")
+        || lower.starts_with("ldurh")
+        || lower.starts_with("ldrsh")
+        || lower.starts_with("ldursh")
+        || lower.starts_with("strh")
+        || lower.starts_with("sturh")
+    {
+        2
+    } else if lower.starts_with("ldrsw")
+        || lower.starts_with("ldursw")
+        || lower.starts_with("ldpsw")
+    {
         4
     } else if destination_register(instruction)
         .as_deref()
@@ -5364,6 +5383,108 @@ mod tests {
                 .iter()
                 .all(|annotation| !matches!(annotation, Annotation::JumpTableCandidate { .. })),
             "invalid scaled register offsets must not create jump-table provenance"
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_byte_element_size_for_byte_load_shifts() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(1),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldrb",
+                vec![
+                    Operand::Register("w10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #2".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].references.is_empty(),
+            "ldrb reads one byte, so lsl #2 must not be accepted from the w-register result width: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "invalid byte-load shifts must not recover a fabricated value"
+        );
+        assert!(
+            instructions[3]
+                .annotations
+                .iter()
+                .all(|annotation| !matches!(annotation, Annotation::JumpTableCandidate { .. })),
+            "invalid byte-load shifts must not create jump-table provenance"
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_halfword_element_size_for_halfword_load_shifts() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(4),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldrh",
+                vec![
+                    Operand::Register("w10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #1".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "ldrh should scale by two bytes, not four from the w-register result width: {:?}",
+            instructions
+        );
+        assert!(
+            !instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x4010 }),
+            "halfword loads must not use the 32-bit destination width as their address scale"
         );
     }
 
