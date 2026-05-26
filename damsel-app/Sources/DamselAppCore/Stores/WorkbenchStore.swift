@@ -167,6 +167,29 @@ public final class WorkbenchStore: ObservableObject {
         loadedImage != nil && !isBusy && decodeValidationMessage == nil
     }
 
+    public var disassemblyActionTitle: String {
+        disassemblyNeedsRefresh ? "Update Disassembly" : "Disassemble"
+    }
+
+    public var disassemblyActionSystemImage: String {
+        disassemblyNeedsRefresh ? "arrow.clockwise" : "play.fill"
+    }
+
+    public var disassemblyActionHelp: String {
+        if isBusy {
+            return "Wait for the current Damsel operation to finish."
+        }
+        guard loadedImage != nil else {
+            return "Load a Mach-O binary before disassembling."
+        }
+        if let decodeValidationMessage {
+            return decodeValidationMessage
+        }
+        return disassemblyNeedsRefresh
+            ? "Refresh disassembly to apply the current controls."
+            : "Run disassembly for the selected target."
+    }
+
     public var canCopySelectedInstruction: Bool {
         selectedInstruction != nil
     }

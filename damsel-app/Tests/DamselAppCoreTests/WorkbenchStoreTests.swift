@@ -126,6 +126,8 @@ final class WorkbenchStoreTests: XCTestCase {
         try await store.runDisassembly()
         XCTAssertFalse(store.disassemblyNeedsRefresh)
         XCTAssertEqual(store.toolbarStatusText, "1 rows")
+        XCTAssertEqual(store.disassemblyActionTitle, "Disassemble")
+        XCTAssertEqual(store.disassemblyActionSystemImage, "play.fill")
 
         store.includeAnalysis = true
 
@@ -133,6 +135,9 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.toolbarStatusText, "1 rows *")
         XCTAssertTrue(store.toolbarStatusDetail.contains("Needs refresh"))
         XCTAssertTrue(store.resultSubtitle.contains("Needs refresh"))
+        XCTAssertEqual(store.disassemblyActionTitle, "Update Disassembly")
+        XCTAssertEqual(store.disassemblyActionSystemImage, "arrow.clockwise")
+        XCTAssertEqual(store.disassemblyActionHelp, "Refresh disassembly to apply the current controls.")
     }
 
     @MainActor
@@ -145,6 +150,20 @@ final class WorkbenchStoreTests: XCTestCase {
         try await store.runDisassembly()
 
         XCTAssertEqual(store.toolbarStatusDetail, "Decode failed")
+    }
+
+    @MainActor
+    func testDisassemblyActionHelpSurfacesDisabledReason() async {
+        let unloadedStore = WorkbenchStore(client: nil)
+        XCTAssertEqual(unloadedStore.disassemblyActionHelp, "Load a Mach-O binary before disassembling.")
+
+        let loadedStore = WorkbenchStore(client: SuggestionClient(response: []), loadedImage: Self.sampleImage())
+        loadedStore.limitText = ""
+        loadedStore.fromText = "0x100000500"
+        loadedStore.toText = "0x1000004b0"
+
+        XCTAssertFalse(loadedStore.canRunDisassembly)
+        XCTAssertEqual(loadedStore.disassemblyActionHelp, "To must be greater than from.")
     }
 
     @MainActor

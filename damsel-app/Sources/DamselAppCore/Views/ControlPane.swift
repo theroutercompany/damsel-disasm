@@ -136,13 +136,15 @@ struct ControlPane: View {
                 Task { try? await store.runDisassembly() }
             } label: {
                 Label(
-                    store.disassemblyNeedsRefresh ? "Update Disassembly" : "Disassemble",
-                    systemImage: store.disassemblyNeedsRefresh ? "arrow.clockwise" : "play.fill"
+                    store.disassemblyActionTitle,
+                    systemImage: store.disassemblyActionSystemImage
                 )
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .disabled(!store.canRunDisassembly)
+            .help(store.disassemblyActionHelp)
+            .accessibilityHint(store.disassemblyActionHelp)
         }
     }
 

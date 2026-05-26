@@ -45,10 +45,12 @@ public struct ContentView: View {
                 Button {
                     Task { try? await store.runDisassembly() }
                 } label: {
-                    Label("Disassemble", systemImage: "play.fill")
+                    Label(store.disassemblyActionTitle, systemImage: store.disassemblyActionSystemImage)
                 }
                 .disabled(!store.canRunDisassembly)
-                .help(disassembleHelp)
+                .help(store.disassemblyActionHelp)
+                .accessibilityLabel(store.disassemblyActionTitle)
+                .accessibilityHint(store.disassemblyActionHelp)
             }
 
             ToolbarItem(placement: .status) {
@@ -110,15 +112,6 @@ public struct ContentView: View {
     private func cancelSymbolSuggestionFetch() {
         symbolSuggestionTask?.cancel()
         symbolSuggestionTask = nil
-    }
-
-    private var disassembleHelp: String {
-        guard store.canRunDisassembly else {
-            return "Load a binary and choose a valid range first"
-        }
-        return store.disassemblyNeedsRefresh
-            ? "Refresh disassembly to apply the current controls"
-            : "Run or refresh disassembly"
     }
 
     private func openFile() {
