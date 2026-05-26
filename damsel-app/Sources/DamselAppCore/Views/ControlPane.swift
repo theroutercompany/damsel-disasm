@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ControlPane: View {
@@ -215,18 +216,102 @@ private struct IntegerInputField: View {
     }
 
     var body: some View {
-        TextField(placeholder, text: sanitizedText)
-            .textFieldStyle(.roundedBorder)
-            .font(.system(.body, design: .monospaced))
-            .lineLimit(1)
-            .autocorrectionDisabled(true)
-            .disabled(disabled)
+        FilteredIntegerTextField(
+            placeholder: placeholder,
+            text: $text,
+            disabled: disabled
+        )
+    }
+}
+
+private struct FilteredIntegerTextField: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    var disabled: Bool
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.placeholderString = placeholder
+        field.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        field.bezelStyle = .roundedBezel
+        field.isBordered = true
+        field.isBezeled = true
+        field.drawsBackground = true
+        field.lineBreakMode = .byTruncatingTail
+        field.delegate = context.coordinator
+        context.coordinator.field = field
+        return field
     }
 
-    private var sanitizedText: Binding<String> {
-        Binding(
-            get: { text },
-            set: { text = IntegerTextInput.sanitize($0) }
-        )
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.text = $text
+        field.placeholderString = placeholder
+        field.isEnabled = !disabled
+        field.textColor = disabled ? .disabledControlTextColor : .labelColor
+        if field.currentEditor() == nil, field.stringValue != text {
+            field.stringValue = text
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
+        var text: Binding<String>
+        weak var field: NSTextField?
+        private var isApplyingSanitizedText = false
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            guard let textView = notification.userInfo?["NSFieldEditor"] as? NSTextView else {
+                return
+            }
+            textView.delegate = self
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard !isApplyingSanitizedText,
+                  let field = notification.object as? NSTextField
+            else {
+                return
+            }
+
+            let sanitized = IntegerTextInput.sanitize(field.stringValue)
+            if sanitized != field.stringValue,
+               let editor = field.currentEditor() as? NSTextView {
+                apply(sanitized, to: editor)
+            } else {
+                text.wrappedValue = sanitized
+            }
+        }
+
+        func textView(
+            _ textView: NSTextView,
+            shouldChangeTextIn affectedCharRange: NSRange,
+            replacementString: String?
+        ) -> Bool {
+            let candidate = (textView.string as NSString)
+                .replacingCharacters(in: affectedCharRange, with: replacementString ?? "")
+            let sanitized = IntegerTextInput.sanitize(candidate)
+            guard sanitized != candidate else {
+                return true
+            }
+
+            apply(sanitized, to: textView)
+            return false
+        }
+
+        private func apply(_ value: String, to textView: NSTextView) {
+            isApplyingSanitizedText = true
+            textView.string = value
+            textView.setSelectedRange(NSRange(location: value.utf16.count, length: 0))
+            field?.stringValue = value
+            text.wrappedValue = value
+            isApplyingSanitizedText = false
+        }
     }
 }

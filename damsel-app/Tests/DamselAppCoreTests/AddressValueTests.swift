@@ -26,6 +26,11 @@ final class AddressValueTests: XCTestCase {
         XCTAssertEqual(IntegerTextInput.sanitize("0x10_00"), "0x10_00")
         XCTAssertEqual(IntegerTextInput.sanitize("w 0x4g!"), "0x4")
         XCTAssertEqual(IntegerTextInput.sanitize("123"), "123")
+        XCTAssertEqual(IntegerTextInput.sanitize("tasi"), "")
+        XCTAssertEqual(IntegerTextInput.sanitize("12ab34"), "1234")
+        XCTAssertEqual(IntegerTextInput.sanitize("1230x4"), "12304")
+        XCTAssertEqual(IntegerTextInput.sanitize("0xDEAD_beef"), "0xDEAD_beef")
+        XCTAssertEqual(IntegerTextInput.sanitize("0x"), "0x")
     }
 
     func testReadyURLParserReadsServerBanner() {

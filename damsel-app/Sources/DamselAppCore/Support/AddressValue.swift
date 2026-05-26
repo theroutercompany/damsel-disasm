@@ -120,8 +120,27 @@ public enum DamselFormat {
 }
 
 public enum IntegerTextInput {
+    private static let decimalCharacters = CharacterSet(charactersIn: "0123456789_")
+    private static let hexCharacters = CharacterSet(charactersIn: "0123456789abcdefABCDEF_")
+
     public static func sanitize(_ value: String) -> String {
-        let allowedCharacters = CharacterSet(charactersIn: "0123456789abcdefABCDEFxX_")
-        return String(value.unicodeScalars.filter { allowedCharacters.contains($0) })
+        let scalars = Array(value.unicodeScalars)
+        if let prefixIndex = scalars.indices.first(where: { index in
+            guard scalars[index] == "0",
+                  scalars.indices.contains(index + 1),
+                  scalars[..<index].allSatisfy({ !decimalCharacters.contains($0) })
+            else {
+                return false
+            }
+            return scalars[index + 1] == "x" || scalars[index + 1] == "X"
+        }) {
+            let prefix = String(String.UnicodeScalarView(scalars[prefixIndex ... prefixIndex + 1]))
+            let suffix = scalars.dropFirst(prefixIndex + 2).prefix { scalar in
+                hexCharacters.contains(scalar)
+            }
+            return prefix + String(String.UnicodeScalarView(suffix))
+        }
+
+        return String(value.unicodeScalars.filter { decimalCharacters.contains($0) })
     }
 }
