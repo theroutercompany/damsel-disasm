@@ -59,6 +59,12 @@ public struct ContentView: View {
                 )
             }
         }
+        .background(
+            WindowMetadataBridge(
+                fileURL: store.selectedFileURL,
+                fileName: store.loadedImage?.fileName
+            )
+        )
         .onAppear {
             Task { await store.bootstrap() }
         }
@@ -175,6 +181,30 @@ private struct BannerView: View {
             Rectangle()
                 .fill(Color.red.opacity(0.35))
                 .frame(height: 1)
+        }
+    }
+}
+
+private struct WindowMetadataBridge: NSViewRepresentable {
+    let fileURL: URL?
+    let fileName: String?
+
+    func makeNSView(context: Context) -> NSView {
+        NSView()
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = view.window else {
+                return
+            }
+
+            window.representedURL = fileURL
+            if let fileName, !fileName.isEmpty {
+                window.title = "\(fileName) - Damsel Workbench"
+            } else {
+                window.title = "Damsel Workbench"
+            }
         }
     }
 }
