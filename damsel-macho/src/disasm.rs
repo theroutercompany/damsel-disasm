@@ -2872,6 +2872,9 @@ fn synthesize_simple_register_value(
             };
             Some((destination, value, RecoveredValueSource::Other))
         }
+        "adc" | "adcs" | "sbc" | "sbcs" | "ngc" | "ngcs" => {
+            synthesize_carry_register_value(&lower, instruction, known_values, known_flags)
+        }
         "mul" | "madd" | "msub" | "mneg" => {
             synthesize_multiply_register_value(&lower, instruction, known_values)
         }
@@ -3149,6 +3152,70 @@ fn synthesize_multiply_register_value(
         normalize_value_for_width(value, width),
         RecoveredValueSource::Other,
     ))
+}
+
+fn synthesize_carry_register_value(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+    known_flags: Option<NzcvFlags>,
+) -> Option<(String, u64, RecoveredValueSource)> {
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register.clone(),
+        _ => return None,
+    };
+    let width = register_value_width_for_write(&destination)?;
+    let carry_in = known_flags?.c;
+    let (lhs, rhs) = carry_arithmetic_operands(mnemonic, instruction, width, known_values)?;
+    let (value, _) = carry_arithmetic_result(mnemonic, lhs, rhs, carry_in, width)?;
+    Some((destination, value, RecoveredValueSource::Other))
+}
+
+fn carry_arithmetic_operands(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    width: u32,
+    known_values: &BTreeMap<String, RecoveredValue>,
+) -> Option<(u64, u64)> {
+    match mnemonic {
+        "adc" | "adcs" | "sbc" | "sbcs" => {
+            let lhs = read_width_checked_register_operand(
+                instruction.operands.get(1)?,
+                width,
+                known_values,
+            )?;
+            let rhs = read_width_checked_register_operand(
+                instruction.operands.get(2)?,
+                width,
+                known_values,
+            )?;
+            Some((lhs, rhs))
+        }
+        "ngc" | "ngcs" => {
+            let rhs = read_width_checked_register_operand(
+                instruction.operands.get(1)?,
+                width,
+                known_values,
+            )?;
+            Some((0, rhs))
+        }
+        _ => None,
+    }
+}
+
+fn carry_arithmetic_result(
+    mnemonic: &str,
+    lhs: u64,
+    rhs: u64,
+    carry_in: bool,
+    width: u32,
+) -> Option<(u64, NzcvFlags)> {
+    let mask = low_bit_mask(width)?;
+    match mnemonic {
+        "adc" | "adcs" => add_with_carry(lhs, rhs, carry_in, width),
+        "sbc" | "sbcs" | "ngc" | "ngcs" => add_with_carry(lhs, !rhs & mask, carry_in, width),
+        _ => None,
+    }
 }
 
 fn synthesize_long_multiply_register_value(
@@ -3553,6 +3620,9 @@ fn synthesize_condition_flags(
                 _ => None,
             }
         }
+        "adcs" | "sbcs" | "ngcs" => {
+            synthesize_carry_condition_flags(mnemonic, instruction, known_values, known_flags)
+        }
         "cmn" | "cmp" => {
             let lhs_register = match instruction.operands.first()? {
                 Operand::Register(register) => register,
@@ -3658,6 +3728,23 @@ fn synthesize_conditional_compare_flags(
     }
 }
 
+fn synthesize_carry_condition_flags(
+    mnemonic: &str,
+    instruction: &DecodedInstruction,
+    known_values: &BTreeMap<String, RecoveredValue>,
+    known_flags: Option<NzcvFlags>,
+) -> Option<NzcvFlags> {
+    let destination = match instruction.operands.first()? {
+        Operand::Register(register) => register,
+        _ => return None,
+    };
+    let width = register_value_width_for_write(destination)?;
+    let carry_in = known_flags?.c;
+    let (lhs, rhs) = carry_arithmetic_operands(mnemonic, instruction, width, known_values)?;
+    let (_, flags) = carry_arithmetic_result(mnemonic, lhs, rhs, carry_in, width)?;
+    Some(flags)
+}
+
 fn conditional_compare_operand_value(
     operand: &Operand,
     width: u32,
@@ -3752,6 +3839,22 @@ fn flags_for_addition(lhs: u64, rhs: u64, width: u32) -> Option<NzcvFlags> {
     let sign = 1_u64.checked_shl(width.checked_sub(1)?)?;
     let overflow = ((lhs ^ result) & (rhs ^ result) & sign) != 0;
     flags_for_result(result, width, carry, overflow)
+}
+
+fn add_with_carry(lhs: u64, rhs: u64, carry_in: bool, width: u32) -> Option<(u64, NzcvFlags)> {
+    let mask = low_bit_mask(width)?;
+    let lhs = lhs & mask;
+    let rhs = rhs & mask;
+    let carry = u128::from(carry_in);
+    let sum = u128::from(lhs) + u128::from(rhs) + carry;
+    let result = (sum & u128::from(mask)) as u64;
+    let carry_out = sum > u128::from(mask);
+    let sign = 1_u64.checked_shl(width.checked_sub(1)?)?;
+    let overflow = ((lhs ^ result) & (rhs ^ result) & sign) != 0;
+    Some((
+        result,
+        flags_for_result(result, width, carry_out, overflow)?,
+    ))
 }
 
 fn flags_for_subtraction(lhs: u64, rhs: u64, width: u32) -> Option<NzcvFlags> {
@@ -6034,6 +6137,350 @@ mod tests {
             instructions[4]
                 .references
                 .contains(&Reference::Branch { target: 0x3000 })
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_carry_register_arithmetic() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0xffff),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "cmp",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "adc",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "sbc",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x8".to_string()),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "ngc",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Register("x8".to_string()),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == 0x1_0000
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-carry adc should add the carry-in bit: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4].recovered_values.iter().any(|value| {
+                value.register == "x11"
+                    && value.value == 0_u64.wrapping_sub(0xffff)
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-carry sbc should subtract without an extra borrow: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x12"
+                    && value.value == 0_u64.wrapping_sub(0xffff)
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-carry ngc should negate without an extra borrow: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_tracks_carry_arithmetic_flags() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(u64::from(u32::MAX)),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "cmp",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "adcs",
+                vec![
+                    Operand::Register("w10".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("w9".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "cset",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::Condition("cs".to_string()),
+                ],
+            ),
+            instruction(
+                0x1014,
+                "cset",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Condition("eq".to_string()),
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "w10"
+                    && value.value == 0
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "32-bit adcs should wrap at W-register width: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4].recovered_values.iter().any(|value| {
+                value.register == "x11"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "adcs carry-out should feed later condition recovery: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5].recovered_values.iter().any(|value| {
+                value.register == "x12"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "adcs zero result should feed later condition recovery: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_carry_arithmetic_for_table_indices() {
+        let image = synthetic_table_image(0x3000);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "cmp",
+                vec![
+                    Operand::Register("x11".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "adc",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Register("x11".to_string()),
+                    Operand::Register("x11".to_string()),
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("x9".to_string()),
+                        index_modifier: Some("lsl #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1014, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "x9"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::Other
+            }),
+            "known-carry adc table indices should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "known-carry adc table indices should resolve slot addresses: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[5]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "known-carry adc table indices should resolve indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_carry_arithmetic_with_unknown_flags() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "adc",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("xzr".to_string()),
+                    Operand::Register("xzr".to_string()),
+                ],
+            ),
+            instruction(0x1008, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.is_empty(),
+            "carry arithmetic must not synthesize values with unknown carry flags"
+        );
+        assert!(
+            !instructions[2]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "carry arithmetic with unknown flags must clear stale destination state: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_rejects_width_mismatched_carry_arithmetic_sources() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "cmp",
+                vec![
+                    Operand::Register("w8".to_string()),
+                    Operand::ImmediateUnsigned(0),
+                ],
+            ),
+            instruction(
+                0x100c,
+                "adc",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("w8".to_string()),
+                    Operand::Register("xzr".to_string()),
+                ],
+            ),
+            instruction(0x1010, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[3].recovered_values.is_empty(),
+            "carry arithmetic must reject source registers that do not match destination width"
+        );
+        assert!(
+            !instructions[4]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "invalid carry arithmetic must clear stale destination state: {:?}",
+            instructions
         );
     }
 
