@@ -2062,6 +2062,30 @@ fn synthesize_analysis_references(
                                     }
                                 } else {
                                     if let Some(value) = effective_target
+                                        && let Some(recovered) = synthesize_scalar_memory_load_value(
+                                            image, &lower, dest, value,
+                                        )
+                                    {
+                                        if canonical_state_key(dest) == jump_table_source_key {
+                                            remove_table_slot_evidence(
+                                                &mut relative_slot_loads,
+                                                dest,
+                                            );
+                                            store_known_value(&mut known_values, recovered.clone());
+                                        } else {
+                                            store_known_value_replacing_derived_state(
+                                                &mut known_values,
+                                                &mut jump_table_sources,
+                                                &mut relative_slot_loads,
+                                                recovered.clone(),
+                                            );
+                                        }
+                                        push_recovered_value(
+                                            &mut instruction.recovered_values,
+                                            recovered,
+                                        );
+                                        destination_updated = true;
+                                    } else if let Some(value) = effective_target
                                         && dest.to_ascii_lowercase().starts_with('x')
                                         && let Some(kind) =
                                             unresolved_load_reference_kind(image, value)
@@ -2740,6 +2764,55 @@ fn load_reads_relative_table_offset(mnemonic: &str) -> bool {
     mnemonic.starts_with("ldrsw")
         || mnemonic.starts_with("ldursw")
         || mnemonic.starts_with("ldapursw")
+}
+
+fn synthesize_scalar_memory_load_value(
+    image: &BinaryImage,
+    lower: &str,
+    register: &str,
+    address: u64,
+) -> Option<RecoveredValue> {
+    let (width, signed) = scalar_memory_load_width(register, lower)?;
+    let (section, _) = image.bytes_for_virtual_range(address, width)?;
+    if section.executable {
+        return None;
+    }
+    if unresolved_load_reference_kind(image, address).is_some() {
+        return None;
+    }
+    let value = read_memory_value(image, address, width, signed)?;
+    Some(RecoveredValue {
+        register: register.to_string(),
+        value: normalize_value_for_write(register, value),
+        kind: classify_recovered_value(image, value, RecoveredValueKind::Literal),
+        source: RecoveredValueSource::AdrpLoad,
+    })
+}
+
+fn scalar_memory_load_width(register: &str, mnemonic: &str) -> Option<(usize, bool)> {
+    if load_reads_relative_table_offset(mnemonic) {
+        return None;
+    }
+    let register = register.to_ascii_lowercase();
+    if mnemonic.starts_with("ldrsb") || mnemonic.starts_with("ldursb") {
+        Some((1, true))
+    } else if mnemonic.starts_with("ldrb") || mnemonic.starts_with("ldurb") {
+        Some((1, false))
+    } else if mnemonic.starts_with("ldrsh") || mnemonic.starts_with("ldursh") {
+        Some((2, true))
+    } else if mnemonic.starts_with("ldrh") || mnemonic.starts_with("ldurh") {
+        Some((2, false))
+    } else if mnemonic == "ldr" || mnemonic == "ldur" {
+        if register.starts_with('w') {
+            Some((4, false))
+        } else if register.starts_with('x') {
+            Some((8, false))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }
 
 fn memory_index_modifier_transform(
@@ -4615,6 +4688,18 @@ fn read_literal_load_value(
 fn read_memory_value(image: &BinaryImage, address: u64, width: usize, signed: bool) -> Option<u64> {
     let (_, bytes) = image.bytes_for_virtual_range(address, width)?;
     match (width, signed, image.endianness()) {
+        (1, true, _) => Some(i64::from(bytes.first().copied()? as i8) as u64),
+        (1, false, _) => Some(u64::from(bytes.first().copied()?)),
+        (2, true, Endianness::Little) => {
+            Some(i64::from(i16::from_le_bytes(bytes.try_into().ok()?)) as u64)
+        }
+        (2, true, Endianness::Big) => {
+            Some(i64::from(i16::from_be_bytes(bytes.try_into().ok()?)) as u64)
+        }
+        (2, false, Endianness::Little) => {
+            Some(u64::from(u16::from_le_bytes(bytes.try_into().ok()?)))
+        }
+        (2, false, Endianness::Big) => Some(u64::from(u16::from_be_bytes(bytes.try_into().ok()?))),
         (4, true, Endianness::Little) => {
             Some(i64::from(i32::from_le_bytes(bytes.try_into().ok()?)) as u64)
         }
@@ -12020,6 +12105,239 @@ mod tests {
                 .references
                 .contains(&Reference::Branch { target: 0x3000 }),
             "pair-loaded table indices should resolve indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_recovers_scalar_memory_load_values() {
+        let mut bytes = vec![0u8; 16];
+        bytes[0] = 0x80;
+        bytes[2..4].copy_from_slice(&(-2_i16).to_le_bytes());
+        bytes[4..8].copy_from_slice(&0x1122_3344_u32.to_le_bytes());
+        bytes[8..16].copy_from_slice(&0x1122_3344_5566_7788_u64.to_le_bytes());
+        let image = synthetic_literal_image(0x4000, &bytes);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldrb",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldrsh",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 2,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x100c,
+                "ldr",
+                vec![
+                    Operand::Register("w11".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 4,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x1010,
+                "ldr",
+                vec![
+                    Operand::Register("x12".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 8,
+                        writeback: None,
+                    },
+                ],
+            ),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "w9"
+                    && value.value == 0x80
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "ldrb should recover zero-extended byte contents: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2].recovered_values.iter().any(|value| {
+                value.register == "x10"
+                    && value.value == ((-2_i64) as u64)
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "ldrsh should recover sign-extended halfword contents: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3].recovered_values.iter().any(|value| {
+                value.register == "w11"
+                    && value.value == 0x1122_3344
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "ldr w should recover 32-bit contents: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[4].recovered_values.iter().any(|value| {
+                value.register == "x12"
+                    && value.value == 0x1122_3344_5566_7788
+                    && value.kind == RecoveredValueKind::Literal
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "ldr x should recover readable 64-bit scalar contents: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_uses_scalar_load_values_for_table_indices() {
+        let mut bytes = vec![0u8; 24];
+        bytes[8..16].copy_from_slice(&0x3000_u64.to_le_bytes());
+        bytes[16] = 1;
+        let image = synthetic_literal_image(0x4000, &bytes);
+        let mut instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x1000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x1004,
+                "ldrb",
+                vec![
+                    Operand::Register("w9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 16,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: Some("w9".to_string()),
+                        index_modifier: Some("uxtw #3".to_string()),
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[1].recovered_values.iter().any(|value| {
+                value.register == "w9"
+                    && value.value == 1
+                    && value.source == RecoveredValueSource::AdrpLoad
+            }),
+            "scalar-loaded table indices should stay known: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[2]
+                .references
+                .contains(&Reference::Data { target: 0x4008 }),
+            "scalar-loaded table indices should resolve slot addresses: {:?}",
+            instructions
+        );
+        assert!(
+            instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "scalar-loaded table indices should resolve indirect branches: {:?}",
+            instructions
+        );
+    }
+
+    #[test]
+    fn synthesize_analysis_references_invalidates_unreadable_scalar_load_destinations() {
+        let image = synthetic_image();
+        let mut instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x4000),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "mov",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::ImmediateUnsigned(0x1234),
+                ],
+            ),
+            instruction(
+                0x1008,
+                "ldr",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x100c, "br", vec![Operand::Register("x9".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut instructions, true);
+
+        assert!(
+            instructions[2].recovered_values.is_empty(),
+            "unreadable scalar loads must not synthesize values"
+        );
+        assert!(
+            !instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x1234 }),
+            "unreadable scalar loads must clear stale destination state: {:?}",
             instructions
         );
     }
