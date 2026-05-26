@@ -59,6 +59,9 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
             return store.disassembly?.instructions.isEmpty == false
         case #selector(clearInstructionFilter(_:)):
             return !store.instructionFilterText.isEmpty
+        case #selector(revealLoadedBinary(_:)),
+             #selector(copyLoadedBinaryPath(_:)):
+            return store.selectedFileURL != nil
         default:
             return true
         }
@@ -83,6 +86,23 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
 
     @objc private func clearInstructionFilter(_ sender: Any?) {
         NotificationCenter.default.post(name: .damselClearInstructionFilterCommand, object: nil)
+    }
+
+    @objc private func revealLoadedBinary(_ sender: Any?) {
+        guard let url = store.selectedFileURL else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @objc private func copyLoadedBinaryPath(_ sender: Any?) {
+        guard let url = store.selectedFileURL else {
+            NSSound.beep()
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.path, forType: .string)
     }
 
     @objc private func showAboutPanel(_ sender: Any?) {
@@ -133,6 +153,19 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         let open = menu.addItem(withTitle: "Open Binary...", action: #selector(openBinary(_:)), keyEquivalent: "o")
         open.keyEquivalentModifierMask = [.command]
         open.target = self
+        menu.addItem(.separator())
+        let reveal = menu.addItem(
+            withTitle: "Reveal Binary in Finder",
+            action: #selector(revealLoadedBinary(_:)),
+            keyEquivalent: ""
+        )
+        reveal.target = self
+        let copyPath = menu.addItem(
+            withTitle: "Copy Binary Path",
+            action: #selector(copyLoadedBinaryPath(_:)),
+            keyEquivalent: ""
+        )
+        copyPath.target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
             .keyEquivalentModifierMask = [.command]

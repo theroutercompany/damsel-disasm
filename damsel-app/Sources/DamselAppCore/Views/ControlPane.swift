@@ -53,6 +53,7 @@ struct ControlPane: View {
             .background(isDropTargeted ? Color.accentColor.opacity(0.16) : Color.clear)
         }
         .buttonStyle(.plain)
+        .help(fileHeaderHelp)
     }
 
     private var fileSummary: String {
@@ -60,6 +61,10 @@ struct ControlPane: View {
             return "Awaiting local binary"
         }
         return "\(image.architecture) · \(DamselFormat.address(image.entryPoint)) · \(image.sections.count) sections"
+    }
+
+    private var fileHeaderHelp: String {
+        store.selectedFileURL?.path ?? "Open or drop a Mach-O binary"
     }
 
     private var targetSection: some View {
