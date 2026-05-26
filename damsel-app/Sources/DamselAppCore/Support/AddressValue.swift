@@ -41,6 +41,8 @@ public struct AddressValue: Hashable, Sendable {
 }
 
 public enum DamselFormat {
+    private static let workbenchWindowTitleFallback = "Damsel Workbench"
+
     public static func address(_ value: UInt64?) -> String {
         guard let value else {
             return "n/a"
@@ -51,6 +53,16 @@ public enum DamselFormat {
     public static func instructionRow(_ instruction: InstructionRow) -> String {
         let opcode = address(instruction.opcode)
         return "\(address(instruction.address))  \(opcode)  \(instruction.rendered)"
+    }
+
+    public static func workbenchWindowTitle(fileName: String?, maxFileNameLength: Int = 36) -> String {
+        guard let fileName = fileName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !fileName.isEmpty
+        else {
+            return workbenchWindowTitleFallback
+        }
+
+        return abbreviateMiddle(fileName, maxLength: maxFileNameLength)
     }
 
     public static func shortCount(_ value: Int?) -> String {
@@ -121,6 +133,18 @@ public enum DamselFormat {
             return value
         }
         return first.uppercased() + value.dropFirst()
+    }
+
+    private static func abbreviateMiddle(_ value: String, maxLength: Int) -> String {
+        guard maxLength > 3, value.count > maxLength else {
+            return value
+        }
+
+        let marker = "..."
+        let available = maxLength - marker.count
+        let prefixCount = (available + 1) / 2
+        let suffixCount = available / 2
+        return "\(value.prefix(prefixCount))\(marker)\(value.suffix(suffixCount))"
     }
 }
 

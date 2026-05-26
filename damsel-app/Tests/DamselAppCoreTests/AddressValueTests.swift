@@ -22,6 +22,24 @@ final class AddressValueTests: XCTestCase {
         XCTAssertEqual(DamselFormat.stopReason("UnmappedDecodeStop"), "Unmapped decode stop")
     }
 
+    func testWorkbenchWindowTitleUsesCompactDocumentTitle() {
+        XCTAssertEqual(DamselFormat.workbenchWindowTitle(fileName: nil), "Damsel Workbench")
+        XCTAssertEqual(DamselFormat.workbenchWindowTitle(fileName: "  "), "Damsel Workbench")
+        XCTAssertEqual(DamselFormat.workbenchWindowTitle(fileName: "semantic-switch"), "semantic-switch")
+    }
+
+    func testWorkbenchWindowTitleAbbreviatesLongFileNamesInTheMiddle() {
+        let title = DamselFormat.workbenchWindowTitle(
+            fileName: "very-long-semantic-switch-fixture-with-extra-suffix",
+            maxFileNameLength: 24
+        )
+
+        XCTAssertLessThanOrEqual(title.count, 24)
+        XCTAssertTrue(title.hasPrefix("very-long-s"))
+        XCTAssertTrue(title.contains("..."))
+        XCTAssertTrue(title.hasSuffix("tra-suffix"))
+    }
+
     func testIntegerInputSanitizerRejectsFreeformText() {
         XCTAssertEqual(IntegerTextInput.sanitize("0x10_00"), "0x10_00")
         XCTAssertEqual(IntegerTextInput.sanitize("w 0x4g!"), "0x4")

@@ -232,11 +232,7 @@ private struct WindowMetadataBridge: NSViewRepresentable {
             }
 
             window.representedURL = fileURL
-            if let fileName, !fileName.isEmpty {
-                window.title = "\(fileName) - Damsel Workbench"
-            } else {
-                window.title = "Damsel Workbench"
-            }
+            window.title = DamselFormat.workbenchWindowTitle(fileName: fileName)
         }
     }
 }
