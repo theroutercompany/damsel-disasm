@@ -2997,7 +2997,11 @@ fn resolve_table_slot_at_address(
     let (_, bytes) = image.bytes_for_virtual_range(slot_address, usize::from(element_size))?;
 
     if element_size == 8 {
-        let raw = u64::from_le_bytes(bytes.try_into().ok()?);
+        let raw_bytes: [u8; 8] = bytes.try_into().ok()?;
+        let raw = match image.endianness() {
+            Endianness::Little => u64::from_le_bytes(raw_bytes),
+            Endianness::Big => u64::from_be_bytes(raw_bytes),
+        };
         let kind = classify_recovered_value(image, raw, RecoveredValueKind::Address);
         if raw != 0
             && !matches!(
@@ -3016,8 +3020,11 @@ fn resolve_table_slot_at_address(
         return None;
     }
 
-    let raw_u32 = u32::from_le_bytes(bytes.try_into().ok()?);
-    let relative = i32::from_le_bytes(raw_u32.to_le_bytes()) as i64;
+    let raw_bytes: [u8; 4] = bytes.try_into().ok()?;
+    let relative = match image.endianness() {
+        Endianness::Little => i32::from_le_bytes(raw_bytes),
+        Endianness::Big => i32::from_be_bytes(raw_bytes),
+    } as i64;
     let relative_target = add_signed(table_base, relative)?;
     if is_executable_target(image, relative_target)
         || image.dyld().export_by_address(relative_target).is_some()
@@ -3031,6 +3038,10 @@ fn resolve_table_slot_at_address(
         });
     }
 
+    let raw_u32 = match image.endianness() {
+        Endianness::Little => u32::from_le_bytes(raw_bytes),
+        Endianness::Big => u32::from_be_bytes(raw_bytes),
+    };
     let absolute = u64::from(raw_u32);
     let kind = classify_recovered_value(image, absolute, RecoveredValueKind::Address);
     if absolute != 0
@@ -3816,17 +3827,32 @@ mod tests {
     }
 
     fn synthetic_table_image(relative_target: u64) -> BinaryImage {
+        synthetic_table_image_with_endianness(relative_target, Endianness::Little)
+    }
+
+    fn synthetic_table_image_with_endianness(
+        relative_target: u64,
+        endianness: Endianness,
+    ) -> BinaryImage {
         let mut bytes = vec![0u8; 96];
         let relative = i32::try_from((relative_target as i64) - 0x4000_i64)
             .expect("relative target offset fits into i32");
-        bytes[64..68].copy_from_slice(&relative.to_le_bytes());
-        bytes[72..80].copy_from_slice(&0x3000_u64.to_le_bytes());
+        match endianness {
+            Endianness::Little => {
+                bytes[64..68].copy_from_slice(&relative.to_le_bytes());
+                bytes[72..80].copy_from_slice(&0x3000_u64.to_le_bytes());
+            }
+            Endianness::Big => {
+                bytes[64..68].copy_from_slice(&relative.to_be_bytes());
+                bytes[72..80].copy_from_slice(&0x3000_u64.to_be_bytes());
+            }
+        }
         let bytes: Arc<[u8]> = bytes.into();
         BinaryImage::from_memory_bytes(
             Some("disasm-synthetic-table".to_string()),
             BinaryFormat::MachO,
             Architecture::Arm64,
-            Endianness::Little,
+            endianness,
             None,
             Some(Platform::unknown("macos")),
             SliceInfo {
@@ -5456,6 +5482,113 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn synthesize_analysis_references_respects_table_slot_endianness() {
+        let image = synthetic_table_image_with_endianness(0x3000, Endianness::Big);
+        let mut absolute_instructions = vec![
+            instruction(
+                0x1000,
+                "mov",
+                vec![
+                    Operand::Register("x8".to_string()),
+                    Operand::ImmediateUnsigned(0x4008),
+                ],
+            ),
+            instruction(
+                0x1004,
+                "ldr",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(0x1008, "blr", vec![Operand::Register("x9".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut absolute_instructions, true);
+
+        assert!(
+            absolute_instructions[1]
+                .recovered_values
+                .iter()
+                .any(|value| {
+                    value.register == "x9"
+                        && value.value == 0x3000
+                        && value.kind == RecoveredValueKind::FunctionPointer
+                        && value.source == RecoveredValueSource::TableLoad
+                }),
+            "big-endian absolute table slots should decode as stored: {:?}",
+            absolute_instructions
+        );
+        assert!(
+            absolute_instructions[2]
+                .references
+                .contains(&Reference::Call { target: 0x3000 }),
+            "big-endian absolute table slots should feed indirect calls: {:?}",
+            absolute_instructions
+        );
+
+        let mut relative_instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Page { target: 0x4000 }],
+                ..instruction(0x2000, "adrp", vec![Operand::Register("x8".to_string())])
+            },
+            instruction(
+                0x2004,
+                "ldrsw",
+                vec![
+                    Operand::Register("x9".to_string()),
+                    Operand::Memory {
+                        base: "x8".to_string(),
+                        index: None,
+                        index_modifier: None,
+                        displacement: 0,
+                        writeback: None,
+                    },
+                ],
+            ),
+            instruction(
+                0x2008,
+                "add",
+                vec![
+                    Operand::Register("x10".to_string()),
+                    Operand::Register("x8".to_string()),
+                    Operand::Register("x9".to_string()),
+                ],
+            ),
+            instruction(0x200c, "br", vec![Operand::Register("x10".to_string())]),
+        ];
+
+        synthesize_analysis_references(&image, &mut relative_instructions, true);
+
+        assert!(
+            relative_instructions[2]
+                .recovered_values
+                .iter()
+                .any(|value| {
+                    value.register == "x10"
+                        && value.value == 0x3000
+                        && value.kind == RecoveredValueKind::FunctionPointer
+                        && value.source == RecoveredValueSource::RelativeTableLoad
+                }),
+            "big-endian relative table slots should decode signed displacements correctly: {:?}",
+            relative_instructions
+        );
+        assert!(
+            relative_instructions[3]
+                .references
+                .contains(&Reference::Branch { target: 0x3000 }),
+            "big-endian relative table slots should feed indirect branches: {:?}",
+            relative_instructions
+        );
     }
 
     #[test]
