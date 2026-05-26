@@ -1112,9 +1112,17 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
         instruction_count: current_count,
         terminator_address: current_terminator_address,
         terminator_mnemonic: current_terminator_mnemonic,
-        terminator_kind: current_terminator_kind,
+        terminator_kind: terminal_window_terminator_kind(current_terminator_kind),
     });
     blocks
+}
+
+fn terminal_window_terminator_kind(kind: BasicBlockTerminatorKind) -> BasicBlockTerminatorKind {
+    if kind == BasicBlockTerminatorKind::Fallthrough {
+        BasicBlockTerminatorKind::Unknown
+    } else {
+        kind
+    }
 }
 
 fn terminator_kind(mnemonic: &str) -> BasicBlockTerminatorKind {
@@ -6075,7 +6083,7 @@ mod tests {
     #[test]
     fn analysis_classifies_basic_block_terminator_kinds() {
         let cases = [
-            ("add", BasicBlockTerminatorKind::Fallthrough),
+            ("add", BasicBlockTerminatorKind::Unknown),
             ("bl", BasicBlockTerminatorKind::Call),
             ("blr", BasicBlockTerminatorKind::IndirectCall),
             ("b", BasicBlockTerminatorKind::Branch),
@@ -6103,6 +6111,45 @@ mod tests {
             assert_eq!(analysis.basic_blocks[0].terminator_address, 0x1000);
             assert_eq!(analysis.basic_blocks[0].terminator_mnemonic, mnemonic);
         }
+    }
+
+    #[test]
+    fn analysis_marks_only_decoded_successor_blocks_as_fallthrough_terminators() {
+        let instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Branch { target: 0x1008 }],
+                ..instruction(0x1000, "b.eq", vec![Operand::Label(0x1008)])
+            },
+            instruction(0x1004, "mov", vec![]),
+            instruction(0x1008, "add", vec![]),
+        ];
+
+        let analysis = analyze_disassembly("synthetic-open-tail", 0x1000, 0x100c, &instructions);
+
+        let fallthrough_block = analysis
+            .basic_blocks
+            .iter()
+            .find(|block| block.start_address == 0x1004)
+            .expect("fallthrough predecessor block");
+        let tail_block = analysis
+            .basic_blocks
+            .iter()
+            .find(|block| block.start_address == 0x1008)
+            .expect("decoded tail block");
+
+        assert_eq!(
+            fallthrough_block.terminator_kind,
+            BasicBlockTerminatorKind::Fallthrough
+        );
+        assert_eq!(
+            tail_block.terminator_kind,
+            BasicBlockTerminatorKind::Unknown
+        );
+        assert!(analysis.edges.iter().any(|edge| {
+            edge.from_block == fallthrough_block.id
+                && edge.to_block == Some(tail_block.id)
+                && edge.kind == ControlFlowEdgeKind::Fallthrough
+        }));
     }
 
     #[test]
