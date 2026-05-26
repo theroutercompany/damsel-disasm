@@ -2838,21 +2838,33 @@ fn scalar_memory_load_width(register: &str, mnemonic: &str) -> Option<(usize, bo
     if mnemonic.starts_with("ldrsb")
         || mnemonic.starts_with("ldursb")
         || mnemonic.starts_with("ldtrsb")
+        || mnemonic.starts_with("ldapursb")
     {
         Some((1, true))
     } else if mnemonic.starts_with("ldrb")
         || mnemonic.starts_with("ldurb")
         || mnemonic.starts_with("ldtrb")
+        || mnemonic.starts_with("ldarb")
+        || mnemonic.starts_with("ldaprb")
+        || mnemonic.starts_with("ldapurb")
+        || mnemonic.starts_with("ldaxrb")
+        || mnemonic.starts_with("ldxrb")
     {
         Some((1, false))
     } else if mnemonic.starts_with("ldrsh")
         || mnemonic.starts_with("ldursh")
         || mnemonic.starts_with("ldtrsh")
+        || mnemonic.starts_with("ldapursh")
     {
         Some((2, true))
     } else if mnemonic.starts_with("ldrh")
         || mnemonic.starts_with("ldurh")
         || mnemonic.starts_with("ldtrh")
+        || mnemonic.starts_with("ldarh")
+        || mnemonic.starts_with("ldaprh")
+        || mnemonic.starts_with("ldapurh")
+        || mnemonic.starts_with("ldaxrh")
+        || mnemonic.starts_with("ldxrh")
     {
         Some((2, false))
     } else if matches!(
@@ -12193,6 +12205,70 @@ mod tests {
     }
 
     #[test]
+    fn synthesize_analysis_references_recovers_byte_half_acquire_exclusive_loads() {
+        for (mnemonic, register, literal, expected) in [
+            ("ldarb", "w9", vec![0x80], 0x80),
+            ("ldaprb", "w9", vec![0x80], 0x80),
+            ("ldapurb", "w9", vec![0x80], 0x80),
+            ("ldaxrb", "w9", vec![0x80], 0x80),
+            ("ldxrb", "w9", vec![0x80], 0x80),
+            ("ldapursb", "x9", vec![0x80], 0xffff_ffff_ffff_ff80),
+            ("ldarh", "w9", vec![0x34, 0x12], 0x1234),
+            ("ldaprh", "w9", vec![0x34, 0x12], 0x1234),
+            ("ldapurh", "w9", vec![0x34, 0x12], 0x1234),
+            ("ldaxrh", "w9", vec![0x34, 0x12], 0x1234),
+            ("ldxrh", "w9", vec![0x34, 0x12], 0x1234),
+            ("ldapursh", "x9", vec![0x00, 0x80], 0xffff_ffff_ffff_8000),
+        ] {
+            let image = synthetic_literal_image(0x4000, &literal);
+            let mut instructions = vec![
+                instruction(
+                    0x1000,
+                    "mov",
+                    vec![
+                        Operand::Register("x8".to_string()),
+                        Operand::ImmediateUnsigned(0x4000),
+                    ],
+                ),
+                instruction(
+                    0x1004,
+                    mnemonic,
+                    vec![
+                        Operand::Register(register.to_string()),
+                        Operand::Memory {
+                            base: "x8".to_string(),
+                            index: None,
+                            index_modifier: None,
+                            displacement: 0,
+                            writeback: None,
+                        },
+                    ],
+                ),
+            ];
+
+            synthesize_analysis_references(&image, &mut instructions, true);
+
+            assert!(
+                instructions[1]
+                    .references
+                    .contains(&Reference::Data { target: 0x4000 }),
+                "acquire/exclusive byte/half load should keep its data reference for {mnemonic}: {:?}",
+                instructions
+            );
+            assert!(
+                instructions[1].recovered_values.iter().any(|value| {
+                    value.register == register
+                        && value.value == expected
+                        && value.kind == RecoveredValueKind::Literal
+                        && value.source == RecoveredValueSource::AdrpLoad
+                }),
+                "acquire/exclusive byte/half load should recover signedness for {mnemonic}: {:?}",
+                instructions
+            );
+        }
+    }
+
+    #[test]
     fn synthesize_analysis_references_emits_data_refs_for_broader_load_store_family() {
         let image = synthetic_image();
         for (mnemonic, operands) in [
@@ -13505,7 +13581,7 @@ mod tests {
     }
 
     #[test]
-    fn synthesize_analysis_references_does_not_promote_unscaled_acquire_byte_half_loads() {
+    fn synthesize_analysis_references_does_not_fabricate_unscaled_acquire_byte_half_targets() {
         let image = synthetic_table_image(0x3000);
         for mnemonic in ["ldapurb", "ldapursb", "ldapurh", "ldapursh"] {
             let mut instructions = vec![
@@ -13544,8 +13620,13 @@ mod tests {
                 instructions
             );
             assert!(
-                instructions[1].recovered_values.is_empty(),
-                "byte/half unscaled acquire loads must not be promoted to 32-bit table slots for {mnemonic}: {:?}",
+                instructions[1].recovered_values.iter().all(|value| {
+                    !matches!(
+                        value.kind,
+                        RecoveredValueKind::FunctionPointer | RecoveredValueKind::ExportAddress
+                    )
+                }),
+                "byte/half unscaled acquire loads must not be promoted to pointer table slots for {mnemonic}: {:?}",
                 instructions
             );
             assert!(
