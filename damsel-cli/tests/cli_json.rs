@@ -2227,6 +2227,11 @@ fn disasm_json_analysis_contract_is_opt_in() {
     );
     for edge in edges {
         assert!(edge["back_edge"].is_boolean());
+        let edge_kind = edge["kind"].as_str().expect("edge kind");
+        let structural_successor = matches!(
+            edge_kind,
+            "fallthrough" | "branch" | "conditional-branch" | "indirect-branch"
+        );
         let from_block = edge["from_block"].as_u64().expect("edge from block");
         let from_block_json = blocks
             .iter()
@@ -2237,23 +2242,40 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 .iter()
                 .find(|block| block["id"].as_u64() == Some(to_block))
                 .expect("to block should exist");
-            assert!(
-                from_block_json["successors"]
-                    .as_array()
-                    .expect("successors")
-                    .iter()
-                    .any(|successor| successor.as_u64() == Some(to_block)),
-                "from block should expose edge to successor"
-            );
-            assert!(
-                to_block_json["predecessors"]
-                    .as_array()
-                    .expect("predecessors")
-                    .iter()
-                    .any(|predecessor| predecessor.as_u64() == Some(from_block)),
-                "to block should expose edge from predecessor"
-            );
-        } else if edge["target_address"].is_number() {
+            let from_successors = from_block_json["successors"]
+                .as_array()
+                .expect("successors");
+            let to_predecessors = to_block_json["predecessors"]
+                .as_array()
+                .expect("predecessors");
+            if structural_successor {
+                assert!(
+                    from_successors
+                        .iter()
+                        .any(|successor| successor.as_u64() == Some(to_block)),
+                    "from block should expose structural successor"
+                );
+                assert!(
+                    to_predecessors
+                        .iter()
+                        .any(|predecessor| predecessor.as_u64() == Some(from_block)),
+                    "to block should expose structural predecessor"
+                );
+            } else {
+                assert!(
+                    !from_successors
+                        .iter()
+                        .any(|successor| successor.as_u64() == Some(to_block)),
+                    "call-like edges should not become structural successors"
+                );
+                assert!(
+                    !to_predecessors
+                        .iter()
+                        .any(|predecessor| predecessor.as_u64() == Some(from_block)),
+                    "call-like edges should not become structural predecessors"
+                );
+            }
+        } else if edge["target_address"].is_number() && structural_successor {
             assert!(
                 from_block_json["external_successors"]
                     .as_array()
@@ -2264,7 +2286,20 @@ fn disasm_json_analysis_contract_is_opt_in() {
                             && successor["source_address"] == edge["source_address"]
                             && successor["kind"] == edge["kind"]
                     ),
-                "from block should expose external successor"
+                "from block should expose external structural successor"
+            );
+        } else if edge["target_address"].is_number() {
+            assert!(
+                !from_block_json["external_successors"]
+                    .as_array()
+                    .expect("external successors")
+                    .iter()
+                    .any(
+                        |successor| successor["target_address"] == edge["target_address"]
+                            && successor["source_address"] == edge["source_address"]
+                            && successor["kind"] == edge["kind"]
+                    ),
+                "call-like external edges should not become block successors"
             );
         } else if edge["kind"] == "return" {
             assert_eq!(from_block_json["terminal"], true);

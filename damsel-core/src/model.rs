@@ -2338,6 +2338,19 @@ impl fmt::Display for ControlFlowEdgeKind {
     }
 }
 
+impl ControlFlowEdgeKind {
+    pub fn is_structural_successor(self) -> bool {
+        matches!(
+            self,
+            Self::Fallthrough | Self::Branch | Self::ConditionalBranch | Self::IndirectBranch
+        )
+    }
+
+    pub fn is_call(self) -> bool {
+        matches!(self, Self::Call | Self::IndirectCall)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlFlowEdge {
     pub from_block: usize,
@@ -2349,6 +2362,10 @@ pub struct ControlFlowEdge {
 }
 
 impl ControlFlowEdge {
+    pub fn is_structural_successor(&self) -> bool {
+        self.to_block.is_some() && self.kind.is_structural_successor()
+    }
+
     pub fn is_back_edge(&self) -> bool {
         let Some(to_block) = self.to_block else {
             return false;

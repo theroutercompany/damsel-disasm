@@ -1,9 +1,9 @@
 use damsel_core::{
     Annotation, Architecture, BasicBlock, BasicBlockTerminatorKind, BasicBlockTerminatorKindCounts,
-    BinaryFormat, BinaryImage, BinaryImageValidationError, DisassemblyLimit, DisassemblyOptions,
-    DisassemblyRequest, DisassemblyRequestV2, DisassemblyTarget, Endianness, ImportBindingKind,
-    ImportBindingRecord, ImportBindingSource, ObjcNameSource, ObjcSelectorSource, Reference,
-    Relocation, SliceDescriptor, SliceInfo, StubKind,
+    BinaryFormat, BinaryImage, BinaryImageValidationError, ControlFlowEdgeKind, DisassemblyLimit,
+    DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2, DisassemblyTarget, Endianness,
+    ImportBindingKind, ImportBindingRecord, ImportBindingSource, ObjcNameSource,
+    ObjcSelectorSource, Reference, Relocation, SliceDescriptor, SliceInfo, StubKind,
 };
 use std::ptr;
 use std::sync::Arc;
@@ -509,6 +509,32 @@ fn basic_block_terminator_kind_display_is_stable() {
     for (kind, expected) in cases {
         assert_eq!(kind.to_string(), expected);
     }
+}
+
+#[test]
+fn control_flow_edge_kind_structural_successor_semantics_are_stable() {
+    let structural = [
+        ControlFlowEdgeKind::Fallthrough,
+        ControlFlowEdgeKind::Branch,
+        ControlFlowEdgeKind::ConditionalBranch,
+        ControlFlowEdgeKind::IndirectBranch,
+    ];
+    let non_structural = [
+        ControlFlowEdgeKind::Call,
+        ControlFlowEdgeKind::IndirectCall,
+        ControlFlowEdgeKind::Return,
+    ];
+
+    for kind in structural {
+        assert!(kind.is_structural_successor(), "{kind}");
+        assert!(!kind.is_call(), "{kind}");
+    }
+    for kind in non_structural {
+        assert!(!kind.is_structural_successor(), "{kind}");
+    }
+    assert!(ControlFlowEdgeKind::Call.is_call());
+    assert!(ControlFlowEdgeKind::IndirectCall.is_call());
+    assert!(!ControlFlowEdgeKind::Return.is_call());
 }
 
 #[test]

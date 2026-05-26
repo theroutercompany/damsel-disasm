@@ -305,8 +305,10 @@ fn analyze_disassembly_impl(
     for edge in &edges {
         if let Some(to_block) = edge.to_block {
             intra_window_edge_count += 1;
-            incoming_blocks.insert(to_block);
-            outgoing_blocks.insert(edge.from_block);
+            if edge.kind.is_structural_successor() {
+                incoming_blocks.insert(to_block);
+                outgoing_blocks.insert(edge.from_block);
+            }
         }
     }
     let first_block_id = basic_blocks.first().map(|block| block.id);
@@ -1215,7 +1217,9 @@ fn primary_entry_reachable_blocks(
     };
     let mut successors = BTreeMap::<usize, Vec<usize>>::new();
     for edge in edges {
-        if let Some(to_block) = edge.to_block {
+        if edge.kind.is_structural_successor()
+            && let Some(to_block) = edge.to_block
+        {
             successors
                 .entry(edge.from_block)
                 .or_default()
@@ -6078,6 +6082,41 @@ mod tests {
                     && edge.to_block == Some(target_block.id)
             }),
             "call edge should resolve to the block that starts at the call target: {:?}",
+            analysis.edges
+        );
+    }
+
+    #[test]
+    fn analysis_does_not_make_in_window_call_targets_structural_successors() {
+        let instructions = vec![
+            DecodedInstruction {
+                references: vec![Reference::Call { target: 0x2000 }],
+                ..instruction(0x1000, "bl", vec![Operand::Label(0x2000)])
+            },
+            instruction(0x1004, "ret", vec![]),
+            instruction(0x2000, "ret", vec![]),
+        ];
+
+        let analysis = analyze_disassembly("synthetic-call-callee", 0x1000, 0x2004, &instructions);
+        let callee_block = analysis
+            .basic_blocks
+            .iter()
+            .find(|block| block.start_address == 0x2000)
+            .expect("callee block");
+
+        assert_eq!(analysis.summary.basic_block_count, 2);
+        assert_eq!(analysis.summary.entry_block_count, 2);
+        assert_eq!(analysis.summary.exit_block_count, 2);
+        assert_eq!(analysis.summary.primary_entry_reachable_block_count, 1);
+        assert_eq!(analysis.summary.disconnected_block_count, 1);
+        assert!(
+            analysis.edges.iter().any(|edge| {
+                edge.kind == ControlFlowEdgeKind::Call
+                    && edge.to_block == Some(callee_block.id)
+                    && edge.target_address == Some(0x2000)
+                    && !edge.is_structural_successor()
+            }),
+            "call edge should resolve without becoming structural CFG: {:?}",
             analysis.edges
         );
     }
