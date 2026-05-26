@@ -326,7 +326,10 @@ fn is_indirect_control(mnemonic: &str) -> bool {
 }
 
 fn is_return_like(mnemonic: &str) -> bool {
-    matches!(mnemonic, "ret" | "eret" | "drps" | "retaa" | "retab")
+    matches!(
+        mnemonic,
+        "ret" | "eret" | "eretaa" | "eretab" | "drps" | "retaa" | "retab"
+    )
 }
 
 fn map_operand(
