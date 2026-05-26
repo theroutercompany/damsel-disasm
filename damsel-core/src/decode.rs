@@ -162,10 +162,9 @@ fn derive_references(
 
     for operand in operands {
         if let Arm64OperandType::Imm(value) = operand.op_type
-            && value >= 0
             && !is_control_flow
         {
-            let target = value as u64;
+            let target = address_from_arm64_immediate(value);
             if is_page_materialization {
                 push_reference(&mut references, Reference::Page { target });
             } else if is_literal_data_reference_mnemonic(&lower) {
@@ -260,10 +259,14 @@ fn direct_control_target_operand(
         .enumerate()
         .rev()
         .filter_map(|(index, operand)| match operand.op_type {
-            Arm64OperandType::Imm(value) if value >= 0 => Some((index, value as u64)),
+            Arm64OperandType::Imm(value) => Some((index, address_from_arm64_immediate(value))),
             _ => None,
         })
         .next()
+}
+
+fn address_from_arm64_immediate(value: i64) -> u64 {
+    value as u64
 }
 
 fn has_group(cs: &Capstone, detail: &InsnDetail<'_>, expected: &str) -> bool {
@@ -353,13 +356,12 @@ fn map_operand(
         }
         Arm64OperandType::Imm(value) => {
             let is_direct_control_target = direct_control_target_index == Some(operand_index);
-            if (((is_call_mnemonic(&lower) || is_relative_branch(&lower))
+            if ((is_call_mnemonic(&lower) || is_relative_branch(&lower))
                 && is_direct_control_target)
                 || lower == "adr"
-                || lower == "adrp")
-                && value >= 0
+                || lower == "adrp"
             {
-                Operand::Label(value as u64)
+                Operand::Label(address_from_arm64_immediate(value))
             } else if value < 0 {
                 Operand::ImmediateSigned(value)
             } else {

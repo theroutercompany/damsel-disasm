@@ -76,6 +76,57 @@ fn decode_labels_direct_call_targets() {
 }
 
 #[test]
+fn decode_preserves_high_half_address_targets() {
+    let start = 0xffff_ffff_ffff_f000;
+    let bytes = [
+        0x00, 0x00, 0x00, 0x14, // b #0xfffffffffffff000
+        0x00, 0x00, 0x00, 0x94, // bl #0xfffffffffffff004
+        0x00, 0x00, 0x00, 0x90, // adrp x0, 0xfffffffffffff000
+    ];
+    let instructions = decode(&bytes, start, None);
+
+    assert_eq!(instructions.len(), 3);
+    assert!(
+        instructions[0]
+            .references
+            .contains(&Reference::Branch { target: start }),
+        "high-half direct branch target should be preserved, got {:?}",
+        instructions[0].references
+    );
+    assert!(
+        matches!(instructions[0].operands.first(), Some(Operand::Label(target)) if *target == start),
+        "high-half branch target should render as a label, got {:?}",
+        instructions[0].operands
+    );
+
+    assert!(
+        instructions[1]
+            .references
+            .contains(&Reference::Call { target: start + 4 }),
+        "high-half direct call target should be preserved, got {:?}",
+        instructions[1].references
+    );
+    assert!(
+        matches!(instructions[1].operands.first(), Some(Operand::Label(target)) if *target == start + 4),
+        "high-half call target should render as a label, got {:?}",
+        instructions[1].operands
+    );
+
+    assert!(
+        instructions[2]
+            .references
+            .contains(&Reference::Page { target: start }),
+        "high-half page materialization target should be preserved, got {:?}",
+        instructions[2].references
+    );
+    assert!(
+        matches!(instructions[2].operands.get(1), Some(Operand::Label(target)) if *target == start),
+        "high-half adrp target should render as a label, got {:?}",
+        instructions[2].operands
+    );
+}
+
+#[test]
 fn decode_uses_final_immediate_for_test_bit_branch_targets() {
     let bytes = [0x28, 0x01, 0x00, 0x37]; // tbnz w8, #0, 0x10000053c
     let instructions = decode(&bytes, 0x100000518, None);
