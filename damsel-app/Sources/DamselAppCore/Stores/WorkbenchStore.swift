@@ -60,22 +60,29 @@ public final class WorkbenchStore: ObservableObject {
     private var symbolSuggestionGeneration = 0
     private var lastDisassemblyRequest: DisasmAPIRequest?
     private let validatesLocalFiles: Bool
+    private let recordRecentDocument: (URL) -> Void
 
-    public init(serverProcess: DamselServerProcess = DamselServerProcess()) {
+    public init(
+        serverProcess: DamselServerProcess = DamselServerProcess(),
+        recordRecentDocument: @escaping (URL) -> Void = { _ in }
+    ) {
         self.serverProcess = serverProcess
         validatesLocalFiles = true
+        self.recordRecentDocument = recordRecentDocument
     }
 
     init(
         serverProcess: DamselServerProcess = DamselServerProcess(),
         client: (any WorkbenchAPIClient)?,
         loadedImage: ImageUploadResponse? = nil,
-        validatesLocalFiles: Bool = false
+        validatesLocalFiles: Bool = false,
+        recordRecentDocument: @escaping (URL) -> Void = { _ in }
     ) {
         self.serverProcess = serverProcess
         self.client = client
         self.loadedImage = loadedImage
         self.validatesLocalFiles = validatesLocalFiles
+        self.recordRecentDocument = recordRecentDocument
         selectedSection = loadedImage?.defaultSection ?? loadedImage?.sections.first?.name ?? ""
     }
 
@@ -302,6 +309,7 @@ public final class WorkbenchStore: ObservableObject {
                 return
             }
             resetForLoadedImage(upload, url: url)
+            recordRecentDocument(url)
             statusText = "\(upload.fileName) · \(upload.architecture) · \(upload.sections.count) sections"
             try await runDisassembly()
         } catch {

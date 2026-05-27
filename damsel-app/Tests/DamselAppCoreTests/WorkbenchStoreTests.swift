@@ -318,6 +318,31 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSuccessfulLocalFileLoadRecordsRecentDocument() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let fileURL = directory.appendingPathComponent("recent-fixture")
+        try Data([0xCF, 0xFA, 0xED, 0xFE]).write(to: fileURL)
+        var recentDocuments: [URL] = []
+        let client = SuggestionClient(
+            response: [],
+            uploadResponse: Self.sampleImage(imageId: "recent-fixture", fileName: "recent-fixture"),
+            disassemblyResponse: try Self.sampleDisassembly()
+        )
+        let store = WorkbenchStore(
+            client: client,
+            validatesLocalFiles: true,
+            recordRecentDocument: { recentDocuments.append($0) }
+        )
+
+        await store.loadFile(fileURL)
+
+        XCTAssertEqual(recentDocuments, [fileURL])
+    }
+
+    @MainActor
     func testLoadingFileResetsFileScopedControlsBeforeAutoDisassembly() async throws {
         let loadedImage = Self.sampleImage(imageId: "new-fixture")
         let client = SuggestionClient(

@@ -4,10 +4,13 @@ import SwiftUI
 
 @main
 @MainActor
-final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     private static var retainedDelegate: DamselWorkbenchApplication?
 
-    private let store = WorkbenchStore()
+    private lazy var store = WorkbenchStore(recordRecentDocument: { url in
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+    })
+    private let openRecentMenu = NSMenu(title: "Open Recent")
     private var mainWindowController: NSWindowController?
     private var openedLaunchFile = false
 
@@ -56,6 +59,13 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         true
     }
 
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === openRecentMenu else {
+            return
+        }
+        rebuildOpenRecentMenu()
+    }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(runDisassembly(_:)),
@@ -82,6 +92,15 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
     @objc private func openBinary(_ sender: Any?) {
         openMainWindow()
         NotificationCenter.default.post(name: .damselOpenBinaryCommand, object: nil)
+    }
+
+    @objc private func openRecentDocument(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else {
+            NSSound.beep()
+            return
+        }
+        openMainWindow()
+        Task { await store.loadFile(url) }
     }
 
     @objc private func runDisassembly(_ sender: Any?) {
@@ -189,6 +208,9 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         let open = menu.addItem(withTitle: "Open Binary...", action: #selector(openBinary(_:)), keyEquivalent: "o")
         open.keyEquivalentModifierMask = [.command]
         open.target = self
+        let openRecent = menu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "")
+        openRecentMenu.delegate = self
+        openRecent.submenu = openRecentMenu
         menu.addItem(.separator())
         let reveal = menu.addItem(
             withTitle: "Reveal Binary in Finder",
@@ -206,6 +228,35 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuI
         menu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
             .keyEquivalentModifierMask = [.command]
         return menu
+    }
+
+    private func rebuildOpenRecentMenu() {
+        openRecentMenu.removeAllItems()
+        let urls = NSDocumentController.shared.recentDocumentURLs
+        guard !urls.isEmpty else {
+            let item = openRecentMenu.addItem(withTitle: "No Recent Binaries", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            return
+        }
+
+        for url in urls.prefix(10) {
+            let item = openRecentMenu.addItem(
+                withTitle: url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent,
+                action: #selector(openRecentDocument(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = url
+            item.target = self
+            item.toolTip = url.path
+        }
+
+        openRecentMenu.addItem(.separator())
+        let clear = openRecentMenu.addItem(
+            withTitle: "Clear Menu",
+            action: #selector(NSDocumentController.clearRecentDocuments(_:)),
+            keyEquivalent: ""
+        )
+        clear.target = NSDocumentController.shared
     }
 
     private func editMenu() -> NSMenu {
