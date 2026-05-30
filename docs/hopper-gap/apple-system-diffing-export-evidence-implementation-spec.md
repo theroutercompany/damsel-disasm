@@ -36,6 +36,14 @@ flows for understanding how Apple system artifacts changed across releases.
 - [Large-Project Performance, Scheduler, And Indexing Implementation Spec](large-project-performance-scheduler-indexing-implementation-spec.md)
 - [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 - [Plugin And SDK Extension Boundary Implementation Spec](plugin-sdk-extension-boundary-implementation-spec.md)
+- [Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
+
+Casebook companion:
+[Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
+owns the analyst-facing layer above diff/export: cases, timeline events,
+evidence pins, hypotheses, findings, notebook pages, report builder, redaction
+preview, and handoff packages. Diff findings and evidence exports should feed
+that casebook instead of becoming isolated files.
 
 ## Public Hopper And Ecosystem Evidence
 
@@ -1388,4 +1396,3 @@ Completion for this tranche requires all gates for the claimed phase. A JSON
 export alone does not prove diffing. A diff finding list alone does not prove
 evidence packaging. A report alone does not prove Workbench route
 synchronization.
-

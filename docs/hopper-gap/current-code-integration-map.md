@@ -146,6 +146,15 @@ service, name-role facts, typeref/field/conformance parsers, metadata accessor
 classification, Swift-ObjC bridge records, Workbench Swift browser stores, and
 paged API routes.
 
+Investigation casebook companion:
+[Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
+maps the current lack of project case/session/timeline records into a durable
+casebook layer above `WorkbenchStore`, routes, semantic edits, jobs, automation
+runs, assistant responses, debugger stops, diff findings, patch previews, and
+evidence exports. It defines the future Rust case tables, Workbench
+`CasebookStore`, `CaseTimelineStore`, `EvidenceTrayStore`, notebook/report
+stores, redaction previews, and CLI/API contracts.
+
 Processor semantics companion:
 [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
 maps current `Architecture`, `Operand`, `DecodedInstruction`,

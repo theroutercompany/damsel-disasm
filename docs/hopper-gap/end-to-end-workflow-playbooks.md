@@ -15,6 +15,12 @@ defines the shared intake/source-registration flow that should precede these
 playbooks whenever the user opens a raw file, dyld cache, kernel collection,
 KDK, dSYM, panic log, app bundle, or extracted Apple asset root.
 
+Investigation companion:
+[Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
+defines how these playbooks become recoverable case records: sessions,
+timeline events, evidence pins, hypotheses, findings, notebook pages, reports,
+redaction previews, and handoff packages.
+
 ## Playbook Principles
 
 Every playbook should specify:

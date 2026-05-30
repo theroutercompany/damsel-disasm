@@ -95,6 +95,14 @@ adds the Swift API family that sits beside ObjC/C++/kernel contracts:
 and `/swift/problems`. Those routes must use project object ids and route ids,
 not raw demangled strings, so Swift facts can feed search, inspector,
 decompiler overlays, automation, ObjC bridge navigation, and evidence export.
+[Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
+adds the casebook API family above those project facts: `/cases`,
+`/cases/{case_id}/sessions`, `/timeline`, `/evidence-pins`, `/hypotheses`,
+`/findings`, `/notebook/pages`, `/reports`, `/redaction/preview`, and
+`/handoff-package/export`. Those APIs should reference route/object ids rather
+than duplicating facts, so manual edits, automation runs, assistant responses,
+debugger stops, diffs, patch previews, and exports share one investigation
+record.
 
 Procedure and decompiler companions:
 [Function Recovery And Procedure Database Plan](function-recovery-and-procedure-database-plan.md)

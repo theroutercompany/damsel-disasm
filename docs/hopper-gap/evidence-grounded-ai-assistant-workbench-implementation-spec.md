@@ -67,7 +67,13 @@ Read this spec with:
 - [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md)
 - [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
 - [Apple System Diffing, Export, And Evidence Implementation Spec](apple-system-diffing-export-evidence-implementation-spec.md)
+- [Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
 - [Quality And Validation Plan](quality-validation-plan.md)
+
+The casebook companion defines where assistant outputs go after generation:
+assistant responses can draft hypotheses, findings, notebook snippets, and
+report sections, but accepted claims must still link to case evidence pins and
+review records.
 
 ## Product Thesis
 

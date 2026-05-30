@@ -41,6 +41,10 @@ The biggest gaps are:
     inventory, demangled-name facts, nominal types, fields, protocols,
     conformances, metadata accessors, witness tables, runtime calls, ObjC
     bridge edges, Swift browser UX, and honest static/dynamic evidence split.
+17. Investigation casebook and report workspace: cases, sessions, timelines,
+    evidence pins, hypotheses, findings, notebook pages, report builder,
+    redaction preview, handoff packages, and unified activity records across
+    manual edits, automation, AI, debugger, diffing, patching, and exports.
 
 ## Current Implemented Strengths
 

@@ -215,6 +215,7 @@ Planned future:
 - [Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](../hopper-gap/semantic-editing-reanalysis-hints-implementation-spec.md)
 - [Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](../hopper-gap/preferences-keymaps-layout-theming-implementation-spec.md)
 - [Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](../hopper-gap/swift-runtime-metadata-implementation-spec.md)
+- [Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](../hopper-gap/investigation-casebook-session-timeline-implementation-spec.md)
 - [Apple Runtime, ObjC/C++/XNU, And System Browser Workbench Implementation Spec](../hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md)
 - [Processor Semantics And Apple ABI Implementation Spec](../hopper-gap/processor-semantics-apple-abi-implementation-spec.md)
 - [Decompiler, Pseudocode, And Native Workbench Representation Implementation Spec](../hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)

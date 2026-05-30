@@ -39,6 +39,7 @@ Core companions:
 - [Patching, Hex, Assembly, And Transaction Implementation Spec](patching-hex-assembly-transaction-implementation-spec.md)
 - [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 - [Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](preferences-keymaps-layout-theming-implementation-spec.md)
+- [Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
 - [API And Data Contracts](api-data-contracts.md)
 - [Refactor And Subsystem Plan](refactor-subsystem-plan.md)
 - [Quality And Validation Plan](quality-validation-plan.md)
@@ -1769,6 +1770,12 @@ Instead use:
 - route ids
 - hashes
 - user-approved evidence snippets
+
+The casebook/timeline layer should subscribe to accepted activity entries and
+transaction summaries, then promote only reviewable route/evidence references
+into investigation notes, findings, reports, and handoff packages. The command
+system remains the source of command truth; the casebook is the analyst-facing
+memory and reporting projection.
 
 ## Job Dispatch And Cancellation
 

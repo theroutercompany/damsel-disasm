@@ -981,6 +981,12 @@ Workbench should display provenance wherever automation output appears:
 
 ## Activity Log
 
+[Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
+defines the project-level timeline that consumes these automation activity
+records. Automation Studio still owns run details and outputs, while the
+casebook owns how important runs become evidence pins, notebook snippets,
+findings, report sections, and handoff package entries.
+
 Activity events:
 
 - recipe run started

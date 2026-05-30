@@ -447,6 +447,9 @@ Requirements:
   references, not in huge Swift arrays.
 - Runtime events should feed the same activity log and evidence export model
   as static analysis jobs.
+- Casebook timeline records should preserve target-environment identity,
+  device/simulator privacy flags, source-symbol status, and stop-report routes
+  without storing raw device logs by default.
 
 ## Remote Workbench Surfaces
 

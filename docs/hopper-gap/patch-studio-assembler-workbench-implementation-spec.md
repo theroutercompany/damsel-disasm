@@ -65,6 +65,7 @@ Read this spec with:
 - [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
 - [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 - [Apple System Diffing, Export, And Evidence Implementation Spec](apple-system-diffing-export-evidence-implementation-spec.md)
+- [Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
 - [Native App Trust, Distribution, Permissions, And Diagnostics Implementation Spec](native-app-trust-distribution-diagnostics-implementation-spec.md)
 - [Corpus, Benchmark, And Regression Plan](corpus-benchmark-regression-plan.md)
 - [Quality And Validation Plan](quality-validation-plan.md)
@@ -1020,6 +1021,11 @@ Patch evidence package includes:
 - analysis versions
 - export artifact hashes
 - user reason
+
+The investigation casebook should consume patch plans, previews, warnings,
+applied project revisions, debugger launches against patched revisions, and
+patch evidence exports as timeline events. Reports should cite the patch
+revision and preview evidence, not just final bytes.
 - redaction policy
 
 This is Damsel's chance to exceed Hopper for research workflows: every patch

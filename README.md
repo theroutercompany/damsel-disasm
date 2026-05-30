@@ -39,6 +39,7 @@ Planned next:
   - [docs/hopper-gap/semantic-editing-reanalysis-hints-implementation-spec.md](./docs/hopper-gap/semantic-editing-reanalysis-hints-implementation-spec.md)
   - [docs/hopper-gap/preferences-keymaps-layout-theming-implementation-spec.md](./docs/hopper-gap/preferences-keymaps-layout-theming-implementation-spec.md)
   - [docs/hopper-gap/swift-runtime-metadata-implementation-spec.md](./docs/hopper-gap/swift-runtime-metadata-implementation-spec.md)
+  - [docs/hopper-gap/investigation-casebook-session-timeline-implementation-spec.md](./docs/hopper-gap/investigation-casebook-session-timeline-implementation-spec.md)
   - [docs/hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md](./docs/hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md)
   - [docs/hopper-gap/processor-semantics-apple-abi-implementation-spec.md](./docs/hopper-gap/processor-semantics-apple-abi-implementation-spec.md)
   - [docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md](./docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)

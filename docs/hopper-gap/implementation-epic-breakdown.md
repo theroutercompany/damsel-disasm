@@ -50,6 +50,7 @@ gates, and "do not start before" constraints.
 | E26 | Semantic editing and reanalysis hints | Analyst-authored knowledge and correction loop | E3/E12/E13/E21/E22/E24 |
 | E27 | Preferences, keymaps, layout, and theming | Native workstation personalization and recovery | E5/E11/E19/E21/E26 |
 | E28 | Swift runtime metadata and Swift-ObjC bridge | First-class Swift Apple-systems analysis lane | E2/E4/E7/E8/E11/E12/E21/E22 |
+| E29 | Investigation casebook, timeline, and report workspace | Evidence-driven analyst memory and handoff | E3/E5/E14/E15/E17/E18/E21/E26 |
 
 ## E0: Docs Acceptance And Scope Lock
 
@@ -82,6 +83,8 @@ Deliverables:
 - command/navigation/undo Workbench interaction implementation spec reviewed
 - Apple runtime Workbench browser implementation spec reviewed
 - Swift runtime metadata and Swift-ObjC bridge implementation spec reviewed
+- investigation casebook, session timeline, and report workspace implementation
+  spec reviewed
 
 Validation:
 
@@ -100,6 +103,7 @@ Validation:
 - command/navigation/undo interaction cross-link check
 - Apple runtime browser suite cross-link check
 - Swift runtime metadata and bridge cross-link check
+- investigation casebook and report workspace cross-link check
 
 Do not leave E0 until:
 
@@ -126,6 +130,9 @@ Do not leave E0 until:
   confidence-aware Workbench workflows over ObjC, C++/ObjC++, IOKit, dyld
   cache, kernel, KDK/dSYM, XNU interface, and panic facts, not just static
   tables over parsed metadata
+- investigation casebooks are understood as evidence-pinned analyst memory,
+  session replay, timeline capture, finding review, redaction, and handoff
+  architecture, not a loose notes surface beside the disassembler
 
 ## E1: Project, Source, And Address Model
 
@@ -1463,6 +1470,80 @@ Risks:
 - ABI drift breaks parser assumptions
 - static metadata and future debugger runtime observations are merged without
   evidence boundaries
+
+## E29: Investigation Casebook, Session Timeline, And Report Workspace
+
+Goal:
+
+- make manual edits, route history, automation outputs, assistant responses,
+  debugger stops, diffs, patch previews, notebook pages, and evidence exports
+  part of one recoverable case record
+
+Primary spec:
+
+- [Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
+
+Deliverables:
+
+- case and session models
+- timeline event model with actor, route, source, privacy, and evidence fields
+- evidence pins with route repair and stale-state diagnostics
+- hypotheses, findings, review states, and confidence boundaries
+- notebook pages with route/evidence embeds
+- report builder with outline, section, citation, and export models
+- redaction preview and handoff package export
+- Workbench casebook sidebar, timeline, evidence tray, hypothesis board,
+  findings list, notebook editor, and report builder stores
+- API and CLI surfaces for case/session/timeline/evidence/hypothesis/finding,
+  notebook, report, redaction, and handoff operations
+- privacy, paging, compaction, and append-only audit rules
+
+Implementation tasks:
+
+- add case, session, timeline, evidence pin, hypothesis, finding, notebook,
+  report, redaction, and handoff tables
+- add session lifecycle commands for open, resume, pause, close, and snapshot
+- add timeline append service with typed actor/event validation
+- connect route history, semantic edits, annotation changes, automation runs,
+  AI drafts, debugger stops, diff reviews, patch previews, and evidence exports
+  to timeline emission
+- add evidence pin creation from route selections, search results, diffs,
+  debugger stops, patch previews, and exported artifacts
+- add stale-route repair and unresolved-evidence problem reporting
+- add hypothesis and finding review-state transitions with required evidence
+  links before accepted findings
+- add notebook route/evidence embeds and deterministic snapshot rendering
+- add report outline/section builder, citation checks, export, and manifest
+  generation
+- add redaction preview for local paths, source roots, user text, device names,
+  debugger targets, plugin names, AI prompts, notebook prose, and report text
+- add handoff package export and reopen validation
+- add Workbench stores and paged APIs that keep large timelines off the main
+  thread
+
+Validation:
+
+- case/session model snapshots
+- timeline actor/event fixture matrix
+- route-history and semantic-edit event capture tests
+- automation, AI, debugger, diff, and patch event capture tests
+- evidence pin creation and stale-route repair fixtures
+- hypothesis and finding transition tests
+- accepted-finding requires evidence-pin test
+- notebook embed rendering snapshots
+- report preview/export snapshots
+- redaction preview and export redaction fixtures
+- handoff manifest and reopen smoke
+- large timeline paging and compaction performance sample
+
+Risks:
+
+- casebook collapses into a loose notes app with weak links to disassembly facts
+- noisy event capture hides the analyst's important decisions
+- local paths, prompts, target names, or notebook text leak through reports
+- AI-generated text is treated as an accepted finding without human review
+- large timelines block the Workbench
+- handoff packages are exportable but not reopenable with route identity intact
 
 ## E16: Plugin / SDK Boundary
 

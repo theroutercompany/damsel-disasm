@@ -67,6 +67,7 @@ Read this spec with:
 - [Apple Artifact Intake, Acquisition, And Source Registration Implementation Spec](apple-artifact-intake-source-registration-implementation-spec.md)
 - [Apple Runtime, ObjC/C++/XNU, And System Browser Workbench Implementation Spec](apple-runtime-workbench-browsers-implementation-spec.md)
 - [Patching, Hex, Assembly, And Transaction Implementation Spec](patching-hex-assembly-transaction-implementation-spec.md)
+- [Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md)
 - [Performance And Responsiveness Architecture](performance-responsiveness-architecture.md)
 - [API And Data Contracts](api-data-contracts.md)
 - [Quality And Validation Plan](quality-validation-plan.md)
@@ -960,6 +961,11 @@ Breakpoint actions should be audited:
 
 The activity log should make debugger actions visible because they affect a
 live process.
+
+The investigation casebook should treat debugger launch, attach, stop,
+continue, module-load, breakpoint, memory-read, register, and stop-report
+records as timeline candidates. Accepted findings should cite route-mapped stop
+summaries rather than raw transient debugger state.
 
 ## Register And Value Interpretation
 

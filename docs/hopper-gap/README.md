@@ -69,6 +69,11 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   field metadata, protocols, conformances, witness/accessor classification,
   Swift-ObjC bridge records, Workbench browsers, API/CLI contracts,
   performance budgets, diagnostics, and validation.
+- [Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md):
+  implementation-ready plan for the analyst memory layer above routes and
+  facts: cases, sessions, timelines, evidence pins, hypotheses, findings,
+  notebook pages, report builder, redaction preview, handoff packages,
+  Workbench stores, API/CLI contracts, performance budgets, and validation.
 - [Implementation Epic Breakdown](implementation-epic-breakdown.md):
   issue-sized epics, dependencies, deliverables, risks, and validation gates for
   turning this pack into real work.
@@ -182,6 +187,12 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   witness tables, metadata accessors, runtime calls, Swift-ObjC bridges,
   dyld-cache projections, Workbench browser UX, and honest static/dynamic
   evidence separation.
+- [Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md):
+  implementation-ready casebook subsystem that turns manual edits, route
+  history, automation outputs, assistant responses, debugger stops, diffs,
+  patch previews, and evidence exports into cases, timeline events, evidence
+  pins, hypotheses, findings, notebook pages, reports, redaction previews, and
+  handoff packages.
 - [Type And Symbolication System Plan](type-symbolication-system-plan.md):
   provenance-aware names, types, dSYM/KDK/DWARF, ObjC encodings, C++ RTTI,
   Swift demangling, user overrides, and symbolication profiles.

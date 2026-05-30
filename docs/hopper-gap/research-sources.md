@@ -192,6 +192,20 @@ roles, typeref/field/protocol/conformance parsing, metadata accessor and
 runtime-call classification, Swift-ObjC bridge records, browser APIs,
 diagnostics, static/dynamic evidence separation, and validation fixtures.
 
+For the investigation casebook/session-timeline/report workspace implementation
+pass, see
+[Investigation Casebook, Session Timeline, And Report Workspace Implementation Spec](investigation-casebook-session-timeline-implementation-spec.md).
+That document uses Hopper's tutorial evidence for comments, labels, tags,
+manual references, graph annotations, navigation stack, bookmarks, breakpoints,
+undo/redo, and switch hints; Hopper's homepage evidence for native UI, direct
+CFG annotation, PDF export, scripting, AI/MCP, debugger, and contextual
+inspector; Hopper's FAQ/download evidence for scripting, save/export, and
+unsupported encrypted iOS app constraints; and public Hopper script/export
+workflows. It maps those sources into Damsel cases, sessions, timeline events,
+evidence pins, hypotheses, findings, notebook pages, report builder,
+redaction preview, handoff packages, Workbench stores, APIs, CLI commands, and
+validation gates.
+
 For the automation and SDK-boundary implementation pass, see
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 and
