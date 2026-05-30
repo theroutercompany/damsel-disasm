@@ -65,6 +65,10 @@ and
 [Plugin And SDK Extension Boundary Implementation Spec](plugin-sdk-extension-boundary-implementation-spec.md)
 show how future CLI batch, MCP, script, loader, analyzer, exporter, and
 Workbench command surfaces must use the same project/query/annotation APIs.
+[Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](automation-studio-scripting-plugin-workbench-implementation-spec.md)
+maps those backend boundaries into a native Workbench surface for recipes,
+runs, MCP sessions, script packages, plugin packages, capability prompts,
+activity logs, extension outputs, and Apple-system automation recipes.
 
 Performance runtime implementation companion:
 [Large-Project Performance, Scheduler, And Indexing Implementation Spec](large-project-performance-scheduler-indexing-implementation-spec.md)

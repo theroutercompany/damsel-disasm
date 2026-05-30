@@ -148,6 +148,15 @@ sample plugin code to derive Damsel's stable CLI JSON, batch automation, local
 MCP, annotation transaction, extension manifest, helper-process, and
 capability-boundary architecture.
 
+For the Automation Studio implementation pass, see
+[Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](automation-studio-scripting-plugin-workbench-implementation-spec.md).
+That document uses Hopper's homepage scripting/MCP/SDK claims, FAQ MCP and
+Python mutation notes, public Hopper Python type stubs, public Hopper scripts,
+and SDK/plugin evidence in this pack to define Damsel's native recipe runner,
+Automation Studio, local MCP session panel, script/package model, plugin
+manager, capability prompts, activity logs, extension outputs, provenance,
+Apple-system automation recipes, diagnostics, and validation gates.
+
 ### Hopper Patching And Debugger Implementation Pass
 
 Source set:
@@ -158,6 +167,8 @@ Source set:
 - <https://www.hopperapp.com/rss/html_changelog.php>
 - <https://www.hopperapp.com/HopperDebuggerServer/>
 - <https://www.hopperapp.com/downloader/public/HopperSDK-6.3.0.zip>
+- <https://pypi.org/project/types-hopper-disassembler/>
+- <https://github.com/droe/hopper-scripts>
 - <https://lldb.llvm.org/use/remote.html>
 - <https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.debugger>
 

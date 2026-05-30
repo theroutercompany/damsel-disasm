@@ -194,6 +194,11 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   implementation architecture for CLI JSON automation, batch operations,
   read-only local MCP, audited annotation mutation, capabilities, privacy,
   activity logs, Workbench integration, and future script bindings.
+- [Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](automation-studio-scripting-plugin-workbench-implementation-spec.md):
+  implementation-ready native Automation Studio plan for recipes, script runs,
+  MCP sessions, plugin manager, capability prompts, extension outputs,
+  activity logs, Apple-system automation recipes, provenance, privacy, and
+  validation gates.
 - [Plugin And SDK Extension Boundary Implementation Spec](plugin-sdk-extension-boundary-implementation-spec.md):
   implementation architecture for Damsel loader, sidecar, architecture
   semantics, analyzer, renderer/exporter, and Workbench command extension

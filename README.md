@@ -40,6 +40,7 @@ Planned next:
   - [docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md](./docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)
   - [docs/hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md](./docs/hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md)
   - [docs/hopper-gap/patch-studio-assembler-workbench-implementation-spec.md](./docs/hopper-gap/patch-studio-assembler-workbench-implementation-spec.md)
+  - [docs/hopper-gap/automation-studio-scripting-plugin-workbench-implementation-spec.md](./docs/hopper-gap/automation-studio-scripting-plugin-workbench-implementation-spec.md)
 
 The project is still private and is not being released publicly yet. This repo currently ships private GitHub prereleases only.
 

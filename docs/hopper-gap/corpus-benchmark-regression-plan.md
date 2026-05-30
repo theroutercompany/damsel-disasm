@@ -621,6 +621,18 @@ Cases:
 - plugin problem emission
 - plugin cancellation
 - helper-process crash isolation
+- Automation Studio recipe catalog
+- Automation Studio run cancellation
+- MCP session binding and call log
+- capability grant and revoke
+- script package timeout
+- emitted fact provenance
+- ObjC selector audit recipe
+- dyld cache provider graph recipe
+- IOKit external method audit recipe
+- panic frame pack recipe
+- C++ vtable sweep recipe
+- patch plan review recipe
 
 Expected evidence:
 
@@ -634,6 +646,11 @@ Expected evidence:
 - plugin manifest validation snapshot
 - plugin-produced fact provenance snapshot
 - helper isolation problem record
+- recipe output snapshots
+- automation run snapshots
+- capability prompt snapshots
+- activity log snapshots
+- diagnostics redaction snapshots
 
 ### Diff, Export, And Evidence Corpus
 

@@ -61,6 +61,13 @@ and assembler sheets, NOP previews, before/after diff panels, impact summaries,
 warning acknowledgements, patch history, export sheets, and debugger handoff
 for patched revisions.
 
+Automation Studio companion:
+[Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](automation-studio-scripting-plugin-workbench-implementation-spec.md)
+defines automation-specific native polish: recipe catalogs, run lists, MCP
+session visibility, script and plugin package state, capability prompts,
+activity history, output inspectors, diagnostics, and Apple-system workflow
+recipes.
+
 Research companion:
 [Hopper Interaction, Debugger, And Product Surface Research](hopper-interaction-debugger-product-research.md)
 grounds the interaction target in Hopper's public tutorial, debugger,

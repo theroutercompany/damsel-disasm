@@ -35,7 +35,7 @@ gates, and "do not start before" constraints.
 | E11 | Performance, scheduler, and persistence | Large-project viability | E1-E10 |
 | E12 | Type/debug-info integration | Better names/types/source | E2/E4/E10 |
 | E13 | Decompiler-lite and IR | Honest high-level function understanding | E4/E9/E12 |
-| E14 | Automation/MCP | Scriptable document facts | E1-E4/E11 |
+| E14 | Automation Studio, MCP, and scripting | Scriptable document facts with native automation UX | E1-E4/E11/E21 |
 | E15 | Debugger bridge and live Workbench | Static/dynamic route mapping plus native debugger surface | E5/E11/E12/E19/E21 |
 | E16 | Plugin/SDK boundary | Controlled extensibility | E11/E14 |
 | E17 | Patch Studio and binary revision design | Future binary mutation path with native preview/export UX | E3/E5/E11/E18/E19/E21 |
@@ -823,37 +823,53 @@ Risks:
 - large functions stall the native app
 - Apple runtime overlays overstate weak evidence
 
-## E14: Automation And MCP
+## E14: Automation Studio, MCP, And Scripting
 
 Goal:
 
-- expose project facts safely to scripts and AI/tooling
+- expose project facts safely to scripts and AI/tooling through one typed API
+  and a native Automation Studio surface
 
 Primary spec:
 
 - [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
+- [Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](automation-studio-scripting-plugin-workbench-implementation-spec.md)
 
 Deliverables:
 
 - CLI JSON query foundation
 - CLI batch operations
+- native Automation Studio shell
+- recipe catalog and recipe run records
 - read-only local MCP server
+- MCP session panel and call log
+- script package install/run plan
+- plugin package visibility and compatibility state
 - audited annotation mutation API
 - automation activity log
 - capability and permission model
 - privacy/redaction policy
 - MCP tool schema fixtures
+- Apple-system recipe pack for ObjC, dyld cache, C++/IOKit, panic/KDK, and
+  patch review workflows
 
 Implementation tasks:
 
 - add project summary/search/route/function/xref/runtime/problem tool schemas
+- add recipe catalog, input schema, output schema, and run model
+- add native stores for automation studio, recipes, runs, MCP sessions,
+  capability grants, script packages, plugin packages, outputs, activity, and
+  diagnostics
 - expose common read APIs
 - add structured batch command
+- add local stdio MCP server binding to a visible project/session scope
 - expose audited annotation writes only through annotation transactions
 - add permission denial paths
 - add byte-read and export-selection policy
 - add Workbench-visible automation activity records
 - add MCP-shaped JSON contract fixtures
+- add Apple-system recipes and evidence outputs
+- add script/plugin sidecar run metadata and provenance records
 
 Validation:
 
@@ -861,6 +877,13 @@ Validation:
 - mutation audit fixture
 - permission denial fixture
 - MCP schema snapshot
+- MCP session/call-log UI test
+- recipe catalog snapshot
+- recipe run/cancel snapshots
+- capability grant/revoke tests
+- script timeout fixture
+- plugin compatibility fixture
+- Apple-system recipe fixtures
 - privacy redaction fixture
 - batch partial-failure fixture
 - route-backed evidence fixture

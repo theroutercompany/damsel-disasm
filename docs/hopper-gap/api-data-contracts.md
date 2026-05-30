@@ -112,6 +112,10 @@ define the API objects for tool manifests, invocation envelopes, capability
 checks, automation activity, annotation mutation transactions, plugin
 manifests, extension runs, plugin provenance, helper-process isolation, and
 plugin-produced fact/problem records.
+[Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](automation-studio-scripting-plugin-workbench-implementation-spec.md)
+expands that surface into recipe catalogs, automation runs, MCP sessions,
+script packages, plugin packages, capability grants, extension outputs, emitted
+facts/problems, Apple-system recipe outputs, diagnostics, and activity logs.
 
 Performance runtime companion:
 [Large-Project Performance, Scheduler, And Indexing Implementation Spec](large-project-performance-scheduler-indexing-implementation-spec.md)
