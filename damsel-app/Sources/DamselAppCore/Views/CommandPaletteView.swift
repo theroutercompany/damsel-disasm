@@ -47,6 +47,22 @@ struct CommandPaletteView: View {
         .onAppear {
             searchFocused = true
         }
+        .onSubmit {
+            performDefaultResult()
+        }
+        .onExitCommand {
+            isPresented = false
+        }
+    }
+
+    private func performDefaultResult() {
+        guard let result = DamselCommandPalette.defaultExecutableResult(matching: query, availability: { commandID in
+            store.commandAvailability(for: commandID)
+        }) else {
+            return
+        }
+        isPresented = false
+        performCommand(result.id)
     }
 }
 

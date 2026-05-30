@@ -43,6 +43,15 @@ public enum DamselCommandPalette {
             .map(\.result)
     }
 
+    public static func defaultExecutableResult(
+        matching query: String,
+        descriptors: [DamselCommandDescriptor] = DamselCommandRegistry.all,
+        availability: (DamselCommandID) -> DamselCommandAvailability
+    ) -> DamselCommandPaletteResult? {
+        results(matching: query, descriptors: descriptors, availability: availability)
+            .first { $0.availability.isEnabled }
+    }
+
     private static func score(
         _ descriptor: DamselCommandDescriptor,
         query: String,

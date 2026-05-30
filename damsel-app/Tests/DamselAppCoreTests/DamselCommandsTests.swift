@@ -89,4 +89,25 @@ final class DamselCommandsTests: XCTestCase {
             [.showCommandPalette]
         )
     }
+
+    func testCommandPaletteDefaultExecutableResultSkipsDisabledMatches() {
+        let result = DamselCommandPalette.defaultExecutableResult(matching: "copy") { commandID in
+            switch commandID {
+            case .copyBinaryPath, .copySelectedAddress, .copySelectedInstruction, .copySelectedRow:
+                return .disabled("Nothing selectable in test.")
+            default:
+                return .enabled
+            }
+        }
+
+        XCTAssertEqual(result?.id, .copyDiagnostics)
+    }
+
+    func testCommandPaletteDefaultExecutableResultReturnsNilWhenEveryMatchIsDisabled() {
+        let result = DamselCommandPalette.defaultExecutableResult(matching: "copy selected") { _ in
+            .disabled("No selection in test.")
+        }
+
+        XCTAssertNil(result)
+    }
 }
