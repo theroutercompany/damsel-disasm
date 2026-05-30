@@ -13,6 +13,7 @@ struct InspectorPane: View {
                         routeSection()
                         instructionSection(instruction)
                         referenceSection(instruction)
+                        analysisTargetUseSection(instruction, analysis: store.disassembly?.analysis)
                         payloadSection("Operands", values: instruction.structuredOperands ?? [])
                         payloadSection("Annotations", values: instruction.annotations)
                         payloadSection("Recovered Values", values: instruction.recoveredValues)
@@ -90,6 +91,43 @@ struct InspectorPane: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func analysisTargetUseSection(_ instruction: InstructionRow, analysis: AnalysisPayload?) -> some View {
+        let rows = analysisTargetUses(for: instruction, analysis: analysis)
+        if !rows.isEmpty {
+            InspectorSection(title: "Analysis Targets") {
+                ForEach(rows) { row in
+                    TargetUseRow(row: row) { address in
+                        Task { await store.jump(to: address) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func analysisTargetUses(
+        for instruction: InstructionRow,
+        analysis: AnalysisPayload?
+    ) -> [LabeledTargetUse] {
+        guard let analysis else {
+            return []
+        }
+
+        return labeledTargetUses("call", uses: analysis.directCalls, instructionAddress: instruction.address) +
+            labeledTargetUses("branch", uses: analysis.branchTargets, instructionAddress: instruction.address) +
+            labeledTargetUses("data", uses: analysis.dataReferences, instructionAddress: instruction.address)
+    }
+
+    private func labeledTargetUses(
+        _ label: String,
+        uses: [AnalysisTargetUse],
+        instructionAddress: UInt64
+    ) -> [LabeledTargetUse] {
+        uses
+            .filter { $0.instructionAddress == instructionAddress }
+            .map { LabeledTargetUse(label: label, use: $0) }
     }
 
     private func payloadSection(_ title: String, values: [JSONValue]) -> some View {
@@ -264,6 +302,40 @@ private struct ReferenceRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+        }
+    }
+}
+
+private struct LabeledTargetUse: Identifiable {
+    let label: String
+    let use: AnalysisTargetUse
+
+    var id: String {
+        "\(label):\(use.id)"
+    }
+}
+
+private struct TargetUseRow: View {
+    let row: LabeledTargetUse
+    let jump: (UInt64) -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(row.label)
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Button(DamselFormat.address(row.use.targetAddress)) {
+                jump(row.use.targetAddress)
+            }
+            .font(.system(.caption, design: .monospaced))
+            .buttonStyle(.borderless)
+            .help("Jump to \(DamselFormat.address(row.use.targetAddress))")
+
+            Text("from \(DamselFormat.address(row.use.instructionAddress))")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
     }
 }

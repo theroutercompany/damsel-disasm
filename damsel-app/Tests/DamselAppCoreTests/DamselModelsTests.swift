@@ -79,6 +79,15 @@ final class DamselModelsTests: XCTestCase {
                 "via": null,
                 "back_edge": false
               }
+            ],
+            "direct_calls": [
+              {"instruction_address": 4294967296, "target_address": 4294983680}
+            ],
+            "branch_targets": [
+              {"instruction_address": 4294967300, "target_address": 4294967296}
+            ],
+            "data_references": [
+              {"instruction_address": 4294967296, "target_address": 4294983680}
             ]
           }
         }
@@ -101,6 +110,10 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertEqual(payload.analysis?.edges.first?.toBlock, nil)
         XCTAssertEqual(payload.analysis?.edges.first?.sourceAddress, 4294967300)
         XCTAssertEqual(payload.analysis?.edges.first?.kind, "return")
+        XCTAssertEqual(payload.analysis?.directCalls.first?.instructionAddress, 4294967296)
+        XCTAssertEqual(payload.analysis?.directCalls.first?.targetAddress, 4294983680)
+        XCTAssertEqual(payload.analysis?.branchTargets.first?.targetAddress, 4294967296)
+        XCTAssertEqual(payload.analysis?.dataReferences.first?.targetAddress, 4294983680)
     }
 
     func testInstructionFilterMatchesRenderedMnemonicAndAddress() throws {

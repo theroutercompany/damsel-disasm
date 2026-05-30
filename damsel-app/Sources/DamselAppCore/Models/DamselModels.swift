@@ -168,6 +168,9 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
     public let overview: JSONValue?
     public let basicBlocks: [BasicBlockSummary]
     public let edges: [ControlFlowEdgeSummary]
+    public let directCalls: [AnalysisTargetUse]
+    public let branchTargets: [AnalysisTargetUse]
+    public let dataReferences: [AnalysisTargetUse]
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -175,6 +178,9 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         case overview
         case basicBlocks = "basic_blocks"
         case edges
+        case directCalls = "direct_calls"
+        case branchTargets = "branch_targets"
+        case dataReferences = "data_references"
     }
 
     public init(from decoder: Decoder) throws {
@@ -184,6 +190,23 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         overview = try container.decodeIfPresent(JSONValue.self, forKey: .overview)
         basicBlocks = try container.decodeIfPresent([BasicBlockSummary].self, forKey: .basicBlocks) ?? []
         edges = try container.decodeIfPresent([ControlFlowEdgeSummary].self, forKey: .edges) ?? []
+        directCalls = try container.decodeIfPresent([AnalysisTargetUse].self, forKey: .directCalls) ?? []
+        branchTargets = try container.decodeIfPresent([AnalysisTargetUse].self, forKey: .branchTargets) ?? []
+        dataReferences = try container.decodeIfPresent([AnalysisTargetUse].self, forKey: .dataReferences) ?? []
+    }
+}
+
+public struct AnalysisTargetUse: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String {
+        "\(DamselFormat.address(instructionAddress))->\(DamselFormat.address(targetAddress))"
+    }
+
+    public let instructionAddress: UInt64
+    public let targetAddress: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case instructionAddress = "instruction_address"
+        case targetAddress = "target_address"
     }
 }
 
