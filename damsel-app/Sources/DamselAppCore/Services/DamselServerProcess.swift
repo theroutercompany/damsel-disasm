@@ -40,6 +40,11 @@ public enum DamselServerError: LocalizedError, Equatable, Sendable {
     }
 }
 
+protocol DamselServerStarting: AnyObject {
+    func start() async throws -> URL
+    func stop()
+}
+
 public final class DamselServerProcess {
     private var process: Process?
     private var readyURL: URL?
@@ -189,6 +194,8 @@ public final class DamselServerProcess {
         return nil
     }
 }
+
+extension DamselServerProcess: DamselServerStarting {}
 
 private final class ServerStartupCoordinator: @unchecked Sendable {
     private let process: Process

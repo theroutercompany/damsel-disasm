@@ -323,6 +323,38 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testRunDisassemblyWithoutImageDoesNotBootstrapServer() async throws {
+        let server = CountingServerProcess()
+        let store = WorkbenchStore(serverProcess: server, client: nil)
+
+        let didRun = try await store.runDisassembly()
+
+        XCTAssertFalse(didRun)
+        XCTAssertEqual(server.startCount, 0)
+        XCTAssertEqual(store.bannerMessage, "Load a Mach-O before requesting disassembly.")
+        XCTAssertEqual(store.statusText, "Awaiting local binary")
+    }
+
+    @MainActor
+    func testRunDisassemblyPreservesBootstrapFailureForLoadedImage() async throws {
+        let error = DamselServerError.startupTimedOut("No readiness banner arrived in test.")
+        let server = CountingServerProcess(result: .failure(error))
+        let store = WorkbenchStore(
+            serverProcess: server,
+            client: nil,
+            loadedImage: Self.sampleImage()
+        )
+
+        let didRun = try await store.runDisassembly()
+
+        XCTAssertFalse(didRun)
+        XCTAssertEqual(server.startCount, 1)
+        XCTAssertEqual(store.serverState, .failed(error.localizedDescription))
+        XCTAssertEqual(store.bannerMessage, error.localizedDescription)
+        XCTAssertEqual(store.statusText, "Server unavailable")
+    }
+
+    @MainActor
     func testCommandAvailabilityExplainsDisabledCommands() async {
         let unloadedStore = WorkbenchStore(client: nil)
         XCTAssertEqual(
@@ -1025,6 +1057,22 @@ private actor SlowDisassemblyClient: WorkbenchAPIClient {
         try await Task.sleep(nanoseconds: 20_000_000)
         return try WorkbenchStoreTests.sampleDisassembly()
     }
+}
+
+private final class CountingServerProcess: DamselServerStarting {
+    private let result: Result<URL, Error>
+    private(set) var startCount = 0
+
+    init(result: Result<URL, Error> = .success(URL(string: "http://127.0.0.1:31337/")!)) {
+        self.result = result
+    }
+
+    func start() async throws -> URL {
+        startCount += 1
+        return try result.get()
+    }
+
+    func stop() {}
 }
 
 private actor SuggestionClient: WorkbenchAPIClient {

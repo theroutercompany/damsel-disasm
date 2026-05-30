@@ -56,7 +56,7 @@ public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var backAddressRoutes: [UInt64] = []
     @Published public private(set) var forwardAddressRoutes: [UInt64] = []
 
-    private let serverProcess: DamselServerProcess
+    private let serverProcess: any DamselServerStarting
     private var client: (any WorkbenchAPIClient)?
     private var bootstrapTask: Task<URL, Error>?
     private var loadRequestID = 0
@@ -77,7 +77,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     init(
-        serverProcess: DamselServerProcess = DamselServerProcess(),
+        serverProcess: any DamselServerStarting = DamselServerProcess(),
         client: (any WorkbenchAPIClient)?,
         loadedImage: ImageUploadResponse? = nil,
         validatesLocalFiles: Bool = false,
@@ -497,8 +497,16 @@ public final class WorkbenchStore: ObservableObject {
         disassemblyRequestID += 1
         let requestID = disassemblyRequestID
 
+        guard loadedImage != nil else {
+            bannerMessage = "Load a Mach-O before requesting disassembly."
+            return false
+        }
+
         await bootstrap()
-        guard let client, let imageId = loadedImage?.imageId else {
+        guard let client else {
+            return false
+        }
+        guard let imageId = loadedImage?.imageId else {
             bannerMessage = "Load a Mach-O before requesting disassembly."
             return false
         }
