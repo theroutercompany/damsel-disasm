@@ -157,6 +157,15 @@ Automation Studio, local MCP session panel, script/package model, plugin
 manager, capability prompts, activity logs, extension outputs, provenance,
 Apple-system automation recipes, diagnostics, and validation gates.
 
+For the evidence-grounded AI assistant implementation pass, see
+[Evidence-Grounded AI Assistant Workbench Implementation Spec](evidence-grounded-ai-assistant-workbench-implementation-spec.md).
+That document uses Hopper's homepage AI/MCP claim, Hopper's FAQ MCP guidance,
+the current official MCP specification, and the MCP tools/resources/prompts
+security model to define Damsel's assistant pane, context review, evidence
+tray, route/fact citations, tool timelines, model profiles, privacy modes,
+reviewed suggestions, Apple-system assistant modes, response validation, and
+evidence exports.
+
 ### Hopper Patching And Debugger Implementation Pass
 
 Source set:
@@ -169,6 +178,10 @@ Source set:
 - <https://www.hopperapp.com/downloader/public/HopperSDK-6.3.0.zip>
 - <https://pypi.org/project/types-hopper-disassembler/>
 - <https://github.com/droe/hopper-scripts>
+- <https://modelcontextprotocol.io/specification/>
+- <https://modelcontextprotocol.io/specification/2025-06-18/server/tools>
+- <https://modelcontextprotocol.io/specification/2025-06-18/server/resources>
+- <https://modelcontextprotocol.io/specification/2025-06-18/server/prompts>
 - <https://lldb.llvm.org/use/remote.html>
 - <https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.debugger>
 

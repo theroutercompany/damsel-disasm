@@ -35,7 +35,7 @@ gates, and "do not start before" constraints.
 | E11 | Performance, scheduler, and persistence | Large-project viability | E1-E10 |
 | E12 | Type/debug-info integration | Better names/types/source | E2/E4/E10 |
 | E13 | Decompiler-lite and IR | Honest high-level function understanding | E4/E9/E12 |
-| E14 | Automation Studio, MCP, and scripting | Scriptable document facts with native automation UX | E1-E4/E11/E21 |
+| E14 | Automation Studio, MCP, scripting, and AI assistant | Scriptable document facts plus evidence-grounded AI UX | E1-E4/E11/E21 |
 | E15 | Debugger bridge and live Workbench | Static/dynamic route mapping plus native debugger surface | E5/E11/E12/E19/E21 |
 | E16 | Plugin/SDK boundary | Controlled extensibility | E11/E14 |
 | E17 | Patch Studio and binary revision design | Future binary mutation path with native preview/export UX | E3/E5/E11/E18/E19/E21 |
@@ -823,23 +823,27 @@ Risks:
 - large functions stall the native app
 - Apple runtime overlays overstate weak evidence
 
-## E14: Automation Studio, MCP, And Scripting
+## E14: Automation Studio, MCP, Scripting, And AI Assistant
 
 Goal:
 
 - expose project facts safely to scripts and AI/tooling through one typed API
-  and a native Automation Studio surface
+  plus native Automation Studio and evidence-grounded assistant surfaces
 
 Primary spec:
 
 - [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 - [Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](automation-studio-scripting-plugin-workbench-implementation-spec.md)
+- [Evidence-Grounded AI Assistant Workbench Implementation Spec](evidence-grounded-ai-assistant-workbench-implementation-spec.md)
 
 Deliverables:
 
 - CLI JSON query foundation
 - CLI batch operations
 - native Automation Studio shell
+- evidence-grounded assistant pane
+- assistant context/evidence/tool/suggestion stores
+- assistant model profiles and privacy policies
 - recipe catalog and recipe run records
 - read-only local MCP server
 - MCP session panel and call log
@@ -852,6 +856,8 @@ Deliverables:
 - MCP tool schema fixtures
 - Apple-system recipe pack for ObjC, dyld cache, C++/IOKit, panic/KDK, and
   patch review workflows
+- Apple-system assistant modes for ObjC dispatch, C++ virtual calls, kernel
+  panic frames, patch plans, debugger stops, and artifact diffs
 
 Implementation tasks:
 
@@ -860,6 +866,8 @@ Implementation tasks:
 - add native stores for automation studio, recipes, runs, MCP sessions,
   capability grants, script packages, plugin packages, outputs, activity, and
   diagnostics
+- add assistant session, context, evidence, tool-call, suggestion, model
+  profile, privacy, prompt-template, and diagnostics stores
 - expose common read APIs
 - add structured batch command
 - add local stdio MCP server binding to a visible project/session scope
@@ -870,6 +878,8 @@ Implementation tasks:
 - add MCP-shaped JSON contract fixtures
 - add Apple-system recipes and evidence outputs
 - add script/plugin sidecar run metadata and provenance records
+- add assistant prompt templates, context review, route/fact citation
+  validation, privacy gates, model-provider adapters, and reviewed suggestions
 
 Validation:
 
@@ -884,6 +894,13 @@ Validation:
 - script timeout fixture
 - plugin compatibility fixture
 - Apple-system recipe fixtures
+- assistant context snapshot
+- assistant tool timeline snapshot
+- assistant citation validation fixture
+- hallucinated-route rejection fixture
+- assistant privacy/redaction fixture
+- assistant suggestion apply/undo fixture
+- Apple-system assistant explanation fixtures
 - privacy redaction fixture
 - batch partial-failure fixture
 - route-backed evidence fixture

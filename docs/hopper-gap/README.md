@@ -199,6 +199,11 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   MCP sessions, plugin manager, capability prompts, extension outputs,
   activity logs, Apple-system automation recipes, provenance, privacy, and
   validation gates.
+- [Evidence-Grounded AI Assistant Workbench Implementation Spec](evidence-grounded-ai-assistant-workbench-implementation-spec.md):
+  implementation-ready plan for an AI/MCP-assisted analyst pane with
+  route/fact citations, evidence trays, tool timelines, context review,
+  privacy modes, model profiles, reviewed suggestions, Apple-system assistant
+  modes, validation, and evidence exports.
 - [Plugin And SDK Extension Boundary Implementation Spec](plugin-sdk-extension-boundary-implementation-spec.md):
   implementation architecture for Damsel loader, sidecar, architecture
   semantics, analyzer, renderer/exporter, and Workbench command extension

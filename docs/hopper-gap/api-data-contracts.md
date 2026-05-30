@@ -116,6 +116,10 @@ plugin-produced fact/problem records.
 expands that surface into recipe catalogs, automation runs, MCP sessions,
 script packages, plugin packages, capability grants, extension outputs, emitted
 facts/problems, Apple-system recipe outputs, diagnostics, and activity logs.
+[Evidence-Grounded AI Assistant Workbench Implementation Spec](evidence-grounded-ai-assistant-workbench-implementation-spec.md)
+defines assistant API contracts for sessions, context, evidence items,
+tool-call timelines, model profiles, privacy policies, route/fact citations,
+reviewed suggestions, and redacted assistant evidence exports.
 
 Performance runtime companion:
 [Large-Project Performance, Scheduler, And Indexing Implementation Spec](large-project-performance-scheduler-indexing-implementation-spec.md)

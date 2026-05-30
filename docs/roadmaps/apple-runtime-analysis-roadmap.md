@@ -217,5 +217,6 @@ Planned future:
 - [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](../hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md)
 - [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](../hopper-gap/patch-studio-assembler-workbench-implementation-spec.md)
 - [Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](../hopper-gap/automation-studio-scripting-plugin-workbench-implementation-spec.md)
+- [Evidence-Grounded AI Assistant Workbench Implementation Spec](../hopper-gap/evidence-grounded-ai-assistant-workbench-implementation-spec.md)
 - [Type, Signature, Symbolication, And Debug-Info Implementation Spec](../hopper-gap/type-signature-symbolication-implementation-spec.md)
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](../hopper-gap/dwarf-dsym-kdk-debug-info-implementation-spec.md)

@@ -71,6 +71,7 @@ Use these labels during audits:
 | Decompiler Workbench | pseudocode route, line/token/source-map snapshots, edit transactions, cancellation, stale-cache, export, and overlay tests | Planned |
 | Scripting/MCP | read-only query tools, mutation permission/audit tests | Planned |
 | Automation Studio | recipe catalog, automation run, MCP session, capability prompt, script/plugin package, emitted fact provenance, denial, and redaction tests | Planned |
+| AI assistant | route/fact citation validation, prompt context review, privacy gates, tool timeline, reviewed suggestions, hallucinated-route rejection, and evidence export tests | Planned |
 | Plugin/SDK boundary | manifest, capability, provenance, cancellation, and isolation tests | Planned |
 | Diff/export/evidence | snapshots, fingerprints, findings, report export, and redaction tests | Planned |
 | Native app trust | helper token auth, source grants, diagnostics redaction, crash/hang recovery, signing gates | Planned |
@@ -81,6 +82,7 @@ Use these labels during audits:
 | Debugger bridge | LLDB local smoke and static/runtime route mapping | Planned |
 | Patch Studio | native patchability, preview, impact, export, and immutable-original UX proof | Planned |
 | Automation Studio | native recipe/run/MCP/plugin/capability/output/activity UX proof | Planned |
+| AI assistant | native context/evidence/tool/suggestion/privacy UX proof with citation validation | Planned |
 | Patching | design, source-hash precondition, write-copy-only tests | Not applicable yet |
 
 ## Existing Current-State Evidence

@@ -126,6 +126,7 @@ Use a trace table for future implementation:
 | Diff/export/evidence | diff spec | snapshot/fingerprint/diff APIs | diff/export service | snapshot/export/diff fixtures | OS-build sample if claimed |
 | Automation/MCP | automation plan | object/tool APIs | script/MCP server | tool fixtures | local-only smoke |
 | Automation Studio | automation studio spec | recipe/run/MCP/plugin/capability APIs | native automation stores | recipe/MCP/capability/plugin UI tests | Apple-system recipe fixtures |
+| AI assistant | evidence-grounded AI spec | assistant/session/context/tool/suggestion APIs | native assistant stores | citation/privacy/suggestion UI tests | Apple-system assistant fixtures |
 | Plugin/SDK boundary | plugin spec | manifest/capability APIs | extension runtime | manifest/isolation fixtures | local toy extension |
 | Debugger bridge | debugger integration spec | debug session APIs | LLDB bridge | fixture executable | signed local sample |
 | Live debugger Workbench | live debugger spec | target/session/event/breakpoint APIs | native debugger stores | launch/attach/stop/register/memory UI tests | signed local sample plus denial cases |

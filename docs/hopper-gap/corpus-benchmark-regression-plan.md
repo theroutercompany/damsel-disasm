@@ -633,6 +633,17 @@ Cases:
 - panic frame pack recipe
 - C++ vtable sweep recipe
 - patch plan review recipe
+- assistant context route snapshot
+- assistant tool-call timeline snapshot
+- assistant citation validation
+- assistant hallucinated-route rejection
+- assistant privacy redaction
+- assistant reviewed suggestion undo
+- assistant ObjC dispatch explanation
+- assistant C++ virtual call explanation
+- assistant panic frame explanation
+- assistant patch plan review
+- assistant debugger stop explanation
 
 Expected evidence:
 
@@ -651,6 +662,10 @@ Expected evidence:
 - capability prompt snapshots
 - activity log snapshots
 - diagnostics redaction snapshots
+- assistant message/output snapshots
+- assistant evidence citation snapshots
+- assistant privacy-mode snapshots
+- assistant suggestion transaction snapshots
 
 ### Diff, Export, And Evidence Corpus
 

@@ -69,6 +69,10 @@ Workbench command surfaces must use the same project/query/annotation APIs.
 maps those backend boundaries into a native Workbench surface for recipes,
 runs, MCP sessions, script packages, plugin packages, capability prompts,
 activity logs, extension outputs, and Apple-system automation recipes.
+[Evidence-Grounded AI Assistant Workbench Implementation Spec](evidence-grounded-ai-assistant-workbench-implementation-spec.md)
+maps the same project API into an evidence-grounded assistant surface with
+context review, route/fact citations, tool-call visibility, privacy modes,
+model profiles, reviewed suggestions, and Apple-system assistant workflows.
 
 Performance runtime implementation companion:
 [Large-Project Performance, Scheduler, And Indexing Implementation Spec](large-project-performance-scheduler-indexing-implementation-spec.md)

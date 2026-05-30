@@ -68,6 +68,13 @@ session visibility, script and plugin package state, capability prompts,
 activity history, output inspectors, diagnostics, and Apple-system workflow
 recipes.
 
+AI assistant companion:
+[Evidence-Grounded AI Assistant Workbench Implementation Spec](evidence-grounded-ai-assistant-workbench-implementation-spec.md)
+defines assistant-specific native polish: context bars, evidence trays,
+tool-call timelines, suggestion review, privacy indicators, model profiles,
+route/fact citations, and AI output validation before claims or mutations are
+presented as trusted.
+
 Research companion:
 [Hopper Interaction, Debugger, And Product Surface Research](hopper-interaction-debugger-product-research.md)
 grounds the interaction target in Hopper's public tutorial, debugger,
