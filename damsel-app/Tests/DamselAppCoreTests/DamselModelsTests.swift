@@ -273,9 +273,13 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertTrue(InstructionFilter.matches(instruction, query: "_printf"))
         XCTAssertTrue(InstructionFilter.matches(instruction, query: "literal pool"))
         XCTAssertTrue(InstructionFilter.matches(instruction, query: "libSystem"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "printf libSystem"))
         XCTAssertTrue(InstructionFilter.matches(instruction, query: "objc-selector"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "objc selector application"))
         XCTAssertTrue(InstructionFilter.matches(instruction, query: "Address"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "address x0 100004000"))
         XCTAssertTrue(InstructionFilter.matches(instruction, query: "register"))
+        XCTAssertFalse(InstructionFilter.matches(instruction, query: "printf malloc"))
         XCTAssertFalse(InstructionFilter.matches(instruction, query: "_malloc"))
     }
 
