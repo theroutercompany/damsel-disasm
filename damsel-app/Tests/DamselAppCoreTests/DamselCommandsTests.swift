@@ -147,6 +147,23 @@ final class DamselCommandsTests: XCTestCase {
         )
     }
 
+    func testCommandPaletteSearchesVisibleInstructions() throws {
+        let instructions = try sampleInstructions()
+
+        XCTAssertEqual(
+            DamselCommandPalette.instructionResults(matching: "ret", instructions: instructions).map(\.instruction.address),
+            [0x1000004b4]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.instructionResults(matching: "0x1000004b0", instructions: instructions).map(\.title),
+            ["0x1000004b0  adrp x0, 0x100004000"]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.instructionResults(matching: "", instructions: instructions).map(\.instruction.address),
+            []
+        )
+    }
+
     private var sampleSections: [SectionSummary] {
         [
             SectionSummary(
@@ -174,5 +191,27 @@ final class DamselCommandsTests: XCTestCase {
                 executable: false
             ),
         ]
+    }
+
+    private func sampleInstructions() throws -> [InstructionRow] {
+        let json = """
+        [
+          {
+            "address": 4294968496,
+            "opcode": 2415919104,
+            "mnemonic": "adrp",
+            "rendered": "adrp x0, 0x100004000",
+            "references": []
+          },
+          {
+            "address": 4294968500,
+            "opcode": 2432696320,
+            "mnemonic": "ret",
+            "rendered": "ret",
+            "references": []
+          }
+        ]
+        """
+        return try JSONDecoder().decode([InstructionRow].self, from: Data(json.utf8))
     }
 }

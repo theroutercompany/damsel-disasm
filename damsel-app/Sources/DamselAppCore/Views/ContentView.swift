@@ -74,7 +74,8 @@ public struct ContentView: View {
                 isPresented: $isCommandPalettePresented,
                 performCommand: performPaletteCommand,
                 jumpToAddress: jumpToAddress,
-                openSection: openSection
+                openSection: openSection,
+                selectInstruction: selectInstruction
             )
         }
         .onAppear {
@@ -185,6 +186,10 @@ public struct ContentView: View {
         store.targetKind = .section
         store.selectedSection = sectionName
         Task { try? await store.runDisassembly() }
+    }
+
+    private func selectInstruction(_ instruction: InstructionRow) {
+        store.selectInstruction(instruction)
     }
 
     private func copySelectedInstruction(_ payload: InstructionClipboardPayload) {

@@ -45,6 +45,22 @@ public struct DamselSectionPaletteResult: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct DamselInstructionPaletteResult: Equatable, Identifiable, Sendable {
+    public let instruction: InstructionRow
+
+    public var id: UInt64 {
+        instruction.address
+    }
+
+    public var title: String {
+        "\(DamselFormat.address(instruction.address))  \(instruction.rendered)"
+    }
+
+    public var subtitle: String {
+        "Visible instruction"
+    }
+}
+
 public enum DamselCommandPalette {
     public static func results(
         matching query: String,
@@ -129,6 +145,37 @@ public enum DamselCommandPalette {
             .map(\.result)
     }
 
+    public static func instructionResults(
+        matching query: String,
+        instructions: [InstructionRow],
+        limit: Int = 8
+    ) -> [DamselInstructionPaletteResult] {
+        let normalizedQuery = normalize(query)
+        guard !normalizedQuery.isEmpty else {
+            return []
+        }
+
+        let ranked = instructions.enumerated().compactMap { index, instruction -> InstructionRankedResult? in
+            guard let score = score(instruction, query: normalizedQuery, fallbackIndex: index) else {
+                return nil
+            }
+            return InstructionRankedResult(
+                score: score,
+                result: DamselInstructionPaletteResult(instruction: instruction)
+            )
+        }
+
+        return ranked
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.result.instruction.address < rhs.result.instruction.address
+                }
+                return lhs.score < rhs.score
+            }
+            .prefix(limit)
+            .map(\.result)
+    }
+
     private static func score(
         _ descriptor: DamselCommandDescriptor,
         query: String,
@@ -197,6 +244,36 @@ public enum DamselCommandPalette {
         return 50 + fallbackIndex
     }
 
+    private static func score(
+        _ instruction: InstructionRow,
+        query: String,
+        fallbackIndex: Int
+    ) -> Int? {
+        let address = normalize(DamselFormat.address(instruction.address))
+        let mnemonic = normalize(instruction.mnemonic)
+        let rendered = normalize(instruction.rendered)
+        let fields = [address, mnemonic, rendered]
+        let tokens = query.split(separator: " ").map(String.init)
+
+        guard tokens.allSatisfy({ token in fields.contains { $0.contains(token) } }) else {
+            return nil
+        }
+
+        if address == query || rendered == query {
+            return 0
+        }
+        if address.hasPrefix(query) || mnemonic.hasPrefix(query) {
+            return 10
+        }
+        if rendered.hasPrefix(query) {
+            return 20
+        }
+        if rendered.contains(query) {
+            return 30
+        }
+        return 50 + fallbackIndex
+    }
+
     private static func normalizeSectionQuery(_ value: String) -> String {
         let normalized = normalize(value)
         if normalized.hasPrefix("section ") {
@@ -225,5 +302,10 @@ public enum DamselCommandPalette {
     private struct SectionRankedResult {
         let score: Int
         let result: DamselSectionPaletteResult
+    }
+
+    private struct InstructionRankedResult {
+        let score: Int
+        let result: DamselInstructionPaletteResult
     }
 }

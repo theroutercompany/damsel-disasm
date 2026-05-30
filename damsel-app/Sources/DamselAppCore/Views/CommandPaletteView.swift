@@ -6,6 +6,7 @@ struct CommandPaletteView: View {
     let performCommand: (DamselCommandID) -> Void
     let jumpToAddress: (UInt64) -> Void
     let openSection: (String) -> Void
+    let selectInstruction: (InstructionRow) -> Void
     @State private var query = ""
     @FocusState private var searchFocused: Bool
 
@@ -17,6 +18,13 @@ struct CommandPaletteView: View {
         DamselCommandPalette.sectionResults(
             matching: query,
             sections: store.loadedImage?.sections ?? []
+        )
+    }
+
+    private var instructionResults: [DamselInstructionPaletteResult] {
+        DamselCommandPalette.instructionResults(
+            matching: query,
+            instructions: store.visibleInstructions
         )
     }
 
@@ -46,6 +54,12 @@ struct CommandPaletteView: View {
                         CommandPaletteAddressRow(result: addressResult) {
                             isPresented = false
                             jumpToAddress(addressResult.address.rawValue)
+                        }
+                    }
+                    ForEach(instructionResults) { result in
+                        CommandPaletteInstructionRow(result: result) {
+                            isPresented = false
+                            selectInstruction(result.instruction)
                         }
                     }
                     ForEach(sectionResults) { result in
@@ -87,6 +101,12 @@ struct CommandPaletteView: View {
             return
         }
 
+        if let instructionResult = instructionResults.first {
+            isPresented = false
+            selectInstruction(instructionResult.instruction)
+            return
+        }
+
         if let sectionResult = sectionResults.first {
             isPresented = false
             openSection(sectionResult.section.name)
@@ -100,6 +120,36 @@ struct CommandPaletteView: View {
         }
         isPresented = false
         performCommand(result.id)
+    }
+}
+
+private struct CommandPaletteInstructionRow: View {
+    let result: DamselInstructionPaletteResult
+    let perform: () -> Void
+
+    var body: some View {
+        Button(action: perform) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(result.title)
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(result.subtitle)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Color.secondary)
+                }
+
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(DamselFormat.address(result.instruction.address))
     }
 }
 
