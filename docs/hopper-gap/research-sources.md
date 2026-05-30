@@ -807,6 +807,58 @@ Planning impact:
 - Apple-system advantage depends on separating user-mode, dyld-cache, and
   XNU/kernel ABI profiles rather than applying one generic arm64 rule set.
 
+### Decompiler Quality And User-Assisted Recovery Implementation Pass
+
+Source set:
+
+- <https://www.hopperapp.com/index.html>
+- <https://www.hopperapp.com/tutorial.html>
+- <https://www.hopperapp.com/faq.html>
+- <https://www.hopperapp.com/rss/html_changelog.php>
+- <https://raw.githubusercontent.com/makigumo/HopperSDK-v4/master/include/Hopper/CPUContext.h>
+- <https://raw.githubusercontent.com/makigumo/HopperSDK-v4/master/include/Hopper/CPUDefinition.h>
+- <https://raw.githubusercontent.com/makigumo/HopperSDK-v4/master/include/Hopper/HPDisassembledFile.h>
+- <https://github.com/melomac/Hopper>
+- <https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms>
+- <https://clang.llvm.org/docs/PointerAuthentication.html>
+- <https://github.com/swiftlang/swift/blob/main/docs/ABI/Mangling.rst>
+
+Repo evidence inspected:
+
+- `docs/hopper-gap/decompiler-function-ir-implementation-spec.md`
+- `docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md`
+- `docs/hopper-gap/decompiler-ir-strategy.md`
+- `damsel-core/src/model.rs`
+- `damsel-macho/src/disasm.rs`
+
+Document produced:
+
+- [Decompiler Quality And User-Assisted Recovery Implementation Spec](decompiler-quality-user-assisted-recovery-implementation-spec.md)
+
+Why it matters:
+
+- Hopper's tutorial frames pseudocode as useful but imperfect, with dead-code
+  visibility and switch/case hints as user-facing recovery tools.
+- Hopper's FAQ explicitly says pseudocode is usually not directly compilable
+  and should be used for understanding rather than source recovery.
+- Hopper's changelog shows decompiler quality is an ongoing subsystem:
+  decompiler rewrite, stack variables, variable rename, liveness, AST
+  optimizations, switch/case, no-return, dead code, C++ signatures,
+  Objective-C ivars/stubs/trampolines, Swift demangling/strings, hangs, memory
+  footprint, and large function behavior.
+- Hopper's SDK exposes CPU decompiler hooks while keeping `ASTNode` private,
+  which reinforces that Damsel needs its own internal quality model rather than
+  a superficial pseudocode renderer.
+
+Planning impact:
+
+- Damsel should treat pseudocode as an evidence-backed Workbench surface with
+  pass ledgers, source maps, quality reports, and user hint transactions.
+- Regression tests should validate semantic expectations and forbidden claims,
+  not only exact pseudocode text.
+- Apple-system pseudocode quality must separately gate ObjC, C++/ObjC++,
+  Swift-adjacent, XNU/kernel, dyld, and arm64e/PAC overlays.
+
 ### Hopper Homepage
 
 Source: <https://www.hopperapp.com/index.html>

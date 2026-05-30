@@ -193,6 +193,11 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   Workbench representation with pseudocode routes, line/token models, source
   maps, confidence, issue records, user correction transactions, Apple runtime
   overlays, jobs, caches, exports, and responsiveness gates.
+- [Decompiler Quality And User-Assisted Recovery Implementation Spec](decompiler-quality-user-assisted-recovery-implementation-spec.md):
+  implementation-ready plan for decompiler pass ledgers, quality reports,
+  source-map evidence, dead-code policy, switch/user-hint correction loops,
+  ObjC/C++/Swift/XNU/PAC overlay quality gates, regression corpus design,
+  Workbench quality drawers, API/CLI contracts, automation, and validation.
 - [Debugger, Automation, Extension, And MCP Plan](debugger-automation-extension-plan.md):
   safe sequencing for scripting, MCP/AI tools, plugins/SDK boundaries, LLDB
   bridging, and future patching.

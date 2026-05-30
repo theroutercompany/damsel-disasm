@@ -92,6 +92,11 @@ Decompiler Workbench companion:
 defines the API objects for decompiler jobs, cached pseudocode views,
 line/token source maps, confidence records, decompiler issues, user hints,
 variable/type correction transactions, and evidence exports.
+[Decompiler Quality And User-Assisted Recovery Implementation Spec](decompiler-quality-user-assisted-recovery-implementation-spec.md)
+expands those contracts into decompiler runs, pass ledgers, quality reports,
+coverage summaries, source-map inspectors, user hint applications, dead-code
+and switch recovery records, regression cases, comparison reports, and
+performance samples.
 
 Mutation and debugger companions:
 [Patching, Hex, Assembly, And Transaction Implementation Spec](patching-hex-assembly-transaction-implementation-spec.md)

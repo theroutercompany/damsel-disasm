@@ -40,6 +40,11 @@ maps the same current analysis strengths into future native pseudocode routes,
 line/token/source-map models, decompiler jobs, confidence/problem display,
 variable/type correction transactions, Apple runtime overlays, and export
 contracts.
+[Decompiler Quality And User-Assisted Recovery Implementation Spec](decompiler-quality-user-assisted-recovery-implementation-spec.md)
+maps current `DisassemblyAnalysis`, future procedure/IR/semantic records,
+typed Workbench routes, CLI JSON, and user correction transactions into a
+decompiler pass ledger, quality report, source-map inspector, hint deck,
+dead-code policy, regression corpus, and Apple-runtime quality gates.
 
 Mutation and debugger implementation companions:
 [Patching, Hex, Assembly, And Transaction Implementation Spec](patching-hex-assembly-transaction-implementation-spec.md)

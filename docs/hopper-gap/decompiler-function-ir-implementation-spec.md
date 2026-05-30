@@ -25,6 +25,7 @@ Architecture companions:
 - [Type And Symbolication System Plan](type-symbolication-system-plan.md)
 - [Type, Signature, Symbolication, And Debug-Info Implementation Spec](type-signature-symbolication-implementation-spec.md)
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md)
+- [Decompiler Quality And User-Assisted Recovery Implementation Spec](decompiler-quality-user-assisted-recovery-implementation-spec.md)
 
 ## Why This Spec Exists
 

@@ -69,6 +69,7 @@ The docs pack should include, at minimum:
 - automation/MCP/scripting implementation spec
 - plugin/SDK extension boundary implementation spec
 - patching/hex/assembly/transaction implementation spec
+- decompiler quality and user-assisted recovery implementation spec
 - debugger static-dynamic integration implementation spec
 - native Workbench Hopper-grade implementation spec
 - Apple runtime Workbench browser implementation spec

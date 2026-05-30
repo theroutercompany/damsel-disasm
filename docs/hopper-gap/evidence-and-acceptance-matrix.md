@@ -70,6 +70,7 @@ Use these labels during audits:
 | Decompiler-lite | function summary snapshots with unresolved facts | Planned |
 | IR | IR snapshots and source instruction mapping tests | Planned |
 | Decompiler Workbench | pseudocode route, line/token/source-map snapshots, edit transactions, cancellation, stale-cache, export, and overlay tests | Planned |
+| Decompiler quality and user-assisted recovery | pass ledger snapshots, quality reports, dead-code policy tests, switch/user-hint transaction tests, source-map evidence, ObjC/C++/Swift/XNU/PAC overlay quality gates, forbidden-claim regression cases, and performance/cancellation samples | Planned |
 | Scripting/MCP | read-only query tools, mutation permission/audit tests | Planned |
 | Automation Studio | recipe catalog, automation run, MCP session, capability prompt, script/plugin package, emitted fact provenance, denial, and redaction tests | Planned |
 | AI assistant | route/fact citation validation, prompt context review, privacy gates, tool timeline, reviewed suggestions, hallucinated-route rejection, and evidence export tests | Planned |

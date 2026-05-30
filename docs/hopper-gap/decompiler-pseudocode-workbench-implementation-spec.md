@@ -45,6 +45,7 @@ Read this spec with:
 
 - [Decompiler And IR Strategy](decompiler-ir-strategy.md)
 - [Decompiler, Function Recovery, And IR Implementation Spec](decompiler-function-ir-implementation-spec.md)
+- [Decompiler Quality And User-Assisted Recovery Implementation Spec](decompiler-quality-user-assisted-recovery-implementation-spec.md)
 - [Function Recovery And Procedure Database Plan](function-recovery-and-procedure-database-plan.md)
 - [Type And Symbolication System Plan](type-symbolication-system-plan.md)
 - [Type, Signature, Symbolication, And Debug-Info Implementation Spec](type-signature-symbolication-implementation-spec.md)

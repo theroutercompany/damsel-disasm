@@ -20,6 +20,10 @@ Implementation companions:
   expands this strategy into staged implementation contracts for procedure
   recovery, architecture semantics, low-level IR, SSA, stack/local recovery,
   ABI modeling, runtime overlays, control-structure recovery, and pseudocode.
+- [Decompiler Quality And User-Assisted Recovery Implementation Spec](decompiler-quality-user-assisted-recovery-implementation-spec.md)
+  defines the pass ledger, source-map evidence, quality reports, hint
+  transactions, regression corpus, and Apple-runtime quality gates that keep
+  pseudocode from becoming an opaque pretty-printer.
 - [Hopper Feature Architecture Public Evidence](hopper-feature-architecture-public-evidence.md)
   records the public Hopper evidence behind the ordering: Hopper's SDK exposes
   procedure, CPU, type, and transaction layers, while the decompiler AST remains

@@ -44,8 +44,8 @@ gates, and "do not start before" constraints.
 | E20 | Artifact intake/source registration | Apple artifact open/import/project/enrich workflow | E1/E11/E19 |
 | E21 | Command/navigation/undo interaction spine | Hopper-class native control surface | E1/E3/E5/E11 |
 | E22 | Processor semantics and Apple ABI | Hopper-class CPU/ABI facts for Apple binaries | E1/E2/E4/E8-E10 |
-| E22 | Apple runtime Workbench browser suite | ObjC/C++/IOKit/cache/kernel/panic browser workflows | E5/E7-E12/E21 |
 | E23 | Decompiler Workbench representation | Native synchronized pseudocode workspace | E5/E11-E13/E21/E22 |
+| E24 | Decompiler quality and user-assisted recovery | Trustworthy pseudocode correction and validation loop | E12/E13/E22/E23 |
 
 ## E0: Docs Acceptance And Scope Lock
 
@@ -849,6 +849,7 @@ Goal:
 Source spec:
 
 - [Decompiler, Pseudocode, And Native Workbench Representation Implementation Spec](decompiler-pseudocode-workbench-implementation-spec.md)
+- [Decompiler Quality And User-Assisted Recovery Implementation Spec](decompiler-quality-user-assisted-recovery-implementation-spec.md)
 
 Deliverables:
 
@@ -902,6 +903,81 @@ Risks:
 - variable/type edits mutate UI text instead of project facts
 - large functions stall the native app
 - Apple runtime overlays overstate weak evidence
+
+## E24: Decompiler Quality And User-Assisted Recovery
+
+Goal:
+
+- make pseudocode trustworthy by exposing pass evidence, source maps,
+  dead-code policy, user hints, Apple-runtime quality gates, regression cases,
+  and performance/cancellation proof
+
+Primary spec:
+
+- [Decompiler Quality And User-Assisted Recovery Implementation Spec](decompiler-quality-user-assisted-recovery-implementation-spec.md)
+
+Deliverables:
+
+- decompiler run records
+- decompiler pass ledger
+- decompiler quality report
+- coverage and confidence summaries
+- source-map inspector
+- decompiler issue records
+- user hint and correction transaction records
+- dead-code include/exclude policy
+- switch and jump-table recovery workflow
+- no-return, tailcall, thunk, frame, and calling-convention hint workflows
+- ObjC overlay quality records
+- C++/ObjC++ overlay quality records
+- Swift-adjacent overlay quality records
+- XNU/kernel overlay quality records
+- arm64e/PAC quality records
+- decompiler regression corpus
+- forbidden-claim regression expectations
+- Workbench quality drawer, pass ledger, and hint deck
+- automation and assistant read endpoints over decompiler evidence
+
+Implementation tasks:
+
+- add `DecompilerRun`, `DecompilerPassRun`, `DecompilerQualityReport`,
+  `DecompilerIssue`, `DecompilerSourceMap`, `DecompilerHint`,
+  `DecompilerRegressionCase`, and `DecompilerPerformanceSample`
+- connect source maps to IR, processor semantics, instructions, graph blocks,
+  type/signature facts, runtime objects, and user hints
+- add dead-code policy and reachable/excluded block records
+- add switch table hint records for address, entry size, entry count,
+  multiplier, and default target
+- add variable rename/type correction as transactions
+- add no-return, tailcall, and thunk hint transactions
+- add ObjC/C++/Swift/XNU/PAC overlay quality issue categories
+- add quality CLI/API routes
+- add regression runner and semantic expectation schema
+- add native Workbench quality drawer, pass ledger, source-map inspector, and
+  hint deck payloads
+
+Validation:
+
+- decompiler run/pass ledger snapshots
+- quality report snapshots
+- line/token source-map snapshots
+- dead-code inclusion/exclusion fixtures
+- switch hint fixtures
+- variable rename/type transaction fixtures
+- no-return/tailcall/thunk fixtures
+- ObjC/C++/Swift/XNU/PAC overlay quality fixtures
+- forbidden-claim negative tests
+- stale pseudocode marker snapshots
+- cancellation and performance samples
+- assistant citation validation over pseudocode/source-map routes
+
+Risks:
+
+- pseudocode confidence becomes a cosmetic badge instead of backed evidence
+- hint edits mutate text instead of project facts
+- exact pseudocode text snapshots make regression tests brittle
+- Apple runtime overlays overfit tiny fixtures
+- large functions make quality reports expensive
 
 ## E14: Automation Studio, MCP, Scripting, And AI Assistant
 

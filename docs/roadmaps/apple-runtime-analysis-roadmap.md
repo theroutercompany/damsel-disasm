@@ -215,6 +215,7 @@ Planned future:
 - [Apple Runtime, ObjC/C++/XNU, And System Browser Workbench Implementation Spec](../hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md)
 - [Processor Semantics And Apple ABI Implementation Spec](../hopper-gap/processor-semantics-apple-abi-implementation-spec.md)
 - [Decompiler, Pseudocode, And Native Workbench Representation Implementation Spec](../hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)
+- [Decompiler Quality And User-Assisted Recovery Implementation Spec](../hopper-gap/decompiler-quality-user-assisted-recovery-implementation-spec.md)
 - [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](../hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md)
 - [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](../hopper-gap/patch-studio-assembler-workbench-implementation-spec.md)
 - [Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](../hopper-gap/automation-studio-scripting-plugin-workbench-implementation-spec.md)
