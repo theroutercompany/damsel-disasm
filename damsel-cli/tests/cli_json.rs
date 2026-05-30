@@ -2005,11 +2005,15 @@ fn disasm_json_analysis_contract_is_opt_in() {
         &analysis["summary"],
         &[
             "basic_block_count",
+            "symbolicated_block_count",
+            "function_start_block_count",
             "entry_block_count",
             "exit_block_count",
             "primary_entry_reachable_block_count",
             "disconnected_block_count",
             "edge_count",
+            "structural_edge_count",
+            "call_edge_count",
             "back_edge_count",
             "loop_header_count",
             "edge_kind_counts",
@@ -2045,6 +2049,16 @@ fn disasm_json_analysis_contract_is_opt_in() {
         ],
     );
     assert!(analysis["summary"]["basic_block_count"].as_u64().unwrap() > 1);
+    assert!(
+        analysis["summary"]["symbolicated_block_count"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        analysis["summary"]["function_start_block_count"]
+            .as_u64()
+            .is_some()
+    );
     assert!(analysis["summary"]["entry_block_count"].as_u64().unwrap() > 0);
     assert!(analysis["summary"]["exit_block_count"].as_u64().unwrap() > 0);
     assert!(
@@ -2092,6 +2106,25 @@ fn disasm_json_analysis_contract_is_opt_in() {
     assert_eq!(
         edge_kind_total,
         analysis["summary"]["edge_count"].as_u64().unwrap()
+    );
+    let edge_kind_counts = &analysis["summary"]["edge_kind_counts"];
+    assert_eq!(
+        analysis["summary"]["structural_edge_count"]
+            .as_u64()
+            .expect("structural edge count"),
+        edge_kind_counts["fallthrough_count"].as_u64().unwrap()
+            + edge_kind_counts["branch_count"].as_u64().unwrap()
+            + edge_kind_counts["conditional_branch_count"]
+                .as_u64()
+                .unwrap()
+            + edge_kind_counts["indirect_branch_count"].as_u64().unwrap()
+    );
+    assert_eq!(
+        analysis["summary"]["call_edge_count"]
+            .as_u64()
+            .expect("call edge count"),
+        edge_kind_counts["call_count"].as_u64().unwrap()
+            + edge_kind_counts["indirect_call_count"].as_u64().unwrap()
     );
     assert_exact_object_keys(
         &analysis["summary"]["terminator_kind_counts"],
@@ -2149,6 +2182,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
             block["id"].is_number()
                 && block["start_address"].is_number()
                 && block["end_address"].is_number()
+                && block["symbol_names"].is_array()
+                && block["function_start"].is_boolean()
                 && block["instruction_count"].is_number()
                 && block["terminator_address"].is_number()
                 && block["terminator_mnemonic"].is_string()
@@ -2169,6 +2204,30 @@ fn disasm_json_analysis_contract_is_opt_in() {
     let blocks = analysis["basic_blocks"]
         .as_array()
         .expect("analysis blocks");
+    let symbolicated_blocks = blocks
+        .iter()
+        .filter(|block| {
+            block["symbol_names"]
+                .as_array()
+                .is_some_and(|names| !names.is_empty())
+        })
+        .count() as u64;
+    let function_start_blocks = blocks
+        .iter()
+        .filter(|block| block["function_start"].as_bool() == Some(true))
+        .count() as u64;
+    assert_eq!(
+        analysis["summary"]["symbolicated_block_count"]
+            .as_u64()
+            .expect("symbolicated block count"),
+        symbolicated_blocks
+    );
+    assert_eq!(
+        analysis["summary"]["function_start_block_count"]
+            .as_u64()
+            .expect("function-start block count"),
+        function_start_blocks
+    );
     for (summary_key, block_kind) in [
         ("fallthrough_count", "fallthrough"),
         ("branch_count", "branch"),
@@ -2199,6 +2258,8 @@ fn disasm_json_analysis_contract_is_opt_in() {
                 "id",
                 "start_address",
                 "end_address",
+                "symbol_names",
+                "function_start",
                 "instruction_count",
                 "terminator_address",
                 "terminator_mnemonic",
@@ -2366,6 +2427,9 @@ fn disasm_json_analysis_contract_is_opt_in() {
             && block["primary_entry_reachable"].as_bool() == Some(true)
     }));
     for block in blocks {
+        for symbol_name in block["symbol_names"].as_array().expect("symbol names") {
+            assert!(symbol_name.is_string());
+        }
         let predecessors = block["predecessors"].as_array().expect("predecessors");
         let back_edge_predecessors = block["back_edge_predecessors"]
             .as_array()

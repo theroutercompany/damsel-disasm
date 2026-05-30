@@ -11,7 +11,7 @@ use damsel_core::{
     DisassemblySummary, DisassemblyTarget, DisassemblyTargetSummary, DisassemblyTargetUse,
     Endianness, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
     IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
-    Reference, Relocation, Section, StubHelperEntry, Symbol, TableSlotEncoding,
+    Reference, Relocation, Section, StubHelperEntry, Symbol, SymbolKind, TableSlotEncoding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -58,7 +58,7 @@ fn analyze_disassembly_impl(
     end_address: u64,
     instructions: &[DecodedInstruction],
 ) -> DisassemblyAnalysis {
-    let basic_blocks = build_basic_blocks(instructions);
+    let basic_blocks = build_basic_blocks(image, instructions);
     let mut edges = Vec::new();
     let mut direct_calls = Vec::new();
     let mut branch_targets = Vec::new();
@@ -333,7 +333,20 @@ fn analyze_disassembly_impl(
     let back_edge_count = edges.iter().filter(|edge| edge.is_back_edge()).count();
     let loop_header_count = back_edge_targets.len();
     let edge_kind_counts = ControlFlowEdgeKindCounts::from_edges(&edges);
+    let structural_edge_count = edges
+        .iter()
+        .filter(|edge| edge.kind.is_structural_successor())
+        .count();
+    let call_edge_count = edges.iter().filter(|edge| edge.kind.is_call()).count();
     let terminator_kind_counts = BasicBlockTerminatorKindCounts::from_blocks(&basic_blocks);
+    let symbolicated_block_count = basic_blocks
+        .iter()
+        .filter(|block| !block.symbol_names.is_empty())
+        .count();
+    let function_start_block_count = basic_blocks
+        .iter()
+        .filter(|block| block.function_start)
+        .count();
     let external_target_edge_count = edges
         .iter()
         .filter(|edge| edge.target_address.is_some() && edge.to_block.is_none())
@@ -403,11 +416,15 @@ fn analyze_disassembly_impl(
         },
         summary: DisassemblySummary {
             basic_block_count: basic_blocks.len(),
+            symbolicated_block_count,
+            function_start_block_count,
             entry_block_count,
             exit_block_count,
             primary_entry_reachable_block_count,
             disconnected_block_count,
             edge_count: edges.len(),
+            structural_edge_count,
+            call_edge_count,
             back_edge_count,
             loop_header_count,
             edge_kind_counts,
@@ -1048,7 +1065,10 @@ fn image_limit_reached(
     }
 }
 
-fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
+fn build_basic_blocks(
+    image: Option<&BinaryImage>,
+    instructions: &[DecodedInstruction],
+) -> Vec<BasicBlock> {
     if instructions.is_empty() {
         return Vec::new();
     }
@@ -1085,18 +1105,20 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
     let mut current_terminator_mnemonic = instructions[0].mnemonic.clone();
     let mut current_terminator_kind = terminator_kind(&instructions[0].mnemonic);
     let mut current_count = 0;
+    let block_metadata = BasicBlockMetadata::from_image(image);
 
     for instruction in instructions {
         if current_count > 0 && leaders.contains(&instruction.address) {
-            blocks.push(BasicBlock {
-                id: blocks.len(),
-                start_address: current_start,
-                end_address: current_end,
-                instruction_count: current_count,
-                terminator_address: current_terminator_address,
-                terminator_mnemonic: current_terminator_mnemonic,
-                terminator_kind: current_terminator_kind,
-            });
+            blocks.push(make_basic_block(
+                &block_metadata,
+                blocks.len(),
+                current_start,
+                current_end,
+                current_count,
+                current_terminator_address,
+                current_terminator_mnemonic,
+                current_terminator_kind,
+            ));
             current_start = instruction.address;
             current_count = 0;
         }
@@ -1109,16 +1131,94 @@ fn build_basic_blocks(instructions: &[DecodedInstruction]) -> Vec<BasicBlock> {
         current_count += 1;
     }
 
-    blocks.push(BasicBlock {
-        id: blocks.len(),
-        start_address: current_start,
-        end_address: current_end,
-        instruction_count: current_count,
-        terminator_address: current_terminator_address,
-        terminator_mnemonic: current_terminator_mnemonic,
-        terminator_kind: terminal_window_terminator_kind(current_terminator_kind),
-    });
+    blocks.push(make_basic_block(
+        &block_metadata,
+        blocks.len(),
+        current_start,
+        current_end,
+        current_count,
+        current_terminator_address,
+        current_terminator_mnemonic,
+        terminal_window_terminator_kind(current_terminator_kind),
+    ));
     blocks
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_basic_block(
+    metadata: &BasicBlockMetadata,
+    id: usize,
+    start_address: u64,
+    end_address: u64,
+    instruction_count: usize,
+    terminator_address: u64,
+    terminator_mnemonic: String,
+    terminator_kind: BasicBlockTerminatorKind,
+) -> BasicBlock {
+    BasicBlock {
+        id,
+        start_address,
+        end_address,
+        symbol_names: metadata.symbol_names(start_address),
+        function_start: metadata.is_function_start(start_address),
+        instruction_count,
+        terminator_address,
+        terminator_mnemonic,
+        terminator_kind,
+    }
+}
+
+#[derive(Debug, Default)]
+struct BasicBlockMetadata {
+    symbol_names_by_address: BTreeMap<u64, Vec<String>>,
+    function_starts: BTreeSet<u64>,
+}
+
+impl BasicBlockMetadata {
+    fn from_image(image: Option<&BinaryImage>) -> Self {
+        let Some(image) = image else {
+            return Self::default();
+        };
+
+        let mut names_by_address = BTreeMap::<u64, BTreeSet<String>>::new();
+        for symbol in image
+            .symbols()
+            .iter()
+            .filter(|symbol| symbol.defined && symbol.kind == SymbolKind::Text)
+        {
+            names_by_address
+                .entry(symbol.address)
+                .or_default()
+                .insert(symbol.name.clone());
+        }
+        for (address, name) in image
+            .dyld()
+            .exported_symbols
+            .iter()
+            .filter_map(|export| export.address.map(|address| (address, export.name.clone())))
+        {
+            names_by_address.entry(address).or_default().insert(name);
+        }
+
+        Self {
+            symbol_names_by_address: names_by_address
+                .into_iter()
+                .map(|(address, names)| (address, names.into_iter().collect()))
+                .collect(),
+            function_starts: image.dyld().function_starts.iter().copied().collect(),
+        }
+    }
+
+    fn symbol_names(&self, address: u64) -> Vec<String> {
+        self.symbol_names_by_address
+            .get(&address)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn is_function_start(&self, address: u64) -> bool {
+        self.function_starts.contains(&address)
+    }
 }
 
 fn terminal_window_terminator_kind(kind: BasicBlockTerminatorKind) -> BasicBlockTerminatorKind {
@@ -2383,7 +2483,7 @@ fn synthesize_analysis_references(
 }
 
 fn basic_block_join_addresses(instructions: &[DecodedInstruction]) -> BTreeSet<u64> {
-    let blocks = build_basic_blocks(instructions);
+    let blocks = build_basic_blocks(None, instructions);
     if blocks.len() < 2 {
         return BTreeSet::new();
     }
@@ -6014,6 +6114,8 @@ mod tests {
                 id: 0,
                 start_address: 0x1000,
                 end_address: 0x1008,
+                symbol_names: Vec::new(),
+                function_start: false,
                 instruction_count: 2,
                 terminator_address: 0x1004,
                 terminator_mnemonic: "add".to_string(),
@@ -6023,6 +6125,8 @@ mod tests {
                 id: 1,
                 start_address: 0x1008,
                 end_address: 0x1010,
+                symbol_names: Vec::new(),
+                function_start: false,
                 instruction_count: 2,
                 terminator_address: 0x100c,
                 terminator_mnemonic: "ret".to_string(),
@@ -6109,6 +6213,9 @@ mod tests {
         assert_eq!(analysis.summary.exit_block_count, 2);
         assert_eq!(analysis.summary.primary_entry_reachable_block_count, 1);
         assert_eq!(analysis.summary.disconnected_block_count, 1);
+        assert_eq!(analysis.summary.edge_count, 3);
+        assert_eq!(analysis.summary.structural_edge_count, 0);
+        assert_eq!(analysis.summary.call_edge_count, 1);
         assert!(
             analysis.edges.iter().any(|edge| {
                 edge.kind == ControlFlowEdgeKind::Call

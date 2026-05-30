@@ -572,6 +572,8 @@ fn block_with_terminator(terminator_kind: BasicBlockTerminatorKind) -> BasicBloc
         id: 0,
         start_address: 0x1000,
         end_address: 0x1004,
+        symbol_names: Vec::new(),
+        function_start: false,
         instruction_count: 1,
         terminator_address: 0x1000,
         terminator_mnemonic: terminator_kind.to_string(),

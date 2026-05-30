@@ -3,10 +3,7 @@ use damsel_core::{
     DisassemblyOptions, DisassemblyRequest, DisassemblyRequestV2, DisassemblyStopReason,
     DisassemblyTarget, RecoveredValueKind, RecoveredValueSource, Reference, TableSlotEncoding,
 };
-use damsel_macho::{
-    MachoError, analyze_disassembly, analyze_disassembly_with_image, disassemble, disassemble_v2,
-    load,
-};
+use damsel_macho::{MachoError, analyze_disassembly_with_image, disassemble, disassemble_v2, load};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -401,7 +398,8 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
         },
     };
     let result = disassemble_v2(&image, &request).expect("disassemble semantic fixture");
-    let analysis = analyze_disassembly(
+    let analysis = analyze_disassembly_with_image(
+        &image,
         result.target.clone(),
         result.start_address,
         result.end_address,
@@ -434,6 +432,30 @@ fn disasm_analysis_builds_cfg_and_summary_for_semantic_fixture() {
         analysis.basic_blocks.len()
     );
     assert_eq!(analysis.summary.edge_count, analysis.edges.len());
+    assert_eq!(
+        analysis.summary.symbolicated_block_count,
+        analysis
+            .basic_blocks
+            .iter()
+            .filter(|block| !block.symbol_names.is_empty())
+            .count()
+    );
+    assert_eq!(
+        analysis.summary.function_start_block_count,
+        analysis
+            .basic_blocks
+            .iter()
+            .filter(|block| block.function_start)
+            .count()
+    );
+    assert!(
+        analysis.basic_blocks.iter().any(|block| {
+            block.start_address == 0x1000004b0
+                && block.function_start
+                && block.symbol_names.iter().any(|name| name == "_main")
+        }),
+        "block provenance should expose symbol and LC_FUNCTION_STARTS labels"
+    );
     assert_eq!(
         analysis.metrics.decoded_byte_count as u64,
         result.end_address.saturating_sub(result.start_address)

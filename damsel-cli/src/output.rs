@@ -1587,13 +1587,17 @@ pub(crate) fn print_disassembly(
 fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
     println!("analysis:");
     println!(
-        "  summary: blocks={} entries={} exits={} primary_reachable={} disconnected={} edges={} back_edges={} loop_headers={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
+        "  summary: blocks={} symbolicated_blocks={} function_start_blocks={} entries={} exits={} primary_reachable={} disconnected={} edges={} structural_edges={} call_edges={} back_edges={} loop_headers={} calls={} indirect_calls={} branches={} returns={} data_refs={} imports={} objc_selectors={} objc_classes={} objc_method_lists={} objc_message_sends={} cache_links={} recovered_values={} jump_tables={} unresolved_indirect={}",
         analysis.summary.basic_block_count,
+        analysis.summary.symbolicated_block_count,
+        analysis.summary.function_start_block_count,
         analysis.summary.entry_block_count,
         analysis.summary.exit_block_count,
         analysis.summary.primary_entry_reachable_block_count,
         analysis.summary.disconnected_block_count,
         analysis.summary.edge_count,
+        analysis.summary.structural_edge_count,
+        analysis.summary.call_edge_count,
         analysis.summary.back_edge_count,
         analysis.summary.loop_header_count,
         analysis.summary.direct_call_count,
@@ -1656,11 +1660,18 @@ fn print_disassembly_analysis_text(analysis: &DisassemblyAnalysis) {
         let block_edge_index = BasicBlockEdgeIndex::new(analysis);
         println!("  blocks:");
         for block in &analysis.basic_blocks {
+            let symbols = if block.symbol_names.is_empty() {
+                "-".to_string()
+            } else {
+                block.symbol_names.join(",")
+            };
             println!(
-                "    - id={} range={:#x}..{:#x} instructions={} entry={} exit={} reachable={} loop_header={} terminal={} terminator={:#x}:{} kind={}",
+                "    - id={} range={:#x}..{:#x} symbols={} function_start={} instructions={} entry={} exit={} reachable={} loop_header={} terminal={} terminator={:#x}:{} kind={}",
                 block.id,
                 block.start_address,
                 block.end_address,
+                symbols,
+                block.function_start,
                 block.instruction_count,
                 block_edge_index.is_entry(block.id),
                 block_edge_index.is_exit(block.id),
@@ -4853,6 +4864,14 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                     usize_num(analysis.summary.basic_block_count),
                 ),
                 (
+                    "symbolicated_block_count".to_string(),
+                    usize_num(analysis.summary.symbolicated_block_count),
+                ),
+                (
+                    "function_start_block_count".to_string(),
+                    usize_num(analysis.summary.function_start_block_count),
+                ),
+                (
                     "entry_block_count".to_string(),
                     usize_num(analysis.summary.entry_block_count),
                 ),
@@ -4871,6 +4890,14 @@ fn disassembly_analysis_json(analysis: &DisassemblyAnalysis) -> JsonValue {
                 (
                     "edge_count".to_string(),
                     usize_num(analysis.summary.edge_count),
+                ),
+                (
+                    "structural_edge_count".to_string(),
+                    usize_num(analysis.summary.structural_edge_count),
+                ),
+                (
+                    "call_edge_count".to_string(),
+                    usize_num(analysis.summary.call_edge_count),
                 ),
                 (
                     "back_edge_count".to_string(),
@@ -5342,6 +5369,20 @@ fn basic_block_json(block: &BasicBlock, edge_index: &BasicBlockEdgeIndex<'_>) ->
         ("id".to_string(), usize_num(block.id)),
         ("start_address".to_string(), u64_num(block.start_address)),
         ("end_address".to_string(), u64_num(block.end_address)),
+        (
+            "symbol_names".to_string(),
+            JsonValue::Array(
+                block
+                    .symbol_names
+                    .iter()
+                    .map(|name| JsonValue::String(name.clone()))
+                    .collect(),
+            ),
+        ),
+        (
+            "function_start".to_string(),
+            JsonValue::Bool(block.function_start),
+        ),
         (
             "instruction_count".to_string(),
             usize_num(block.instruction_count),
@@ -7630,6 +7671,8 @@ mod tests {
                 id: 0,
                 start_address: 0x1000,
                 end_address: 0x1004,
+                symbol_names: Vec::new(),
+                function_start: false,
                 instruction_count: 1,
                 terminator_address: 0x1000,
                 terminator_mnemonic: "br".to_string(),
@@ -7655,11 +7698,15 @@ mod tests {
             jump_tables: Vec::new(),
             summary: damsel_core::DisassemblySummary {
                 basic_block_count: 1,
+                symbolicated_block_count: 0,
+                function_start_block_count: 0,
                 entry_block_count: 1,
                 exit_block_count: 1,
                 primary_entry_reachable_block_count: 1,
                 disconnected_block_count: 0,
                 edge_count: 1,
+                structural_edge_count: 1,
+                call_edge_count: 0,
                 back_edge_count: 0,
                 loop_header_count: 0,
                 edge_kind_counts: damsel_core::ControlFlowEdgeKindCounts {
@@ -7750,6 +7797,8 @@ mod tests {
                     id: 0,
                     start_address: 0x1000,
                     end_address: 0x1004,
+                    symbol_names: Vec::new(),
+                    function_start: false,
                     instruction_count: 1,
                     terminator_address: 0x1000,
                     terminator_mnemonic: "b".to_string(),
@@ -7759,6 +7808,8 @@ mod tests {
                     id: 1,
                     start_address: 0x1004,
                     end_address: 0x1008,
+                    symbol_names: Vec::new(),
+                    function_start: false,
                     instruction_count: 1,
                     terminator_address: 0x1004,
                     terminator_mnemonic: "b.eq".to_string(),
@@ -7795,11 +7846,15 @@ mod tests {
             jump_tables: Vec::new(),
             summary: damsel_core::DisassemblySummary {
                 basic_block_count: 2,
+                symbolicated_block_count: 0,
+                function_start_block_count: 0,
                 entry_block_count: 1,
                 exit_block_count: 0,
                 primary_entry_reachable_block_count: 2,
                 disconnected_block_count: 0,
                 edge_count: 2,
+                structural_edge_count: 2,
+                call_edge_count: 0,
                 back_edge_count: 1,
                 loop_header_count: 1,
                 edge_kind_counts: damsel_core::ControlFlowEdgeKindCounts {
@@ -7878,6 +7933,8 @@ mod tests {
                     id: 0,
                     start_address: 0x1000,
                     end_address: 0x1004,
+                    symbol_names: Vec::new(),
+                    function_start: false,
                     instruction_count: 1,
                     terminator_address: 0x1000,
                     terminator_mnemonic: "ret".to_string(),
@@ -7887,6 +7944,8 @@ mod tests {
                     id: 1,
                     start_address: 0x1004,
                     end_address: 0x1008,
+                    symbol_names: Vec::new(),
+                    function_start: false,
                     instruction_count: 1,
                     terminator_address: 0x1004,
                     terminator_mnemonic: "ret".to_string(),
@@ -7906,11 +7965,15 @@ mod tests {
             jump_tables: Vec::new(),
             summary: damsel_core::DisassemblySummary {
                 basic_block_count: 2,
+                symbolicated_block_count: 0,
+                function_start_block_count: 0,
                 entry_block_count: 2,
                 exit_block_count: 2,
                 primary_entry_reachable_block_count: 1,
                 disconnected_block_count: 1,
                 edge_count: 0,
+                structural_edge_count: 0,
+                call_edge_count: 0,
                 back_edge_count: 0,
                 loop_header_count: 0,
                 edge_kind_counts: damsel_core::ControlFlowEdgeKindCounts::default(),
@@ -7975,6 +8038,8 @@ mod tests {
                 id: 0,
                 start_address: 0x1000,
                 end_address: 0x1004,
+                symbol_names: Vec::new(),
+                function_start: false,
                 instruction_count: 1,
                 terminator_address: 0x1000,
                 terminator_mnemonic: "brk".to_string(),
@@ -7993,11 +8058,15 @@ mod tests {
             jump_tables: Vec::new(),
             summary: damsel_core::DisassemblySummary {
                 basic_block_count: 1,
+                symbolicated_block_count: 0,
+                function_start_block_count: 0,
                 entry_block_count: 1,
                 exit_block_count: 1,
                 primary_entry_reachable_block_count: 1,
                 disconnected_block_count: 0,
                 edge_count: 0,
+                structural_edge_count: 0,
+                call_edge_count: 0,
                 back_edge_count: 0,
                 loop_header_count: 0,
                 edge_kind_counts: damsel_core::ControlFlowEdgeKindCounts::default(),
@@ -8055,6 +8124,8 @@ mod tests {
                     id: 0,
                     start_address: 0x1000,
                     end_address: 0x1004,
+                    symbol_names: Vec::new(),
+                    function_start: false,
                     instruction_count: 1,
                     terminator_address: 0x1000,
                     terminator_mnemonic: "bl".to_string(),
@@ -8064,6 +8135,8 @@ mod tests {
                     id: 1,
                     start_address: 0x2000,
                     end_address: 0x2004,
+                    symbol_names: vec!["_callee".to_string()],
+                    function_start: true,
                     instruction_count: 1,
                     terminator_address: 0x2000,
                     terminator_mnemonic: "ret".to_string(),
@@ -8090,11 +8163,15 @@ mod tests {
             jump_tables: Vec::new(),
             summary: damsel_core::DisassemblySummary {
                 basic_block_count: 2,
+                symbolicated_block_count: 1,
+                function_start_block_count: 1,
                 entry_block_count: 2,
                 exit_block_count: 2,
                 primary_entry_reachable_block_count: 1,
                 disconnected_block_count: 1,
                 edge_count: 1,
+                structural_edge_count: 0,
+                call_edge_count: 1,
                 back_edge_count: 0,
                 loop_header_count: 0,
                 edge_kind_counts: damsel_core::ControlFlowEdgeKindCounts {
