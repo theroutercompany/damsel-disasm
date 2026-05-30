@@ -133,6 +133,8 @@ final class WorkbenchStoreTests: XCTestCase {
             return XCTFail("Expected disassembly to select the first instruction.")
         }
         XCTAssertEqual(store.route(for: instruction), WorkbenchRoute(basicBlockID: "7", address: 0x1000004b0))
+        XCTAssertEqual(store.route(for: 0x1000004b0), WorkbenchRoute(basicBlockID: "7", address: 0x1000004b0))
+        XCTAssertEqual(store.recentRoutes, [WorkbenchRoute(basicBlockID: "7", address: 0x1000004b0)])
         XCTAssertEqual(store.selectedRouteLabel, "Block 7 · 0x1000004b0")
         XCTAssertEqual(store.selectedRouteClipboardText, "block:7@0x1000004b0")
         XCTAssertEqual(store.selectedInstructionClipboardText(.route), "block:7@0x1000004b0")

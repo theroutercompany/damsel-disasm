@@ -30,18 +30,30 @@ public struct DamselAddressPaletteResult: Equatable, Identifiable, Sendable {
 }
 
 public struct DamselRecentRoutePaletteResult: Equatable, Identifiable, Sendable {
-    public let address: UInt64
+    public let route: WorkbenchRoute
 
-    public var id: UInt64 {
-        address
+    public init(address: UInt64) {
+        route = WorkbenchRoute(address: address)
+    }
+
+    public init(route: WorkbenchRoute) {
+        self.route = route
+    }
+
+    public var id: String {
+        route.rawValue
+    }
+
+    public var address: UInt64 {
+        route.address
     }
 
     public var title: String {
-        "Recent \(DamselFormat.address(address))"
+        "Recent \(route.displayLabel)"
     }
 
     public var subtitle: String {
-        "Address route history"
+        "Route history · \(route.rawValue)"
     }
 }
 
@@ -254,6 +266,18 @@ public enum DamselCommandPalette {
         addresses: [UInt64],
         limit: Int = 6
     ) -> [DamselRecentRoutePaletteResult] {
+        recentRouteResults(
+            matching: query,
+            routes: addresses.map(WorkbenchRoute.init(address:)),
+            limit: limit
+        )
+    }
+
+    public static func recentRouteResults(
+        matching query: String,
+        routes: [WorkbenchRoute],
+        limit: Int = 6
+    ) -> [DamselRecentRoutePaletteResult] {
         let normalizedQuery = normalize(query)
         let routeQuery = normalizeRecentRouteQuery(query)
         let showsAllRecentRoutes = routeQuery.isEmpty && isRecentRouteCategoryQuery(normalizedQuery)
@@ -261,9 +285,9 @@ public enum DamselCommandPalette {
             return []
         }
 
-        let ranked = addresses.enumerated().compactMap { index, address -> RecentRouteRankedResult? in
+        let ranked = routes.enumerated().compactMap { index, route -> RecentRouteRankedResult? in
             guard let score = scoreRecentRoute(
-                address,
+                route,
                 query: routeQuery,
                 showsAllRecentRoutes: showsAllRecentRoutes,
                 fallbackIndex: index
@@ -272,14 +296,14 @@ public enum DamselCommandPalette {
             }
             return RecentRouteRankedResult(
                 score: score,
-                result: DamselRecentRoutePaletteResult(address: address)
+                result: DamselRecentRoutePaletteResult(route: route)
             )
         }
 
         return ranked
             .sorted { lhs, rhs in
                 if lhs.score == rhs.score {
-                    return lhs.result.address < rhs.result.address
+                    return lhs.result.route.rawValue < rhs.result.route.rawValue
                 }
                 return lhs.score < rhs.score
             }
@@ -533,7 +557,7 @@ public enum DamselCommandPalette {
     }
 
     private static func scoreRecentRoute(
-        _ address: UInt64,
+        _ route: WorkbenchRoute,
         query: String,
         showsAllRecentRoutes: Bool,
         fallbackIndex: Int
@@ -542,14 +566,20 @@ public enum DamselCommandPalette {
             return fallbackIndex
         }
 
-        let addressText = normalize(DamselFormat.address(address))
+        let addressText = normalize(DamselFormat.address(route.address))
+        let displayLabel = normalize(route.displayLabel)
+        let rawValue = normalize(route.rawValue)
         let fields = [
             addressText,
+            displayLabel,
+            rawValue,
+            normalize(route.kind.rawValue),
+            route.blockID.map(normalize),
             "recent",
             "route",
             "address route",
             "recent address route"
-        ]
+        ].compactMap { $0 }
         let tokens = query.split(separator: " ").map(String.init)
 
         guard !tokens.isEmpty,
@@ -558,13 +588,13 @@ public enum DamselCommandPalette {
             return nil
         }
 
-        if addressText == query {
+        if addressText == query || displayLabel == query || rawValue == query {
             return 0
         }
-        if addressText.hasPrefix(query) {
+        if addressText.hasPrefix(query) || displayLabel.hasPrefix(query) || rawValue.hasPrefix(query) {
             return 10
         }
-        if addressText.contains(query) {
+        if addressText.contains(query) || displayLabel.contains(query) || rawValue.contains(query) {
             return 20
         }
         return 50 + fallbackIndex

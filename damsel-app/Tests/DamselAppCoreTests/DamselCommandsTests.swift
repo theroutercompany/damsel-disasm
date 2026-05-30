@@ -161,11 +161,31 @@ final class DamselCommandsTests: XCTestCase {
         )
         XCTAssertEqual(
             DamselCommandPalette.recentRouteResults(matching: "route 0x1000004b0", addresses: addresses).map(\.title),
-            ["Recent 0x1000004b0"]
+            ["Recent Address 0x1000004b0"]
         )
         XCTAssertEqual(
             DamselCommandPalette.recentRouteResults(matching: "", addresses: addresses).map(\.address),
             []
+        )
+    }
+
+    func testCommandPaletteSearchesRecentWorkbenchRoutes() {
+        let routes = [
+            WorkbenchRoute(basicBlockID: "7", address: 0x1000004b0),
+            WorkbenchRoute(address: 0x100000500),
+        ]
+
+        XCTAssertEqual(
+            DamselCommandPalette.recentRouteResults(matching: "block 7", routes: routes).map(\.title),
+            ["Recent Block 7 · 0x1000004b0"]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.recentRouteResults(matching: "block:7", routes: routes).map(\.route),
+            [WorkbenchRoute(basicBlockID: "7", address: 0x1000004b0)]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.recentRouteResults(matching: "recent", routes: routes).map(\.route),
+            routes
         )
     }
 

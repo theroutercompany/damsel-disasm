@@ -21,7 +21,7 @@ struct CommandPaletteView: View {
     private var recentRouteResults: [DamselRecentRoutePaletteResult] {
         DamselCommandPalette.recentRouteResults(
             matching: query,
-            addresses: store.recentAddressRoutes
+            routes: store.recentRoutes
         )
     }
 
@@ -337,7 +337,7 @@ private struct CommandPaletteRecentRouteRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(DamselFormat.address(result.address))
+        .help(result.route.rawValue)
     }
 }
 

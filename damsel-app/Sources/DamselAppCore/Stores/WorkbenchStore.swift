@@ -124,6 +124,10 @@ public final class WorkbenchStore: ObservableObject {
         selectedRoute?.rawValue
     }
 
+    public var recentRoutes: [WorkbenchRoute] {
+        recentAddressRoutes.map(route(for:))
+    }
+
     public var resultTitle: String {
         disassembly?.target ?? "No target"
     }
@@ -590,11 +594,15 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func route(for instruction: InstructionRow) -> WorkbenchRoute {
-        if let block = basicBlock(containing: instruction.address),
+        route(for: instruction.address)
+    }
+
+    public func route(for address: UInt64) -> WorkbenchRoute {
+        if let block = basicBlock(containing: address),
            let startAddress = block.startAddress {
             return WorkbenchRoute(basicBlockID: block.id, address: startAddress)
         }
-        return WorkbenchRoute(address: instruction.address)
+        return WorkbenchRoute(address: address)
     }
 
     public func selectedInstructionClipboardText(_ payload: InstructionClipboardPayload) -> String? {
