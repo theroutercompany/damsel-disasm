@@ -37,8 +37,8 @@ final class DamselModelsTests: XCTestCase {
               "direct_call_count": 0,
               "branch_count": 0,
               "data_reference_count": 1,
-              "import_count": 0,
-              "cache_link_count": 0,
+              "import_count": 1,
+              "cache_link_count": 1,
               "recovered_value_count": 0,
               "jump_table_count": 0,
               "unresolved_indirect_count": 0
@@ -96,6 +96,30 @@ final class DamselModelsTests: XCTestCase {
                 "via": "x16",
                 "resolved_target": null
               }
+            ],
+            "imports": [
+              {
+                "instruction_address": 4294967296,
+                "dylib": "/usr/lib/libSystem.B.dylib",
+                "name": "_printf",
+                "address": 4294971392
+              }
+            ],
+            "cache_links": [
+              {
+                "instruction_address": 4294967300,
+                "symbol_name": "_objc_msgSend",
+                "dylib": "/usr/lib/libobjc.A.dylib",
+                "provider_image_id": "dyld-shared-cache:libobjc",
+                "provider_install_name": "/usr/lib/libobjc.A.dylib",
+                "provider_member_name": "libobjc.A.dylib",
+                "provider_kind": "dylib",
+                "target_dylib": "/usr/lib/libobjc.A.dylib",
+                "target_symbol": "_objc_msgSend",
+                "resolved_target_image_id": "dyld-shared-cache:libobjc",
+                "resolved_target_install_name": "/usr/lib/libobjc.A.dylib",
+                "resolved_target_member_name": "libobjc.A.dylib"
+              }
             ]
           }
         }
@@ -126,6 +150,30 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertEqual(payload.analysis?.indirectControls.first?.kind, "indirect-branch")
         XCTAssertEqual(payload.analysis?.indirectControls.first?.via, "x16")
         XCTAssertNil(payload.analysis?.indirectControls.first?.resolvedTarget)
+        XCTAssertEqual(payload.analysis?.imports.first?.instructionAddress, 4294967296)
+        XCTAssertEqual(payload.analysis?.imports.first?.dylib, "/usr/lib/libSystem.B.dylib")
+        XCTAssertEqual(payload.analysis?.imports.first?.name, "_printf")
+        XCTAssertEqual(payload.analysis?.imports.first?.address, 4294971392)
+        XCTAssertEqual(payload.analysis?.cacheLinks.first?.instructionAddress, 4294967300)
+        XCTAssertEqual(payload.analysis?.cacheLinks.first?.symbolName, "_objc_msgSend")
+        XCTAssertEqual(payload.analysis?.cacheLinks.first?.providerMemberName, "libobjc.A.dylib")
+        XCTAssertEqual(payload.analysis?.cacheLinks.first?.targetSymbol, "_objc_msgSend")
+        XCTAssertEqual(payload.analysis?.cacheLinks.first?.resolvedTargetImageID, "dyld-shared-cache:libobjc")
+    }
+
+    func testAnalysisPayloadDefaultsLinkageArraysWhenMissing() throws {
+        let json = """
+        {
+          "summary": {}
+        }
+        """
+
+        let payload = try JSONDecoder().decode(AnalysisPayload.self, from: Data(json.utf8))
+
+        XCTAssertTrue(payload.imports.isEmpty)
+        XCTAssertTrue(payload.cacheLinks.isEmpty)
+        XCTAssertTrue(payload.directCalls.isEmpty)
+        XCTAssertTrue(payload.indirectControls.isEmpty)
     }
 
     func testInstructionFilterMatchesRenderedMnemonicAndAddress() throws {

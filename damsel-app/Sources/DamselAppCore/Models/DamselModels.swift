@@ -172,6 +172,8 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
     public let branchTargets: [AnalysisTargetUse]
     public let dataReferences: [AnalysisTargetUse]
     public let indirectControls: [AnalysisIndirectControlUse]
+    public let imports: [AnalysisImportUse]
+    public let cacheLinks: [AnalysisCacheLinkUse]
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -183,6 +185,8 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         case branchTargets = "branch_targets"
         case dataReferences = "data_references"
         case indirectControls = "indirect_controls"
+        case imports
+        case cacheLinks = "cache_links"
     }
 
     public init(from decoder: Decoder) throws {
@@ -196,6 +200,8 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         branchTargets = try container.decodeIfPresent([AnalysisTargetUse].self, forKey: .branchTargets) ?? []
         dataReferences = try container.decodeIfPresent([AnalysisTargetUse].self, forKey: .dataReferences) ?? []
         indirectControls = try container.decodeIfPresent([AnalysisIndirectControlUse].self, forKey: .indirectControls) ?? []
+        imports = try container.decodeIfPresent([AnalysisImportUse].self, forKey: .imports) ?? []
+        cacheLinks = try container.decodeIfPresent([AnalysisCacheLinkUse].self, forKey: .cacheLinks) ?? []
     }
 }
 
@@ -228,6 +234,58 @@ public struct AnalysisIndirectControlUse: Decodable, Equatable, Identifiable, Se
         case kind
         case via
         case resolvedTarget = "resolved_target"
+    }
+}
+
+public struct AnalysisImportUse: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String {
+        "\(DamselFormat.address(instructionAddress)):\(dylib):\(name):\(DamselFormat.address(address))"
+    }
+
+    public let instructionAddress: UInt64
+    public let dylib: String
+    public let name: String
+    public let address: UInt64?
+
+    enum CodingKeys: String, CodingKey {
+        case instructionAddress = "instruction_address"
+        case dylib
+        case name
+        case address
+    }
+}
+
+public struct AnalysisCacheLinkUse: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String {
+        "\(DamselFormat.address(instructionAddress)):\(symbolName):\(dylib):\(providerImageID)"
+    }
+
+    public let instructionAddress: UInt64
+    public let symbolName: String
+    public let dylib: String
+    public let providerImageID: String
+    public let providerInstallName: String
+    public let providerMemberName: String
+    public let providerKind: String
+    public let targetDylib: String?
+    public let targetSymbol: String?
+    public let resolvedTargetImageID: String?
+    public let resolvedTargetInstallName: String?
+    public let resolvedTargetMemberName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case instructionAddress = "instruction_address"
+        case symbolName = "symbol_name"
+        case dylib
+        case providerImageID = "provider_image_id"
+        case providerInstallName = "provider_install_name"
+        case providerMemberName = "provider_member_name"
+        case providerKind = "provider_kind"
+        case targetDylib = "target_dylib"
+        case targetSymbol = "target_symbol"
+        case resolvedTargetImageID = "resolved_target_image_id"
+        case resolvedTargetInstallName = "resolved_target_install_name"
+        case resolvedTargetMemberName = "resolved_target_member_name"
     }
 }
 

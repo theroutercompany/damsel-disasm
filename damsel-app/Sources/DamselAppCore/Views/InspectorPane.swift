@@ -13,6 +13,7 @@ struct InspectorPane: View {
                         routeSection()
                         instructionSection(instruction)
                         referenceSection(instruction)
+                        linkageSection(instruction, analysis: store.disassembly?.analysis)
                         analysisTargetUseSection(instruction, analysis: store.disassembly?.analysis)
                         payloadSection("Operands", values: instruction.structuredOperands ?? [])
                         payloadSection("Annotations", values: instruction.annotations)
@@ -91,6 +92,32 @@ struct InspectorPane: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func linkageSection(_ instruction: InstructionRow, analysis: AnalysisPayload?) -> some View {
+        let importRows = importUses(for: instruction, analysis: analysis)
+        let cacheLinkRows = cacheLinks(for: instruction, analysis: analysis)
+        if !importRows.isEmpty || !cacheLinkRows.isEmpty {
+            InspectorSection(title: "Linkage") {
+                ForEach(importRows) { use in
+                    ImportUseRow(use: use) { address in
+                        Task { await store.jump(to: address) }
+                    }
+                }
+                ForEach(cacheLinkRows) { use in
+                    CacheLinkUseRow(use: use)
+                }
+            }
+        }
+    }
+
+    private func importUses(for instruction: InstructionRow, analysis: AnalysisPayload?) -> [AnalysisImportUse] {
+        analysis?.imports.filter { $0.instructionAddress == instruction.address } ?? []
+    }
+
+    private func cacheLinks(for instruction: InstructionRow, analysis: AnalysisPayload?) -> [AnalysisCacheLinkUse] {
+        analysis?.cacheLinks.filter { $0.instructionAddress == instruction.address } ?? []
     }
 
     @ViewBuilder
@@ -391,6 +418,129 @@ private struct IndirectControlRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
+    }
+}
+
+private struct ImportUseRow: View {
+    let use: AnalysisImportUse
+    let jump: (UInt64) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("import")
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                if let address = use.address {
+                    Button(DamselFormat.address(address)) {
+                        jump(address)
+                    }
+                    .font(.system(.caption, design: .monospaced))
+                    .buttonStyle(.borderless)
+                    .help("Jump to \(DamselFormat.address(address))")
+                } else {
+                    Text("unresolved")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(use.name)
+                    .font(.system(.caption, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
+            Text(use.dylib)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct CacheLinkUseRow: View {
+    let use: AnalysisCacheLinkUse
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("cache")
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(use.symbolName)
+                    .font(.system(.caption, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
+            Text(providerText)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            Text("dylib \(use.dylib)")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            if let targetText {
+                Text(targetText)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
+            if let resolvedText {
+                Text(resolvedText)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var providerText: String {
+        "provider \(use.providerMemberName) · \(use.providerKind) · \(use.providerInstallName)"
+    }
+
+    private var targetText: String? {
+        let values = [use.targetDylib, use.targetSymbol]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !values.isEmpty else {
+            return nil
+        }
+        return "target " + values.joined(separator: " ")
+    }
+
+    private var resolvedText: String? {
+        let values = [
+            use.resolvedTargetMemberName,
+            use.resolvedTargetInstallName,
+            use.resolvedTargetImageID,
+        ]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !values.isEmpty else {
+            return nil
+        }
+        return "resolved " + values.joined(separator: " ")
     }
 }
 
