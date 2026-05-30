@@ -557,6 +557,22 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDiagnosticsReportSummarizesAnalysisFactsWithoutNames() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassemblyWithAnalysisFacts())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+
+        let report = store.diagnosticsReport
+        XCTAssertTrue(report.contains(
+            "Analysis facts: blocks=1, edges=1, calls=1, branches=1, data_refs=1, " +
+                "indirect=1, imports=1, cache_links=1, objc=1, jump_tables=1, recovered_values=1"
+        ))
+        XCTAssertFalse(report.contains("_printf"))
+        XCTAssertFalse(report.contains("libobjc"))
+    }
+
+    @MainActor
     func testLoadingFileResetsFileScopedControlsBeforeAutoDisassembly() async throws {
         let loadedImage = Self.sampleImage(imageId: "new-fixture")
         let client = SuggestionClient(
@@ -678,6 +694,133 @@ final class WorkbenchStoreTests: XCTestCase {
                 "entry": true,
                 "exit": true,
                 "terminal": true
+              }
+            ]
+          }
+        }
+        """
+        return try JSONDecoder().decode(DisassemblyResponse.self, from: Data(json.utf8))
+    }
+
+    fileprivate static func sampleDisassemblyWithAnalysisFacts() throws -> DisassemblyResponse {
+        let json = """
+        {
+          "target": "__TEXT:__text",
+          "start_address": 4294968496,
+          "end_address": 4294968500,
+          "instruction_count": 1,
+          "stop_reason": "limit",
+          "instructions": [
+            {
+              "address": 4294968496,
+              "opcode": 2432696320,
+              "mnemonic": "ret",
+              "rendered": "ret",
+              "references": []
+            }
+          ],
+          "analysis": {
+            "summary": {
+              "basic_block_count": 1,
+              "edge_count": 1,
+              "direct_call_count": 1,
+              "branch_count": 1,
+              "data_reference_count": 1,
+              "import_count": 1,
+              "cache_link_count": 1,
+              "recovered_value_count": 1,
+              "jump_table_count": 1,
+              "unresolved_indirect_count": 1
+            },
+            "basic_blocks": [
+              {
+                "id": 7,
+                "start_address": 4294968496,
+                "end_address": 4294968500,
+                "instruction_count": 1,
+                "entry": true,
+                "exit": true,
+                "terminal": true
+              }
+            ],
+            "edges": [
+              {
+                "from_block": 7,
+                "to_block": null,
+                "source_address": 4294968496,
+                "target_address": null,
+                "kind": "return",
+                "via": null,
+                "back_edge": false
+              }
+            ],
+            "direct_calls": [
+              {"instruction_address": 4294968496, "target_address": 4294983680}
+            ],
+            "branch_targets": [
+              {"instruction_address": 4294968496, "target_address": 4294968496}
+            ],
+            "data_references": [
+              {"instruction_address": 4294968496, "target_address": 4294983680}
+            ],
+            "indirect_controls": [
+              {
+                "instruction_address": 4294968496,
+                "kind": "indirect-branch",
+                "via": "x16",
+                "resolved_target": null
+              }
+            ],
+            "imports": [
+              {
+                "instruction_address": 4294968496,
+                "dylib": "/usr/lib/libSystem.B.dylib",
+                "name": "_printf",
+                "address": 4294983680
+              }
+            ],
+            "cache_links": [
+              {
+                "instruction_address": 4294968496,
+                "symbol_name": "_objc_msgSend",
+                "dylib": "/usr/lib/libobjc.A.dylib",
+                "provider_image_id": "dyld-shared-cache:libobjc",
+                "provider_install_name": "/usr/lib/libobjc.A.dylib",
+                "provider_member_name": "libobjc.A.dylib",
+                "provider_kind": "dylib",
+                "target_dylib": "/usr/lib/libobjc.A.dylib",
+                "target_symbol": "_objc_msgSend",
+                "resolved_target_image_id": "dyld-shared-cache:libobjc",
+                "resolved_target_install_name": "/usr/lib/libobjc.A.dylib",
+                "resolved_target_member_name": "libobjc.A.dylib"
+              }
+            ],
+            "objc_references": [
+              {
+                "instruction_address": 4294968496,
+                "target_address": 4294975488,
+                "resolved_address": 4294975744,
+                "kind": "message-send",
+                "name": "applicationDidFinishLaunching:",
+                "import_dylib": "/usr/lib/libobjc.A.dylib",
+                "import_symbol": "_objc_msgSend"
+              }
+            ],
+            "jump_tables": [
+              {
+                "instruction_address": 4294968496,
+                "table_base": 4295000064,
+                "index_register": "x9",
+                "element_size": 8
+              }
+            ],
+            "recovered_values": [
+              {
+                "instruction_address": 4294968496,
+                "register": "x0",
+                "value": 4294983680,
+                "kind": "Address",
+                "source": "AdrpAdd"
               }
             ]
           }

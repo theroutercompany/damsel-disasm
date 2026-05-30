@@ -223,6 +223,9 @@ public final class WorkbenchStore: ObservableObject {
             lines.append("Recent address routes: \(recentAddressRoutes.count)")
             lines.append("Back address routes: \(backAddressRoutes.count)")
             lines.append("Forward address routes: \(forwardAddressRoutes.count)")
+            if let analysis = disassembly.analysis {
+                lines.append("Analysis facts: \(diagnosticsAnalysisSummary(analysis))")
+            }
         } else {
             lines.append("Disassembly: none")
         }
@@ -741,6 +744,22 @@ public final class WorkbenchStore: ObservableObject {
             return trimmed.isEmpty ? nil : "\(label)=\(diagnosticText(trimmed))"
         }
         return populated.isEmpty ? "default" : populated.joined(separator: ", ")
+    }
+
+    private func diagnosticsAnalysisSummary(_ analysis: AnalysisPayload) -> String {
+        [
+            "blocks=\(analysis.basicBlocks.count)",
+            "edges=\(analysis.edges.count)",
+            "calls=\(analysis.directCalls.count)",
+            "branches=\(analysis.branchTargets.count)",
+            "data_refs=\(analysis.dataReferences.count)",
+            "indirect=\(analysis.indirectControls.count)",
+            "imports=\(analysis.imports.count)",
+            "cache_links=\(analysis.cacheLinks.count)",
+            "objc=\(analysis.objcReferences.count)",
+            "jump_tables=\(analysis.jumpTables.count)",
+            "recovered_values=\(analysis.recoveredValues.count)",
+        ].joined(separator: ", ")
     }
 
     private func diagnosticValue(_ value: String) -> String {
