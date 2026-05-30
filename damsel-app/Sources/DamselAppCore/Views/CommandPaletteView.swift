@@ -4,8 +4,13 @@ struct CommandPaletteView: View {
     @ObservedObject var store: WorkbenchStore
     @Binding var isPresented: Bool
     let performCommand: (DamselCommandID) -> Void
+    let jumpToAddress: (UInt64) -> Void
     @State private var query = ""
     @FocusState private var searchFocused: Bool
+
+    private var addressResult: DamselAddressPaletteResult? {
+        DamselCommandPalette.addressResult(matching: query)
+    }
 
     private var results: [DamselCommandPaletteResult] {
         DamselCommandPalette.results(matching: query) { commandID in
@@ -29,6 +34,12 @@ struct CommandPaletteView: View {
 
             ScrollView {
                 LazyVStack(spacing: 0) {
+                    if let addressResult {
+                        CommandPaletteAddressRow(result: addressResult) {
+                            isPresented = false
+                            jumpToAddress(addressResult.address.rawValue)
+                        }
+                    }
                     ForEach(results) { result in
                         CommandPaletteRow(result: result) {
                             guard result.availability.isEnabled else {
@@ -56,6 +67,12 @@ struct CommandPaletteView: View {
     }
 
     private func performDefaultResult() {
+        if let addressResult {
+            isPresented = false
+            jumpToAddress(addressResult.address.rawValue)
+            return
+        }
+
         guard let result = DamselCommandPalette.defaultExecutableResult(matching: query, availability: { commandID in
             store.commandAvailability(for: commandID)
         }) else {
@@ -63,6 +80,36 @@ struct CommandPaletteView: View {
         }
         isPresented = false
         performCommand(result.id)
+    }
+}
+
+private struct CommandPaletteAddressRow: View {
+    let result: DamselAddressPaletteResult
+    let perform: () -> Void
+
+    var body: some View {
+        Button(action: perform) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: "arrow.turn.down.right")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(result.title)
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(result.subtitle)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Color.secondary)
+                }
+
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(result.address.displayString)
     }
 }
 

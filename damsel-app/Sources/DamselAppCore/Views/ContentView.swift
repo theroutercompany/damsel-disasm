@@ -72,7 +72,8 @@ public struct ContentView: View {
             CommandPaletteView(
                 store: store,
                 isPresented: $isCommandPalettePresented,
-                performCommand: performPaletteCommand
+                performCommand: performPaletteCommand,
+                jumpToAddress: jumpToAddress
             )
         }
         .onAppear {
@@ -173,6 +174,10 @@ public struct ContentView: View {
         case .copyDiagnostics:
             copyToPasteboard(store.diagnosticsReport)
         }
+    }
+
+    private func jumpToAddress(_ address: UInt64) {
+        Task { await store.jump(to: address) }
     }
 
     private func copySelectedInstruction(_ payload: InstructionClipboardPayload) {

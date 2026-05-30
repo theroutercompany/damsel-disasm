@@ -13,6 +13,22 @@ public struct DamselCommandPaletteResult: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct DamselAddressPaletteResult: Equatable, Identifiable, Sendable {
+    public let address: AddressValue
+
+    public var id: UInt64 {
+        address.rawValue
+    }
+
+    public var title: String {
+        "Jump to \(address.displayString)"
+    }
+
+    public var subtitle: String {
+        "Address route"
+    }
+}
+
 public enum DamselCommandPalette {
     public static func results(
         matching query: String,
@@ -50,6 +66,23 @@ public enum DamselCommandPalette {
     ) -> DamselCommandPaletteResult? {
         results(matching: query, descriptors: descriptors, availability: availability)
             .first { $0.availability.isEnabled }
+    }
+
+    public static func addressResult(matching query: String) -> DamselAddressPaletteResult? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let addressText: String
+        if trimmed.hasPrefix("@") {
+            addressText = String(trimmed.dropFirst())
+        } else if trimmed.lowercased().hasPrefix("0x") {
+            addressText = trimmed
+        } else {
+            return nil
+        }
+
+        guard let address = AddressValue(text: addressText) else {
+            return nil
+        }
+        return DamselAddressPaletteResult(address: address)
     }
 
     private static func score(

@@ -110,4 +110,17 @@ final class DamselCommandsTests: XCTestCase {
 
         XCTAssertNil(result)
     }
+
+    func testCommandPaletteParsesAddressRouteQueries() {
+        XCTAssertEqual(
+            DamselCommandPalette.addressResult(matching: "@0x1000004b0")?.address.rawValue,
+            0x1000004b0
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.addressResult(matching: "  0x1000004b0  ")?.title,
+            "Jump to 0x1000004b0"
+        )
+        XCTAssertNil(DamselCommandPalette.addressResult(matching: "copy"))
+        XCTAssertNil(DamselCommandPalette.addressResult(matching: "@not-an-address"))
+    }
 }
