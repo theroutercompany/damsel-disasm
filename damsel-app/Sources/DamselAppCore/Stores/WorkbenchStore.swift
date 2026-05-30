@@ -51,6 +51,7 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
     @Published public var selectedInstructionAddress: UInt64?
+    @Published public private(set) var recentAddressRoutes: [UInt64] = []
 
     private let serverProcess: DamselServerProcess
     private var client: (any WorkbenchAPIClient)?
@@ -200,6 +201,7 @@ public final class WorkbenchStore: ObservableObject {
             lines.append("Needs refresh: \(diagnosticFlag(disassemblyNeedsRefresh))")
             lines.append("Filter: \(diagnosticValue(instructionFilterText))")
             lines.append("Selected instruction: \(DamselFormat.address(selectedInstructionAddress))")
+            lines.append("Recent address routes: \(recentAddressRoutes.count)")
         } else {
             lines.append("Disassembly: none")
         }
@@ -451,6 +453,7 @@ public final class WorkbenchStore: ObservableObject {
                 selectedInstructionAddress = payload.instructions.first?.address
             }
             reconcileSelectedInstructionWithFilter()
+            recordRecentRoute(for: request, fallbackAddress: selectedInstructionAddress)
             statusText = resultSubtitle
         } catch {
             guard requestID == disassemblyRequestID, loadedImage?.imageId == imageId else {
@@ -507,6 +510,7 @@ public final class WorkbenchStore: ObservableObject {
 
     public func selectInstruction(_ instruction: InstructionRow) {
         selectedInstructionAddress = instruction.address
+        recordRecentAddressRoute(instruction.address)
     }
 
     public func selectedInstructionClipboardText(_ payload: InstructionClipboardPayload) -> String? {
@@ -584,6 +588,28 @@ public final class WorkbenchStore: ObservableObject {
         disassembly = nil
         lastDisassemblyRequest = nil
         selectedInstructionAddress = nil
+        recentAddressRoutes = []
+    }
+
+    private func recordRecentRoute(for request: DisasmAPIRequest, fallbackAddress: UInt64?) {
+        switch request.target.kind {
+        case .address:
+            recordRecentAddressRoute(AddressValue(text: request.target.value)?.rawValue ?? fallbackAddress)
+        case .section, .symbol:
+            recordRecentAddressRoute(fallbackAddress)
+        }
+    }
+
+    private func recordRecentAddressRoute(_ address: UInt64?) {
+        guard let address else {
+            return
+        }
+
+        recentAddressRoutes.removeAll { $0 == address }
+        recentAddressRoutes.insert(address, at: 0)
+        if recentAddressRoutes.count > Self.maxRecentAddressRoutes {
+            recentAddressRoutes.removeSubrange(Self.maxRecentAddressRoutes...)
+        }
     }
 
     private var diagnosticsTargetSummary: String {
@@ -685,6 +711,8 @@ public final class WorkbenchStore: ObservableObject {
         }
         return Self.supportedBinaryMagics.contains([UInt8](header))
     }
+
+    private static let maxRecentAddressRoutes = 20
 
     private static let supportedBinaryMagics: Set<[UInt8]> = [
         [0xFE, 0xED, 0xFA, 0xCE],

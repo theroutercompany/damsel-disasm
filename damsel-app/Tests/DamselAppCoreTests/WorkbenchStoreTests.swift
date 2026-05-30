@@ -119,6 +119,28 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testRecentAddressRoutesTrackSelectionAndJumps() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        XCTAssertEqual(store.recentAddressRoutes, [0x1000004b0])
+
+        guard let instruction = store.selectedInstruction else {
+            return XCTFail("Expected disassembly to select the first instruction.")
+        }
+        store.selectInstruction(instruction)
+        XCTAssertEqual(store.recentAddressRoutes, [0x1000004b0])
+
+        await store.jump(to: 0x100000500)
+
+        XCTAssertEqual(store.recentAddressRoutes, [0x100000500, 0x1000004b0])
+        let requests = await client.disassemblyRequests
+        XCTAssertEqual(requests.last?.target.kind, .address)
+        XCTAssertEqual(requests.last?.target.value, "0x100000500")
+    }
+
+    @MainActor
     func testChangingDecodeControlsMarksResultAsNeedingRefresh() async throws {
         let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
@@ -391,6 +413,24 @@ final class WorkbenchStoreTests: XCTestCase {
         await store.loadFile(fileURL)
 
         XCTAssertEqual(recentDocuments, [fileURL])
+    }
+
+    @MainActor
+    func testLoadingFileDropsStaleRecentRoutesForPreviousImage() async throws {
+        let client = SuggestionClient(
+            response: [],
+            uploadResponse: Self.sampleImage(imageId: "new-fixture", fileName: "new-fixture"),
+            disassemblyResponse: try Self.sampleDisassembly()
+        )
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        await store.jump(to: 0x100000500)
+        XCTAssertEqual(store.recentAddressRoutes, [0x100000500])
+
+        await store.loadFile(URL(fileURLWithPath: "/tmp/new-fixture"))
+
+        XCTAssertEqual(store.loadedImage?.imageId, "new-fixture")
+        XCTAssertEqual(store.recentAddressRoutes, [0x1000004b0])
     }
 
     @MainActor

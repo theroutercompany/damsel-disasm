@@ -29,6 +29,22 @@ public struct DamselAddressPaletteResult: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct DamselRecentRoutePaletteResult: Equatable, Identifiable, Sendable {
+    public let address: UInt64
+
+    public var id: UInt64 {
+        address
+    }
+
+    public var title: String {
+        "Recent \(DamselFormat.address(address))"
+    }
+
+    public var subtitle: String {
+        "Address route history"
+    }
+}
+
 public struct DamselSectionPaletteResult: Equatable, Identifiable, Sendable {
     public let section: SectionSummary
 
@@ -115,6 +131,44 @@ public enum DamselCommandPalette {
             return nil
         }
         return DamselAddressPaletteResult(address: address)
+    }
+
+    public static func recentRouteResults(
+        matching query: String,
+        addresses: [UInt64],
+        limit: Int = 6
+    ) -> [DamselRecentRoutePaletteResult] {
+        let normalizedQuery = normalize(query)
+        let routeQuery = normalizeRecentRouteQuery(query)
+        let showsAllRecentRoutes = routeQuery.isEmpty && isRecentRouteCategoryQuery(normalizedQuery)
+        guard !routeQuery.isEmpty || showsAllRecentRoutes else {
+            return []
+        }
+
+        let ranked = addresses.enumerated().compactMap { index, address -> RecentRouteRankedResult? in
+            guard let score = scoreRecentRoute(
+                address,
+                query: routeQuery,
+                showsAllRecentRoutes: showsAllRecentRoutes,
+                fallbackIndex: index
+            ) else {
+                return nil
+            }
+            return RecentRouteRankedResult(
+                score: score,
+                result: DamselRecentRoutePaletteResult(address: address)
+            )
+        }
+
+        return ranked
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.result.address < rhs.result.address
+                }
+                return lhs.score < rhs.score
+            }
+            .prefix(limit)
+            .map(\.result)
     }
 
     public static func sectionResults(
@@ -213,6 +267,44 @@ public enum DamselCommandPalette {
         return 50 + fallbackIndex
     }
 
+    private static func scoreRecentRoute(
+        _ address: UInt64,
+        query: String,
+        showsAllRecentRoutes: Bool,
+        fallbackIndex: Int
+    ) -> Int? {
+        if showsAllRecentRoutes {
+            return fallbackIndex
+        }
+
+        let addressText = normalize(DamselFormat.address(address))
+        let fields = [
+            addressText,
+            "recent",
+            "route",
+            "address route",
+            "recent address route"
+        ]
+        let tokens = query.split(separator: " ").map(String.init)
+
+        guard !tokens.isEmpty,
+              tokens.allSatisfy({ token in fields.contains { $0.contains(token) } })
+        else {
+            return nil
+        }
+
+        if addressText == query {
+            return 0
+        }
+        if addressText.hasPrefix(query) {
+            return 10
+        }
+        if addressText.contains(query) {
+            return 20
+        }
+        return 50 + fallbackIndex
+    }
+
     private static func score(
         _ section: SectionSummary,
         query: String,
@@ -274,6 +366,28 @@ public enum DamselCommandPalette {
         return 50 + fallbackIndex
     }
 
+    private static func normalizeRecentRouteQuery(_ value: String) -> String {
+        let normalized = normalize(value)
+        if isRecentRouteCategoryQuery(normalized) {
+            return ""
+        }
+
+        let prefixes = [
+            "recent route ",
+            "recent ",
+            "route ",
+            ":route "
+        ]
+        for prefix in prefixes where normalized.hasPrefix(prefix) {
+            return String(normalized.dropFirst(prefix.count))
+        }
+        return normalized
+    }
+
+    private static func isRecentRouteCategoryQuery(_ value: String) -> Bool {
+        value == "recent" || value == "route" || value == ":route" || value == "recent route"
+    }
+
     private static func normalizeSectionQuery(_ value: String) -> String {
         let normalized = normalize(value)
         if normalized.hasPrefix("section ") {
@@ -297,6 +411,11 @@ public enum DamselCommandPalette {
     private struct RankedResult {
         let score: Int
         let result: DamselCommandPaletteResult
+    }
+
+    private struct RecentRouteRankedResult {
+        let score: Int
+        let result: DamselRecentRoutePaletteResult
     }
 
     private struct SectionRankedResult {

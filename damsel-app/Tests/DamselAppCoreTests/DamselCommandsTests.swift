@@ -124,6 +124,23 @@ final class DamselCommandsTests: XCTestCase {
         XCTAssertNil(DamselCommandPalette.addressResult(matching: "@not-an-address"))
     }
 
+    func testCommandPaletteSearchesRecentRoutes() {
+        let addresses: [UInt64] = [0x1000004b4, 0x1000004b0]
+
+        XCTAssertEqual(
+            DamselCommandPalette.recentRouteResults(matching: "recent", addresses: addresses).map(\.address),
+            addresses
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.recentRouteResults(matching: "route 0x1000004b0", addresses: addresses).map(\.title),
+            ["Recent 0x1000004b0"]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.recentRouteResults(matching: "", addresses: addresses).map(\.address),
+            []
+        )
+    }
+
     func testCommandPaletteSearchesLoadedSections() {
         let results = DamselCommandPalette.sectionResults(matching: "text", sections: sampleSections)
 
