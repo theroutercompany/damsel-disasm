@@ -123,4 +123,56 @@ final class DamselCommandsTests: XCTestCase {
         XCTAssertNil(DamselCommandPalette.addressResult(matching: "copy"))
         XCTAssertNil(DamselCommandPalette.addressResult(matching: "@not-an-address"))
     }
+
+    func testCommandPaletteSearchesLoadedSections() {
+        let results = DamselCommandPalette.sectionResults(matching: "text", sections: sampleSections)
+
+        XCTAssertEqual(results.map(\.section.name), ["__TEXT:__text", "__TEXT:__cstring"])
+        XCTAssertEqual(results.first?.title, "Open __TEXT:__text")
+        XCTAssertEqual(results.first?.subtitle, "__TEXT section · 0x1000004b0 · 256 bytes")
+    }
+
+    func testCommandPaletteSectionSearchAcceptsCategoryPrefixAndAddress() {
+        XCTAssertEqual(
+            DamselCommandPalette.sectionResults(matching: ":section cstring", sections: sampleSections).map(\.section.name),
+            ["__TEXT:__cstring"]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.sectionResults(matching: "0x1000005b0", sections: sampleSections).map(\.section.name),
+            ["__DATA:__data"]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.sectionResults(matching: "", sections: sampleSections).map(\.section.name),
+            []
+        )
+    }
+
+    private var sampleSections: [SectionSummary] {
+        [
+            SectionSummary(
+                name: "__TEXT:__text",
+                shortName: "__text",
+                segmentName: "__TEXT",
+                address: 0x1000004b0,
+                size: 256,
+                executable: true
+            ),
+            SectionSummary(
+                name: "__DATA:__data",
+                shortName: "__data",
+                segmentName: "__DATA",
+                address: 0x1000005b0,
+                size: 128,
+                executable: false
+            ),
+            SectionSummary(
+                name: "__TEXT:__cstring",
+                shortName: "__cstring",
+                segmentName: "__TEXT",
+                address: 0x100000630,
+                size: 64,
+                executable: false
+            ),
+        ]
+    }
 }

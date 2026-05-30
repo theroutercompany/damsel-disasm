@@ -73,7 +73,8 @@ public struct ContentView: View {
                 store: store,
                 isPresented: $isCommandPalettePresented,
                 performCommand: performPaletteCommand,
-                jumpToAddress: jumpToAddress
+                jumpToAddress: jumpToAddress,
+                openSection: openSection
             )
         }
         .onAppear {
@@ -178,6 +179,12 @@ public struct ContentView: View {
 
     private func jumpToAddress(_ address: UInt64) {
         Task { await store.jump(to: address) }
+    }
+
+    private func openSection(_ sectionName: String) {
+        store.targetKind = .section
+        store.selectedSection = sectionName
+        Task { try? await store.runDisassembly() }
     }
 
     private func copySelectedInstruction(_ payload: InstructionClipboardPayload) {

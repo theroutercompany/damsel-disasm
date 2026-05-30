@@ -29,6 +29,22 @@ public struct DamselAddressPaletteResult: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct DamselSectionPaletteResult: Equatable, Identifiable, Sendable {
+    public let section: SectionSummary
+
+    public var id: String {
+        section.name
+    }
+
+    public var title: String {
+        "Open \(section.name)"
+    }
+
+    public var subtitle: String {
+        "\(section.segmentName) section · \(DamselFormat.address(section.address)) · \(section.size) bytes"
+    }
+}
+
 public enum DamselCommandPalette {
     public static func results(
         matching query: String,
@@ -85,6 +101,34 @@ public enum DamselCommandPalette {
         return DamselAddressPaletteResult(address: address)
     }
 
+    public static func sectionResults(
+        matching query: String,
+        sections: [SectionSummary],
+        limit: Int = 8
+    ) -> [DamselSectionPaletteResult] {
+        let normalizedQuery = normalizeSectionQuery(query)
+        guard !normalizedQuery.isEmpty else {
+            return []
+        }
+
+        let ranked = sections.enumerated().compactMap { index, section -> SectionRankedResult? in
+            guard let score = score(section, query: normalizedQuery, fallbackIndex: index) else {
+                return nil
+            }
+            return SectionRankedResult(score: score, result: DamselSectionPaletteResult(section: section))
+        }
+
+        return ranked
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.result.section.name < rhs.result.section.name
+                }
+                return lhs.score < rhs.score
+            }
+            .prefix(limit)
+            .map(\.result)
+    }
+
     private static func score(
         _ descriptor: DamselCommandDescriptor,
         query: String,
@@ -122,6 +166,48 @@ public enum DamselCommandPalette {
         return 50 + fallbackIndex
     }
 
+    private static func score(
+        _ section: SectionSummary,
+        query: String,
+        fallbackIndex: Int
+    ) -> Int? {
+        let name = normalize(section.name)
+        let shortName = normalize(section.shortName)
+        let segment = normalize(section.segmentName)
+        let address = normalize(DamselFormat.address(section.address))
+        let fields = [name, shortName, segment, address]
+        let tokens = query.split(separator: " ").map(String.init)
+
+        guard tokens.allSatisfy({ token in fields.contains { $0.contains(token) } }) else {
+            return nil
+        }
+
+        if name == query || shortName == query {
+            return 0
+        }
+        if name.hasPrefix(query) || shortName.hasPrefix(query) {
+            return 10
+        }
+        if name.contains(query) || shortName.contains(query) {
+            return 20
+        }
+        if segment.contains(query) {
+            return 30
+        }
+        return 50 + fallbackIndex
+    }
+
+    private static func normalizeSectionQuery(_ value: String) -> String {
+        let normalized = normalize(value)
+        if normalized.hasPrefix("section ") {
+            return String(normalized.dropFirst("section ".count))
+        }
+        if normalized.hasPrefix(":section ") {
+            return String(normalized.dropFirst(":section ".count))
+        }
+        return normalized
+    }
+
     private static func normalize(_ value: String) -> String {
         value
             .lowercased()
@@ -134,5 +220,10 @@ public enum DamselCommandPalette {
     private struct RankedResult {
         let score: Int
         let result: DamselCommandPaletteResult
+    }
+
+    private struct SectionRankedResult {
+        let score: Int
+        let result: DamselSectionPaletteResult
     }
 }

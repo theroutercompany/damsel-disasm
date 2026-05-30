@@ -5,11 +5,19 @@ struct CommandPaletteView: View {
     @Binding var isPresented: Bool
     let performCommand: (DamselCommandID) -> Void
     let jumpToAddress: (UInt64) -> Void
+    let openSection: (String) -> Void
     @State private var query = ""
     @FocusState private var searchFocused: Bool
 
     private var addressResult: DamselAddressPaletteResult? {
         DamselCommandPalette.addressResult(matching: query)
+    }
+
+    private var sectionResults: [DamselSectionPaletteResult] {
+        DamselCommandPalette.sectionResults(
+            matching: query,
+            sections: store.loadedImage?.sections ?? []
+        )
     }
 
     private var results: [DamselCommandPaletteResult] {
@@ -38,6 +46,12 @@ struct CommandPaletteView: View {
                         CommandPaletteAddressRow(result: addressResult) {
                             isPresented = false
                             jumpToAddress(addressResult.address.rawValue)
+                        }
+                    }
+                    ForEach(sectionResults) { result in
+                        CommandPaletteSectionRow(result: result) {
+                            isPresented = false
+                            openSection(result.section.name)
                         }
                     }
                     ForEach(results) { result in
@@ -73,6 +87,12 @@ struct CommandPaletteView: View {
             return
         }
 
+        if let sectionResult = sectionResults.first {
+            isPresented = false
+            openSection(sectionResult.section.name)
+            return
+        }
+
         guard let result = DamselCommandPalette.defaultExecutableResult(matching: query, availability: { commandID in
             store.commandAvailability(for: commandID)
         }) else {
@@ -80,6 +100,37 @@ struct CommandPaletteView: View {
         }
         isPresented = false
         performCommand(result.id)
+    }
+}
+
+private struct CommandPaletteSectionRow: View {
+    let result: DamselSectionPaletteResult
+    let perform: () -> Void
+
+    var body: some View {
+        Button(action: perform) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: result.section.executable ? "cpu" : "square.stack.3d.down.right")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(result.title)
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(result.subtitle)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(result.section.name)
     }
 }
 
