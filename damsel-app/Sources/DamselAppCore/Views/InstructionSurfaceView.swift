@@ -127,6 +127,8 @@ struct InstructionSurfaceView: View {
                 selectedAddress: store.selectedInstructionAddress
             ) { instruction in
                 store.selectInstruction(instruction)
+            } routeForInstruction: { instruction in
+                store.route(for: instruction)
             }
         } else if store.disassembly?.instructions.isEmpty == false {
             EmptyInstructionView(

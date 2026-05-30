@@ -279,6 +279,15 @@ private struct BasicBlockRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
+            if let routeText {
+                Text(routeText)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
             if !badges.isEmpty {
                 HStack(spacing: 5) {
                     ForEach(badges, id: \.self) { badge in
@@ -317,6 +326,13 @@ private struct BasicBlockRow: View {
             return "\(range) · \(instructionText)"
         }
         return "\(range) · \(instructionText) · \(terminatorText)"
+    }
+
+    private var routeText: String? {
+        guard let startAddress = block.startAddress else {
+            return nil
+        }
+        return WorkbenchRoute(basicBlockID: block.id, address: startAddress).rawValue
     }
 
     private var badges: [String] {

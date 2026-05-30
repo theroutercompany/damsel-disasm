@@ -110,7 +110,10 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public var selectedRoute: WorkbenchRoute? {
-        selectedInstruction.map { WorkbenchRoute(address: $0.address) }
+        guard let instruction = selectedInstruction else {
+            return nil
+        }
+        return route(for: instruction)
     }
 
     public var selectedRouteLabel: String? {
@@ -558,6 +561,14 @@ public final class WorkbenchStore: ObservableObject {
         recordRecentAddressRoute(instruction.address)
     }
 
+    public func route(for instruction: InstructionRow) -> WorkbenchRoute {
+        if let block = basicBlock(containing: instruction.address),
+           let startAddress = block.startAddress {
+            return WorkbenchRoute(basicBlockID: block.id, address: startAddress)
+        }
+        return WorkbenchRoute(address: instruction.address)
+    }
+
     public func selectedInstructionClipboardText(_ payload: InstructionClipboardPayload) -> String? {
         guard let instruction = selectedInstruction else {
             return nil
@@ -944,6 +955,18 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
         selectedInstructionAddress = visible.first?.address
+    }
+
+    private func basicBlock(containing address: UInt64) -> BasicBlockSummary? {
+        disassembly?.analysis?.basicBlocks.first { block in
+            guard let startAddress = block.startAddress else {
+                return false
+            }
+            guard let endAddress = block.endAddress else {
+                return startAddress == address
+            }
+            return startAddress <= address && address < endAddress
+        }
     }
 }
 

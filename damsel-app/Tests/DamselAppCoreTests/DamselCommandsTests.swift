@@ -141,10 +141,13 @@ final class DamselCommandsTests: XCTestCase {
 
     func testCommandPaletteParsesWorkbenchRouteQueries() {
         let result = DamselCommandPalette.workbenchRouteResult(matching: " address:0x1000004b0 ")
+        let blockResult = DamselCommandPalette.workbenchRouteResult(matching: " block:7@0x1000004d0 ")
 
         XCTAssertEqual(result?.route, WorkbenchRoute(address: 0x1000004b0))
         XCTAssertEqual(result?.title, "Jump to Address 0x1000004b0")
         XCTAssertEqual(result?.subtitle, "Workbench route")
+        XCTAssertEqual(blockResult?.route, WorkbenchRoute(basicBlockID: "7", address: 0x1000004d0))
+        XCTAssertEqual(blockResult?.title, "Jump to Block 7 · 0x1000004d0")
         XCTAssertNil(DamselCommandPalette.workbenchRouteResult(matching: "0x1000004b0"))
         XCTAssertNil(DamselCommandPalette.workbenchRouteResult(matching: "instruction:0x1000004b0"))
     }
@@ -215,7 +218,11 @@ final class DamselCommandsTests: XCTestCase {
         )
         XCTAssertEqual(
             DamselCommandPalette.basicBlockResults(matching: "loop", blocks: blocks).map(\.title),
-            ["Block 1 0x1000004d0"]
+            ["Block 1 · 0x1000004d0"]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.basicBlockResults(matching: "loop", blocks: blocks).first?.route?.rawValue,
+            "block:1@0x1000004d0"
         )
         XCTAssertEqual(
             DamselCommandPalette.basicBlockResults(matching: ":block _main", blocks: blocks).map(\.subtitle),

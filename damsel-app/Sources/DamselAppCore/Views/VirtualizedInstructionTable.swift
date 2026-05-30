@@ -5,9 +5,10 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
     var instructions: [InstructionRow]
     var selectedAddress: UInt64?
     var onSelect: (InstructionRow) -> Void
+    var routeForInstruction: (InstructionRow) -> WorkbenchRoute
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onSelect: onSelect)
+        Coordinator(onSelect: onSelect, routeForInstruction: routeForInstruction)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -96,6 +97,7 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
         context.coordinator.instructions = instructions
         context.coordinator.selectedAddress = selectedAddress
         context.coordinator.onSelect = onSelect
+        context.coordinator.routeForInstruction = routeForInstruction
 
         if dataChanged {
             tableView.reloadData()
@@ -123,14 +125,19 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
         var instructions: [InstructionRow] = []
         var selectedAddress: UInt64?
         var onSelect: (InstructionRow) -> Void
+        var routeForInstruction: (InstructionRow) -> WorkbenchRoute
         weak var tableView: NSTableView?
 
         private var suppressSelectionCallback = false
         private let rowFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         private let headerFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
 
-        init(onSelect: @escaping (InstructionRow) -> Void) {
+        init(
+            onSelect: @escaping (InstructionRow) -> Void,
+            routeForInstruction: @escaping (InstructionRow) -> WorkbenchRoute
+        ) {
             self.onSelect = onSelect
+            self.routeForInstruction = routeForInstruction
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
@@ -258,7 +265,7 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
         }
 
         private func routeText(for instruction: InstructionRow) -> String {
-            WorkbenchRoute(address: instruction.address).rawValue
+            routeForInstruction(instruction).rawValue
         }
 
         private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {

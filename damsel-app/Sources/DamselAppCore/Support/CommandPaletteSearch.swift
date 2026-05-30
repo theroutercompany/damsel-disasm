@@ -101,7 +101,7 @@ public struct DamselBasicBlockPaletteResult: Equatable, Identifiable, Sendable {
     }
 
     public var title: String {
-        "Block \(block.id) \(DamselFormat.address(block.startAddress))"
+        route?.displayLabel ?? "Block \(block.id) \(DamselFormat.address(block.startAddress))"
     }
 
     public var subtitle: String {
@@ -109,6 +109,13 @@ public struct DamselBasicBlockPaletteResult: Equatable, Identifiable, Sendable {
         let instructionText = "\(block.instructionCount ?? 0) instructions"
         let terminatorText = block.terminatorKind.map { " · \($0)" } ?? ""
         return "\(range) · \(instructionText)\(terminatorText)"
+    }
+
+    public var route: WorkbenchRoute? {
+        guard let startAddress = block.startAddress else {
+            return nil
+        }
+        return WorkbenchRoute(basicBlockID: block.id, address: startAddress)
     }
 }
 

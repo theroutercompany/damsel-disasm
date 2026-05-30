@@ -123,6 +123,22 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectedRouteUsesContainingBasicBlockWhenAnalysisIsAvailable() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassemblyWithBasicBlock())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+
+        guard let instruction = store.selectedInstruction else {
+            return XCTFail("Expected disassembly to select the first instruction.")
+        }
+        XCTAssertEqual(store.route(for: instruction), WorkbenchRoute(basicBlockID: "7", address: 0x1000004b0))
+        XCTAssertEqual(store.selectedRouteLabel, "Block 7 · 0x1000004b0")
+        XCTAssertEqual(store.selectedRouteClipboardText, "block:7@0x1000004b0")
+        XCTAssertEqual(store.selectedInstructionClipboardText(.route), "block:7@0x1000004b0")
+    }
+
+    @MainActor
     func testRecentAddressRoutesTrackSelectionAndJumps() async throws {
         let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
@@ -624,6 +640,47 @@ final class WorkbenchStoreTests: XCTestCase {
               "references": []
             }
           ]
+        }
+        """
+        return try JSONDecoder().decode(DisassemblyResponse.self, from: Data(json.utf8))
+    }
+
+    fileprivate static func sampleDisassemblyWithBasicBlock() throws -> DisassemblyResponse {
+        let json = """
+        {
+          "target": "__TEXT:__text",
+          "start_address": 4294968496,
+          "end_address": 4294968500,
+          "instruction_count": 1,
+          "stop_reason": "limit",
+          "instructions": [
+            {
+              "address": 4294968496,
+              "opcode": 2432696320,
+              "mnemonic": "ret",
+              "rendered": "ret",
+              "references": []
+            }
+          ],
+          "analysis": {
+            "summary": {
+              "basic_block_count": 1,
+              "entry_block_count": 1,
+              "exit_block_count": 1,
+              "edge_count": 0
+            },
+            "basic_blocks": [
+              {
+                "id": 7,
+                "start_address": 4294968496,
+                "end_address": 4294968500,
+                "instruction_count": 1,
+                "entry": true,
+                "exit": true,
+                "terminal": true
+              }
+            ]
+          }
         }
         """
         return try JSONDecoder().decode(DisassemblyResponse.self, from: Data(json.utf8))

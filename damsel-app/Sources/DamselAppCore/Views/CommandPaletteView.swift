@@ -88,7 +88,7 @@ struct CommandPaletteView: View {
                     }
                     ForEach(basicBlockResults) { result in
                         CommandPaletteBasicBlockRow(result: result) {
-                            guard let address = result.block.startAddress else {
+                            guard let address = result.route?.address else {
                                 return
                             }
                             isPresented = false
@@ -153,7 +153,7 @@ struct CommandPaletteView: View {
         }
 
         if let basicBlockResult = basicBlockResults.first,
-           let address = basicBlockResult.block.startAddress {
+           let address = basicBlockResult.route?.address {
             isPresented = false
             jumpToAddress(address)
             return
@@ -208,7 +208,7 @@ private struct CommandPaletteBasicBlockRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(result.subtitle)
+        .help(result.route?.rawValue ?? result.subtitle)
     }
 }
 
