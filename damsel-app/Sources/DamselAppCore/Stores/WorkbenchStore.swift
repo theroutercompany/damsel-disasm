@@ -134,8 +134,7 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         let analysisText = disassembly.analysis.map { analysis in
-            let summary = analysis.summary
-            return " · \(summary.basicBlockCount ?? 0) blocks · \(summary.edgeCount ?? 0) edges · \(summary.dataReferenceCount ?? 0) data refs"
+            analysisSubtitle(analysis)
         } ?? ""
         let freshnessText = disassemblyNeedsRefresh ? " · Needs refresh" : ""
 
@@ -144,6 +143,32 @@ public final class WorkbenchStore: ObservableObject {
             ? "\(disassembly.instructionCount) rows"
             : "\(visibleInstructions.count) of \(disassembly.instructionCount) rows"
         return "\(rowText) · \(DamselFormat.stopReason(disassembly.stopReason))\(analysisText)\(freshnessText)"
+    }
+
+    private func analysisSubtitle(_ analysis: AnalysisPayload) -> String {
+        let summary = analysis.summary
+        let facts: [(Int, String, String)] = [
+            (summary.basicBlockCount ?? analysis.basicBlocks.count, "block", "blocks"),
+            (summary.edgeCount ?? analysis.edges.count, "edge", "edges"),
+            (summary.directCallCount ?? analysis.directCalls.count, "call", "calls"),
+            (summary.branchCount ?? analysis.branchTargets.count, "branch", "branches"),
+            (summary.dataReferenceCount ?? analysis.dataReferences.count, "data ref", "data refs"),
+            (analysis.indirectControls.count, "indirect", "indirect"),
+            (summary.importCount ?? analysis.imports.count, "import", "imports"),
+            (summary.cacheLinkCount ?? analysis.cacheLinks.count, "cache link", "cache links"),
+            (analysis.objcReferences.count, "ObjC", "ObjC"),
+            (summary.jumpTableCount ?? analysis.jumpTables.count, "jump table", "jump tables"),
+            (summary.recoveredValueCount ?? analysis.recoveredValues.count, "recovered", "recovered"),
+        ]
+
+        let text = facts
+            .filter { count, _, _ in count > 0 }
+            .map { count, singular, plural in
+                "\(count) \(count == 1 ? singular : plural)"
+            }
+            .joined(separator: " · ")
+
+        return text.isEmpty ? "" : " · \(text)"
     }
 
     public var toolbarStatusText: String {

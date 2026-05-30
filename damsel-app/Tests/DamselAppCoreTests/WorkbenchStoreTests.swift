@@ -573,6 +573,20 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testResultSubtitleSummarizesNonzeroAnalysisFacts() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassemblyWithAnalysisFacts())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+
+        XCTAssertEqual(
+            store.resultSubtitle,
+            "1 rows · Limit · 1 block · 1 edge · 1 call · 1 branch · 1 data ref · " +
+                "1 indirect · 1 import · 1 cache link · 1 ObjC · 1 jump table · 1 recovered"
+        )
+    }
+
+    @MainActor
     func testLoadingFileResetsFileScopedControlsBeforeAutoDisassembly() async throws {
         let loadedImage = Self.sampleImage(imageId: "new-fixture")
         let client = SuggestionClient(
