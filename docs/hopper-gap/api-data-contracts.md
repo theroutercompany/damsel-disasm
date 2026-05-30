@@ -103,6 +103,15 @@ adds the casebook API family above those project facts: `/cases`,
 than duplicating facts, so manual edits, automation runs, assistant responses,
 debugger stops, diffs, patch previews, and exports share one investigation
 record.
+[Apple SDK, Header, And Semantic Packs Implementation Spec](apple-sdk-semantic-packs-implementation-spec.md)
+adds the semantic-pack API family beside type/debug-info/runtime routes:
+`/semantic-packs`, `/semantic-packs/import-preview`,
+`/semantic-packs/import`, `/semantic-packs/{pack_id}/declarations`,
+`/semantic-matches`, `/routes/{route_id}/semantic-overlays`, and
+`/semantic-packs/{pack_id}/compatibility`. These APIs must distinguish
+declaration facts from binary matches, preserve pack/version/privacy
+provenance, and expose confidence so runtime browsers, decompiler overlays,
+automation, AI, casebooks, and reports can cite the same semantic evidence.
 
 Procedure and decompiler companions:
 [Function Recovery And Procedure Database Plan](function-recovery-and-procedure-database-plan.md)

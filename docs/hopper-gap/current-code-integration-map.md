@@ -155,6 +155,16 @@ evidence exports. It defines the future Rust case tables, Workbench
 `CasebookStore`, `CaseTimelineStore`, `EvidenceTrayStore`, notebook/report
 stores, redaction previews, and CLI/API contracts.
 
+Apple semantic packs companion:
+[Apple SDK, Header, And Semantic Packs Implementation Spec](apple-sdk-semantic-packs-implementation-spec.md)
+maps the current absence of SDK/header/XNU/dyld/objc4/Swift ABI pack ingestion
+into a dedicated semantic-pack layer above source registration and beside the
+type/debug-info/runtime stores. It defines future Rust pack, parse-profile,
+declaration, match, overlay, privacy, and manifest records; Clang-backed import
+workers; Workbench semantic-pack browser surfaces; and CLI/API contracts that
+feed ObjC/C++/Swift/XNU browsers, decompiler overlays, AI, casebooks, and
+reports.
+
 Processor semantics companion:
 [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
 maps current `Architecture`, `Operand`, `DecodedInstruction`,

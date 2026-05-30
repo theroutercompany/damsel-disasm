@@ -74,6 +74,11 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   facts: cases, sessions, timelines, evidence pins, hypotheses, findings,
   notebook pages, report builder, redaction preview, handoff packages,
   Workbench stores, API/CLI contracts, performance budgets, and validation.
+- [Apple SDK, Header, And Semantic Packs Implementation Spec](apple-sdk-semantic-packs-implementation-spec.md):
+  implementation-ready plan for versioned SDK/header/XNU/objc4/dyld/Swift ABI
+  semantic packs, parse profiles, declaration facts, semantic matches,
+  overlays, Workbench pack UX, API/CLI contracts, privacy, performance budgets,
+  and validation.
 - [Implementation Epic Breakdown](implementation-epic-breakdown.md):
   issue-sized epics, dependencies, deliverables, risks, and validation gates for
   turning this pack into real work.
@@ -193,6 +198,12 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   patch previews, and evidence exports into cases, timeline events, evidence
   pins, hypotheses, findings, notebook pages, reports, redaction previews, and
   handoff packages.
+- [Apple SDK, Header, And Semantic Packs Implementation Spec](apple-sdk-semantic-packs-implementation-spec.md):
+  implementation-ready semantic-pack subsystem that turns Apple SDK headers,
+  XNU/objc4/dyld open-source material, Swift ABI references, KDK/dSYM/source
+  sidecars, and private/team headers into versioned declaration facts, matches,
+  overlays, search facets, Workbench pack UX, reports, and redaction-aware
+  handoff context.
 - [Type And Symbolication System Plan](type-symbolication-system-plan.md):
   provenance-aware names, types, dSYM/KDK/DWARF, ObjC encodings, C++ RTTI,
   Swift demangling, user overrides, and symbolication profiles.

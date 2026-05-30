@@ -20,6 +20,7 @@ This is a companion to:
 - [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
 - [Remote Device Debugging And Target Environment Implementation Spec](remote-device-debugging-target-environment-implementation-spec.md)
 - [Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](preferences-keymaps-layout-theming-implementation-spec.md)
+- [Apple SDK, Header, And Semantic Packs Implementation Spec](apple-sdk-semantic-packs-implementation-spec.md)
 
 ## Why This Exists
 

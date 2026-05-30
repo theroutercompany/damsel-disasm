@@ -45,6 +45,10 @@ The biggest gaps are:
     evidence pins, hypotheses, findings, notebook pages, report builder,
     redaction preview, handoff packages, and unified activity records across
     manual edits, automation, AI, debugger, diffing, patching, and exports.
+18. Apple SDK/header semantic packs: versioned SDK, KDK, XNU, objc4, dyld,
+    Swift ABI, IOKit, DriverKit, and private/team declaration packs with parse
+    profiles, provenance, confidence, privacy, matches, overlays, search facets,
+    decompiler inputs, report citations, and redacted handoff support.
 
 ## Current Implemented Strengths
 

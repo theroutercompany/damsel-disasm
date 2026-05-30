@@ -12,6 +12,13 @@ through the same project API, routes, facts, source maps, confidence records,
 capability grants, activity logs, and privacy rules as the rest of the
 Workbench.
 
+Semantic-pack companion:
+[Apple SDK, Header, And Semantic Packs Implementation Spec](apple-sdk-semantic-packs-implementation-spec.md)
+defines how Apple SDK/XNU/objc4/dyld/Swift ABI/private header declarations
+become versioned, privacy-aware evidence. The assistant may cite those
+declarations, but it must distinguish declaration hints from accepted binary
+matches and must request explicit capability before reading private packs.
+
 ## Why This Spec Exists
 
 Hopper's homepage says it is enhanced with AI capabilities through an integrated

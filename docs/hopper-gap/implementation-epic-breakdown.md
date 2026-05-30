@@ -51,6 +51,7 @@ gates, and "do not start before" constraints.
 | E27 | Preferences, keymaps, layout, and theming | Native workstation personalization and recovery | E5/E11/E19/E21/E26 |
 | E28 | Swift runtime metadata and Swift-ObjC bridge | First-class Swift Apple-systems analysis lane | E2/E4/E7/E8/E11/E12/E21/E22 |
 | E29 | Investigation casebook, timeline, and report workspace | Evidence-driven analyst memory and handoff | E3/E5/E14/E15/E17/E18/E21/E26 |
+| E30 | Apple SDK/header semantic packs | Versioned Apple declaration knowledge and overlays | E2/E7-E12/E18/E20/E23/E26/E29 |
 
 ## E0: Docs Acceptance And Scope Lock
 
@@ -85,6 +86,7 @@ Deliverables:
 - Swift runtime metadata and Swift-ObjC bridge implementation spec reviewed
 - investigation casebook, session timeline, and report workspace implementation
   spec reviewed
+- Apple SDK/header semantic packs implementation spec reviewed
 
 Validation:
 
@@ -104,6 +106,7 @@ Validation:
 - Apple runtime browser suite cross-link check
 - Swift runtime metadata and bridge cross-link check
 - investigation casebook and report workspace cross-link check
+- Apple semantic pack source-to-overlay cross-link check
 
 Do not leave E0 until:
 
@@ -133,6 +136,9 @@ Do not leave E0 until:
 - investigation casebooks are understood as evidence-pinned analyst memory,
   session replay, timeline capture, finding review, redaction, and handoff
   architecture, not a loose notes surface beside the disassembler
+- Apple SDK/header semantic packs are understood as versioned declaration,
+  provenance, parsing, matching, privacy, and overlay infrastructure, not a
+  one-time header text import
 
 ## E1: Project, Source, And Address Model
 
@@ -1544,6 +1550,88 @@ Risks:
 - AI-generated text is treated as an accepted finding without human review
 - large timelines block the Workbench
 - handoff packages are exportable but not reopenable with route identity intact
+
+## E30: Apple SDK, Header, And Semantic Packs
+
+Goal:
+
+- turn Apple SDK headers, XNU/objc4/dyld open-source material, Swift ABI
+  references, KDK/dSYM/source roots, and private/team headers into versioned,
+  route-backed declaration facts, semantic matches, overlays, and reportable
+  evidence without treating header hints as binary truth
+
+Primary spec:
+
+- [Apple SDK, Header, And Semantic Packs Implementation Spec](apple-sdk-semantic-packs-implementation-spec.md)
+
+Deliverables:
+
+- `SemanticPack`, `SemanticParseProfile`, `DeclarationFact`,
+  `SemanticMatch`, and `SemanticOverlay` models
+- pack source registration for SDKs, KDKs, Apple OSS roots, user header roots,
+  generated packs, and imported pack archives
+- deterministic pack manifest and content hash model
+- Clang-backed C, C++, Objective-C, and ObjC++ declaration importer
+- XNU macro-domain and header install-scope model
+- syscall, Mach trap, MIG, IOKit, DriverKit, dyld, Objective-C runtime, and
+  Swift ABI reference importers
+- semantic declaration query API and CLI
+- symbol, selector, debug-info, C++/Swift name, syscall/MIG, and IOKit matchers
+- match review, accept, reject, suppress, conflict, and stale-state records
+- route overlay API for inspector, runtime browsers, decompiler, automation,
+  AI, casebook, and report consumers
+- Semantic Pack Center Workbench UX
+- private-pack privacy, redaction, AI/MCP capability, and handoff rules
+- large SDK/KDK import and query performance budgets
+
+Implementation tasks:
+
+- add semantic-pack tables and schema snapshots
+- add source discovery for SDK/KDK/header/Apple OSS roots
+- add manifest builder with redacted source-root map
+- add parse profile resolver for platform, target triple, sysroot, includes,
+  module maps, defines, XNU domain, and private/public visibility
+- add helper-driven Clang parse worker with diagnostics, cancellation, and
+  chunked commit output
+- add dedicated importers for MIG/syscall/Mach trap tables and Swift/dyld/objc
+  reference facts
+- add normalized declaration, type, signature, constant, availability, macro,
+  XNU-domain, IOKit, and privacy records
+- add declaration search and pack detail APIs
+- add matching jobs and confidence rules that separate declaration facts from
+  binary evidence
+- add route overlays for function signatures, ObjC methods, C++ classes, IOKit
+  user-client hints, XNU interfaces, Swift ABI references, and dyld cache facts
+- add Workbench pack list, import preview, declaration browser, match review,
+  and privacy/redaction surfaces
+- add casebook timeline events and report citations for pack import, match
+  review, private-pack access, and semantic-pack evidence
+
+Validation:
+
+- pack manifest deterministic snapshot
+- source discovery and parse-profile fixtures
+- C/Objective-C/C++/ObjC++ declaration import fixtures
+- macro-condition and XNU-domain preservation fixtures
+- syscall, Mach trap, MIG, IOKit, dyld, objc4, and Swift ABI import fixtures
+- exact symbol and Objective-C selector matching fixtures
+- C++ overload and Swift demangled-name matching fixtures
+- weak-match rejection and accepted-match transaction tests
+- semantic overlay snapshots for inspector/runtime/decompiler routes
+- private-pack redaction and AI/MCP capability-denial tests
+- report citation and handoff manifest tests
+- large SDK declaration paging and cancellation performance samples
+
+Risks:
+
+- header declarations are mistaken for proven binary facts
+- SDK/KDK import freezes the Workbench
+- private headers leak through diagnostics, AI context, reports, or handoffs
+- Clang integration turns into an unbounded build-system project
+- framework, namespace, Swift module, XNU domain, and private/public names
+  collapse into one ambiguous search index
+- open-source Apple material is treated as an exact match for a local closed
+  binary without UUID/build/debug-info evidence
 
 ## E16: Plugin / SDK Boundary
 

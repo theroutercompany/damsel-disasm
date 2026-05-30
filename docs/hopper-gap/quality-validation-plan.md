@@ -64,6 +64,7 @@ The docs pack should include, at minimum:
 - preferences/keymaps/layout/theming implementation spec
 - Swift runtime metadata and Swift-ObjC bridge implementation spec
 - investigation casebook/session timeline/report workspace implementation spec
+- Apple SDK/header semantic packs implementation spec
 - Hopper public-web feature architecture audit
 - Hopper feature architecture public evidence
 - large-project performance/scheduler/indexing implementation spec

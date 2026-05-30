@@ -1227,6 +1227,85 @@ Planning impact:
 - Swift is not the center of this pack, but demangled Swift symbols should
   coexist with ObjC/C++ names in the name system.
 
+## Apple SDK, Header, And Semantic Packs
+
+### Hopper Product And Document Evidence
+
+Sources:
+
+- <https://www.hopperapp.com/index.html>
+- <https://www.hopperapp.com/tutorial.html>
+- <https://www.hopperapp.com/faq.html>
+- <https://www.hopperapp.com/download>
+- <https://pypi.org/project/types-hopper-disassembler/>
+- <https://github.com/droe/hopper-scripts>
+
+Why it matters:
+
+- Hopper publicly combines Objective-C/Swift awareness, scripting, MCP, SDK
+  extensibility, context-sensitive inspectors, symbols/strings/tags, comments,
+  references, byte typing, and editable document state.
+- This supports the need for semantic packs to become routeable project facts
+  with provenance and confidence, not detached text imports.
+
+Planning impact:
+
+- Damsel should make SDK/header knowledge available to the same APIs used by
+  Workbench views, automation, AI, casebooks, and reports.
+
+### Apple Open Source And Runtime Sources
+
+Sources:
+
+- <https://opensource.apple.com/>
+- <https://github.com/apple-oss-distributions/xnu>
+- <https://github.com/apple-oss-distributions/objc4>
+- <https://github.com/apple-oss-distributions/dyld>
+- <https://developer.apple.com/documentation/objectivec/objective-c-runtime>
+
+Why it matters:
+
+- Apple publishes source and headers for major runtime/system components that
+  define names, structures, domains, and conventions relevant to Apple reverse
+  engineering.
+- The XNU source tree documents public/private/kernel/user/DriverKit header
+  installation domains and macro guards; those boundaries must survive import.
+- objc4 and Objective-C runtime docs ground selector/class/method/ivar/property
+  concepts; dyld grounds shared-cache and kernel-collection terminology.
+
+Planning impact:
+
+- Semantic packs should store source family, OS/build/SDK/KDK version,
+  domain, macro conditions, privacy class, and compatibility state. Open-source
+  Apple declarations are useful hints unless binary, KDK, dSYM, or debug
+  evidence proves a specific build match.
+
+### Swift ABI And Clang Import Technology
+
+Sources:
+
+- <https://github.com/swiftlang/swift/blob/main/docs/ABI/TypeMetadata.rst>
+- <https://github.com/swiftlang/swift/blob/main/include/swift/ABI/Metadata.h>
+- <https://clang.llvm.org/docs/LibClang.html>
+- <https://clang.llvm.org/docs/IntroductionToTheClangAST.html>
+- <https://clang.llvm.org/doxygen/group__CINDEX.html>
+
+Why it matters:
+
+- Swift ABI docs and headers provide reference semantics for metadata kinds,
+  nominal descriptors, value witness tables, protocol/existential metadata, and
+  runtime metadata access patterns.
+- Clang/libclang provides a structured route for parsing C, C++, Objective-C,
+  and Objective-C++ headers into declarations with source locations and
+  diagnostics.
+
+Planning impact:
+
+- Damsel should use structured importer workers and parse profiles for SDK and
+  XNU headers. It should not parse headers with ad hoc text matching, and it
+  should keep Swift ABI reference facts separate from actual Swift metadata
+  recovered from binaries.
+
 ## Damsel Repo Evidence
 
 ### Root README
