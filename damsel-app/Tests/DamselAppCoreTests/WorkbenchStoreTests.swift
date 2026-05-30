@@ -151,7 +151,7 @@ final class WorkbenchStoreTests: XCTestCase {
         guard let instruction = store.selectedInstruction else {
             return XCTFail("Expected disassembly to select the first instruction.")
         }
-        store.selectInstruction(instruction)
+        XCTAssertTrue(store.selectInstruction(instruction))
         XCTAssertEqual(store.recentAddressRoutes, [0x1000004b0])
 
         await store.jump(to: 0x100000500)
@@ -170,7 +170,7 @@ final class WorkbenchStoreTests: XCTestCase {
         try await store.runDisassembly()
         let staleInstruction = try Self.sampleInstruction(address: 0x100000700, rendered: "blr x16")
 
-        store.selectInstruction(staleInstruction, recordsNavigation: true)
+        XCTAssertFalse(store.selectInstruction(staleInstruction, recordsNavigation: true))
 
         XCTAssertEqual(store.selectedInstructionAddress, 0x1000004b0)
         XCTAssertEqual(store.recentAddressRoutes, [0x1000004b0])

@@ -51,7 +51,7 @@ public final class WorkbenchStore: ObservableObject {
             }
         }
     }
-    @Published public var selectedInstructionAddress: UInt64?
+    @Published public private(set) var selectedInstructionAddress: UInt64?
     @Published public private(set) var recentAddressRoutes: [UInt64] = []
     @Published public private(set) var backAddressRoutes: [UInt64] = []
     @Published public private(set) var forwardAddressRoutes: [UInt64] = []
@@ -585,15 +585,17 @@ public final class WorkbenchStore: ObservableObject {
         symbolSuggestions = []
     }
 
-    public func selectInstruction(_ instruction: InstructionRow, recordsNavigation: Bool = false) {
+    @discardableResult
+    public func selectInstruction(_ instruction: InstructionRow, recordsNavigation: Bool = false) -> Bool {
         guard disassembly?.instructions.contains(where: { $0.address == instruction.address }) == true else {
-            return
+            return false
         }
         if recordsNavigation {
             pushActiveAddressRouteForNavigation(to: instruction.address)
         }
         selectedInstructionAddress = instruction.address
         recordRecentAddressRoute(instruction.address)
+        return true
     }
 
     public func route(for instruction: InstructionRow) -> WorkbenchRoute {
