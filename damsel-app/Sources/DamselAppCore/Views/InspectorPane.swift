@@ -17,7 +17,7 @@ struct InspectorPane: View {
                         payloadSection("Annotations", values: instruction.annotations)
                         payloadSection("Recovered Values", values: instruction.recoveredValues)
                         analysisSection(store.disassembly?.analysis)
-                        basicBlockSection(store.disassembly?.analysis?.basicBlocks ?? [])
+                        basicBlockSection(store.disassembly?.analysis)
                     }
                     .padding(18)
                 } else {
@@ -134,12 +134,16 @@ struct InspectorPane: View {
     }
 
     @ViewBuilder
-    private func basicBlockSection(_ blocks: [BasicBlockSummary]) -> some View {
-        if !blocks.isEmpty {
+    private func basicBlockSection(_ analysis: AnalysisPayload?) -> some View {
+        if let analysis, !analysis.basicBlocks.isEmpty {
             InspectorSection(title: "Basic Blocks") {
-                DetailRow("Showing", "\(min(blocks.count, Self.maxVisibleBasicBlocks)) of \(blocks.count)")
-                ForEach(Array(blocks.prefix(Self.maxVisibleBasicBlocks))) { block in
-                    BasicBlockRow(block: block) { address in
+                DetailRow("Showing", "\(min(analysis.basicBlocks.count, Self.maxVisibleBasicBlocks)) of \(analysis.basicBlocks.count)")
+                ForEach(Array(analysis.basicBlocks.prefix(Self.maxVisibleBasicBlocks))) { block in
+                    BasicBlockRow(
+                        block: block,
+                        outgoingEdges: outgoingEdges(for: block, in: analysis),
+                        incomingEdges: incomingEdges(for: block, in: analysis)
+                    ) { address in
                         Task { await store.jump(to: address) }
                     }
                 }
@@ -148,6 +152,20 @@ struct InspectorPane: View {
     }
 
     private static let maxVisibleBasicBlocks = 12
+
+    private func outgoingEdges(for block: BasicBlockSummary, in analysis: AnalysisPayload) -> [ControlFlowEdgeSummary] {
+        guard let blockID = block.blockID else {
+            return []
+        }
+        return analysis.edges.filter { $0.fromBlock == blockID }
+    }
+
+    private func incomingEdges(for block: BasicBlockSummary, in analysis: AnalysisPayload) -> [ControlFlowEdgeSummary] {
+        guard let blockID = block.blockID else {
+            return []
+        }
+        return analysis.edges.filter { $0.toBlock == blockID }
+    }
 }
 
 private struct InspectorSection<Content: View>: View {
@@ -252,6 +270,8 @@ private struct ReferenceRow: View {
 
 private struct BasicBlockRow: View {
     let block: BasicBlockSummary
+    let outgoingEdges: [ControlFlowEdgeSummary]
+    let incomingEdges: [ControlFlowEdgeSummary]
     let jump: (UInt64) -> Void
 
     var body: some View {
@@ -311,8 +331,26 @@ private struct BasicBlockRow: View {
                     .truncationMode(.middle)
                     .textSelection(.enabled)
             }
+
+            edgeGroup("out", edges: outgoingEdges)
+            edgeGroup("in", edges: incomingEdges)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func edgeGroup(_ title: String, edges: [ControlFlowEdgeSummary]) -> some View {
+        if !edges.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(title): \(edges.count)")
+                    .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                ForEach(Array(edges.prefix(Self.maxVisibleEdges))) { edge in
+                    EdgeRow(edge: edge, jump: jump)
+                }
+            }
+        }
     }
 
     private var blockRangeText: String {
@@ -362,5 +400,49 @@ private struct BasicBlockRow: View {
             values.append("\(block.predecessors.count)->\(block.successors.count)")
         }
         return values
+    }
+
+    private static let maxVisibleEdges = 4
+}
+
+private struct EdgeRow: View {
+    let edge: ControlFlowEdgeSummary
+    let jump: (UInt64) -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Text(edgeLabel)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            if let targetAddress = edge.targetAddress {
+                Button(DamselFormat.address(targetAddress)) {
+                    jump(targetAddress)
+                }
+                .font(.system(.caption2, design: .monospaced))
+                .buttonStyle(.borderless)
+                .help("Jump to \(DamselFormat.address(targetAddress))")
+            } else {
+                Text("external")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var edgeLabel: String {
+        var values = [
+            edge.kind,
+            "\(edge.fromBlock)->\(edge.toBlock.map(String.init) ?? "external")",
+            "@\(DamselFormat.address(edge.sourceAddress))",
+        ]
+        if let via = edge.via, !via.isEmpty {
+            values.append("via \(via)")
+        }
+        if edge.backEdge {
+            values.append("back")
+        }
+        return values.joined(separator: " ")
     }
 }

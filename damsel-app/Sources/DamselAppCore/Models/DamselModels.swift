@@ -167,12 +167,14 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
     public let metrics: AnalysisMetrics?
     public let overview: JSONValue?
     public let basicBlocks: [BasicBlockSummary]
+    public let edges: [ControlFlowEdgeSummary]
 
     enum CodingKeys: String, CodingKey {
         case summary
         case metrics
         case overview
         case basicBlocks = "basic_blocks"
+        case edges
     }
 
     public init(from decoder: Decoder) throws {
@@ -181,6 +183,31 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         metrics = try container.decodeIfPresent(AnalysisMetrics.self, forKey: .metrics)
         overview = try container.decodeIfPresent(JSONValue.self, forKey: .overview)
         basicBlocks = try container.decodeIfPresent([BasicBlockSummary].self, forKey: .basicBlocks) ?? []
+        edges = try container.decodeIfPresent([ControlFlowEdgeSummary].self, forKey: .edges) ?? []
+    }
+}
+
+public struct ControlFlowEdgeSummary: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String {
+        "\(fromBlock)->\(toBlock.map(String.init) ?? "external"):\(DamselFormat.address(sourceAddress))"
+    }
+
+    public let fromBlock: Int
+    public let toBlock: Int?
+    public let sourceAddress: UInt64
+    public let targetAddress: UInt64?
+    public let kind: String
+    public let via: String?
+    public let backEdge: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case fromBlock = "from_block"
+        case toBlock = "to_block"
+        case sourceAddress = "source_address"
+        case targetAddress = "target_address"
+        case kind
+        case via
+        case backEdge = "back_edge"
     }
 }
 
