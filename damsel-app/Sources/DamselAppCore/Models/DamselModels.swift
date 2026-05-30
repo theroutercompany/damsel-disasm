@@ -171,6 +171,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
     public let directCalls: [AnalysisTargetUse]
     public let branchTargets: [AnalysisTargetUse]
     public let dataReferences: [AnalysisTargetUse]
+    public let indirectControls: [AnalysisIndirectControlUse]
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -181,6 +182,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         case directCalls = "direct_calls"
         case branchTargets = "branch_targets"
         case dataReferences = "data_references"
+        case indirectControls = "indirect_controls"
     }
 
     public init(from decoder: Decoder) throws {
@@ -193,6 +195,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         directCalls = try container.decodeIfPresent([AnalysisTargetUse].self, forKey: .directCalls) ?? []
         branchTargets = try container.decodeIfPresent([AnalysisTargetUse].self, forKey: .branchTargets) ?? []
         dataReferences = try container.decodeIfPresent([AnalysisTargetUse].self, forKey: .dataReferences) ?? []
+        indirectControls = try container.decodeIfPresent([AnalysisIndirectControlUse].self, forKey: .indirectControls) ?? []
     }
 }
 
@@ -207,6 +210,24 @@ public struct AnalysisTargetUse: Decodable, Equatable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case instructionAddress = "instruction_address"
         case targetAddress = "target_address"
+    }
+}
+
+public struct AnalysisIndirectControlUse: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String {
+        "\(DamselFormat.address(instructionAddress)):\(kind):\(via)"
+    }
+
+    public let instructionAddress: UInt64
+    public let kind: String
+    public let via: String
+    public let resolvedTarget: UInt64?
+
+    enum CodingKeys: String, CodingKey {
+        case instructionAddress = "instruction_address"
+        case kind
+        case via
+        case resolvedTarget = "resolved_target"
     }
 }
 

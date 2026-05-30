@@ -95,11 +95,17 @@ struct InspectorPane: View {
 
     @ViewBuilder
     private func analysisTargetUseSection(_ instruction: InstructionRow, analysis: AnalysisPayload?) -> some View {
-        let rows = analysisTargetUses(for: instruction, analysis: analysis)
-        if !rows.isEmpty {
+        let targetRows = analysisTargetUses(for: instruction, analysis: analysis)
+        let indirectRows = analysisIndirectControls(for: instruction, analysis: analysis)
+        if !targetRows.isEmpty || !indirectRows.isEmpty {
             InspectorSection(title: "Analysis Targets") {
-                ForEach(rows) { row in
+                ForEach(targetRows) { row in
                     TargetUseRow(row: row) { address in
+                        Task { await store.jump(to: address) }
+                    }
+                }
+                ForEach(indirectRows) { row in
+                    IndirectControlRow(row: row) { address in
                         Task { await store.jump(to: address) }
                     }
                 }
@@ -128,6 +134,15 @@ struct InspectorPane: View {
         uses
             .filter { $0.instructionAddress == instructionAddress }
             .map { LabeledTargetUse(label: label, use: $0) }
+    }
+
+    private func analysisIndirectControls(
+        for instruction: InstructionRow,
+        analysis: AnalysisPayload?
+    ) -> [LabeledIndirectControlUse] {
+        analysis?.indirectControls
+            .filter { $0.instructionAddress == instruction.address }
+            .map { LabeledIndirectControlUse(use: $0) } ?? []
     }
 
     private func payloadSection(_ title: String, values: [JSONValue]) -> some View {
@@ -333,6 +348,45 @@ private struct TargetUseRow: View {
             .help("Jump to \(DamselFormat.address(row.use.targetAddress))")
 
             Text("from \(DamselFormat.address(row.use.instructionAddress))")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+}
+
+private struct LabeledIndirectControlUse: Identifiable {
+    let use: AnalysisIndirectControlUse
+
+    var id: String {
+        "indirect:\(use.id)"
+    }
+}
+
+private struct IndirectControlRow: View {
+    let row: LabeledIndirectControlUse
+    let jump: (UInt64) -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("indirect \(row.use.kind)")
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            if let resolvedTarget = row.use.resolvedTarget {
+                Button(DamselFormat.address(resolvedTarget)) {
+                    jump(resolvedTarget)
+                }
+                .font(.system(.caption, design: .monospaced))
+                .buttonStyle(.borderless)
+                .help("Jump to \(DamselFormat.address(resolvedTarget))")
+            } else {
+                Text("unresolved")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("via \(row.use.via)")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
