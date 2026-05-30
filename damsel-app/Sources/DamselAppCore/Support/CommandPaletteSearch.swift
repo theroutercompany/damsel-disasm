@@ -552,7 +552,7 @@ public enum DamselCommandPalette {
         let address = normalize(DamselFormat.address(instruction.address))
         let mnemonic = normalize(instruction.mnemonic)
         let rendered = normalize(instruction.rendered)
-        let fields = [address, mnemonic, rendered]
+        let fields = InstructionFilter.searchableFields(for: instruction).map(normalize)
         let tokens = query.split(separator: " ").map(String.init)
 
         guard tokens.allSatisfy({ token in fields.contains { $0.contains(token) } }) else {
@@ -570,6 +570,9 @@ public enum DamselCommandPalette {
         }
         if rendered.contains(query) {
             return 30
+        }
+        if fields.contains(where: { $0.contains(query) }) {
+            return 40
         }
         return 50 + fallbackIndex
     }

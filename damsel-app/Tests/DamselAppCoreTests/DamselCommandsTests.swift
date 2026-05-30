@@ -209,6 +209,61 @@ final class DamselCommandsTests: XCTestCase {
         )
     }
 
+    func testCommandPaletteSearchesInstructionMetadata() throws {
+        let json = """
+        [
+          {
+            "address": 4294968496,
+            "opcode": 3506438144,
+            "mnemonic": "adrp",
+            "rendered": "adrp x0, 0x100004000",
+            "operands": ["x0", "0x100004000"],
+            "structured_operands": [
+              {"kind": "register", "name": "x0"}
+            ],
+            "references": [
+              {
+                "type": "data",
+                "target": 4294983680,
+                "symbol": "_printf",
+                "label": "literal pool",
+                "kind": "import",
+                "value": {"dylib": "/usr/lib/libSystem.B.dylib"}
+              }
+            ],
+            "annotations": [
+              {"kind": "objc-selector", "value": "applicationDidFinishLaunching:"}
+            ],
+            "recovered_values": [
+              {"register": "x0", "value": "0x100004000", "kind": "Address"}
+            ]
+          }
+        ]
+        """
+        let instructions = try JSONDecoder().decode([InstructionRow].self, from: Data(json.utf8))
+
+        XCTAssertEqual(
+            DamselCommandPalette.instructionResults(matching: "_printf", instructions: instructions).map(\.instruction.address),
+            [0x1000004b0]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.instructionResults(matching: "literal pool", instructions: instructions).map(\.instruction.address),
+            [0x1000004b0]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.instructionResults(matching: "libSystem", instructions: instructions).map(\.instruction.address),
+            [0x1000004b0]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.instructionResults(matching: "objc-selector", instructions: instructions).map(\.instruction.address),
+            [0x1000004b0]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.instructionResults(matching: "_malloc", instructions: instructions).map(\.instruction.address),
+            []
+        )
+    }
+
     func testCommandPaletteSearchesBasicBlocks() throws {
         let blocks = try sampleBasicBlocks()
 

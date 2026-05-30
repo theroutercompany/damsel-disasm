@@ -12,7 +12,7 @@ public enum InstructionFilter {
         }
     }
 
-    private static func searchableFields(for instruction: InstructionRow) -> [String] {
+    static func searchableFields(for instruction: InstructionRow) -> [String] {
         var fields = [
             instruction.rendered,
             instruction.mnemonic,
