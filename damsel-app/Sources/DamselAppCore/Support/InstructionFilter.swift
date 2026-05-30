@@ -2,17 +2,13 @@ import Foundation
 
 public enum InstructionFilter {
     public static func matches(_ instruction: InstructionRow, query: String) -> Bool {
-        let tokens = normalizedTokens(query)
+        let tokens = SearchText.tokens(query)
         guard !tokens.isEmpty else {
             return true
         }
 
-        let fields = searchableFields(for: instruction).map(normalize)
-        return tokens.allSatisfy { token in
-            fields.contains { field in
-                field.contains(token)
-            }
-        }
+        let fields = searchableFields(for: instruction).map(SearchText.normalize)
+        return SearchText.matchesAllTokens(tokens, in: fields)
     }
 
     static func searchableFields(for instruction: InstructionRow) -> [String] {
@@ -40,18 +36,5 @@ public enum InstructionFilter {
         }
 
         return fields
-    }
-
-    private static func normalizedTokens(_ value: String) -> [String] {
-        normalize(value).split(separator: " ").map(String.init)
-    }
-
-    private static func normalize(_ value: String) -> String {
-        value
-            .lowercased()
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: ".", with: " ")
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
     }
 }

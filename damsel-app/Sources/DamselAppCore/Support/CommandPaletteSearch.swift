@@ -975,12 +975,7 @@ public enum DamselCommandPalette {
     }
 
     private static func normalize(_ value: String) -> String {
-        value
-            .lowercased()
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: ".", with: " ")
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
+        SearchText.normalize(value)
     }
 
     private struct RankedResult {
