@@ -36,7 +36,7 @@ gates, and "do not start before" constraints.
 | E12 | Type/debug-info integration | Better names/types/source | E2/E4/E10 |
 | E13 | Decompiler-lite and IR | Honest high-level function understanding | E4/E9/E12 |
 | E14 | Automation/MCP | Scriptable document facts | E1-E4/E11 |
-| E15 | Debugger bridge | Static/dynamic route mapping | E5/E11/E12 |
+| E15 | Debugger bridge and live Workbench | Static/dynamic route mapping plus native debugger surface | E5/E11/E12/E19/E21 |
 | E16 | Plugin/SDK boundary | Controlled extensibility | E11/E14 |
 | E17 | Patching design | Future binary mutation path | E3/E11 |
 | E18 | Diff/export/evidence | Apple OS build archaeology and reports | E4/E7-E12/E14 |
@@ -873,14 +873,17 @@ Risks:
 - automation returns plausible prose without route/object evidence
 - automation gets a separate model from CLI and Workbench
 
-## E15: Debugger Bridge
+## E15: Debugger Bridge And Live Workbench
 
 Goal:
 
-- bridge live LLDB state to static project routes
+- bridge live LLDB state to static project routes and expose it through a
+  permissioned native debugger Workbench
 
 Deliverables:
 
+- debug target and launch configuration model
+- launch/attach sheets and debugger bar
 - LLDB launch/attach spike
 - debug session model
 - runtime module model
@@ -888,23 +891,44 @@ Deliverables:
 - module/slide mapping
 - static-to-dynamic route resolver
 - breakpoint route mapping
+- breakpoint gutter and unresolved breakpoint problem states
 - current-PC overlay model
 - frame-to-function mapping
 - registers/backtrace/memory panel
+- ObjC/C++/arm64e runtime value interpretation
+- helper-process isolation and session-token auth
+- redacted debugger diagnostics and session export
 - platform failure problem records
+- separate future design gates for remote, iOS, and kernel debugging
+
+Source specs:
+
+- [Debugger Static-Dynamic Integration Implementation Spec](debugger-static-dynamic-integration-implementation-spec.md)
+- [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
 
 Implementation tasks:
 
+- define debug target/session/module/breakpoint/stop-event/frame/register/memory
+  API contracts
+- add native debug target, session, breakpoint, module, thread, frame,
+  register, memory, problem, and diagnostics stores
 - evaluate LLDB transport
 - define helper process boundary
+- authenticate helper sessions with per-session tokens
 - map runtime modules to sources
 - compute slides
 - resolve runtime address to project route
 - resolve project route to runtime breakpoint location
 - set route-backed breakpoints
 - read registers/backtrace/read-only memory
+- interpret registers and memory using ObjC, C++, dyld, PAC, and source-route
+  evidence where available
 - surface SIP/permission errors
 - represent dyld shared-cache and patched-source-revision mismatches
+- enforce redaction for launch environment, arguments, logs, registers, memory,
+  and local paths
+- gate automation capabilities for launch, attach, control, memory read, and
+  breakpoint mutation
 
 Validation:
 
@@ -914,6 +938,12 @@ Validation:
 - current-PC overlay test
 - frame mapping test
 - read-only memory test
+- helper crash test
+- helper token rejection test
+- launch/attach UI tests
+- register/frame/memory snapshot tests
+- ObjC/C++/arm64e stop-context fixtures
+- redacted export test
 - platform denial fixture
 
 Risks:

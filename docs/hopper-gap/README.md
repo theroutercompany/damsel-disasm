@@ -206,6 +206,12 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   implementation architecture for local debugger sessions, runtime module
   matching, route-backed breakpoints, current-PC overlays, registers, frames,
   read-only memory, LLDB helper boundaries, and platform failure handling.
+- [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md):
+  implementation-ready native debugger Workbench plan for launch/attach,
+  debug targets, module matching, route-backed breakpoints, stop events,
+  stepping, registers, frames, memory windows, ObjC/C++/arm64e runtime
+  interpretation, dyld shared-cache runtime mapping, LLDB helper isolation,
+  permissions, diagnostics, exports, and validation gates.
 - [Refactor And Subsystem Plan](refactor-subsystem-plan.md): the large
   subsystems and deep refactors required for a real app, not just small feature
   patches.

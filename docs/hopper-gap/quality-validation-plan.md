@@ -127,6 +127,7 @@ Use a trace table for future implementation:
 | Automation/MCP | automation plan | object/tool APIs | script/MCP server | tool fixtures | local-only smoke |
 | Plugin/SDK boundary | plugin spec | manifest/capability APIs | extension runtime | manifest/isolation fixtures | local toy extension |
 | Debugger bridge | debugger integration spec | debug session APIs | LLDB bridge | fixture executable | signed local sample |
+| Live debugger Workbench | live debugger spec | target/session/event/breakpoint APIs | native debugger stores | launch/attach/stop/register/memory UI tests | signed local sample plus denial cases |
 | Graph/representation sync | graph spec | graph/feature-map/hex schemas | graph/layout/hex services | graph/hex/feature-map fixtures | Workbench graph smoke |
 | Patching/hex | patching spec | byte/patch APIs | patch preview/export | byte/patch fixtures | standalone sample |
 | Implementation epics | epic breakdown | issue map | phased branches | per-epic gates | milestone audit |

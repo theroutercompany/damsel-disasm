@@ -393,6 +393,15 @@ Cases:
 - runtime address maps to project route
 - project route maps to runtime breakpoint address
 - unresolved breakpoint problem
+- launch local signed fixture
+- attach denied fixture or simulated denial
+- stop at entry event
+- breakpoint hit event
+- PC outside known source
+- register snapshot with pointer interpretation
+- stack memory with route pointer
+- helper crash event
+- redacted debugger export
 
 Expected evidence:
 
@@ -401,6 +410,10 @@ Expected evidence:
 - invalidation plan snapshots
 - source revision snapshots
 - debug mapping snapshots
+- debug target/session/module snapshots
+- breakpoint and stop-event snapshots
+- register/frame/memory snapshots
+- helper-isolation test output
 - platform-denial problem snapshots where environment supports them
 
 ### Function And Xref Corpus

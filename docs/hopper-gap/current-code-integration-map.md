@@ -48,6 +48,11 @@ and
 show how current byte providers, Workbench selection state, source identity,
 and future transactions must grow before Damsel can safely support patch
 preview or route-backed debugging.
+[Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
+extends that bridge into the future product layer: launch/attach UX, debug
+targets and sessions, module snapshots, route-backed breakpoints, stop events,
+register/frame/memory stores, LLDB helper isolation, Apple runtime live
+interpretation, permission errors, and diagnostic redaction.
 
 Automation and extension implementation companions:
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)

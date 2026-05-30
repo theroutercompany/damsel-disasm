@@ -119,6 +119,16 @@ server page, and changelog entries to derive Damsel's safe byte-editing,
 copy-on-write revision, patch preview, LLDB bridge, and static-dynamic route
 mapping architecture.
 
+For the live debugger Workbench implementation pass, see
+[Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md).
+That document uses Hopper's homepage, tutorial breakpoint surface, Debugger
+Server page, prior changelog notes in this pack, LLDB remote-debugging
+documentation, and Apple debugging entitlement/hardened-runtime documentation
+to define Damsel's future launch/attach UX, debug target/session/module models,
+route-backed breakpoints, stop-event views, register/frame/memory panes,
+helper isolation, permission diagnostics, Apple runtime live interpretation,
+and redacted session exports.
+
 For the automation and SDK-boundary implementation pass, see
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 and
@@ -139,6 +149,8 @@ Source set:
 - <https://www.hopperapp.com/rss/html_changelog.php>
 - <https://www.hopperapp.com/HopperDebuggerServer/>
 - <https://www.hopperapp.com/downloader/public/HopperSDK-6.3.0.zip>
+- <https://lldb.llvm.org/use/remote.html>
+- <https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.debugger>
 
 SDK evidence inspected:
 
@@ -158,6 +170,10 @@ Why it matters:
   widget.
 - The debugger evidence shows that live process state must overlay the same
   static routes, assembly, graph, hex, and procedure objects.
+- Hopper's local/remote debugger split and Apple's debugger permission model
+  imply that Damsel's live debugger needs explicit launch/attach flows, helper
+  isolation, platform-denial problems, diagnostic redaction, and separate
+  future tracks for remote, iOS, and kernel debugging.
 
 Planning impact:
 
@@ -166,6 +182,10 @@ Planning impact:
   models early.
 - Damsel's debugger should start as local, explicit, read-mostly, route-backed
   LLDB integration after project/source/address models are stable.
+- Damsel's debugger Workbench should treat debug targets, sessions, modules,
+  breakpoints, stop events, frames, registers, memory windows, and live
+  Apple-runtime interpretations as structured project records rather than as a
+  raw LLDB transcript.
 - In-place patching of shared caches or kernel collections remains outside the
   safe product path.
 

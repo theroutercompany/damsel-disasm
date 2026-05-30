@@ -73,6 +73,7 @@ Use these labels during audits:
 | Plugin/SDK boundary | manifest, capability, provenance, cancellation, and isolation tests | Planned |
 | Diff/export/evidence | snapshots, fingerprints, findings, report export, and redaction tests | Planned |
 | Native app trust | helper token auth, source grants, diagnostics redaction, crash/hang recovery, signing gates | Planned |
+| Live debugger Workbench | debug target/session/module/breakpoint/stop-event fixtures, helper isolation tests, route-backed PC overlays, permission-denial problems, and redacted exports | Planned |
 | Artifact intake | intake sessions, candidate plans, source graph, sidecar matching, projection recipes, artifact overview | Planned |
 | DWARF/dSYM/KDK debug info | debug-source registry, exact/mismatch candidate explanations, line/function/variable/type fixtures, privacy tests | Planned |
 | Debugger bridge | LLDB local smoke and static/runtime route mapping | Planned |

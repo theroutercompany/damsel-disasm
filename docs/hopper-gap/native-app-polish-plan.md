@@ -47,6 +47,13 @@ helper, diagnostics, update, debugger entitlement, and plugin trust layer that a
 native reverse-engineering Workbench needs before it can be distributed with
 Hopper-like confidence.
 
+Live debugger companion:
+[Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
+defines debugger-specific native polish: launch and attach sheets, debugger
+bar state, breakpoint gutters, stopped-state layouts, current-PC overlays,
+register/frame/memory panes, LLDB/helper failure UX, permission errors, and
+redacted session exports.
+
 Research companion:
 [Hopper Interaction, Debugger, And Product Surface Research](hopper-interaction-debugger-product-research.md)
 grounds the interaction target in Hopper's public tutorial, debugger,

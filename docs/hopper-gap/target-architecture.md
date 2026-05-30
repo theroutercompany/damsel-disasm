@@ -90,6 +90,11 @@ Companion blueprints:
 - [Debugger, Automation, Extension, And MCP Plan](debugger-automation-extension-plan.md)
   defines the safe route for scripting, MCP/AI, plugins/SDK boundaries, LLDB
   bridge work, and future binary mutation.
+- [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
+  defines the native runtime-overlay architecture for launch/attach workflows,
+  debug targets/sessions/modules, route-backed breakpoints, stop-event UI,
+  registers, frames, memory windows, LLDB helper isolation, permissions,
+  diagnostics, and Apple-runtime interpretation.
 - [Current Code Integration Map](current-code-integration-map.md) maps this
   architecture onto today's `damsel-core`, `damsel-macho`, `damsel-cli`, and
   Workbench implementation.

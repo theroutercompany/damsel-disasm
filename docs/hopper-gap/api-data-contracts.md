@@ -93,6 +93,11 @@ and
 define the API objects for byte windows, patchability, patch plans, source
 revisions, patch transactions, debug sessions, runtime modules, breakpoints,
 stop events, registers, frames, and read-only memory windows.
+[Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
+expands the live debugger API surface into debug targets, launch
+configurations, attach candidates, session event streams, control commands,
+module/source matching, route-backed breakpoints, register/value
+interpretations, memory read windows, diagnostics, and redacted exports.
 
 Automation and extension companions:
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
