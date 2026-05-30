@@ -347,6 +347,10 @@ final class DamselCommandsTests: XCTestCase {
             "Jump table 0x100008000"
         )
         XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "jump-table x9", analysis: analysis).first?.title,
+            "Jump table 0x100008000"
+        )
+        XCTAssertEqual(
             DamselCommandPalette.analysisFactResults(matching: "value x0", analysis: analysis).first?.kind,
             "recovered"
         )

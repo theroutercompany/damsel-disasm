@@ -6,6 +6,7 @@ enum SearchText {
             .lowercased()
             .replacingOccurrences(of: "_", with: " ")
             .replacingOccurrences(of: ".", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
     }
