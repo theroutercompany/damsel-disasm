@@ -141,6 +141,50 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testNavigationBackAndForwardUseAddressRouteStack() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        await store.jump(to: 0x100000500)
+
+        XCTAssertTrue(store.canNavigateBack)
+        XCTAssertFalse(store.canNavigateForward)
+        XCTAssertEqual(store.backAddressRoutes, [0x1000004b0])
+
+        await store.navigateBack()
+
+        XCTAssertFalse(store.canNavigateBack)
+        XCTAssertTrue(store.canNavigateForward)
+        XCTAssertEqual(store.forwardAddressRoutes, [0x100000500])
+
+        await store.navigateForward()
+
+        XCTAssertTrue(store.canNavigateBack)
+        XCTAssertFalse(store.canNavigateForward)
+        let requests = await client.disassemblyRequests
+        XCTAssertEqual(requests.map(\.target.value), ["__TEXT:__text", "0x100000500", "0x1000004b0", "0x100000500"])
+    }
+
+    @MainActor
+    func testBranchJumpClearsForwardRouteStack() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        await store.jump(to: 0x100000500)
+        await store.navigateBack()
+        XCTAssertEqual(store.forwardAddressRoutes, [0x100000500])
+
+        await store.jump(to: 0x100000600)
+
+        XCTAssertEqual(store.forwardAddressRoutes, [])
+        XCTAssertEqual(store.backAddressRoutes, [0x1000004b0])
+        let requests = await client.disassemblyRequests
+        XCTAssertEqual(requests.last?.target.value, "0x100000600")
+    }
+
+    @MainActor
     func testChangingDecodeControlsMarksResultAsNeedingRefresh() async throws {
         let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
@@ -202,6 +246,14 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(
             unloadedStore.commandAvailability(for: .revealBinary),
             .disabled("Load a local binary first.")
+        )
+        XCTAssertEqual(
+            unloadedStore.commandAvailability(for: .navigateBack),
+            .disabled("No previous address route.")
+        )
+        XCTAssertEqual(
+            unloadedStore.commandAvailability(for: .navigateForward),
+            .disabled("No forward address route.")
         )
 
         let invalidRangeStore = WorkbenchStore(client: SuggestionClient(response: []), loadedImage: Self.sampleImage())

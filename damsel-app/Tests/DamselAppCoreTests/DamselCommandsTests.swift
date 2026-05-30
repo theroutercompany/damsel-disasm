@@ -28,6 +28,16 @@ final class DamselCommandsTests: XCTestCase {
         XCTAssertEqual(clear.menuPath, ["Navigate"])
         XCTAssertEqual(clear.shortcut, DamselCommandShortcut("f", modifiers: [.command, .shift]))
 
+        let back = DamselCommandRegistry.descriptor(for: .navigateBack)
+        XCTAssertEqual(back.title, "Back")
+        XCTAssertEqual(back.menuPath, ["Navigate"])
+        XCTAssertEqual(back.shortcut, DamselCommandShortcut("["))
+
+        let forward = DamselCommandRegistry.descriptor(for: .navigateForward)
+        XCTAssertEqual(forward.title, "Forward")
+        XCTAssertEqual(forward.menuPath, ["Navigate"])
+        XCTAssertEqual(forward.shortcut, DamselCommandShortcut("]"))
+
         let diagnostics = DamselCommandRegistry.descriptor(for: .copyDiagnostics)
         XCTAssertEqual(diagnostics.title, "Copy Diagnostics")
         XCTAssertEqual(diagnostics.menuPath, ["Help"])

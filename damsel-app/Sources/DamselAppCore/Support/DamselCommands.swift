@@ -8,6 +8,8 @@ public enum DamselCommandID: String, CaseIterable, Codable, Sendable {
     case runDisassembly = "analysis.disassemble"
     case refreshDisassembly = "analysis.refresh_disassembly"
     case cancelAnalysis = "analysis.cancel"
+    case navigateBack = "navigation.back"
+    case navigateForward = "navigation.forward"
     case focusInstructionFilter = "navigation.focus_instruction_filter"
     case clearInstructionFilter = "navigation.clear_instruction_filter"
     case copySelectedAddress = "edit.copy_selected_address"
@@ -119,6 +121,18 @@ public enum DamselCommandRegistry {
             title: "Cancel Analysis",
             menuPath: ["Analyze"],
             shortcut: DamselCommandShortcut(".")
+        ),
+        DamselCommandDescriptor(
+            id: .navigateBack,
+            title: "Back",
+            menuPath: ["Navigate"],
+            shortcut: DamselCommandShortcut("[")
+        ),
+        DamselCommandDescriptor(
+            id: .navigateForward,
+            title: "Forward",
+            menuPath: ["Navigate"],
+            shortcut: DamselCommandShortcut("]")
         ),
         DamselCommandDescriptor(
             id: .focusInstructionFilter,

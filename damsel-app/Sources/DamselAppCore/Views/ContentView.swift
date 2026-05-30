@@ -163,6 +163,10 @@ public struct ContentView: View {
             Task { try? await store.runDisassembly() }
         case .cancelAnalysis:
             store.cancelCurrentOperation()
+        case .navigateBack:
+            Task { await store.navigateBack() }
+        case .navigateForward:
+            Task { await store.navigateForward() }
         case .focusInstructionFilter:
             NotificationCenter.default.post(name: .damselFocusInstructionFilterCommand, object: nil)
         case .clearInstructionFilter:
@@ -189,7 +193,7 @@ public struct ContentView: View {
     }
 
     private func selectInstruction(_ instruction: InstructionRow) {
-        store.selectInstruction(instruction)
+        store.selectInstruction(instruction, recordsNavigation: true)
     }
 
     private func copySelectedInstruction(_ payload: InstructionClipboardPayload) {

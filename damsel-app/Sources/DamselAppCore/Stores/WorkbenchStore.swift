@@ -52,6 +52,8 @@ public final class WorkbenchStore: ObservableObject {
     }
     @Published public var selectedInstructionAddress: UInt64?
     @Published public private(set) var recentAddressRoutes: [UInt64] = []
+    @Published public private(set) var backAddressRoutes: [UInt64] = []
+    @Published public private(set) var forwardAddressRoutes: [UInt64] = []
 
     private let serverProcess: DamselServerProcess
     private var client: (any WorkbenchAPIClient)?
@@ -60,6 +62,7 @@ public final class WorkbenchStore: ObservableObject {
     private var disassemblyRequestID = 0
     private var symbolSuggestionGeneration = 0
     private var lastDisassemblyRequest: DisasmAPIRequest?
+    private var activeAddressRoute: UInt64?
     private let validatesLocalFiles: Bool
     private let recordRecentDocument: (URL) -> Void
 
@@ -202,6 +205,8 @@ public final class WorkbenchStore: ObservableObject {
             lines.append("Filter: \(diagnosticValue(instructionFilterText))")
             lines.append("Selected instruction: \(DamselFormat.address(selectedInstructionAddress))")
             lines.append("Recent address routes: \(recentAddressRoutes.count)")
+            lines.append("Back address routes: \(backAddressRoutes.count)")
+            lines.append("Forward address routes: \(forwardAddressRoutes.count)")
         } else {
             lines.append("Disassembly: none")
         }
@@ -232,6 +237,14 @@ public final class WorkbenchStore: ObservableObject {
 
     public var canCancelOperation: Bool {
         isBusy
+    }
+
+    public var canNavigateBack: Bool {
+        !isBusy && !backAddressRoutes.isEmpty
+    }
+
+    public var canNavigateForward: Bool {
+        !isBusy && !forwardAddressRoutes.isEmpty
     }
 
     public var disassemblyActionTitle: String {
@@ -301,6 +314,22 @@ public final class WorkbenchStore: ObservableObject {
             return canCancelOperation
                 ? .enabled
                 : .disabled("No Damsel operation is running.")
+        case .navigateBack:
+            guard !isBusy else {
+                return .disabled("Wait for the current Damsel operation to finish.")
+            }
+            guard !backAddressRoutes.isEmpty else {
+                return .disabled("No previous address route.")
+            }
+            return .enabled
+        case .navigateForward:
+            guard !isBusy else {
+                return .disabled("Wait for the current Damsel operation to finish.")
+            }
+            guard !forwardAddressRoutes.isEmpty else {
+                return .disabled("No forward address route.")
+            }
+            return .enabled
         case .focusInstructionFilter:
             guard disassembly?.instructions.isEmpty == false else {
                 return .disabled("Run disassembly before searching instructions.")
@@ -508,7 +537,10 @@ public final class WorkbenchStore: ObservableObject {
         symbolSuggestions = []
     }
 
-    public func selectInstruction(_ instruction: InstructionRow) {
+    public func selectInstruction(_ instruction: InstructionRow, recordsNavigation: Bool = false) {
+        if recordsNavigation {
+            pushActiveAddressRouteForNavigation(to: instruction.address)
+        }
         selectedInstructionAddress = instruction.address
         recordRecentAddressRoute(instruction.address)
     }
@@ -529,6 +561,33 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func jump(to address: UInt64) async {
+        pushActiveAddressRouteForNavigation(to: address)
+        await decodeAddressRoute(address)
+    }
+
+    public func navigateBack() async {
+        guard !isBusy, let destination = backAddressRoutes.first else {
+            return
+        }
+        backAddressRoutes.removeFirst()
+        if let activeAddressRoute, activeAddressRoute != destination {
+            insertNavigationRoute(activeAddressRoute, into: &forwardAddressRoutes)
+        }
+        await decodeAddressRoute(destination)
+    }
+
+    public func navigateForward() async {
+        guard !isBusy, let destination = forwardAddressRoutes.first else {
+            return
+        }
+        forwardAddressRoutes.removeFirst()
+        if let activeAddressRoute, activeAddressRoute != destination {
+            insertNavigationRoute(activeAddressRoute, into: &backAddressRoutes)
+        }
+        await decodeAddressRoute(destination)
+    }
+
+    private func decodeAddressRoute(_ address: UInt64) async {
         targetKind = .address
         addressText = AddressValue(address).requestString
         fromText = ""
@@ -589,6 +648,9 @@ public final class WorkbenchStore: ObservableObject {
         lastDisassemblyRequest = nil
         selectedInstructionAddress = nil
         recentAddressRoutes = []
+        backAddressRoutes = []
+        forwardAddressRoutes = []
+        activeAddressRoute = nil
     }
 
     private func recordRecentRoute(for request: DisasmAPIRequest, fallbackAddress: UInt64?) {
@@ -605,10 +667,28 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
 
+        activeAddressRoute = address
         recentAddressRoutes.removeAll { $0 == address }
         recentAddressRoutes.insert(address, at: 0)
         if recentAddressRoutes.count > Self.maxRecentAddressRoutes {
             recentAddressRoutes.removeSubrange(Self.maxRecentAddressRoutes...)
+        }
+    }
+
+    private func pushActiveAddressRouteForNavigation(to destination: UInt64) {
+        guard let activeAddressRoute, activeAddressRoute != destination else {
+            return
+        }
+
+        insertNavigationRoute(activeAddressRoute, into: &backAddressRoutes)
+        forwardAddressRoutes = []
+    }
+
+    private func insertNavigationRoute(_ address: UInt64, into routes: inout [UInt64]) {
+        routes.removeAll { $0 == address }
+        routes.insert(address, at: 0)
+        if routes.count > Self.maxNavigationAddressRoutes {
+            routes.removeSubrange(Self.maxNavigationAddressRoutes...)
         }
     }
 
@@ -713,6 +793,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private static let maxRecentAddressRoutes = 20
+    private static let maxNavigationAddressRoutes = 100
 
     private static let supportedBinaryMagics: Set<[UInt8]> = [
         [0xFE, 0xED, 0xFA, 0xCE],

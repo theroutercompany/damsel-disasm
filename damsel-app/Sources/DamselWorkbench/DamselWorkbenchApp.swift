@@ -116,6 +116,22 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
         store.cancelCurrentOperation()
     }
 
+    @objc private func navigateBack(_ sender: Any?) {
+        guard store.canNavigateBack else {
+            NSSound.beep()
+            return
+        }
+        Task { await store.navigateBack() }
+    }
+
+    @objc private func navigateForward(_ sender: Any?) {
+        guard store.canNavigateForward else {
+            NSSound.beep()
+            return
+        }
+        Task { await store.navigateForward() }
+    }
+
     @objc private func focusInstructionFilter(_ sender: Any?) {
         NotificationCenter.default.post(name: .damselFocusInstructionFilterCommand, object: nil)
     }
@@ -282,6 +298,9 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
     private func navigateMenu() -> NSMenu {
         let menu = NSMenu(title: "Navigate")
         menu.addItem(commandMenuItem(.showCommandPalette, action: #selector(showCommandPalette(_:))))
+        menu.addItem(.separator())
+        menu.addItem(commandMenuItem(.navigateBack, action: #selector(navigateBack(_:))))
+        menu.addItem(commandMenuItem(.navigateForward, action: #selector(navigateForward(_:))))
         menu.addItem(.separator())
         menu.addItem(commandMenuItem(.focusInstructionFilter, action: #selector(focusInstructionFilter(_:))))
         menu.addItem(commandMenuItem(.clearInstructionFilter, action: #selector(clearInstructionFilter(_:))))
