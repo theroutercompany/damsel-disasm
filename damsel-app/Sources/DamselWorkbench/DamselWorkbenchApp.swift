@@ -149,8 +149,7 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
             NSSound.beep()
             return
         }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.path, forType: .string)
+        copyToPasteboard(url.path)
     }
 
     @objc private func copySelectedInstructionAddress(_ sender: Any?) {
@@ -170,11 +169,7 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
     }
 
     @objc private func copyDiagnostics(_ sender: Any?) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        if !pasteboard.setString(store.diagnosticsReport, forType: .string) {
-            NSSound.beep()
-        }
+        copyToPasteboard(store.diagnosticsReport)
     }
 
     private func installMainMenu() {
@@ -333,8 +328,15 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
             NSSound.beep()
             return
         }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        copyToPasteboard(text)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if !pasteboard.setString(text, forType: .string) {
+            NSSound.beep()
+        }
     }
 
     private func openMainWindow() {
