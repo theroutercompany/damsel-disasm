@@ -39,6 +39,13 @@ struct CommandPaletteView: View {
         )
     }
 
+    private var basicBlockResults: [DamselBasicBlockPaletteResult] {
+        DamselCommandPalette.basicBlockResults(
+            matching: query,
+            blocks: store.disassembly?.analysis?.basicBlocks ?? []
+        )
+    }
+
     private var results: [DamselCommandPaletteResult] {
         DamselCommandPalette.results(matching: query) { commandID in
             store.commandAvailability(for: commandID)
@@ -77,6 +84,15 @@ struct CommandPaletteView: View {
                         CommandPaletteRecentRouteRow(result: result) {
                             isPresented = false
                             jumpToAddress(result.address)
+                        }
+                    }
+                    ForEach(basicBlockResults) { result in
+                        CommandPaletteBasicBlockRow(result: result) {
+                            guard let address = result.block.startAddress else {
+                                return
+                            }
+                            isPresented = false
+                            jumpToAddress(address)
                         }
                     }
                     ForEach(instructionResults) { result in
@@ -136,6 +152,13 @@ struct CommandPaletteView: View {
             return
         }
 
+        if let basicBlockResult = basicBlockResults.first,
+           let address = basicBlockResult.block.startAddress {
+            isPresented = false
+            jumpToAddress(address)
+            return
+        }
+
         if let instructionResult = instructionResults.first {
             isPresented = false
             selectInstruction(instructionResult.instruction)
@@ -155,6 +178,37 @@ struct CommandPaletteView: View {
         }
         isPresented = false
         performCommand(result.id)
+    }
+}
+
+private struct CommandPaletteBasicBlockRow: View {
+    let result: DamselBasicBlockPaletteResult
+    let perform: () -> Void
+
+    var body: some View {
+        Button(action: perform) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(result.title)
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(result.subtitle)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(result.subtitle)
     }
 }
 

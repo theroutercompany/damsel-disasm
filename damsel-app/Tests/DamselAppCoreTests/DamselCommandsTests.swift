@@ -206,6 +206,27 @@ final class DamselCommandsTests: XCTestCase {
         )
     }
 
+    func testCommandPaletteSearchesBasicBlocks() throws {
+        let blocks = try sampleBasicBlocks()
+
+        XCTAssertEqual(
+            DamselCommandPalette.basicBlockResults(matching: "block", blocks: blocks).map(\.block.id),
+            ["0", "1"]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.basicBlockResults(matching: "loop", blocks: blocks).map(\.title),
+            ["Block 1 0x1000004d0"]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.basicBlockResults(matching: ":block _main", blocks: blocks).map(\.subtitle),
+            ["0x1000004b0..0x1000004d0 · 8 instructions · conditional-branch"]
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.basicBlockResults(matching: "", blocks: blocks).map(\.block.id),
+            []
+        )
+    }
+
     private var sampleSections: [SectionSummary] {
         [
             SectionSummary(
@@ -255,5 +276,46 @@ final class DamselCommandsTests: XCTestCase {
         ]
         """
         return try JSONDecoder().decode([InstructionRow].self, from: Data(json.utf8))
+    }
+
+    private func sampleBasicBlocks() throws -> [BasicBlockSummary] {
+        let json = """
+        [
+          {
+            "id": 0,
+            "start_address": 4294968496,
+            "end_address": 4294968528,
+            "symbol_names": ["_main"],
+            "function_start": true,
+            "instruction_count": 8,
+            "terminator_mnemonic": "b.lt",
+            "terminator_kind": "conditional-branch",
+            "entry": true,
+            "exit": false,
+            "primary_entry_reachable": true,
+            "loop_header": false,
+            "predecessors": [],
+            "successors": [1]
+          },
+          {
+            "id": 1,
+            "start_address": 4294968528,
+            "end_address": 4294968560,
+            "symbol_names": [],
+            "function_start": false,
+            "instruction_count": 4,
+            "terminator_mnemonic": "b",
+            "terminator_kind": "branch",
+            "entry": false,
+            "exit": false,
+            "primary_entry_reachable": true,
+            "loop_header": true,
+            "back_edge_predecessors": [1],
+            "predecessors": [0, 1],
+            "successors": [1]
+          }
+        ]
+        """
+        return try JSONDecoder().decode([BasicBlockSummary].self, from: Data(json.utf8))
     }
 }

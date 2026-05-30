@@ -93,6 +93,25 @@ public struct DamselInstructionPaletteResult: Equatable, Identifiable, Sendable 
     }
 }
 
+public struct DamselBasicBlockPaletteResult: Equatable, Identifiable, Sendable {
+    public let block: BasicBlockSummary
+
+    public var id: String {
+        block.id
+    }
+
+    public var title: String {
+        "Block \(block.id) \(DamselFormat.address(block.startAddress))"
+    }
+
+    public var subtitle: String {
+        let range = "\(DamselFormat.address(block.startAddress))..\(DamselFormat.address(block.endAddress))"
+        let instructionText = "\(block.instructionCount ?? 0) instructions"
+        let terminatorText = block.terminatorKind.map { " · \($0)" } ?? ""
+        return "\(range) · \(instructionText)\(terminatorText)"
+    }
+}
+
 public enum DamselCommandPalette {
     public static func results(
         matching query: String,
@@ -254,6 +273,37 @@ public enum DamselCommandPalette {
             .map(\.result)
     }
 
+    public static func basicBlockResults(
+        matching query: String,
+        blocks: [BasicBlockSummary],
+        limit: Int = 8
+    ) -> [DamselBasicBlockPaletteResult] {
+        let normalizedQuery = normalizeBasicBlockQuery(query)
+        guard !normalizedQuery.isEmpty else {
+            return []
+        }
+
+        let ranked = blocks.enumerated().compactMap { index, block -> BasicBlockRankedResult? in
+            guard let score = score(block, query: normalizedQuery, fallbackIndex: index) else {
+                return nil
+            }
+            return BasicBlockRankedResult(
+                score: score,
+                result: DamselBasicBlockPaletteResult(block: block)
+            )
+        }
+
+        return ranked
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return (lhs.result.block.startAddress ?? UInt64.max) < (rhs.result.block.startAddress ?? UInt64.max)
+                }
+                return lhs.score < rhs.score
+            }
+            .prefix(limit)
+            .map(\.result)
+    }
+
     private static func score(
         _ descriptor: DamselCommandDescriptor,
         query: String,
@@ -287,6 +337,53 @@ public enum DamselCommandPalette {
         }
         if commandID.contains(query) {
             return 40
+        }
+        return 50 + fallbackIndex
+    }
+
+    private static func score(
+        _ block: BasicBlockSummary,
+        query: String,
+        fallbackIndex: Int
+    ) -> Int? {
+        guard block.startAddress != nil else {
+            return nil
+        }
+
+        let blockID = normalize(block.id)
+        let blockLabel = normalize("block \(block.id)")
+        let startAddress = normalize(DamselFormat.address(block.startAddress))
+        let endAddress = normalize(DamselFormat.address(block.endAddress))
+        let symbols = normalize(block.symbolNames.joined(separator: " "))
+        let terminatorMnemonic = normalize(block.terminatorMnemonic ?? "")
+        let terminatorKind = normalize(block.terminatorKind ?? "")
+        let badges = basicBlockBadges(block).map(normalize)
+        let fields = [
+            blockID,
+            blockLabel,
+            startAddress,
+            endAddress,
+            symbols,
+            terminatorMnemonic,
+            terminatorKind,
+        ] + badges
+        let tokens = query.split(separator: " ").map(String.init)
+
+        guard tokens.allSatisfy({ token in fields.contains { $0.contains(token) } }) else {
+            return nil
+        }
+
+        if blockID == query || blockLabel == query || startAddress == query {
+            return 0
+        }
+        if blockLabel.hasPrefix(query) || startAddress.hasPrefix(query) {
+            return 10
+        }
+        if symbols.contains(query) {
+            return 20
+        }
+        if badges.contains(query) || terminatorKind.contains(query) || terminatorMnemonic.contains(query) {
+            return 30
         }
         return 50 + fallbackIndex
     }
@@ -423,6 +520,43 @@ public enum DamselCommandPalette {
         return normalized
     }
 
+    private static func normalizeBasicBlockQuery(_ value: String) -> String {
+        let normalized = normalize(value)
+        if normalized.hasPrefix(":block ") {
+            return String(normalized.dropFirst(":block ".count))
+        }
+        if normalized.hasPrefix("basic block ") {
+            return String(normalized.dropFirst("basic block ".count))
+        }
+        return normalized
+    }
+
+    private static func basicBlockBadges(_ block: BasicBlockSummary) -> [String] {
+        var values: [String] = ["block", "basic block"]
+        if block.entry == true {
+            values.append("entry")
+        }
+        if block.exit == true {
+            values.append("exit")
+        }
+        if block.functionStart == true {
+            values.append("function")
+        }
+        if block.loopHeader == true {
+            values.append("loop")
+        }
+        if block.terminal == true {
+            values.append("terminal")
+        }
+        if block.primaryEntryReachable == false {
+            values.append("disconnected")
+        }
+        if !block.backEdgePredecessors.isEmpty {
+            values.append("back edge")
+        }
+        return values
+    }
+
     private static func normalize(_ value: String) -> String {
         value
             .lowercased()
@@ -450,5 +584,10 @@ public enum DamselCommandPalette {
     private struct InstructionRankedResult {
         let score: Int
         let result: DamselInstructionPaletteResult
+    }
+
+    private struct BasicBlockRankedResult {
+        let score: Int
+        let result: DamselBasicBlockPaletteResult
     }
 }
