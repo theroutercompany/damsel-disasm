@@ -14,6 +14,7 @@ struct InspectorPane: View {
                         instructionSection(instruction)
                         referenceSection(instruction)
                         linkageSection(instruction, analysis: store.disassembly?.analysis)
+                        objcReferenceSection(instruction, analysis: store.disassembly?.analysis)
                         analysisTargetUseSection(instruction, analysis: store.disassembly?.analysis)
                         payloadSection("Operands", values: instruction.structuredOperands ?? [])
                         payloadSection("Annotations", values: instruction.annotations)
@@ -118,6 +119,24 @@ struct InspectorPane: View {
 
     private func cacheLinks(for instruction: InstructionRow, analysis: AnalysisPayload?) -> [AnalysisCacheLinkUse] {
         analysis?.cacheLinks.filter { $0.instructionAddress == instruction.address } ?? []
+    }
+
+    @ViewBuilder
+    private func objcReferenceSection(_ instruction: InstructionRow, analysis: AnalysisPayload?) -> some View {
+        let objcRows = objcReferences(for: instruction, analysis: analysis)
+        if !objcRows.isEmpty {
+            InspectorSection(title: "Objective-C") {
+                ForEach(objcRows) { use in
+                    ObjCReferenceRow(use: use) { address in
+                        Task { await store.jump(to: address) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func objcReferences(for instruction: InstructionRow, analysis: AnalysisPayload?) -> [AnalysisObjCReferenceUse] {
+        analysis?.objcReferences.filter { $0.instructionAddress == instruction.address } ?? []
     }
 
     @ViewBuilder
@@ -541,6 +560,72 @@ private struct CacheLinkUseRow: View {
             return nil
         }
         return "resolved " + values.joined(separator: " ")
+    }
+}
+
+private struct ObjCReferenceRow: View {
+    let use: AnalysisObjCReferenceUse
+    let jump: (UInt64) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(use.kind)
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(displayName)
+                    .font(.system(.caption, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Button("target \(DamselFormat.address(use.targetAddress))") {
+                    jump(use.targetAddress)
+                }
+                .font(.system(.caption2, design: .monospaced))
+                .buttonStyle(.borderless)
+                .help("Jump to \(DamselFormat.address(use.targetAddress))")
+
+                if let resolvedAddress = use.resolvedAddress, resolvedAddress != use.targetAddress {
+                    Button("resolved \(DamselFormat.address(resolvedAddress))") {
+                        jump(resolvedAddress)
+                    }
+                    .font(.system(.caption2, design: .monospaced))
+                    .buttonStyle(.borderless)
+                    .help("Jump to \(DamselFormat.address(resolvedAddress))")
+                }
+            }
+
+            if let importText {
+                Text(importText)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var displayName: String {
+        guard let name = use.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else {
+            return "unnamed reference"
+        }
+        return name
+    }
+
+    private var importText: String? {
+        let values = [use.importDylib, use.importSymbol]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !values.isEmpty else {
+            return nil
+        }
+        return "import " + values.joined(separator: " ")
     }
 }
 

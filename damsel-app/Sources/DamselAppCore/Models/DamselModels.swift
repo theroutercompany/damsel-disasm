@@ -174,6 +174,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
     public let indirectControls: [AnalysisIndirectControlUse]
     public let imports: [AnalysisImportUse]
     public let cacheLinks: [AnalysisCacheLinkUse]
+    public let objcReferences: [AnalysisObjCReferenceUse]
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -187,6 +188,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         case indirectControls = "indirect_controls"
         case imports
         case cacheLinks = "cache_links"
+        case objcReferences = "objc_references"
     }
 
     public init(from decoder: Decoder) throws {
@@ -202,6 +204,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         indirectControls = try container.decodeIfPresent([AnalysisIndirectControlUse].self, forKey: .indirectControls) ?? []
         imports = try container.decodeIfPresent([AnalysisImportUse].self, forKey: .imports) ?? []
         cacheLinks = try container.decodeIfPresent([AnalysisCacheLinkUse].self, forKey: .cacheLinks) ?? []
+        objcReferences = try container.decodeIfPresent([AnalysisObjCReferenceUse].self, forKey: .objcReferences) ?? []
     }
 }
 
@@ -286,6 +289,30 @@ public struct AnalysisCacheLinkUse: Decodable, Equatable, Identifiable, Sendable
         case resolvedTargetImageID = "resolved_target_image_id"
         case resolvedTargetInstallName = "resolved_target_install_name"
         case resolvedTargetMemberName = "resolved_target_member_name"
+    }
+}
+
+public struct AnalysisObjCReferenceUse: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String {
+        "\(DamselFormat.address(instructionAddress)):\(kind):\(DamselFormat.address(targetAddress))"
+    }
+
+    public let instructionAddress: UInt64
+    public let targetAddress: UInt64
+    public let resolvedAddress: UInt64?
+    public let kind: String
+    public let name: String?
+    public let importDylib: String?
+    public let importSymbol: String?
+
+    enum CodingKeys: String, CodingKey {
+        case instructionAddress = "instruction_address"
+        case targetAddress = "target_address"
+        case resolvedAddress = "resolved_address"
+        case kind
+        case name
+        case importDylib = "import_dylib"
+        case importSymbol = "import_symbol"
     }
 }
 

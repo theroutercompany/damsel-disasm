@@ -105,6 +105,17 @@ final class DamselModelsTests: XCTestCase {
                 "address": 4294971392
               }
             ],
+            "objc_references": [
+              {
+                "instruction_address": 4294967300,
+                "target_address": 4294975488,
+                "resolved_address": 4294975744,
+                "kind": "message-send",
+                "name": "applicationDidFinishLaunching:",
+                "import_dylib": "/usr/lib/libobjc.A.dylib",
+                "import_symbol": "_objc_msgSend"
+              }
+            ],
             "cache_links": [
               {
                 "instruction_address": 4294967300,
@@ -159,6 +170,12 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertEqual(payload.analysis?.cacheLinks.first?.providerMemberName, "libobjc.A.dylib")
         XCTAssertEqual(payload.analysis?.cacheLinks.first?.targetSymbol, "_objc_msgSend")
         XCTAssertEqual(payload.analysis?.cacheLinks.first?.resolvedTargetImageID, "dyld-shared-cache:libobjc")
+        XCTAssertEqual(payload.analysis?.objcReferences.first?.instructionAddress, 4294967300)
+        XCTAssertEqual(payload.analysis?.objcReferences.first?.targetAddress, 4294975488)
+        XCTAssertEqual(payload.analysis?.objcReferences.first?.resolvedAddress, 4294975744)
+        XCTAssertEqual(payload.analysis?.objcReferences.first?.kind, "message-send")
+        XCTAssertEqual(payload.analysis?.objcReferences.first?.name, "applicationDidFinishLaunching:")
+        XCTAssertEqual(payload.analysis?.objcReferences.first?.importSymbol, "_objc_msgSend")
     }
 
     func testAnalysisPayloadDefaultsLinkageArraysWhenMissing() throws {
@@ -172,6 +189,7 @@ final class DamselModelsTests: XCTestCase {
 
         XCTAssertTrue(payload.imports.isEmpty)
         XCTAssertTrue(payload.cacheLinks.isEmpty)
+        XCTAssertTrue(payload.objcReferences.isEmpty)
         XCTAssertTrue(payload.directCalls.isEmpty)
         XCTAssertTrue(payload.indirectControls.isEmpty)
     }
