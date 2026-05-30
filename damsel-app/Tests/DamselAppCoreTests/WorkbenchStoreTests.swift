@@ -280,6 +280,23 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testAddressTargetIgnoresStaleFromText() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        store.targetKind = .address
+        store.addressText = "0x100000500"
+        store.fromText = "not-a-visible-address-mode-input"
+
+        XCTAssertNil(store.decodeValidationMessage)
+        try await store.runDisassembly()
+
+        let request = await client.disassemblyRequests.last
+        XCTAssertEqual(request?.target.value, "0x100000500")
+        XCTAssertNil(request?.window.from)
+    }
+
+    @MainActor
     func testToolbarStatusDetailPrefersFailureStatusWhenBannerIsVisible() async throws {
         let client = DecodeFailureAfterFirstClient()
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())

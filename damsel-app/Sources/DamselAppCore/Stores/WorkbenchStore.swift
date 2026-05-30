@@ -939,7 +939,9 @@ public final class WorkbenchStore: ObservableObject {
             targetValue = address.requestString
         }
 
-        let from = try optionalIntegerRequest(fromText, label: "From")
+        let from = targetKind == .address
+            ? nil
+            : try optionalIntegerRequest(fromText, label: "From")
         let to = try optionalIntegerRequest(toText, label: "To")
         let bytes = try optionalPositiveIntegerRequest(bytesText, label: "Bytes")
         let limit = try optionalPositiveIntegerRequest(limitText, label: "Limit")
@@ -950,7 +952,8 @@ public final class WorkbenchStore: ObservableObject {
         if to != nil && (bytes != nil || limit != nil) {
             throw WorkbenchValidationError("To cannot be combined with bytes or limit.")
         }
-        if let fromValue = AddressValue(text: fromText),
+        if targetKind != .address,
+           let fromValue = AddressValue(text: fromText),
            let toValue = AddressValue(text: toText),
            toValue.rawValue <= fromValue.rawValue {
             throw WorkbenchValidationError("To must be greater than from.")
