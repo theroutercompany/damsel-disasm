@@ -343,6 +343,52 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDiagnosticsReportSummarizesLoadedStateWithoutLeakingPath() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("secret-diagnostics-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let fileURL = directory.appendingPathComponent("diagnostics-fixture")
+        try Data([0xCF, 0xFA, 0xED, 0xFE]).write(to: fileURL)
+        let client = SuggestionClient(
+            response: [],
+            uploadResponse: Self.sampleImage(imageId: "diagnostics-fixture", fileName: "diagnostics-fixture"),
+            disassemblyResponse: try Self.sampleDisassembly()
+        )
+        let store = WorkbenchStore(client: client, validatesLocalFiles: true)
+
+        await store.loadFile(fileURL)
+
+        let report = store.diagnosticsReport
+        XCTAssertTrue(report.contains("Damsel Workbench Diagnostics"))
+        XCTAssertTrue(report.contains("Binary: diagnostics-fixture"))
+        XCTAssertTrue(report.contains("Binary path: omitted"))
+        XCTAssertTrue(report.contains("Architecture: arm64"))
+        XCTAssertTrue(report.contains("Disassembly: __TEXT:__text"))
+        XCTAssertTrue(report.contains("Instructions: 1"))
+        XCTAssertTrue(report.contains("Selected instruction: 0x1000004b0"))
+        XCTAssertFalse(report.contains(directory.path))
+        XCTAssertFalse(report.contains(fileURL.path))
+
+        store.bannerMessage = "Backend failed at \(fileURL.path)\ncache \(directory.path)"
+        let redactedReport = store.diagnosticsReport
+        XCTAssertTrue(redactedReport.contains("Backend failed at [omitted-path]\\ncache [omitted-path]"))
+        XCTAssertFalse(redactedReport.contains(directory.path))
+        XCTAssertFalse(redactedReport.contains(fileURL.path))
+    }
+
+    @MainActor
+    func testDiagnosticsReportIncludesValidationState() async {
+        let store = WorkbenchStore(client: SuggestionClient(response: []), loadedImage: Self.sampleImage())
+        store.limitText = ""
+        store.fromText = "0x100000500"
+        store.toText = "0x1000004b0"
+
+        XCTAssertTrue(store.diagnosticsReport.contains("Validation: To must be greater than from."))
+    }
+
+    @MainActor
     func testLoadingFileResetsFileScopedControlsBeforeAutoDisassembly() async throws {
         let loadedImage = Self.sampleImage(imageId: "new-fixture")
         let client = SuggestionClient(

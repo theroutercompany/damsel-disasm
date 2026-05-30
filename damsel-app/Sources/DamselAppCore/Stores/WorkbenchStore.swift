@@ -157,6 +157,56 @@ public final class WorkbenchStore: ObservableObject {
         return statusText
     }
 
+    public var diagnosticsReport: String {
+        var lines = [
+            "Damsel Workbench Diagnostics",
+            "",
+            "Server: \(diagnosticText(serverState.displayText))",
+            "Busy: \(isBusy ? "yes" : "no")",
+            "Status: \(diagnosticText(statusText))"
+        ]
+
+        if let bannerMessage {
+            lines.append("Banner: \(diagnosticText(bannerMessage))")
+        }
+
+        if let loadedImage {
+            lines.append("Binary: \(diagnosticText(loadedImage.fileName))")
+            lines.append("Binary path: \(selectedFileURL == nil ? "none" : "omitted")")
+            lines.append("Architecture: \(diagnosticText(loadedImage.architecture))")
+            lines.append("Entry point: \(DamselFormat.address(loadedImage.entryPoint))")
+            lines.append("Sections: \(loadedImage.sections.count)")
+            lines.append("Selected section: \(diagnosticValue(selectedSection))")
+        } else {
+            lines.append("Binary: none")
+        }
+
+        lines.append("Target: \(diagnosticsTargetSummary)")
+        lines.append("Range: \(diagnosticsRangeSummary)")
+        lines.append(
+            "Options: annotations=\(diagnosticFlag(includeAnnotations)), " +
+                "recovered_values=\(diagnosticFlag(includeValueFlow)), " +
+                "summary_graph=\(diagnosticFlag(includeAnalysis))"
+        )
+        lines.append("Validation: \(diagnosticText(decodeValidationMessage ?? "ok"))")
+
+        if let disassembly {
+            lines.append("Disassembly: \(diagnosticText(disassembly.target))")
+            lines.append("Instructions: \(disassembly.instructionCount)")
+            lines.append("Visible instructions: \(visibleInstructions.count)")
+            lines.append("Stop reason: \(diagnosticText(DamselFormat.stopReason(disassembly.stopReason)))")
+            lines.append("Start address: \(DamselFormat.address(disassembly.startAddress))")
+            lines.append("End address: \(DamselFormat.address(disassembly.endAddress ?? disassembly.windowEnd))")
+            lines.append("Needs refresh: \(diagnosticFlag(disassemblyNeedsRefresh))")
+            lines.append("Filter: \(diagnosticValue(instructionFilterText))")
+            lines.append("Selected instruction: \(DamselFormat.address(selectedInstructionAddress))")
+        } else {
+            lines.append("Disassembly: none")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
     public var visibleInstructions: [InstructionRow] {
         guard let instructions = disassembly?.instructions else {
             return []
@@ -492,6 +542,64 @@ public final class WorkbenchStore: ObservableObject {
         disassembly = nil
         lastDisassemblyRequest = nil
         selectedInstructionAddress = nil
+    }
+
+    private var diagnosticsTargetSummary: String {
+        switch targetKind {
+        case .section:
+            return "section \(diagnosticValue(selectedSection))"
+        case .symbol:
+            return "symbol \(diagnosticValue(symbolText))"
+        case .address:
+            return "address \(diagnosticValue(addressText))"
+        }
+    }
+
+    private var diagnosticsRangeSummary: String {
+        let fields = [
+            ("from", fromText),
+            ("to", toText),
+            ("bytes", bytesText),
+            ("limit", limitText)
+        ]
+        let populated = fields.compactMap { label, value -> String? in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : "\(label)=\(diagnosticText(trimmed))"
+        }
+        return populated.isEmpty ? "default" : populated.joined(separator: ", ")
+    }
+
+    private func diagnosticValue(_ value: String) -> String {
+        diagnosticText(value)
+    }
+
+    private func diagnosticText(_ value: String) -> String {
+        var redacted = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        for path in diagnosticsPathRedactions {
+            redacted = redacted.replacingOccurrences(of: path, with: "[omitted-path]")
+        }
+        redacted = redacted
+            .replacingOccurrences(of: "\r\n", with: "\\n")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\n")
+        return redacted.isEmpty ? "none" : redacted
+    }
+
+    private var diagnosticsPathRedactions: [String] {
+        guard let selectedFileURL else {
+            return []
+        }
+
+        return [
+            selectedFileURL.path,
+            selectedFileURL.deletingLastPathComponent().path,
+        ]
+        .filter { !$0.isEmpty && $0 != "/" }
+        .sorted { $0.count > $1.count }
+    }
+
+    private func diagnosticFlag(_ value: Bool) -> String {
+        value ? "yes" : "no"
     }
 
     private func localFileValidationMessage(for url: URL) -> String? {

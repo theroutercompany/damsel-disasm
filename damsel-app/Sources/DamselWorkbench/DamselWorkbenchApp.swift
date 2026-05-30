@@ -164,6 +164,14 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
         NSApp.orderFrontStandardAboutPanel(sender)
     }
 
+    @objc private func copyDiagnostics(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if !pasteboard.setString(store.diagnosticsReport, forType: .string) {
+            NSSound.beep()
+        }
+    }
+
     private func installMainMenu() {
         let mainMenu = NSMenu()
         mainMenu.addItem(menu("Damsel Workbench", submenu: appMenu()))
@@ -178,6 +186,10 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
         mainMenu.addItem(menu("Window", submenu: windowMenu))
         NSApp.windowsMenu = windowMenu
+
+        let helpMenu = helpMenu()
+        mainMenu.addItem(menu("Help", submenu: helpMenu))
+        NSApp.helpMenu = helpMenu
 
         NSApp.mainMenu = mainMenu
     }
@@ -338,6 +350,18 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
         )
         clear.keyEquivalentModifierMask = [.command, .shift]
         clear.target = self
+        return menu
+    }
+
+    private func helpMenu() -> NSMenu {
+        let menu = NSMenu(title: "Help")
+        let diagnostics = menu.addItem(
+            withTitle: "Copy Diagnostics",
+            action: #selector(copyDiagnostics(_:)),
+            keyEquivalent: "d"
+        )
+        diagnostics.keyEquivalentModifierMask = [.command, .option]
+        diagnostics.target = self
         return menu
     }
 
