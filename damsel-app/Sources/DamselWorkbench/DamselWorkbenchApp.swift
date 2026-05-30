@@ -168,6 +168,10 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
         copySelectedInstruction(.row)
     }
 
+    @objc private func copySelectedRoute(_ sender: Any?) {
+        copySelectedInstruction(.route)
+    }
+
     @objc private func showAboutPanel(_ sender: Any?) {
         NSApp.orderFrontStandardAboutPanel(sender)
     }
@@ -283,6 +287,7 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
         menu.addItem(commandMenuItem(.copySelectedAddress, action: #selector(copySelectedInstructionAddress(_:))))
         menu.addItem(commandMenuItem(.copySelectedInstruction, action: #selector(copySelectedInstructionText(_:))))
         menu.addItem(commandMenuItem(.copySelectedRow, action: #selector(copySelectedInstructionRow(_:))))
+        menu.addItem(commandMenuItem(.copySelectedRoute, action: #selector(copySelectedRoute(_:))))
         return menu
     }
 

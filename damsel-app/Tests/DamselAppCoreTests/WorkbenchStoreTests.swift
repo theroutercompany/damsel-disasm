@@ -116,6 +116,8 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.selectedInstructionClipboardText(.address), DamselFormat.address(instruction.address))
         XCTAssertEqual(store.selectedInstructionClipboardText(.instruction), instruction.rendered)
         XCTAssertEqual(store.selectedInstructionClipboardText(.row), DamselFormat.instructionRow(instruction))
+        XCTAssertEqual(store.selectedRoute, WorkbenchRoute(address: instruction.address))
+        XCTAssertEqual(store.selectedInstructionClipboardText(.route), "address:0x1000004b0")
     }
 
     @MainActor
@@ -244,6 +246,10 @@ final class WorkbenchStoreTests: XCTestCase {
             .disabled("Select an instruction first.")
         )
         XCTAssertEqual(
+            unloadedStore.commandAvailability(for: .copySelectedRoute),
+            .disabled("Select an instruction first.")
+        )
+        XCTAssertEqual(
             unloadedStore.commandAvailability(for: .revealBinary),
             .disabled("Load a local binary first.")
         )
@@ -281,6 +287,7 @@ final class WorkbenchStoreTests: XCTestCase {
         try await store.runDisassembly()
 
         XCTAssertEqual(store.commandAvailability(for: .copySelectedAddress), .enabled)
+        XCTAssertEqual(store.commandAvailability(for: .copySelectedRoute), .enabled)
         XCTAssertEqual(store.commandAvailability(for: .focusInstructionFilter), .enabled)
         XCTAssertEqual(
             store.commandAvailability(for: .clearInstructionFilter),

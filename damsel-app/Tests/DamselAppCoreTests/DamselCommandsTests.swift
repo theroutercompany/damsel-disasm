@@ -42,6 +42,11 @@ final class DamselCommandsTests: XCTestCase {
         XCTAssertEqual(diagnostics.title, "Copy Diagnostics")
         XCTAssertEqual(diagnostics.menuPath, ["Help"])
         XCTAssertEqual(diagnostics.shortcut, DamselCommandShortcut("d", modifiers: [.command, .option]))
+
+        let copyRoute = DamselCommandRegistry.descriptor(for: .copySelectedRoute)
+        XCTAssertEqual(copyRoute.title, "Copy Selected Route")
+        XCTAssertEqual(copyRoute.menuPath, ["Edit"])
+        XCTAssertNil(copyRoute.shortcut)
     }
 
     func testNotificationBackedCommandsReferenceExistingNotificationNames() {
@@ -103,7 +108,7 @@ final class DamselCommandsTests: XCTestCase {
     func testCommandPaletteDefaultExecutableResultSkipsDisabledMatches() {
         let result = DamselCommandPalette.defaultExecutableResult(matching: "copy") { commandID in
             switch commandID {
-            case .copyBinaryPath, .copySelectedAddress, .copySelectedInstruction, .copySelectedRow:
+            case .copyBinaryPath, .copySelectedAddress, .copySelectedInstruction, .copySelectedRow, .copySelectedRoute:
                 return .disabled("Nothing selectable in test.")
             default:
                 return .enabled

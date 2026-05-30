@@ -15,6 +15,7 @@ public enum DamselCommandID: String, CaseIterable, Codable, Sendable {
     case copySelectedAddress = "edit.copy_selected_address"
     case copySelectedInstruction = "edit.copy_selected_instruction"
     case copySelectedRow = "edit.copy_selected_row"
+    case copySelectedRoute = "edit.copy_selected_route"
     case copyDiagnostics = "help.copy_diagnostics"
 }
 
@@ -161,6 +162,11 @@ public enum DamselCommandRegistry {
         DamselCommandDescriptor(
             id: .copySelectedRow,
             title: "Copy Selected Row",
+            menuPath: ["Edit"]
+        ),
+        DamselCommandDescriptor(
+            id: .copySelectedRoute,
+            title: "Copy Selected Route",
             menuPath: ["Edit"]
         ),
         DamselCommandDescriptor(

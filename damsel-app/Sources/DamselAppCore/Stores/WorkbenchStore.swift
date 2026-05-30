@@ -5,6 +5,7 @@ public enum InstructionClipboardPayload: Sendable {
     case address
     case instruction
     case row
+    case route
 }
 
 @MainActor
@@ -106,6 +107,10 @@ public final class WorkbenchStore: ObservableObject {
             return nil
         }
         return instructions.first
+    }
+
+    public var selectedRoute: WorkbenchRoute? {
+        selectedInstruction.map { WorkbenchRoute(address: $0.address) }
     }
 
     public var resultTitle: String {
@@ -340,7 +345,7 @@ public final class WorkbenchStore: ObservableObject {
                 return .disabled("No instruction filter is active.")
             }
             return .enabled
-        case .copySelectedAddress, .copySelectedInstruction, .copySelectedRow:
+        case .copySelectedAddress, .copySelectedInstruction, .copySelectedRow, .copySelectedRoute:
             guard canCopySelectedInstruction else {
                 return .disabled("Select an instruction first.")
             }
@@ -557,6 +562,8 @@ public final class WorkbenchStore: ObservableObject {
             return instruction.rendered
         case .row:
             return DamselFormat.instructionRow(instruction)
+        case .route:
+            return selectedRoute?.rawValue
         }
     }
 

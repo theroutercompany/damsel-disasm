@@ -177,6 +177,8 @@ public struct ContentView: View {
             copySelectedInstruction(.instruction)
         case .copySelectedRow:
             copySelectedInstruction(.row)
+        case .copySelectedRoute:
+            copySelectedInstruction(.route)
         case .copyDiagnostics:
             copyToPasteboard(store.diagnosticsReport)
         }
