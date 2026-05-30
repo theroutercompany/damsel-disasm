@@ -277,7 +277,7 @@ public final class WorkbenchStore: ObservableObject {
 
     public func commandAvailability(for commandID: DamselCommandID) -> DamselCommandAvailability {
         switch commandID {
-        case .openBinary, .copyDiagnostics:
+        case .openBinary, .showCommandPalette, .copyDiagnostics:
             return .enabled
         case .revealBinary, .copyBinaryPath:
             guard selectedFileURL != nil else {

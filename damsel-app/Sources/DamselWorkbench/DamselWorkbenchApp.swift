@@ -82,6 +82,11 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
         NotificationCenter.default.post(name: .damselOpenBinaryCommand, object: nil)
     }
 
+    @objc private func showCommandPalette(_ sender: Any?) {
+        openMainWindow()
+        NotificationCenter.default.post(name: .damselShowCommandPaletteCommand, object: nil)
+    }
+
     @objc private func openRecentDocument(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL else {
             NSSound.beep()
@@ -276,6 +281,8 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
 
     private func navigateMenu() -> NSMenu {
         let menu = NSMenu(title: "Navigate")
+        menu.addItem(commandMenuItem(.showCommandPalette, action: #selector(showCommandPalette(_:))))
+        menu.addItem(.separator())
         menu.addItem(commandMenuItem(.focusInstructionFilter, action: #selector(focusInstructionFilter(_:))))
         menu.addItem(commandMenuItem(.clearInstructionFilter, action: #selector(clearInstructionFilter(_:))))
         return menu

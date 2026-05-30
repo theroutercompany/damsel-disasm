@@ -18,6 +18,11 @@ final class DamselCommandsTests: XCTestCase {
         XCTAssertEqual(open.menuPath, ["File"])
         XCTAssertEqual(open.shortcut, DamselCommandShortcut("o"))
 
+        let palette = DamselCommandRegistry.descriptor(for: .showCommandPalette)
+        XCTAssertEqual(palette.title, "Show Command Palette")
+        XCTAssertEqual(palette.menuPath, ["Navigate"])
+        XCTAssertEqual(palette.shortcut, DamselCommandShortcut("p", modifiers: [.command, .shift]))
+
         let clear = DamselCommandRegistry.descriptor(for: .clearInstructionFilter)
         XCTAssertEqual(clear.title, "Clear Instruction Filter")
         XCTAssertEqual(clear.menuPath, ["Navigate"])
@@ -35,6 +40,10 @@ final class DamselCommandsTests: XCTestCase {
             .damselOpenBinaryCommand
         )
         XCTAssertEqual(
+            DamselCommandRegistry.descriptor(for: .showCommandPalette).notificationName,
+            .damselShowCommandPaletteCommand
+        )
+        XCTAssertEqual(
             DamselCommandRegistry.descriptor(for: .runDisassembly).notificationName,
             .damselRunDisassemblyCommand
         )
@@ -45,6 +54,39 @@ final class DamselCommandsTests: XCTestCase {
         XCTAssertEqual(
             DamselCommandRegistry.descriptor(for: .clearInstructionFilter).notificationName,
             .damselClearInstructionFilterCommand
+        )
+    }
+
+    func testCommandPaletteListsCommandsAndCarriesAvailability() {
+        let results = DamselCommandPalette.results(matching: "") { commandID in
+            commandID == .runDisassembly
+                ? .disabled("Load a Mach-O binary before disassembling.")
+                : .enabled
+        }
+
+        XCTAssertEqual(results.first?.id, .openBinary)
+        XCTAssertEqual(Set(results.map(\.id)), Set(DamselCommandID.allCases))
+        XCTAssertEqual(
+            results.first(where: { $0.id == .runDisassembly })?.availability,
+            .disabled("Load a Mach-O binary before disassembling.")
+        )
+    }
+
+    func testCommandPaletteSearchMatchesTitlesMenuPathsAndCommandIDs() {
+        let alwaysEnabled: (DamselCommandID) -> DamselCommandAvailability = { _ in .enabled }
+
+        XCTAssertEqual(
+            DamselCommandPalette.results(matching: "diag", availability: alwaysEnabled).map(\.id),
+            [.copyDiagnostics]
+        )
+        XCTAssertTrue(
+            DamselCommandPalette.results(matching: "analysis", availability: alwaysEnabled)
+                .map(\.id)
+                .contains(.runDisassembly)
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.results(matching: "app show", availability: alwaysEnabled).map(\.id),
+            [.showCommandPalette]
         )
     }
 }

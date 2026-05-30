@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 public struct ContentView: View {
     @ObservedObject private var store: WorkbenchStore
     @State private var isDropTargeted = false
+    @State private var isCommandPalettePresented = false
     @State private var symbolSuggestionTask: Task<Void, Never>?
 
     public init(store: WorkbenchStore) {
@@ -67,6 +68,13 @@ public struct ContentView: View {
                 fileName: store.loadedImage?.fileName
             )
         )
+        .sheet(isPresented: $isCommandPalettePresented) {
+            CommandPaletteView(
+                store: store,
+                isPresented: $isCommandPalettePresented,
+                performCommand: performPaletteCommand
+            )
+        }
         .onAppear {
             Task { await store.bootstrap() }
         }
@@ -78,6 +86,9 @@ public struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .damselRunDisassemblyCommand)) { _ in
             Task { try? await store.runDisassembly() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .damselShowCommandPaletteCommand)) { _ in
+            isCommandPalettePresented = true
         }
         .onChange(of: store.symbolText) { _, _ in
             scheduleSymbolSuggestionFetch()
@@ -119,6 +130,64 @@ public struct ContentView: View {
             store.cancelCurrentOperation()
         } else {
             Task { try? await store.runDisassembly() }
+        }
+    }
+
+    private func performPaletteCommand(_ commandID: DamselCommandID) {
+        guard store.commandAvailability(for: commandID).isEnabled else {
+            NSSound.beep()
+            return
+        }
+
+        switch commandID {
+        case .openBinary:
+            openFile()
+        case .showCommandPalette:
+            isCommandPalettePresented = true
+        case .revealBinary:
+            guard let url = store.selectedFileURL else {
+                NSSound.beep()
+                return
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .copyBinaryPath:
+            guard let url = store.selectedFileURL else {
+                NSSound.beep()
+                return
+            }
+            copyToPasteboard(url.path)
+        case .runDisassembly, .refreshDisassembly:
+            Task { try? await store.runDisassembly() }
+        case .cancelAnalysis:
+            store.cancelCurrentOperation()
+        case .focusInstructionFilter:
+            NotificationCenter.default.post(name: .damselFocusInstructionFilterCommand, object: nil)
+        case .clearInstructionFilter:
+            NotificationCenter.default.post(name: .damselClearInstructionFilterCommand, object: nil)
+        case .copySelectedAddress:
+            copySelectedInstruction(.address)
+        case .copySelectedInstruction:
+            copySelectedInstruction(.instruction)
+        case .copySelectedRow:
+            copySelectedInstruction(.row)
+        case .copyDiagnostics:
+            copyToPasteboard(store.diagnosticsReport)
+        }
+    }
+
+    private func copySelectedInstruction(_ payload: InstructionClipboardPayload) {
+        guard let text = store.selectedInstructionClipboardText(payload) else {
+            NSSound.beep()
+            return
+        }
+        copyToPasteboard(text)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if !pasteboard.setString(text, forType: .string) {
+            NSSound.beep()
         }
     }
 

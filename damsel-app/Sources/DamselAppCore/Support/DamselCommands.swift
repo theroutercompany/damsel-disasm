@@ -2,6 +2,7 @@ import Foundation
 
 public enum DamselCommandID: String, CaseIterable, Codable, Sendable {
     case openBinary = "app.open_binary"
+    case showCommandPalette = "app.show_command_palette"
     case revealBinary = "app.reveal_binary"
     case copyBinaryPath = "app.copy_binary_path"
     case runDisassembly = "analysis.disassemble"
@@ -84,6 +85,13 @@ public enum DamselCommandRegistry {
             notificationName: .damselOpenBinaryCommand
         ),
         DamselCommandDescriptor(
+            id: .showCommandPalette,
+            title: "Show Command Palette",
+            menuPath: ["Navigate"],
+            shortcut: DamselCommandShortcut("p", modifiers: [.command, .shift]),
+            notificationName: .damselShowCommandPaletteCommand
+        ),
+        DamselCommandDescriptor(
             id: .revealBinary,
             title: "Reveal Binary in Finder",
             menuPath: ["File"]
@@ -159,6 +167,7 @@ public enum DamselCommandRegistry {
 
 public extension Notification.Name {
     static let damselOpenBinaryCommand = Notification.Name("DamselOpenBinaryCommand")
+    static let damselShowCommandPaletteCommand = Notification.Name("DamselShowCommandPaletteCommand")
     static let damselRunDisassemblyCommand = Notification.Name("DamselRunDisassemblyCommand")
     static let damselFocusInstructionFilterCommand = Notification.Name("DamselFocusInstructionFilterCommand")
     static let damselClearInstructionFilterCommand = Notification.Name("DamselClearInstructionFilterCommand")
