@@ -296,6 +296,7 @@ public enum DamselCommandPalette {
             }
             return RecentRouteRankedResult(
                 score: score,
+                fallbackIndex: index,
                 result: DamselRecentRoutePaletteResult(route: route)
             )
         }
@@ -303,7 +304,7 @@ public enum DamselCommandPalette {
         return ranked
             .sorted { lhs, rhs in
                 if lhs.score == rhs.score {
-                    return lhs.result.route.rawValue < rhs.result.route.rawValue
+                    return lhs.fallbackIndex < rhs.fallbackIndex
                 }
                 return lhs.score < rhs.score
             }
@@ -1015,6 +1016,7 @@ public enum DamselCommandPalette {
 
     private struct RecentRouteRankedResult {
         let score: Int
+        let fallbackIndex: Int
         let result: DamselRecentRoutePaletteResult
     }
 

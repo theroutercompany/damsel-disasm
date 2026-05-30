@@ -169,6 +169,15 @@ final class DamselCommandsTests: XCTestCase {
         )
     }
 
+    func testCommandPalettePreservesRecentRouteOrderForTiedMatches() {
+        let addresses: [UInt64] = [0x1000004b4, 0x1000004b0]
+
+        XCTAssertEqual(
+            DamselCommandPalette.recentRouteResults(matching: "route 0x1000004", addresses: addresses).map(\.address),
+            addresses
+        )
+    }
+
     func testCommandPaletteSearchesRecentWorkbenchRoutes() {
         let routes = [
             WorkbenchRoute(basicBlockID: "7", address: 0x1000004b0),
