@@ -46,6 +46,13 @@ struct CommandPaletteView: View {
         )
     }
 
+    private var analysisFactResults: [DamselAnalysisFactPaletteResult] {
+        DamselCommandPalette.analysisFactResults(
+            matching: query,
+            analysis: store.disassembly?.analysis
+        )
+    }
+
     private var results: [DamselCommandPaletteResult] {
         DamselCommandPalette.results(matching: query) { commandID in
             store.commandAvailability(for: commandID)
@@ -93,6 +100,12 @@ struct CommandPaletteView: View {
                             }
                             isPresented = false
                             jumpToAddress(address)
+                        }
+                    }
+                    ForEach(analysisFactResults) { result in
+                        CommandPaletteAnalysisFactRow(result: result) {
+                            isPresented = false
+                            jumpToAddress(result.address)
                         }
                     }
                     ForEach(instructionResults) { result in
@@ -159,6 +172,12 @@ struct CommandPaletteView: View {
             return
         }
 
+        if let analysisFactResult = analysisFactResults.first {
+            isPresented = false
+            jumpToAddress(analysisFactResult.address)
+            return
+        }
+
         if let instructionResult = instructionResults.first {
             isPresented = false
             selectInstruction(instructionResult.instruction)
@@ -209,6 +228,54 @@ private struct CommandPaletteBasicBlockRow: View {
         }
         .buttonStyle(.plain)
         .help(result.route?.rawValue ?? result.subtitle)
+    }
+}
+
+private struct CommandPaletteAnalysisFactRow: View {
+    let result: DamselAnalysisFactPaletteResult
+    let perform: () -> Void
+
+    var body: some View {
+        Button(action: perform) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: iconName)
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(result.title)
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(result.subtitle)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Jump to use \(DamselFormat.address(result.address))")
+    }
+
+    private var iconName: String {
+        switch result.kind {
+        case "call", "branch", "indirect":
+            return "arrow.triangle.branch"
+        case "data", "recovered":
+            return "number"
+        case "import", "cache":
+            return "link"
+        case "objc":
+            return "at"
+        case "jump table":
+            return "tablecells"
+        default:
+            return "scope"
+        }
     }
 }
 

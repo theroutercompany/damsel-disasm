@@ -119,6 +119,15 @@ public struct DamselBasicBlockPaletteResult: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct DamselAnalysisFactPaletteResult: Equatable, Identifiable, Sendable {
+    public let id: String
+    public let kind: String
+    public let title: String
+    public let subtitle: String
+    public let address: UInt64
+    public let searchText: String
+}
+
 public enum DamselCommandPalette {
     public static func results(
         matching query: String,
@@ -311,6 +320,42 @@ public enum DamselCommandPalette {
             .map(\.result)
     }
 
+    public static func analysisFactResults(
+        matching query: String,
+        analysis: AnalysisPayload?,
+        limit: Int = 8
+    ) -> [DamselAnalysisFactPaletteResult] {
+        guard let analysis else {
+            return []
+        }
+
+        let normalizedQuery = normalizeAnalysisFactQuery(query)
+        guard !normalizedQuery.isEmpty else {
+            return []
+        }
+
+        let candidates = analysisFactCandidates(from: analysis)
+        let ranked = candidates.enumerated().compactMap { index, result -> AnalysisFactRankedResult? in
+            guard let score = score(result, query: normalizedQuery, fallbackIndex: index) else {
+                return nil
+            }
+            return AnalysisFactRankedResult(score: score, result: result)
+        }
+
+        return ranked
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    if lhs.result.address == rhs.result.address {
+                        return lhs.result.title < rhs.result.title
+                    }
+                    return lhs.result.address < rhs.result.address
+                }
+                return lhs.score < rhs.score
+            }
+            .prefix(limit)
+            .map(\.result)
+    }
+
     private static func score(
         _ descriptor: DamselCommandDescriptor,
         query: String,
@@ -393,6 +438,41 @@ public enum DamselCommandPalette {
             return 30
         }
         return 50 + fallbackIndex
+    }
+
+    private static func score(
+        _ result: DamselAnalysisFactPaletteResult,
+        query: String,
+        fallbackIndex: Int
+    ) -> Int? {
+        let title = normalize(result.title)
+        let subtitle = normalize(result.subtitle)
+        let kind = normalize(result.kind)
+        let address = normalize(DamselFormat.address(result.address))
+        let searchText = normalize(result.searchText)
+        let fields = [title, subtitle, kind, address, searchText]
+        let tokens = query.split(separator: " ").map(String.init)
+
+        guard tokens.allSatisfy({ token in fields.contains { $0.contains(token) } }) else {
+            return nil
+        }
+
+        if title == query || address == query {
+            return 0
+        }
+        if title.hasPrefix(query) || kind == query {
+            return 10
+        }
+        if kind.hasPrefix(query) {
+            return 15
+        }
+        if title.contains(query) || searchText.contains(query) {
+            return 20
+        }
+        if subtitle.contains(query) {
+            return 30
+        }
+        return 60 + fallbackIndex
     }
 
     private static func scoreRecentRoute(
@@ -516,6 +596,23 @@ public enum DamselCommandPalette {
         value == "recent" || value == "route" || value == ":route" || value == "recent route"
     }
 
+    private static func normalizeAnalysisFactQuery(_ value: String) -> String {
+        let normalized = normalize(value)
+        let prefixes = [
+            ":analysis ",
+            "analysis ",
+            ":fact ",
+            "fact ",
+        ]
+        for prefix in prefixes where normalized.hasPrefix(prefix) {
+            return String(normalized.dropFirst(prefix.count))
+        }
+        if normalized.hasPrefix(":") {
+            return String(normalized.dropFirst())
+        }
+        return normalized
+    }
+
     private static func normalizeSectionQuery(_ value: String) -> String {
         let normalized = normalize(value)
         if normalized.hasPrefix("section ") {
@@ -564,6 +661,218 @@ public enum DamselCommandPalette {
         return values
     }
 
+    private static func analysisFactCandidates(from analysis: AnalysisPayload) -> [DamselAnalysisFactPaletteResult] {
+        var results: [DamselAnalysisFactPaletteResult] = []
+
+        for use in analysis.directCalls {
+            results.append(
+                analysisFact(
+                    id: "call:\(use.id)",
+                    kind: "call",
+                    title: "Call \(DamselFormat.address(use.targetAddress))",
+                    subtitle: "use \(DamselFormat.address(use.instructionAddress))",
+                    address: use.instructionAddress,
+                    searchParts: ["analysis", "target", "call", DamselFormat.address(use.targetAddress)]
+                )
+            )
+        }
+
+        for use in analysis.branchTargets {
+            results.append(
+                analysisFact(
+                    id: "branch:\(use.id)",
+                    kind: "branch",
+                    title: "Branch \(DamselFormat.address(use.targetAddress))",
+                    subtitle: "use \(DamselFormat.address(use.instructionAddress))",
+                    address: use.instructionAddress,
+                    searchParts: ["analysis", "target", "branch", DamselFormat.address(use.targetAddress)]
+                )
+            )
+        }
+
+        for use in analysis.dataReferences {
+            results.append(
+                analysisFact(
+                    id: "data:\(use.id)",
+                    kind: "data",
+                    title: "Data \(DamselFormat.address(use.targetAddress))",
+                    subtitle: "use \(DamselFormat.address(use.instructionAddress))",
+                    address: use.instructionAddress,
+                    searchParts: ["analysis", "target", "data", "reference", DamselFormat.address(use.targetAddress)]
+                )
+            )
+        }
+
+        for use in analysis.indirectControls {
+            let targetText = use.resolvedTarget.map { " · resolved \(DamselFormat.address($0))" } ?? " · unresolved"
+            results.append(
+                analysisFact(
+                    id: "indirect:\(use.id)",
+                    kind: "indirect",
+                    title: "Indirect \(use.kind)",
+                    subtitle: "via \(use.via)\(targetText) · use \(DamselFormat.address(use.instructionAddress))",
+                    address: use.instructionAddress,
+                    searchParts: [
+                        "analysis",
+                        "target",
+                        "indirect",
+                        use.kind,
+                        use.via,
+                        use.resolvedTarget.map(DamselFormat.address),
+                    ]
+                )
+            )
+        }
+
+        for use in analysis.imports {
+            results.append(
+                analysisFact(
+                    id: "import:\(use.id)",
+                    kind: "import",
+                    title: "Import \(use.name)",
+                    subtitle: "\(use.dylib) · use \(DamselFormat.address(use.instructionAddress))",
+                    address: use.instructionAddress,
+                    searchParts: [
+                        "analysis",
+                        "linkage",
+                        "import",
+                        use.name,
+                        use.dylib,
+                        use.address.map(DamselFormat.address),
+                    ]
+                )
+            )
+        }
+
+        for use in analysis.cacheLinks {
+            results.append(
+                analysisFact(
+                    id: "cache:\(use.id)",
+                    kind: "cache",
+                    title: "Cache \(use.symbolName)",
+                    subtitle: "\(use.providerMemberName) · \(use.providerKind) · use \(DamselFormat.address(use.instructionAddress))",
+                    address: use.instructionAddress,
+                    searchParts: [
+                        "analysis",
+                        "linkage",
+                        "cache",
+                        "dyld",
+                        use.symbolName,
+                        use.dylib,
+                        use.providerImageID,
+                        use.providerInstallName,
+                        use.providerMemberName,
+                        use.providerKind,
+                        use.targetDylib,
+                        use.targetSymbol,
+                        use.resolvedTargetImageID,
+                        use.resolvedTargetInstallName,
+                        use.resolvedTargetMemberName,
+                    ]
+                )
+            )
+        }
+
+        for use in analysis.objcReferences {
+            let displayName: String
+            if let name = use.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                displayName = name
+            } else {
+                displayName = "unnamed reference"
+            }
+
+            results.append(
+                analysisFact(
+                    id: "objc:\(use.id)",
+                    kind: "objc",
+                    title: "ObjC \(use.kind) \(displayName)",
+                    subtitle: "target \(DamselFormat.address(use.targetAddress)) · use \(DamselFormat.address(use.instructionAddress))",
+                    address: use.instructionAddress,
+                    searchParts: [
+                        "analysis",
+                        "objc",
+                        "objective c",
+                        "selector",
+                        "class",
+                        "message",
+                        use.kind,
+                        use.name,
+                        use.importDylib,
+                        use.importSymbol,
+                        DamselFormat.address(use.targetAddress),
+                        use.resolvedAddress.map(DamselFormat.address),
+                    ]
+                )
+            )
+        }
+
+        for use in analysis.jumpTables {
+            results.append(
+                analysisFact(
+                    id: "jump-table:\(use.id)",
+                    kind: "jump table",
+                    title: "Jump table \(DamselFormat.address(use.tableBase))",
+                    subtitle: "index \(use.indexRegister) · element \(use.elementSize) bytes · use \(DamselFormat.address(use.instructionAddress))",
+                    address: use.instructionAddress,
+                    searchParts: [
+                        "analysis",
+                        "jump",
+                        "jump table",
+                        "switch",
+                        use.indexRegister,
+                        DamselFormat.address(use.tableBase),
+                        "\(use.elementSize)",
+                    ]
+                )
+            )
+        }
+
+        for use in analysis.recoveredValues {
+            results.append(
+                analysisFact(
+                    id: "recovered:\(use.id)",
+                    kind: "recovered",
+                    title: "Recovered \(use.register) = \(DamselFormat.address(use.value))",
+                    subtitle: "\(use.kind) · \(use.source) · use \(DamselFormat.address(use.instructionAddress))",
+                    address: use.instructionAddress,
+                    searchParts: [
+                        "analysis",
+                        "recovered",
+                        "value",
+                        "value flow",
+                        use.register,
+                        use.kind,
+                        use.source,
+                        DamselFormat.address(use.value),
+                    ]
+                )
+            )
+        }
+
+        return results
+    }
+
+    private static func analysisFact(
+        id: String,
+        kind: String,
+        title: String,
+        subtitle: String,
+        address: UInt64,
+        searchParts: [String?]
+    ) -> DamselAnalysisFactPaletteResult {
+        DamselAnalysisFactPaletteResult(
+            id: id,
+            kind: kind,
+            title: title,
+            subtitle: subtitle,
+            address: address,
+            searchText: searchParts
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        )
+    }
+
     private static func normalize(_ value: String) -> String {
         value
             .lowercased()
@@ -596,5 +905,10 @@ public enum DamselCommandPalette {
     private struct BasicBlockRankedResult {
         let score: Int
         let result: DamselBasicBlockPaletteResult
+    }
+
+    private struct AnalysisFactRankedResult {
+        let score: Int
+        let result: DamselAnalysisFactPaletteResult
     }
 }

@@ -234,6 +234,43 @@ final class DamselCommandsTests: XCTestCase {
         )
     }
 
+    func testCommandPaletteSearchesAnalysisFacts() throws {
+        let analysis = try sampleAnalysis()
+
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "printf", analysis: analysis).first?.title,
+            "Import _printf"
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "printf", analysis: analysis).first?.address,
+            0x1000004b0
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: ":analysis cache objc", analysis: analysis).first?.kind,
+            "cache"
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: ":objc application", analysis: analysis).first?.title,
+            "ObjC message-send applicationDidFinishLaunching:"
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "switch x9", analysis: analysis).first?.title,
+            "Jump table 0x100008000"
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "value x0", analysis: analysis).first?.kind,
+            "recovered"
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "", analysis: analysis).map(\.id),
+            []
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "printf", analysis: nil).map(\.id),
+            []
+        )
+    }
+
     private var sampleSections: [SectionSummary] {
         [
             SectionSummary(
@@ -324,5 +361,69 @@ final class DamselCommandsTests: XCTestCase {
         ]
         """
         return try JSONDecoder().decode([BasicBlockSummary].self, from: Data(json.utf8))
+    }
+
+    private func sampleAnalysis() throws -> AnalysisPayload {
+        let json = """
+        {
+          "summary": {},
+          "direct_calls": [
+            {"instruction_address": 4294968496, "target_address": 4294983680}
+          ],
+          "imports": [
+            {
+              "instruction_address": 4294968496,
+              "dylib": "/usr/lib/libSystem.B.dylib",
+              "name": "_printf",
+              "address": 4294983680
+            }
+          ],
+          "cache_links": [
+            {
+              "instruction_address": 4294968500,
+              "symbol_name": "_objc_msgSend",
+              "dylib": "/usr/lib/libobjc.A.dylib",
+              "provider_image_id": "dyld-shared-cache:libobjc",
+              "provider_install_name": "/usr/lib/libobjc.A.dylib",
+              "provider_member_name": "libobjc.A.dylib",
+              "provider_kind": "dylib",
+              "target_dylib": "/usr/lib/libobjc.A.dylib",
+              "target_symbol": "_objc_msgSend",
+              "resolved_target_image_id": "dyld-shared-cache:libobjc",
+              "resolved_target_install_name": "/usr/lib/libobjc.A.dylib",
+              "resolved_target_member_name": "libobjc.A.dylib"
+            }
+          ],
+          "objc_references": [
+            {
+              "instruction_address": 4294968500,
+              "target_address": 4294975488,
+              "resolved_address": 4294975744,
+              "kind": "message-send",
+              "name": "applicationDidFinishLaunching:",
+              "import_dylib": "/usr/lib/libobjc.A.dylib",
+              "import_symbol": "_objc_msgSend"
+            }
+          ],
+          "jump_tables": [
+            {
+              "instruction_address": 4294968500,
+              "table_base": 4295000064,
+              "index_register": "x9",
+              "element_size": 8
+            }
+          ],
+          "recovered_values": [
+            {
+              "instruction_address": 4294968496,
+              "register": "x0",
+              "value": 4294983680,
+              "kind": "Address",
+              "source": "AdrpAdd"
+            }
+          ]
+        }
+        """
+        return try JSONDecoder().decode(AnalysisPayload.self, from: Data(json.utf8))
     }
 }
