@@ -492,14 +492,15 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    public func runDisassembly() async throws {
+    @discardableResult
+    public func runDisassembly() async throws -> Bool {
         disassemblyRequestID += 1
         let requestID = disassemblyRequestID
 
         await bootstrap()
         guard let client, let imageId = loadedImage?.imageId else {
             bannerMessage = "Load a Mach-O before requesting disassembly."
-            return
+            return false
         }
 
         let request: DisasmAPIRequest
@@ -507,7 +508,7 @@ public final class WorkbenchStore: ObservableObject {
             request = try buildRequest()
         } catch {
             bannerMessage = error.localizedDescription
-            return
+            return false
         }
 
         isBusy = true
@@ -522,7 +523,7 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let payload = try await client.disassemble(imageId: imageId, request: request)
             guard requestID == disassemblyRequestID, loadedImage?.imageId == imageId else {
-                return
+                return false
             }
             disassembly = payload
             lastDisassemblyRequest = request
@@ -532,12 +533,14 @@ public final class WorkbenchStore: ObservableObject {
             reconcileSelectedInstructionWithFilter()
             recordRecentRoute(for: request, fallbackAddress: selectedInstructionAddress)
             statusText = resultSubtitle
+            return true
         } catch {
             guard requestID == disassemblyRequestID, loadedImage?.imageId == imageId else {
-                return
+                return false
             }
             bannerMessage = error.localizedDescription
             statusText = "Decode failed"
+            return false
         }
     }
 
@@ -628,42 +631,54 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func jump(to address: UInt64) async {
-        pushActiveAddressRouteForNavigation(to: address)
-        await decodeAddressRoute(address)
+        let source = activeAddressRoute
+        guard await decodeAddressRoute(address) else {
+            return
+        }
+        pushAddressRouteForNavigation(from: source, to: address, clearsForward: true)
     }
 
     public func navigateBack() async {
         guard !isBusy, let destination = backAddressRoutes.first else {
             return
         }
-        backAddressRoutes.removeFirst()
-        if let activeAddressRoute, activeAddressRoute != destination {
-            insertNavigationRoute(activeAddressRoute, into: &forwardAddressRoutes)
+        let source = activeAddressRoute
+        let remainingBackRoutes = Array(backAddressRoutes.dropFirst())
+        guard await decodeAddressRoute(destination) else {
+            return
         }
-        await decodeAddressRoute(destination)
+        backAddressRoutes = remainingBackRoutes
+        if let source, source != destination {
+            insertNavigationRoute(source, into: &forwardAddressRoutes)
+        }
     }
 
     public func navigateForward() async {
         guard !isBusy, let destination = forwardAddressRoutes.first else {
             return
         }
-        forwardAddressRoutes.removeFirst()
-        if let activeAddressRoute, activeAddressRoute != destination {
-            insertNavigationRoute(activeAddressRoute, into: &backAddressRoutes)
+        let source = activeAddressRoute
+        let remainingForwardRoutes = Array(forwardAddressRoutes.dropFirst())
+        guard await decodeAddressRoute(destination) else {
+            return
         }
-        await decodeAddressRoute(destination)
+        forwardAddressRoutes = remainingForwardRoutes
+        if let source, source != destination {
+            insertNavigationRoute(source, into: &backAddressRoutes)
+        }
     }
 
-    private func decodeAddressRoute(_ address: UInt64) async {
+    private func decodeAddressRoute(_ address: UInt64) async -> Bool {
         targetKind = .address
         addressText = AddressValue(address).requestString
         fromText = ""
         toText = ""
         bytesText = ""
         do {
-            try await runDisassembly()
+            return try await runDisassembly()
         } catch {
             bannerMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -747,12 +762,18 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func pushActiveAddressRouteForNavigation(to destination: UInt64) {
-        guard let activeAddressRoute, activeAddressRoute != destination else {
+        pushAddressRouteForNavigation(from: activeAddressRoute, to: destination, clearsForward: true)
+    }
+
+    private func pushAddressRouteForNavigation(from source: UInt64?, to destination: UInt64, clearsForward: Bool) {
+        guard let source, source != destination else {
             return
         }
 
-        insertNavigationRoute(activeAddressRoute, into: &backAddressRoutes)
-        forwardAddressRoutes = []
+        insertNavigationRoute(source, into: &backAddressRoutes)
+        if clearsForward {
+            forwardAddressRoutes = []
+        }
     }
 
     private func insertNavigationRoute(_ address: UInt64, into routes: inout [UInt64]) {

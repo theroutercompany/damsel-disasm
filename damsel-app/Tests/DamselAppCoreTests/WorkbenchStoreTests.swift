@@ -30,7 +30,7 @@ final class WorkbenchStoreTests: XCTestCase {
         }
 
         store.symbolText = "_main"
-        await task.value
+        _ = await task.value
 
         XCTAssertEqual(store.symbolSuggestions, [])
     }
@@ -80,7 +80,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
         store.targetKind = .section
         store.targetKind = .symbol
-        await task.value
+        _ = await task.value
 
         XCTAssertEqual(store.symbolSuggestions, [])
     }
@@ -223,6 +223,41 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testFailedJumpDoesNotCommitNavigationHistory() async throws {
+        let client = DecodeFailureAfterFirstClient()
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        await store.jump(to: 0x100000500)
+
+        XCTAssertEqual(store.statusText, "Decode failed")
+        XCTAssertEqual(store.recentAddressRoutes, [0x1000004b0])
+        XCTAssertEqual(store.backAddressRoutes, [])
+        XCTAssertEqual(store.forwardAddressRoutes, [])
+        XCTAssertFalse(store.canNavigateBack)
+        XCTAssertFalse(store.canNavigateForward)
+    }
+
+    @MainActor
+    func testFailedNavigateBackKeepsNavigationStacks() async throws {
+        let client = DecodeFailureAfterSecondClient()
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        await store.jump(to: 0x100000500)
+        XCTAssertEqual(store.backAddressRoutes, [0x1000004b0])
+
+        await store.navigateBack()
+
+        XCTAssertEqual(store.statusText, "Decode failed")
+        XCTAssertEqual(store.recentAddressRoutes, [0x100000500, 0x1000004b0])
+        XCTAssertEqual(store.backAddressRoutes, [0x1000004b0])
+        XCTAssertEqual(store.forwardAddressRoutes, [])
+        XCTAssertTrue(store.canNavigateBack)
+        XCTAssertFalse(store.canNavigateForward)
+    }
+
+    @MainActor
     func testChangingDecodeControlsMarksResultAsNeedingRefresh() async throws {
         let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
@@ -359,7 +394,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(store.canCancelOperation)
         XCTAssertEqual(store.statusText, "Canceled")
 
-        await task.value
+        _ = await task.value
 
         XCTAssertNil(store.disassembly)
         XCTAssertEqual(store.statusText, "Canceled")
@@ -934,6 +969,26 @@ private actor DecodeFailureAfterFirstClient: WorkbenchAPIClient {
     func disassemble(imageId: String, request payload: DisasmAPIRequest) async throws -> DisassemblyResponse {
         disassemblyCount += 1
         if disassemblyCount > 1 {
+            throw WorkbenchValidationError("Decode exploded in test.")
+        }
+        return try WorkbenchStoreTests.sampleDisassembly()
+    }
+}
+
+private actor DecodeFailureAfterSecondClient: WorkbenchAPIClient {
+    private var disassemblyCount = 0
+
+    func uploadImage(fileURL: URL) async throws -> ImageUploadResponse {
+        WorkbenchStoreTests.sampleImage()
+    }
+
+    func symbolSuggestions(imageId: String, query: String, limit: Int) async throws -> [String] {
+        []
+    }
+
+    func disassemble(imageId: String, request payload: DisasmAPIRequest) async throws -> DisassemblyResponse {
+        disassemblyCount += 1
+        if disassemblyCount > 2 {
             throw WorkbenchValidationError("Decode exploded in test.")
         }
         return try WorkbenchStoreTests.sampleDisassembly()
