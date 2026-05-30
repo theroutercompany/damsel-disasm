@@ -10,6 +10,7 @@ struct InspectorPane: View {
             ScrollView {
                 if let instruction = store.selectedInstruction {
                     VStack(alignment: .leading, spacing: 18) {
+                        routeSection()
                         instructionSection(instruction)
                         referenceSection(instruction)
                         payloadSection("Operands", values: instruction.structuredOperands ?? [])
@@ -55,6 +56,17 @@ struct InspectorPane: View {
             return "No instruction matches the current filter."
         }
         return "Select an instruction to inspect references and recovered values."
+    }
+
+    @ViewBuilder
+    private func routeSection() -> some View {
+        if let routeLabel = store.selectedRouteLabel,
+           let routeText = store.selectedRouteClipboardText {
+            InspectorSection(title: "Route") {
+                DetailRow("Selected", routeLabel)
+                DetailRow("Clipboard", routeText)
+            }
+        }
     }
 
     private func instructionSection(_ instruction: InstructionRow) -> some View {

@@ -117,6 +117,8 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.selectedInstructionClipboardText(.instruction), instruction.rendered)
         XCTAssertEqual(store.selectedInstructionClipboardText(.row), DamselFormat.instructionRow(instruction))
         XCTAssertEqual(store.selectedRoute, WorkbenchRoute(address: instruction.address))
+        XCTAssertEqual(store.selectedRouteLabel, "Address 0x1000004b0")
+        XCTAssertEqual(store.selectedRouteClipboardText, "address:0x1000004b0")
         XCTAssertEqual(store.selectedInstructionClipboardText(.route), "address:0x1000004b0")
     }
 

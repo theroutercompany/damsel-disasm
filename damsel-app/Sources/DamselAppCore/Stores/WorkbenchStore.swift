@@ -113,6 +113,14 @@ public final class WorkbenchStore: ObservableObject {
         selectedInstruction.map { WorkbenchRoute(address: $0.address) }
     }
 
+    public var selectedRouteLabel: String? {
+        selectedRoute?.displayLabel
+    }
+
+    public var selectedRouteClipboardText: String? {
+        selectedRoute?.rawValue
+    }
+
     public var resultTitle: String {
         disassembly?.target ?? "No target"
     }
@@ -563,7 +571,7 @@ public final class WorkbenchStore: ObservableObject {
         case .row:
             return DamselFormat.instructionRow(instruction)
         case .route:
-            return selectedRoute?.rawValue
+            return selectedRouteClipboardText
         }
     }
 
