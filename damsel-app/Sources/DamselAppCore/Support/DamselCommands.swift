@@ -58,6 +58,22 @@ public struct DamselCommandDescriptor: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct DamselCommandAvailability: Equatable, Sendable {
+    public let isEnabled: Bool
+    public let disabledReason: String?
+
+    public init(isEnabled: Bool, disabledReason: String? = nil) {
+        self.isEnabled = isEnabled
+        self.disabledReason = isEnabled ? nil : disabledReason
+    }
+
+    public static let enabled = DamselCommandAvailability(isEnabled: true)
+
+    public static func disabled(_ reason: String) -> DamselCommandAvailability {
+        DamselCommandAvailability(isEnabled: false, disabledReason: reason)
+    }
+}
+
 public enum DamselCommandRegistry {
     public static let all: [DamselCommandDescriptor] = [
         DamselCommandDescriptor(

@@ -72,26 +72,9 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
         else {
             return true
         }
-        return isCommandAvailable(commandID)
-    }
-
-    private func isCommandAvailable(_ commandID: DamselCommandID) -> Bool {
-        switch commandID {
-        case .runDisassembly, .refreshDisassembly:
-            return store.canRunDisassembly
-        case .cancelAnalysis:
-            return store.canCancelOperation
-        case .focusInstructionFilter:
-            return store.disassembly?.instructions.isEmpty == false
-        case .clearInstructionFilter:
-            return !store.instructionFilterText.isEmpty
-        case .revealBinary, .copyBinaryPath:
-            return store.selectedFileURL != nil
-        case .copySelectedAddress, .copySelectedInstruction, .copySelectedRow:
-            return store.canCopySelectedInstruction
-        case .openBinary, .copyDiagnostics:
-            return true
-        }
+        let availability = store.commandAvailability(for: commandID)
+        menuItem.toolTip = availability.disabledReason
+        return availability.isEnabled
     }
 
     @objc private func openBinary(_ sender: Any?) {

@@ -167,6 +167,57 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCommandAvailabilityExplainsDisabledCommands() async {
+        let unloadedStore = WorkbenchStore(client: nil)
+        XCTAssertEqual(
+            unloadedStore.commandAvailability(for: .runDisassembly),
+            .disabled("Load a Mach-O binary before disassembling.")
+        )
+        XCTAssertEqual(
+            unloadedStore.commandAvailability(for: .copySelectedRow),
+            .disabled("Select an instruction first.")
+        )
+        XCTAssertEqual(
+            unloadedStore.commandAvailability(for: .revealBinary),
+            .disabled("Load a local binary first.")
+        )
+
+        let invalidRangeStore = WorkbenchStore(client: SuggestionClient(response: []), loadedImage: Self.sampleImage())
+        invalidRangeStore.limitText = ""
+        invalidRangeStore.fromText = "0x100000500"
+        invalidRangeStore.toText = "0x1000004b0"
+
+        XCTAssertEqual(
+            invalidRangeStore.commandAvailability(for: .refreshDisassembly),
+            .disabled("To must be greater than from.")
+        )
+    }
+
+    @MainActor
+    func testCommandAvailabilityTracksLoadedDisassemblyState() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        XCTAssertEqual(store.commandAvailability(for: .runDisassembly), .enabled)
+        XCTAssertEqual(
+            store.commandAvailability(for: .focusInstructionFilter),
+            .disabled("Run disassembly before searching instructions.")
+        )
+
+        try await store.runDisassembly()
+
+        XCTAssertEqual(store.commandAvailability(for: .copySelectedAddress), .enabled)
+        XCTAssertEqual(store.commandAvailability(for: .focusInstructionFilter), .enabled)
+        XCTAssertEqual(
+            store.commandAvailability(for: .clearInstructionFilter),
+            .disabled("No instruction filter is active.")
+        )
+
+        store.instructionFilterText = "ret"
+        XCTAssertEqual(store.commandAvailability(for: .clearInstructionFilter), .enabled)
+    }
+
+    @MainActor
     func testCancelCurrentDisassemblyIgnoresLateResult() async throws {
         let client = SlowDisassemblyClient()
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())

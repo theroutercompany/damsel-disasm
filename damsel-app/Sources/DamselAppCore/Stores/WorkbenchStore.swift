@@ -275,6 +275,48 @@ public final class WorkbenchStore: ObservableObject {
         selectedInstruction != nil
     }
 
+    public func commandAvailability(for commandID: DamselCommandID) -> DamselCommandAvailability {
+        switch commandID {
+        case .openBinary, .copyDiagnostics:
+            return .enabled
+        case .revealBinary, .copyBinaryPath:
+            guard selectedFileURL != nil else {
+                return .disabled("Load a local binary first.")
+            }
+            return .enabled
+        case .runDisassembly, .refreshDisassembly:
+            guard loadedImage != nil else {
+                return .disabled("Load a Mach-O binary before disassembling.")
+            }
+            guard !isBusy else {
+                return .disabled("Wait for the current Damsel operation to finish.")
+            }
+            if let decodeValidationMessage {
+                return .disabled(decodeValidationMessage)
+            }
+            return .enabled
+        case .cancelAnalysis:
+            return canCancelOperation
+                ? .enabled
+                : .disabled("No Damsel operation is running.")
+        case .focusInstructionFilter:
+            guard disassembly?.instructions.isEmpty == false else {
+                return .disabled("Run disassembly before searching instructions.")
+            }
+            return .enabled
+        case .clearInstructionFilter:
+            guard !instructionFilterText.isEmpty else {
+                return .disabled("No instruction filter is active.")
+            }
+            return .enabled
+        case .copySelectedAddress, .copySelectedInstruction, .copySelectedRow:
+            guard canCopySelectedInstruction else {
+                return .disabled("Select an instruction first.")
+            }
+            return .enabled
+        }
+    }
+
     public var disassemblyNeedsRefresh: Bool {
         guard disassembly != nil, let lastDisassemblyRequest else {
             return false
