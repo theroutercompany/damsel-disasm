@@ -34,6 +34,10 @@ Planned next:
   - [docs/specs/dyld-shared-cache-v1.md](./docs/specs/dyld-shared-cache-v1.md)
   - [docs/architecture/apple-runtime-analysis-architecture.md](./docs/architecture/apple-runtime-analysis-architecture.md)
   - [docs/roadmaps/apple-runtime-analysis-roadmap.md](./docs/roadmaps/apple-runtime-analysis-roadmap.md)
+  - [docs/hopper-gap/README.md](./docs/hopper-gap/README.md)
+  - [docs/hopper-gap/command-navigation-undo-workbench-implementation-spec.md](./docs/hopper-gap/command-navigation-undo-workbench-implementation-spec.md)
+  - [docs/hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md](./docs/hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md)
+  - [docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md](./docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)
 
 The project is still private and is not being released publicly yet. This repo currently ships private GitHub prereleases only.
 

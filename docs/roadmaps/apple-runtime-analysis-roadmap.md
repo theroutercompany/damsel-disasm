@@ -193,8 +193,13 @@ Implemented present:
 
 Planned future:
 
+- artifact intake/source-registration workflows for dyld roots, driver caches,
+  kernel collections, KDKs, dSYMs, panic logs, app bundles, and extracted Apple
+  asset roots
 - graph/trace-oriented cache workflows layered on top of the current point-query surface
 - any future live-debugger or transport integration after a separate design pass
+- native Workbench trust, permissions, helper-security, diagnostic-redaction,
+  and release-signing work before broad app distribution claims
 
 ## Cross References
 
@@ -202,3 +207,12 @@ Planned future:
 - [ADR-0002: Shared-Cache Container Model](../adr/ADR-0002-shared-cache-container-model.md)
 - [Apple Runtime Analysis Architecture](../architecture/apple-runtime-analysis-architecture.md)
 - [dyld Shared Cache v1 Spec](../specs/dyld-shared-cache-v1.md)
+- [Hopper Gap Documentation Pack](../hopper-gap/README.md)
+- [Apple Artifact Intake, Acquisition, And Source Registration Implementation Spec](../hopper-gap/apple-artifact-intake-source-registration-implementation-spec.md)
+- [Native App Trust, Distribution, Permissions, And Diagnostics Implementation Spec](../hopper-gap/native-app-trust-distribution-diagnostics-implementation-spec.md)
+- [Graph, Feature Map, Hex, And Representation Sync Implementation Spec](../hopper-gap/graph-feature-map-hex-representation-sync-implementation-spec.md)
+- [Command, Navigation, Undo, And Native Workbench Interaction Implementation Spec](../hopper-gap/command-navigation-undo-workbench-implementation-spec.md)
+- [Apple Runtime, ObjC/C++/XNU, And System Browser Workbench Implementation Spec](../hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md)
+- [Decompiler, Pseudocode, And Native Workbench Representation Implementation Spec](../hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)
+- [Type, Signature, Symbolication, And Debug-Info Implementation Spec](../hopper-gap/type-signature-symbolication-implementation-spec.md)
+- [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](../hopper-gap/dwarf-dsym-kdk-debug-info-implementation-spec.md)
