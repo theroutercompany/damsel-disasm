@@ -67,24 +67,29 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        switch menuItem.action {
-        case #selector(runDisassembly(_:)),
-             #selector(refreshDisassembly(_:)):
+        guard let rawCommandID = menuItem.representedObject as? String,
+              let commandID = DamselCommandID(rawValue: rawCommandID)
+        else {
+            return true
+        }
+        return isCommandAvailable(commandID)
+    }
+
+    private func isCommandAvailable(_ commandID: DamselCommandID) -> Bool {
+        switch commandID {
+        case .runDisassembly, .refreshDisassembly:
             return store.canRunDisassembly
-        case #selector(cancelOperation(_:)):
+        case .cancelAnalysis:
             return store.canCancelOperation
-        case #selector(focusInstructionFilter(_:)):
+        case .focusInstructionFilter:
             return store.disassembly?.instructions.isEmpty == false
-        case #selector(clearInstructionFilter(_:)):
+        case .clearInstructionFilter:
             return !store.instructionFilterText.isEmpty
-        case #selector(revealLoadedBinary(_:)),
-             #selector(copyLoadedBinaryPath(_:)):
+        case .revealBinary, .copyBinaryPath:
             return store.selectedFileURL != nil
-        case #selector(copySelectedInstructionAddress(_:)),
-             #selector(copySelectedInstructionText(_:)),
-             #selector(copySelectedInstructionRow(_:)):
+        case .copySelectedAddress, .copySelectedInstruction, .copySelectedRow:
             return store.canCopySelectedInstruction
-        default:
+        case .openBinary, .copyDiagnostics:
             return true
         }
     }
@@ -217,25 +222,13 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
 
     private func fileMenu() -> NSMenu {
         let menu = NSMenu(title: "File")
-        let open = menu.addItem(withTitle: "Open Binary...", action: #selector(openBinary(_:)), keyEquivalent: "o")
-        open.keyEquivalentModifierMask = [.command]
-        open.target = self
+        menu.addItem(commandMenuItem(.openBinary, action: #selector(openBinary(_:))))
         let openRecent = menu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "")
         openRecentMenu.delegate = self
         openRecent.submenu = openRecentMenu
         menu.addItem(.separator())
-        let reveal = menu.addItem(
-            withTitle: "Reveal Binary in Finder",
-            action: #selector(revealLoadedBinary(_:)),
-            keyEquivalent: ""
-        )
-        reveal.target = self
-        let copyPath = menu.addItem(
-            withTitle: "Copy Binary Path",
-            action: #selector(copyLoadedBinaryPath(_:)),
-            keyEquivalent: ""
-        )
-        copyPath.target = self
+        menu.addItem(commandMenuItem(.revealBinary, action: #selector(revealLoadedBinary(_:))))
+        menu.addItem(commandMenuItem(.copyBinaryPath, action: #selector(copyLoadedBinaryPath(_:))))
         menu.addItem(.separator())
         menu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
             .keyEquivalentModifierMask = [.command]
@@ -288,81 +281,45 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
             .keyEquivalentModifierMask = [.command]
         menu.addItem(.separator())
-        let copyAddress = menu.addItem(
-            withTitle: "Copy Selected Address",
-            action: #selector(copySelectedInstructionAddress(_:)),
-            keyEquivalent: ""
-        )
-        copyAddress.target = self
-        let copyInstruction = menu.addItem(
-            withTitle: "Copy Selected Instruction",
-            action: #selector(copySelectedInstructionText(_:)),
-            keyEquivalent: ""
-        )
-        copyInstruction.target = self
-        let copyRow = menu.addItem(
-            withTitle: "Copy Selected Row",
-            action: #selector(copySelectedInstructionRow(_:)),
-            keyEquivalent: ""
-        )
-        copyRow.target = self
+        menu.addItem(commandMenuItem(.copySelectedAddress, action: #selector(copySelectedInstructionAddress(_:))))
+        menu.addItem(commandMenuItem(.copySelectedInstruction, action: #selector(copySelectedInstructionText(_:))))
+        menu.addItem(commandMenuItem(.copySelectedRow, action: #selector(copySelectedInstructionRow(_:))))
         return menu
     }
 
     private func analyzeMenu() -> NSMenu {
         let menu = NSMenu(title: "Analyze")
-        let disassemble = menu.addItem(withTitle: "Disassemble", action: #selector(runDisassembly(_:)), keyEquivalent: "\r")
-        disassemble.keyEquivalentModifierMask = [.command]
-        disassemble.target = self
-
-        let refresh = menu.addItem(
-            withTitle: "Refresh Disassembly",
-            action: #selector(refreshDisassembly(_:)),
-            keyEquivalent: "r"
-        )
-        refresh.keyEquivalentModifierMask = [.command]
-        refresh.target = self
+        menu.addItem(commandMenuItem(.runDisassembly, action: #selector(runDisassembly(_:))))
+        menu.addItem(commandMenuItem(.refreshDisassembly, action: #selector(refreshDisassembly(_:))))
         menu.addItem(.separator())
-        let cancel = menu.addItem(
-            withTitle: "Cancel Analysis",
-            action: #selector(cancelOperation(_:)),
-            keyEquivalent: "."
-        )
-        cancel.keyEquivalentModifierMask = [.command]
-        cancel.target = self
+        menu.addItem(commandMenuItem(.cancelAnalysis, action: #selector(cancelOperation(_:))))
         return menu
     }
 
     private func navigateMenu() -> NSMenu {
         let menu = NSMenu(title: "Navigate")
-        let find = menu.addItem(
-            withTitle: "Find in Instructions",
-            action: #selector(focusInstructionFilter(_:)),
-            keyEquivalent: "f"
-        )
-        find.keyEquivalentModifierMask = [.command]
-        find.target = self
-
-        let clear = menu.addItem(
-            withTitle: "Clear Instruction Filter",
-            action: #selector(clearInstructionFilter(_:)),
-            keyEquivalent: "f"
-        )
-        clear.keyEquivalentModifierMask = [.command, .shift]
-        clear.target = self
+        menu.addItem(commandMenuItem(.focusInstructionFilter, action: #selector(focusInstructionFilter(_:))))
+        menu.addItem(commandMenuItem(.clearInstructionFilter, action: #selector(clearInstructionFilter(_:))))
         return menu
     }
 
     private func helpMenu() -> NSMenu {
         let menu = NSMenu(title: "Help")
-        let diagnostics = menu.addItem(
-            withTitle: "Copy Diagnostics",
-            action: #selector(copyDiagnostics(_:)),
-            keyEquivalent: "d"
-        )
-        diagnostics.keyEquivalentModifierMask = [.command, .option]
-        diagnostics.target = self
+        menu.addItem(commandMenuItem(.copyDiagnostics, action: #selector(copyDiagnostics(_:))))
         return menu
+    }
+
+    private func commandMenuItem(_ commandID: DamselCommandID, action: Selector) -> NSMenuItem {
+        let descriptor = DamselCommandRegistry.descriptor(for: commandID)
+        let item = NSMenuItem(
+            title: descriptor.title,
+            action: action,
+            keyEquivalent: descriptor.shortcut?.keyEquivalent ?? ""
+        )
+        item.keyEquivalentModifierMask = descriptor.shortcut?.appKitModifierFlags ?? []
+        item.target = self
+        item.representedObject = commandID.rawValue
+        return item
     }
 
     private func menu(_ title: String, submenu: NSMenu) -> NSMenuItem {
@@ -449,5 +406,24 @@ final class DamselWorkbenchApplication: NSObject, NSApplicationDelegate, NSMenuD
             y: visibleFrame.midY - frame.height / 2
         )
         window.setFrameOrigin(origin)
+    }
+}
+
+private extension DamselCommandShortcut {
+    var appKitModifierFlags: NSEvent.ModifierFlags {
+        var flags: NSEvent.ModifierFlags = []
+        for modifier in modifiers {
+            switch modifier {
+            case .command:
+                flags.insert(.command)
+            case .option:
+                flags.insert(.option)
+            case .shift:
+                flags.insert(.shift)
+            case .control:
+                flags.insert(.control)
+            }
+        }
+        return flags
     }
 }
