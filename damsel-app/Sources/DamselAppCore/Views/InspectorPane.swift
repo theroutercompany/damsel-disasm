@@ -16,6 +16,7 @@ struct InspectorPane: View {
                         linkageSection(instruction, analysis: store.disassembly?.analysis)
                         objcReferenceSection(instruction, analysis: store.disassembly?.analysis)
                         analysisTargetUseSection(instruction, analysis: store.disassembly?.analysis)
+                        incomingXrefSection(instruction, analysis: store.disassembly?.analysis)
                         jumpTableSection(instruction, analysis: store.disassembly?.analysis)
                         payloadSection("Operands", values: instruction.structuredOperands ?? [])
                         payloadSection("Annotations", values: instruction.annotations)
@@ -194,6 +195,20 @@ struct InspectorPane: View {
         analysis?.indirectControls
             .filter { $0.instructionAddress == instruction.address }
             .map { LabeledIndirectControlUse(use: $0) } ?? []
+    }
+
+    @ViewBuilder
+    private func incomingXrefSection(_ instruction: InstructionRow, analysis: AnalysisPayload?) -> some View {
+        let rows = AnalysisXrefs.incomingTargetUses(to: instruction.address, analysis: analysis)
+        if !rows.isEmpty {
+            InspectorSection(title: "Incoming Xrefs") {
+                ForEach(rows) { row in
+                    IncomingXrefRow(row: row) { address in
+                        Task { await store.jump(to: address) }
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -488,6 +503,31 @@ private struct IndirectControlRow: View {
             }
 
             Text("via \(row.use.via)")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+}
+
+private struct IncomingXrefRow: View {
+    let row: AnalysisXrefUse
+    let jump: (UInt64) -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(row.label)
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Button(DamselFormat.address(row.sourceAddress)) {
+                jump(row.sourceAddress)
+            }
+            .font(.system(.caption, design: .monospaced))
+            .buttonStyle(.borderless)
+            .help("Jump to source \(DamselFormat.address(row.sourceAddress))")
+
+            Text("targets \(DamselFormat.address(row.targetAddress))")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
