@@ -16,6 +16,7 @@ struct InspectorPane: View {
                         linkageSection(instruction, analysis: store.disassembly?.analysis)
                         objcReferenceSection(instruction, analysis: store.disassembly?.analysis)
                         analysisTargetUseSection(instruction, analysis: store.disassembly?.analysis)
+                        jumpTableSection(instruction, analysis: store.disassembly?.analysis)
                         payloadSection("Operands", values: instruction.structuredOperands ?? [])
                         payloadSection("Annotations", values: instruction.annotations)
                         payloadSection("Recovered Values", values: instruction.recoveredValues)
@@ -189,6 +190,24 @@ struct InspectorPane: View {
         analysis?.indirectControls
             .filter { $0.instructionAddress == instruction.address }
             .map { LabeledIndirectControlUse(use: $0) } ?? []
+    }
+
+    @ViewBuilder
+    private func jumpTableSection(_ instruction: InstructionRow, analysis: AnalysisPayload?) -> some View {
+        let jumpTables = jumpTables(for: instruction, analysis: analysis)
+        if !jumpTables.isEmpty {
+            InspectorSection(title: "Jump Tables") {
+                ForEach(jumpTables) { table in
+                    JumpTableRow(table: table) { address in
+                        Task { await store.jump(to: address) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func jumpTables(for instruction: InstructionRow, analysis: AnalysisPayload?) -> [AnalysisJumpTableUse] {
+        analysis?.jumpTables.filter { $0.instructionAddress == instruction.address } ?? []
     }
 
     private func payloadSection(_ title: String, values: [JSONValue]) -> some View {
@@ -626,6 +645,36 @@ private struct ObjCReferenceRow: View {
             return nil
         }
         return "import " + values.joined(separator: " ")
+    }
+}
+
+private struct JumpTableRow: View {
+    let table: AnalysisJumpTableUse
+    let jump: (UInt64) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("table")
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Button(DamselFormat.address(table.tableBase)) {
+                    jump(table.tableBase)
+                }
+                .font(.system(.caption, design: .monospaced))
+                .buttonStyle(.borderless)
+                .help("Jump to \(DamselFormat.address(table.tableBase))")
+            }
+
+            Text("index \(table.indexRegister) · element \(table.elementSize) bytes")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

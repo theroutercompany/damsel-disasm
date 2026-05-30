@@ -40,7 +40,7 @@ final class DamselModelsTests: XCTestCase {
               "import_count": 1,
               "cache_link_count": 1,
               "recovered_value_count": 0,
-              "jump_table_count": 0,
+              "jump_table_count": 1,
               "unresolved_indirect_count": 0
             },
             "metrics": {
@@ -131,6 +131,14 @@ final class DamselModelsTests: XCTestCase {
                 "resolved_target_install_name": "/usr/lib/libobjc.A.dylib",
                 "resolved_target_member_name": "libobjc.A.dylib"
               }
+            ],
+            "jump_tables": [
+              {
+                "instruction_address": 4294967300,
+                "table_base": 4294987776,
+                "index_register": "x9",
+                "element_size": 8
+              }
             ]
           }
         }
@@ -176,6 +184,10 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertEqual(payload.analysis?.objcReferences.first?.kind, "message-send")
         XCTAssertEqual(payload.analysis?.objcReferences.first?.name, "applicationDidFinishLaunching:")
         XCTAssertEqual(payload.analysis?.objcReferences.first?.importSymbol, "_objc_msgSend")
+        XCTAssertEqual(payload.analysis?.jumpTables.first?.instructionAddress, 4294967300)
+        XCTAssertEqual(payload.analysis?.jumpTables.first?.tableBase, 4294987776)
+        XCTAssertEqual(payload.analysis?.jumpTables.first?.indexRegister, "x9")
+        XCTAssertEqual(payload.analysis?.jumpTables.first?.elementSize, 8)
     }
 
     func testAnalysisPayloadDefaultsLinkageArraysWhenMissing() throws {
@@ -190,6 +202,7 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertTrue(payload.imports.isEmpty)
         XCTAssertTrue(payload.cacheLinks.isEmpty)
         XCTAssertTrue(payload.objcReferences.isEmpty)
+        XCTAssertTrue(payload.jumpTables.isEmpty)
         XCTAssertTrue(payload.directCalls.isEmpty)
         XCTAssertTrue(payload.indirectControls.isEmpty)
     }

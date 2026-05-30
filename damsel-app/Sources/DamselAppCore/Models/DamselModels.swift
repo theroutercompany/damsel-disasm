@@ -175,6 +175,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
     public let imports: [AnalysisImportUse]
     public let cacheLinks: [AnalysisCacheLinkUse]
     public let objcReferences: [AnalysisObjCReferenceUse]
+    public let jumpTables: [AnalysisJumpTableUse]
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -189,6 +190,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         case imports
         case cacheLinks = "cache_links"
         case objcReferences = "objc_references"
+        case jumpTables = "jump_tables"
     }
 
     public init(from decoder: Decoder) throws {
@@ -205,6 +207,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         imports = try container.decodeIfPresent([AnalysisImportUse].self, forKey: .imports) ?? []
         cacheLinks = try container.decodeIfPresent([AnalysisCacheLinkUse].self, forKey: .cacheLinks) ?? []
         objcReferences = try container.decodeIfPresent([AnalysisObjCReferenceUse].self, forKey: .objcReferences) ?? []
+        jumpTables = try container.decodeIfPresent([AnalysisJumpTableUse].self, forKey: .jumpTables) ?? []
     }
 }
 
@@ -313,6 +316,24 @@ public struct AnalysisObjCReferenceUse: Decodable, Equatable, Identifiable, Send
         case name
         case importDylib = "import_dylib"
         case importSymbol = "import_symbol"
+    }
+}
+
+public struct AnalysisJumpTableUse: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String {
+        "\(DamselFormat.address(instructionAddress)):\(DamselFormat.address(tableBase)):\(indexRegister):\(elementSize)"
+    }
+
+    public let instructionAddress: UInt64
+    public let tableBase: UInt64
+    public let indexRegister: String
+    public let elementSize: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case instructionAddress = "instruction_address"
+        case tableBase = "table_base"
+        case indexRegister = "index_register"
+        case elementSize = "element_size"
     }
 }
 
