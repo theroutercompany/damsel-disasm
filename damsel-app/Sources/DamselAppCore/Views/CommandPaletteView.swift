@@ -273,6 +273,8 @@ private struct CommandPaletteAnalysisFactRow: View {
             return "at"
         case "jump table":
             return "tablecells"
+        case "xref":
+            return "arrow.turn.down.left"
         default:
             return "scope"
         }

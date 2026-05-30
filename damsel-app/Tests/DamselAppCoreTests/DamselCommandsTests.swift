@@ -262,6 +262,14 @@ final class DamselCommandsTests: XCTestCase {
             "recovered"
         )
         XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "xref 0x100004000", analysis: analysis).first?.title,
+            "Xref call to 0x100004000"
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "xref 0x100004000", analysis: analysis).first?.address,
+            0x1000004b0
+        )
+        XCTAssertEqual(
             DamselCommandPalette.analysisFactResults(matching: "", analysis: analysis).map(\.id),
             []
         )

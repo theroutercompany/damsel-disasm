@@ -852,7 +852,38 @@ public enum DamselCommandPalette {
             )
         }
 
+        for targetAddress in incomingXrefTargetAddresses(from: analysis) {
+            for xref in AnalysisXrefs.incomingTargetUses(to: targetAddress, analysis: analysis) {
+                results.append(
+                    analysisFact(
+                        id: "xref:\(xref.id)",
+                        kind: "xref",
+                        title: "Xref \(xref.label) to \(DamselFormat.address(xref.targetAddress))",
+                        subtitle: "from \(DamselFormat.address(xref.sourceAddress))",
+                        address: xref.sourceAddress,
+                        searchParts: [
+                            "analysis",
+                            "xref",
+                            "incoming",
+                            "reference",
+                            xref.label,
+                            DamselFormat.address(xref.targetAddress),
+                            DamselFormat.address(xref.sourceAddress),
+                        ]
+                    )
+                )
+            }
+        }
+
         return results
+    }
+
+    private static func incomingXrefTargetAddresses(from analysis: AnalysisPayload) -> [UInt64] {
+        let directTargets = analysis.directCalls.map(\.targetAddress)
+        let branchTargets = analysis.branchTargets.map(\.targetAddress)
+        let dataTargets = analysis.dataReferences.map(\.targetAddress)
+        let indirectTargets = analysis.indirectControls.compactMap(\.resolvedTarget)
+        return Array(Set(directTargets + branchTargets + dataTargets + indirectTargets)).sorted()
     }
 
     private static func analysisFact(
