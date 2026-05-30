@@ -37,13 +37,15 @@ public struct WorkbenchRoute: Codable, Equatable, Hashable, Identifiable, Sendab
             self.init(address: address)
         case .basicBlock:
             let blockParts = parts[1].split(separator: "@", maxSplits: 1).map(String.init)
+            let blockID = blockParts.first?.trimmingCharacters(in: .whitespacesAndNewlines)
             guard blockParts.count == 2,
-                  !blockParts[0].isEmpty,
+                  let blockID,
+                  !blockID.isEmpty,
                   let address = AddressValue(text: blockParts[1])?.rawValue
             else {
                 return nil
             }
-            self.init(basicBlockID: blockParts[0], address: address)
+            self.init(basicBlockID: blockID, address: address)
         }
     }
 

@@ -42,11 +42,16 @@ final class WorkbenchRouteTests: XCTestCase {
             WorkbenchRoute(basicBlockID: "7", address: 0x1000004d0)
         )
         XCTAssertEqual(
+            WorkbenchRoute(rawValue: "block: b0 @ 4294968528"),
+            WorkbenchRoute(basicBlockID: "b0", address: 0x1000004d0)
+        )
+        XCTAssertEqual(
             WorkbenchRoute(rawValue: "block:b0@4294968528"),
             WorkbenchRoute(basicBlockID: "b0", address: 0x1000004d0)
         )
         XCTAssertNil(WorkbenchRoute(rawValue: "block:7"))
         XCTAssertNil(WorkbenchRoute(rawValue: "block:@0x1000004d0"))
+        XCTAssertNil(WorkbenchRoute(rawValue: "block:   @0x1000004d0"))
         XCTAssertNil(WorkbenchRoute(rawValue: "block:7@not-an-address"))
     }
 }
