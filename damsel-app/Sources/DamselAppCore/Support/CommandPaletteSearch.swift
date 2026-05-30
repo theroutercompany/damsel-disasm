@@ -89,7 +89,64 @@ public struct DamselInstructionPaletteResult: Equatable, Identifiable, Sendable 
     }
 
     public var subtitle: String {
-        "Visible instruction"
+        let metadata = Self.metadataSubtitleParts(for: instruction)
+        guard !metadata.isEmpty else {
+            return "Visible instruction"
+        }
+        return (["Visible instruction"] + metadata.prefix(3)).joined(separator: " · ")
+    }
+
+    private static func metadataSubtitleParts(for instruction: InstructionRow) -> [String] {
+        var parts: [String] = []
+
+        if let reference = instruction.references.first,
+           let summary = referenceSubtitle(reference) {
+            parts.append(summary)
+        }
+        if let annotation = instruction.annotations.first {
+            parts.append(abbreviate("ann \(annotation.compactDescription)", maxLength: 64))
+        }
+        if let recoveredValue = instruction.recoveredValues.first {
+            parts.append(abbreviate("value \(recoveredValue.compactDescription)", maxLength: 64))
+        }
+
+        return parts
+    }
+
+    private static func referenceSubtitle(_ reference: InstructionReference) -> String? {
+        var pieces: [String] = []
+        if let kind = firstDisplayText(reference.kind, reference.type) {
+            pieces.append(kind)
+        }
+        if let symbol = firstDisplayText(reference.symbol, reference.label, reference.target.map(DamselFormat.address)) {
+            pieces.append(symbol)
+        }
+        if let value = displayText(reference.value?.compactDescription) {
+            pieces.append(value)
+        }
+
+        guard !pieces.isEmpty else {
+            return nil
+        }
+        return abbreviate("ref \(pieces.joined(separator: " "))", maxLength: 80)
+    }
+
+    private static func firstDisplayText(_ values: String?...) -> String? {
+        values.compactMap(displayText).first
+    }
+
+    private static func displayText(_ value: String?) -> String? {
+        guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return nil
+        }
+        return text
+    }
+
+    private static func abbreviate(_ value: String, maxLength: Int) -> String {
+        guard maxLength > 3, value.count > maxLength else {
+            return value
+        }
+        return "\(value.prefix(maxLength - 3))..."
     }
 }
 

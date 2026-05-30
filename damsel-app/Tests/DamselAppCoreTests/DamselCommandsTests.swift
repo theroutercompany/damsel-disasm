@@ -241,11 +241,16 @@ final class DamselCommandsTests: XCTestCase {
         ]
         """
         let instructions = try JSONDecoder().decode([InstructionRow].self, from: Data(json.utf8))
+        let printfResults = DamselCommandPalette.instructionResults(matching: "_printf", instructions: instructions)
 
         XCTAssertEqual(
-            DamselCommandPalette.instructionResults(matching: "_printf", instructions: instructions).map(\.instruction.address),
+            printfResults.map(\.instruction.address),
             [0x1000004b0]
         )
+        XCTAssertTrue(printfResults.first?.subtitle.contains("ref import _printf") == true)
+        XCTAssertTrue(printfResults.first?.subtitle.contains("libSystem") == true)
+        XCTAssertTrue(printfResults.first?.subtitle.contains("ann kind: objc-selector") == true)
+        XCTAssertTrue(printfResults.first?.subtitle.contains("value kind: Address") == true)
         XCTAssertEqual(
             DamselCommandPalette.instructionResults(matching: "literal pool", instructions: instructions).map(\.instruction.address),
             [0x1000004b0]
