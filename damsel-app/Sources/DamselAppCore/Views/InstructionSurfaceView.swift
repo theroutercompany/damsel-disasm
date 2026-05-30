@@ -41,32 +41,77 @@ struct InstructionSurfaceView: View {
 
             Spacer(minLength: 12)
 
-            HStack(spacing: 8) {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                    .foregroundStyle(.secondary)
-                TextField("Filter", text: $store.instructionFilterText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(width: 180)
-                    .focused($focusedField, equals: .filter)
-
-                if !store.instructionFilterText.isEmpty {
-                    Button {
-                        store.clearInstructionFilter()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Clear instruction filter")
-                    .accessibilityLabel("Clear instruction filter")
-                }
-            }
-            .disabled(!hasInstructions)
+            headerControls
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
+    }
+
+    private var headerControls: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            navigationStrip
+            instructionFilterControls
+        }
+    }
+
+    private var navigationStrip: some View {
+        HStack(spacing: 6) {
+            Button {
+                Task { await store.navigateBack() }
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            .frame(width: 24, height: 22)
+            .disabled(!store.canNavigateBack)
+            .help("Navigate to the previous address route")
+            .accessibilityLabel("Back")
+
+            Button {
+                Task { await store.navigateForward() }
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .buttonStyle(.borderless)
+            .frame(width: 24, height: 22)
+            .disabled(!store.canNavigateForward)
+            .help("Navigate to the next address route")
+            .accessibilityLabel("Forward")
+
+            Text(store.selectedRouteLabel ?? "No route")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(width: 190, alignment: .trailing)
+                .help(store.selectedRouteClipboardText ?? "Run disassembly or select an instruction to create a route")
+        }
+    }
+
+    private var instructionFilterControls: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .foregroundStyle(.secondary)
+            TextField("Filter", text: $store.instructionFilterText)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.caption, design: .monospaced))
+                .frame(width: 180)
+                .focused($focusedField, equals: .filter)
+
+            if !store.instructionFilterText.isEmpty {
+                Button {
+                    store.clearInstructionFilter()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Clear instruction filter")
+                .accessibilityLabel("Clear instruction filter")
+            }
+        }
+        .disabled(!hasInstructions)
     }
 
     private var hasInstructions: Bool {
