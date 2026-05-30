@@ -45,6 +45,22 @@ public struct DamselRecentRoutePaletteResult: Equatable, Identifiable, Sendable 
     }
 }
 
+public struct DamselWorkbenchRoutePaletteResult: Equatable, Identifiable, Sendable {
+    public let route: WorkbenchRoute
+
+    public var id: String {
+        route.rawValue
+    }
+
+    public var title: String {
+        "Jump to \(route.displayLabel)"
+    }
+
+    public var subtitle: String {
+        "Workbench route"
+    }
+}
+
 public struct DamselSectionPaletteResult: Equatable, Identifiable, Sendable {
     public let section: SectionSummary
 
@@ -131,6 +147,14 @@ public enum DamselCommandPalette {
             return nil
         }
         return DamselAddressPaletteResult(address: address)
+    }
+
+    public static func workbenchRouteResult(matching query: String) -> DamselWorkbenchRoutePaletteResult? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let route = WorkbenchRoute(rawValue: trimmed) else {
+            return nil
+        }
+        return DamselWorkbenchRoutePaletteResult(route: route)
     }
 
     public static func recentRouteResults(

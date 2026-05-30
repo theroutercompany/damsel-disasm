@@ -14,6 +14,10 @@ struct CommandPaletteView: View {
         DamselCommandPalette.addressResult(matching: query)
     }
 
+    private var workbenchRouteResult: DamselWorkbenchRoutePaletteResult? {
+        DamselCommandPalette.workbenchRouteResult(matching: query)
+    }
+
     private var recentRouteResults: [DamselRecentRoutePaletteResult] {
         DamselCommandPalette.recentRouteResults(
             matching: query,
@@ -61,6 +65,12 @@ struct CommandPaletteView: View {
                         CommandPaletteAddressRow(result: addressResult) {
                             isPresented = false
                             jumpToAddress(addressResult.address.rawValue)
+                        }
+                    }
+                    if let workbenchRouteResult {
+                        CommandPaletteWorkbenchRouteRow(result: workbenchRouteResult) {
+                            isPresented = false
+                            jumpToAddress(workbenchRouteResult.route.address)
                         }
                     }
                     ForEach(recentRouteResults) { result in
@@ -114,6 +124,12 @@ struct CommandPaletteView: View {
             return
         }
 
+        if let workbenchRouteResult {
+            isPresented = false
+            jumpToAddress(workbenchRouteResult.route.address)
+            return
+        }
+
         if let recentRouteResult = recentRouteResults.first {
             isPresented = false
             jumpToAddress(recentRouteResult.address)
@@ -139,6 +155,36 @@ struct CommandPaletteView: View {
         }
         isPresented = false
         performCommand(result.id)
+    }
+}
+
+private struct CommandPaletteWorkbenchRouteRow: View {
+    let result: DamselWorkbenchRoutePaletteResult
+    let perform: () -> Void
+
+    var body: some View {
+        Button(action: perform) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(result.title)
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(result.subtitle)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Color.secondary)
+                }
+
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(result.route.rawValue)
     }
 }
 

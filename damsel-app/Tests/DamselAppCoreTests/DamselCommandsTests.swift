@@ -139,6 +139,16 @@ final class DamselCommandsTests: XCTestCase {
         XCTAssertNil(DamselCommandPalette.addressResult(matching: "@not-an-address"))
     }
 
+    func testCommandPaletteParsesWorkbenchRouteQueries() {
+        let result = DamselCommandPalette.workbenchRouteResult(matching: " address:0x1000004b0 ")
+
+        XCTAssertEqual(result?.route, WorkbenchRoute(address: 0x1000004b0))
+        XCTAssertEqual(result?.title, "Jump to Address 0x1000004b0")
+        XCTAssertEqual(result?.subtitle, "Workbench route")
+        XCTAssertNil(DamselCommandPalette.workbenchRouteResult(matching: "0x1000004b0"))
+        XCTAssertNil(DamselCommandPalette.workbenchRouteResult(matching: "instruction:0x1000004b0"))
+    }
+
     func testCommandPaletteSearchesRecentRoutes() {
         let addresses: [UInt64] = [0x1000004b4, 0x1000004b0]
 
