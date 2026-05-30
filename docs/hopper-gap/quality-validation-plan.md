@@ -75,6 +75,7 @@ The docs pack should include, at minimum:
 - native app trust/distribution/diagnostics implementation spec
 - Apple artifact intake/source-registration implementation spec
 - Apple runtime and kernel object model implementation spec
+- processor semantics and Apple ABI implementation spec
 - DWARF/dSYM/KDK source-level debug-info implementation spec
 - architecture decision and risk register
 - implementation epic breakdown

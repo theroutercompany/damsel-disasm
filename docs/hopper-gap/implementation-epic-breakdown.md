@@ -34,7 +34,7 @@ gates, and "do not start before" constraints.
 | E10 | Kernel/KDK/panic workflows | XNU analysis lane | E8/E9 |
 | E11 | Performance, scheduler, and persistence | Large-project viability | E1-E10 |
 | E12 | Type/debug-info integration | Better names/types/source | E2/E4/E10 |
-| E13 | Decompiler-lite and IR | Honest high-level function understanding | E4/E9/E12 |
+| E13 | Decompiler-lite and IR | Honest high-level function understanding | E4/E9/E12/E22 |
 | E14 | Automation Studio, MCP, scripting, and AI assistant | Scriptable document facts plus evidence-grounded AI UX | E1-E4/E11/E21 |
 | E15 | Debugger bridge and live Workbench | Static/dynamic route mapping plus native debugger surface | E5/E11/E12/E19/E21 |
 | E16 | Plugin/SDK boundary | Controlled extensibility | E11/E14 |
@@ -43,6 +43,7 @@ gates, and "do not start before" constraints.
 | E19 | Native app trust/distribution/diagnostics | Trustworthy macOS workstation distribution and recovery | E1/E5/E11 |
 | E20 | Artifact intake/source registration | Apple artifact open/import/project/enrich workflow | E1/E11/E19 |
 | E21 | Command/navigation/undo interaction spine | Hopper-class native control surface | E1/E3/E5/E11 |
+| E22 | Processor semantics and Apple ABI | Hopper-class CPU/ABI facts for Apple binaries | E1/E2/E4/E8-E10 |
 | E22 | Apple runtime Workbench browser suite | ObjC/C++/IOKit/cache/kernel/panic browser workflows | E5/E7-E12/E21 |
 | E23 | Decompiler Workbench representation | Native synchronized pseudocode workspace | E5/E11-E13/E21/E22 |
 
@@ -630,6 +631,7 @@ Primary spec:
 
 - [Type, Signature, Symbolication, And Debug-Info Implementation Spec](type-signature-symbolication-implementation-spec.md)
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md)
+- [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
 
 Deliverables:
 
@@ -714,6 +716,11 @@ Goal:
 
 - provide honest high-level function understanding
 
+Primary spec:
+
+- [Decompiler, Function Recovery, And IR Implementation Spec](decompiler-function-ir-implementation-spec.md)
+- [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
+
 Deliverables:
 
 - function summary pass
@@ -758,6 +765,79 @@ Risks:
 - pretty output outruns evidence
 - dead/unreachable code hidden
 - full decompiler expectations too early
+
+## E22: Processor Semantics And Apple ABI
+
+Goal:
+
+- turn decoded rows into stable architecture, CPU-mode, register, control,
+  stack, ABI, PAC, ObjC/C++/Swift, and XNU facts that every Hopper-class
+  surface can cite
+
+Primary spec:
+
+- [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
+
+Deliverables:
+
+- architecture profile model
+- ABI profile model
+- CPU-mode model
+- register role model
+- instruction semantics model
+- control effect records
+- stack/frame effect records
+- callsite ABI interpretations
+- PAC state records
+- ObjC message-send semantics
+- C++/ObjC++ callsite semantics
+- Swift-adjacent ABI and symbol-role facts
+- XNU/kernel ABI profiles
+- semantic problem records
+- semantic override transactions
+- CLI/API semantic profile and instruction routes
+- Workbench architecture, instruction, ABI, CPU-mode, and PAC inspectors
+
+Implementation tasks:
+
+- add `ArchitectureProfile`, `AbiProfile`, `CpuModeProfile`, and
+  `RegisterProfile`
+- map Mach-O slice and fileset facts to profile selection
+- add arm64 register roles and Apple ABI rules
+- add local arm64 control semantics for branch/call/return families
+- add PC-relative value semantics for ADR, ADRP, ADD, and literal loads
+- add frame and stack semantics with Apple user/kernel profile separation
+- add ObjC message-send callsite interpretation
+- add arm64e/PAC state tracking
+- add x86_64 Darwin profile baseline
+- add legacy ARM/Thumb profile baseline
+- add semantic problem and override models
+- project semantic facts into existing `DisassemblyAnalysis` summaries during
+  migration
+
+Validation:
+
+- architecture profile JSON snapshots
+- register-role snapshots
+- CPU-mode snapshots
+- instruction semantic snapshots
+- control-effect snapshots
+- stack/frame snapshots
+- PC-relative value snapshots
+- PAC state snapshots
+- ObjC/C++/Swift callsite fixtures
+- XNU/kernel profile negative tests
+- CLI/API route snapshots
+- Workbench inspector payload snapshots
+- performance gates for semantic page queries
+
+Risks:
+
+- semantic layer grows into an unbounded decoder rewrite
+- ABI facts look more certain than the evidence supports
+- user-mode ABI rules leak into kernel workflows
+- arm64e/PAC is flattened into raw address resolution
+- semantic enrichment blocks Workbench responsiveness
 
 ## E23: Decompiler Workbench Representation
 

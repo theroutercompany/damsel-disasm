@@ -111,6 +111,15 @@ CLI JSON, and Workbench stores into provenance-aware names, type records,
 function signatures, variables, calling conventions, debug-info imports,
 symbolication profiles, conflict records, and edit transactions.
 
+Processor semantics companion:
+[Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
+maps current `Architecture`, `Operand`, `DecodedInstruction`,
+`DisassemblyAnalysis`, `damsel-macho::disasm`, Capstone decoding, Mach-O slice
+selection, ObjC metadata, Swift symbol lookup, dyld/cache facts, and Workbench
+instruction state into architecture profiles, CPU-mode records, register
+roles, instruction semantics, control/stack effects, ABI profiles, PAC facts,
+and routeable semantic problems.
+
 DWARF/dSYM/KDK debug-info companion:
 [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md)
 maps current Mach-O loading, shared-cache UUID handling, dyld metadata,

@@ -46,6 +46,13 @@ signature candidates, calling conventions, variables, register aliases, local
 labels, debug-info imports, symbolication profiles, type conflicts, and
 type-edit transactions.
 
+Processor semantics companion:
+[Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
+defines the API objects for architecture profiles, ABI profiles, CPU modes,
+register roles, instruction semantics, control effects, stack/frame effects,
+callsite ABI interpretations, PAC states, semantic problems, and CPU-mode,
+switch-hint, and calling-convention override transactions.
+
 Debug-info companion:
 [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md)
 defines the API objects for debug sources, dSYM/KDK candidates, match

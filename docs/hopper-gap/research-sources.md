@@ -749,6 +749,64 @@ Planning impact:
   implementation must still match Hopper's document and interaction
   architecture.
 
+### Processor Semantics And Apple ABI Implementation Pass
+
+Source set:
+
+- <https://www.hopperapp.com/index.html>
+- <https://www.hopperapp.com/tutorial.html>
+- <https://www.hopperapp.com/faq.html>
+- <https://www.hopperapp.com/rss/html_changelog.php>
+- <https://raw.githubusercontent.com/makigumo/HopperSDK-v4/master/include/Hopper/CPUDefinition.h>
+- <https://raw.githubusercontent.com/makigumo/HopperSDK-v4/master/include/Hopper/CPUContext.h>
+- <https://raw.githubusercontent.com/makigumo/HopperSDK-v4/master/include/Hopper/HPDisassembledFile.h>
+- <https://raw.githubusercontent.com/makigumo/HopperSDK-v4/master/include/Hopper/FileLoader.h>
+- <https://raw.githubusercontent.com/makigumo/HopperSDK-v4/master/include/Hopper/CommonTypes.h>
+- <https://raw.githubusercontent.com/makigumo/HopperSDK-v4/master/include/Hopper/DisasmStruct.h>
+- <https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms>
+- <https://developer.apple.com/documentation/security/preparing-your-app-to-work-with-pointer-authentication>
+- <https://clang.llvm.org/docs/PointerAuthentication.html>
+- <https://github.com/ARM-software/abi-aa/blob/main/aapcs64/aapcs64.rst>
+- <https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/EXTERNAL_HEADERS/mach-o/loader.h>
+- <https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/EXTERNAL_HEADERS/mach-o/fat.h>
+- <https://github.com/swiftlang/swift/blob/main/docs/ABI/Mangling.rst>
+
+Repo evidence inspected:
+
+- `damsel-core/src/model.rs`
+- `damsel-macho/src/disasm.rs`
+- `Cargo.toml`
+
+Document produced:
+
+- [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
+
+Why it matters:
+
+- Hopper's public SDK shape shows CPU support as an analysis contract, not only
+  a disassembly-printer contract: CPU plugins expose mode selection, address
+  adjustment, prolog/epilog detection, branch and switch analysis, thunk
+  recovery, assembler support, and decompiler hooks.
+- Hopper's tutorial and changelog make CPU mode, switch hints, AArch64,
+  AArch64e/PAC, ARMv7, Intel, Swift, ObjC, dyld cache, driver cache, and kernel
+  cache concerns user-visible product behavior.
+- Apple and Clang ABI sources make arm64e/PAC, `x18`, `x29`, stack alignment,
+  Objective-C runtime pointers, C++ vtables, Swift mangling, and XNU filesets
+  central to Damsel's Apple-system niche.
+- Current Damsel code has `Architecture`, `Operand`, `DecodedInstruction`, and
+  `DisassemblyAnalysis`, but lacks routeable architecture profiles, register
+  roles, instruction semantics, ABI profiles, and semantic problem records.
+
+Planning impact:
+
+- Damsel should implement a durable processor/ABI semantics layer before
+  claiming Hopper-class decompiler, debugger, patching, ObjC/C++/Swift/XNU
+  browser, MCP, or AI assistant parity.
+- Capstone can remain the initial decoder, but Damsel needs its own
+  provenance-rich semantic facts above decoder output.
+- Apple-system advantage depends on separating user-mode, dyld-cache, and
+  XNU/kernel ABI profiles rather than applying one generic arm64 rule set.
+
 ### Hopper Homepage
 
 Source: <https://www.hopperapp.com/index.html>

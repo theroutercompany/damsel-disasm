@@ -166,6 +166,12 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   calling conventions, local variables, debug-info imports, KDK/dSYM profiles,
   ObjC encodings, C++ demangling/RTTI, Swift name facts, Workbench editing,
   CLI/API contracts, automation, and validation.
+- [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md):
+  implementation-ready plan for Hopper-class architecture profiles, CPU modes,
+  register roles, instruction semantics, control/stack effects, Apple
+  arm64/arm64e/x86_64 ABI profiles, PAC facts, ObjC/C++/Swift callsite
+  semantics, XNU profiles, CLI/API contracts, Workbench inspectors, and
+  validation.
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md):
   implementation-ready plan for debug-source discovery, dSYM/KDK matching,
   DWARF compile units, source files, line tables, inline callsites, variables,

@@ -49,6 +49,7 @@ Use these labels during audits:
 | Byte typing | byte classification snapshots and user override tests | Planned |
 | Feature map | compact range API and Workbench route sync test | Planned |
 | Function index | whole-function fixture snapshots and overlap/conflict tests | Planned |
+| Processor semantics and Apple ABI | architecture profile snapshots, register-role facts, CPU-mode facts, control/stack/PAC semantic snapshots, ObjC/C++/Swift callsite ABI fixtures, and XNU profile negative tests | Planned |
 | Xref index | from/to xref queries across calls/data/import/runtime refs | Planned |
 | Graph view | CFG JSON, layout smoke, selection sync | Planned |
 | Hex/data view | byte-range fetches and assembly/hex selection sync | Planned |

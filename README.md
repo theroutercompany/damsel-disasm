@@ -37,6 +37,7 @@ Planned next:
   - [docs/hopper-gap/README.md](./docs/hopper-gap/README.md)
   - [docs/hopper-gap/command-navigation-undo-workbench-implementation-spec.md](./docs/hopper-gap/command-navigation-undo-workbench-implementation-spec.md)
   - [docs/hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md](./docs/hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md)
+  - [docs/hopper-gap/processor-semantics-apple-abi-implementation-spec.md](./docs/hopper-gap/processor-semantics-apple-abi-implementation-spec.md)
   - [docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md](./docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)
   - [docs/hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md](./docs/hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md)
   - [docs/hopper-gap/patch-studio-assembler-workbench-implementation-spec.md](./docs/hopper-gap/patch-studio-assembler-workbench-implementation-spec.md)
