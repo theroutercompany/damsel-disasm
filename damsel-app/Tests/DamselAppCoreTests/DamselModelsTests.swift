@@ -49,7 +49,25 @@ final class DamselModelsTests: XCTestCase {
               "annotation_count": 1
             },
             "basic_blocks": [
-              {"id": "b0", "start_address": 4294967296, "end_address": 4294967332, "instruction_count": 2}
+              {
+                "id": 0,
+                "start_address": 4294967296,
+                "end_address": 4294967332,
+                "symbol_names": ["_main"],
+                "function_start": true,
+                "instruction_count": 2,
+                "terminator_address": 4294967300,
+                "terminator_mnemonic": "ret",
+                "terminator_kind": "return",
+                "entry": true,
+                "exit": true,
+                "primary_entry_reachable": true,
+                "loop_header": false,
+                "back_edge_predecessors": [],
+                "predecessors": [],
+                "successors": [],
+                "terminal": true
+              }
             ]
           }
         }
@@ -63,6 +81,11 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertEqual(payload.instructions[0].annotations.first?.compactDescription, "kind: page, value: 0x100004000")
         XCTAssertEqual(payload.analysis?.summary.basicBlockCount, 1)
         XCTAssertEqual(payload.analysis?.metrics?.decodedByteCount, 8)
+        XCTAssertEqual(payload.analysis?.basicBlocks.first?.id, "0")
+        XCTAssertEqual(payload.analysis?.basicBlocks.first?.blockID, 0)
+        XCTAssertEqual(payload.analysis?.basicBlocks.first?.symbolNames, ["_main"])
+        XCTAssertEqual(payload.analysis?.basicBlocks.first?.terminatorKind, "return")
+        XCTAssertEqual(payload.analysis?.basicBlocks.first?.terminal, true)
     }
 
     func testInstructionFilterMatchesRenderedMnemonicAndAddress() throws {

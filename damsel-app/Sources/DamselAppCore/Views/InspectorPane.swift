@@ -17,6 +17,7 @@ struct InspectorPane: View {
                         payloadSection("Annotations", values: instruction.annotations)
                         payloadSection("Recovered Values", values: instruction.recoveredValues)
                         analysisSection(store.disassembly?.analysis)
+                        basicBlockSection(store.disassembly?.analysis?.basicBlocks ?? [])
                     }
                     .padding(18)
                 } else {
@@ -131,6 +132,22 @@ struct InspectorPane: View {
             }
         }
     }
+
+    @ViewBuilder
+    private func basicBlockSection(_ blocks: [BasicBlockSummary]) -> some View {
+        if !blocks.isEmpty {
+            InspectorSection(title: "Basic Blocks") {
+                DetailRow("Showing", "\(min(blocks.count, Self.maxVisibleBasicBlocks)) of \(blocks.count)")
+                ForEach(Array(blocks.prefix(Self.maxVisibleBasicBlocks))) { block in
+                    BasicBlockRow(block: block) { address in
+                        Task { await store.jump(to: address) }
+                    }
+                }
+            }
+        }
+    }
+
+    private static let maxVisibleBasicBlocks = 12
 }
 
 private struct InspectorSection<Content: View>: View {
@@ -230,5 +247,104 @@ private struct ReferenceRow: View {
                     .truncationMode(.middle)
             }
         }
+    }
+}
+
+private struct BasicBlockRow: View {
+    let block: BasicBlockSummary
+    let jump: (UInt64) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Block \(block.id)")
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 8)
+
+                if let startAddress = block.startAddress {
+                    Button(DamselFormat.address(startAddress)) {
+                        jump(startAddress)
+                    }
+                    .font(.system(.caption, design: .monospaced))
+                    .buttonStyle(.borderless)
+                    .help("Jump to \(DamselFormat.address(startAddress))")
+                }
+            }
+
+            Text(blockRangeText)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            if !badges.isEmpty {
+                HStack(spacing: 5) {
+                    ForEach(badges, id: \.self) { badge in
+                        Text(badge)
+                            .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.10))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !block.symbolNames.isEmpty {
+                Text(block.symbolNames.joined(separator: ", "))
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var blockRangeText: String {
+        let range = "\(DamselFormat.address(block.startAddress))..\(DamselFormat.address(block.endAddress))"
+        let instructionText = "\(block.instructionCount ?? 0) ins"
+        let terminatorText = [block.terminatorMnemonic, block.terminatorKind]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !terminatorText.isEmpty else {
+            return "\(range) · \(instructionText)"
+        }
+        return "\(range) · \(instructionText) · \(terminatorText)"
+    }
+
+    private var badges: [String] {
+        var values: [String] = []
+        if block.entry == true {
+            values.append("entry")
+        }
+        if block.exit == true {
+            values.append("exit")
+        }
+        if block.functionStart == true {
+            values.append("function")
+        }
+        if block.loopHeader == true {
+            values.append("loop")
+        }
+        if block.terminal == true {
+            values.append("terminal")
+        }
+        if block.primaryEntryReachable == false {
+            values.append("disconnected")
+        }
+        if !block.backEdgePredecessors.isEmpty {
+            values.append("back-edge")
+        }
+        if !block.predecessors.isEmpty || !block.successors.isEmpty {
+            values.append("\(block.predecessors.count)->\(block.successors.count)")
+        }
+        return values
     }
 }

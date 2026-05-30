@@ -236,20 +236,71 @@ public struct AnalysisMetrics: Decodable, Equatable, Sendable {
 
 public struct BasicBlockSummary: Decodable, Equatable, Identifiable, Sendable {
     public let id: String
+    public let blockID: Int?
     public let startAddress: UInt64?
     public let endAddress: UInt64?
+    public let symbolNames: [String]
+    public let functionStart: Bool?
     public let instructionCount: Int?
+    public let terminatorAddress: UInt64?
+    public let terminatorMnemonic: String?
+    public let terminatorKind: String?
     public let entry: Bool?
     public let exit: Bool?
+    public let primaryEntryReachable: Bool?
     public let loopHeader: Bool?
+    public let backEdgePredecessors: [Int]
+    public let predecessors: [Int]
+    public let successors: [Int]
+    public let terminal: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id
         case startAddress = "start_address"
         case endAddress = "end_address"
+        case symbolNames = "symbol_names"
+        case functionStart = "function_start"
         case instructionCount = "instruction_count"
+        case terminatorAddress = "terminator_address"
+        case terminatorMnemonic = "terminator_mnemonic"
+        case terminatorKind = "terminator_kind"
         case entry
         case exit
+        case primaryEntryReachable = "primary_entry_reachable"
         case loopHeader = "loop_header"
+        case backEdgePredecessors = "back_edge_predecessors"
+        case predecessors
+        case successors
+        case terminal
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        if let numericID = try? container.decode(Int.self, forKey: .id) {
+            id = String(numericID)
+            blockID = numericID
+        } else {
+            let stringID = try container.decode(String.self, forKey: .id)
+            id = stringID
+            blockID = Int(stringID)
+        }
+
+        startAddress = try container.decodeIfPresent(UInt64.self, forKey: .startAddress)
+        endAddress = try container.decodeIfPresent(UInt64.self, forKey: .endAddress)
+        symbolNames = try container.decodeIfPresent([String].self, forKey: .symbolNames) ?? []
+        functionStart = try container.decodeIfPresent(Bool.self, forKey: .functionStart)
+        instructionCount = try container.decodeIfPresent(Int.self, forKey: .instructionCount)
+        terminatorAddress = try container.decodeIfPresent(UInt64.self, forKey: .terminatorAddress)
+        terminatorMnemonic = try container.decodeIfPresent(String.self, forKey: .terminatorMnemonic)
+        terminatorKind = try container.decodeIfPresent(String.self, forKey: .terminatorKind)
+        entry = try container.decodeIfPresent(Bool.self, forKey: .entry)
+        exit = try container.decodeIfPresent(Bool.self, forKey: .exit)
+        primaryEntryReachable = try container.decodeIfPresent(Bool.self, forKey: .primaryEntryReachable)
+        loopHeader = try container.decodeIfPresent(Bool.self, forKey: .loopHeader)
+        backEdgePredecessors = try container.decodeIfPresent([Int].self, forKey: .backEdgePredecessors) ?? []
+        predecessors = try container.decodeIfPresent([Int].self, forKey: .predecessors) ?? []
+        successors = try container.decodeIfPresent([Int].self, forKey: .successors) ?? []
+        terminal = try container.decodeIfPresent(Bool.self, forKey: .terminal)
     }
 }
