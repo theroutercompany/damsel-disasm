@@ -66,7 +66,7 @@ public final class DamselAPIClient {
     }
 
     public func symbolSuggestions(imageId: String, query: String, limit: Int = 30) async throws -> [String] {
-        guard var components = URLComponents(url: try apiURL("api/images/\(imageId)/symbols"), resolvingAgainstBaseURL: false) else {
+        guard var components = URLComponents(url: try imageURL(imageId: imageId, suffix: "symbols"), resolvingAgainstBaseURL: false) else {
             throw DamselClientError.invalidURL("symbols")
         }
         components.queryItems = [
@@ -82,12 +82,28 @@ public final class DamselAPIClient {
     }
 
     public func disassemble(imageId: String, request payload: DisasmAPIRequest) async throws -> DisassemblyResponse {
-        var request = URLRequest(url: try apiURL("api/images/\(imageId)/disasm"))
+        var request = URLRequest(url: try imageURL(imageId: imageId, suffix: "disasm"))
         request.httpMethod = "POST"
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(payload)
 
         return try await send(request, as: DisassemblyResponse.self)
+    }
+
+    private func imageURL(imageId: String, suffix: String) throws -> URL {
+        let encodedImageID = try percentEncodedPathSegment(imageId, label: "image id")
+        return try apiURL("api/images/\(encodedImageID)/\(suffix)")
+    }
+
+    private func percentEncodedPathSegment(_ value: String, label: String) throws -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#%")
+        guard let encoded = value.addingPercentEncoding(withAllowedCharacters: allowed),
+              !encoded.isEmpty
+        else {
+            throw DamselClientError.invalidURL(label)
+        }
+        return encoded
     }
 
     private func apiURL(_ path: String) throws -> URL {
