@@ -386,6 +386,17 @@ Cases:
 - same-size AArch64 replacement preview
 - invalid assembly diagnostic
 - NOP-region preview
+- patchability query for selected instruction
+- patchability query for readonly projection
+- Patch Studio byte replacement dry run
+- Patch Studio assembler dry run
+- Patch Studio NOP dry run
+- copy-on-write patch revision
+- patch history snapshot
+- code-signing warning snapshot
+- dyld shared-cache projection patch rejection
+- kernel collection patch rejection
+- patch evidence export
 - stale source hash rejection
 - source revision snapshot
 - debug module exact UUID match
@@ -407,8 +418,14 @@ Expected evidence:
 
 - byte-window snapshots
 - patch preview snapshots
+- patchability snapshots
+- patch impact snapshots
+- patch revision snapshots
+- patch history snapshots
+- assembler/NOP diagnostic snapshots
 - invalidation plan snapshots
 - source revision snapshots
+- patch evidence export snapshots
 - debug mapping snapshots
 - debug target/session/module snapshots
 - breakpoint and stop-event snapshots

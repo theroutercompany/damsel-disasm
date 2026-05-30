@@ -53,6 +53,11 @@ extends that bridge into the future product layer: launch/attach UX, debug
 targets and sessions, module snapshots, route-backed breakpoints, stop events,
 register/frame/memory stores, LLDB helper isolation, Apple runtime live
 interpretation, permission errors, and diagnostic redaction.
+[Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md)
+extends the current byte providers and future transaction model into a native
+patching product surface: patchability, byte edit previews, assembler/NOP
+plans, copy-on-write source revisions, Apple artifact safety, export policy,
+reanalysis, and patch evidence.
 
 Automation and extension implementation companions:
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)

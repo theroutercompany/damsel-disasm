@@ -215,5 +215,6 @@ Planned future:
 - [Apple Runtime, ObjC/C++/XNU, And System Browser Workbench Implementation Spec](../hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md)
 - [Decompiler, Pseudocode, And Native Workbench Representation Implementation Spec](../hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)
 - [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](../hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md)
+- [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](../hopper-gap/patch-studio-assembler-workbench-implementation-spec.md)
 - [Type, Signature, Symbolication, And Debug-Info Implementation Spec](../hopper-gap/type-signature-symbolication-implementation-spec.md)
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](../hopper-gap/dwarf-dsym-kdk-debug-info-implementation-spec.md)

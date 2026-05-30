@@ -202,6 +202,11 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   implementation architecture for synchronized hex/data views, patch preview,
   assembler/NOP generation, copy-on-write source revisions, patch
   transactions, invalidation, export, Workbench UX, and safety policy.
+- [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md):
+  implementation-ready native Patch Studio plan for patchability queries,
+  hex byte edits, assembler and NOP previews, copy-on-write patch revisions,
+  Apple artifact export policy, code-signing warnings, reanalysis, patch
+  history, debugger handoff, automation gates, and evidence packages.
 - [Debugger Static-Dynamic Integration Implementation Spec](debugger-static-dynamic-integration-implementation-spec.md):
   implementation architecture for local debugger sessions, runtime module
   matching, route-backed breakpoints, current-PC overlays, registers, frames,

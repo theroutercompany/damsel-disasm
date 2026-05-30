@@ -130,6 +130,7 @@ Use a trace table for future implementation:
 | Live debugger Workbench | live debugger spec | target/session/event/breakpoint APIs | native debugger stores | launch/attach/stop/register/memory UI tests | signed local sample plus denial cases |
 | Graph/representation sync | graph spec | graph/feature-map/hex schemas | graph/layout/hex services | graph/hex/feature-map fixtures | Workbench graph smoke |
 | Patching/hex | patching spec | byte/patch APIs | patch preview/export | byte/patch fixtures | standalone sample |
+| Patch Studio | patch studio spec | patchability/plan/preview/revision/export APIs | native patch stores | patchability/assembler/NOP/export UI tests | standalone and Apple-artifact policy samples |
 | Implementation epics | epic breakdown | issue map | phased branches | per-epic gates | milestone audit |
 | Existing-code integration | code integration map | crate/module plan | migration slices | existing tests plus new slices | repo audit |
 | Completion audit | evidence matrix | proof table | inspected current state | commands/tests | real samples if claimed |

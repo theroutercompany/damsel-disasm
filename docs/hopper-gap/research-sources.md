@@ -119,6 +119,15 @@ server page, and changelog entries to derive Damsel's safe byte-editing,
 copy-on-write revision, patch preview, LLDB bridge, and static-dynamic route
 mapping architecture.
 
+For the Patch Studio implementation pass, see
+[Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md).
+That document uses Hopper's tutorial byte-editing, assembler, NOP Region, hex
+view synchronization, undo/redo, FAQ mutation, public SDK mutation/assembler
+surfaces, and prior changelog notes in this pack to define Damsel's future
+patchability queries, byte/assembler/NOP previews, copy-on-write patch
+revisions, Apple artifact export policies, code-signing warnings, reanalysis,
+patch history, debugger handoff, automation gates, and evidence packages.
+
 For the live debugger Workbench implementation pass, see
 [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md).
 That document uses Hopper's homepage, tutorial breakpoint surface, Debugger
@@ -174,6 +183,9 @@ Why it matters:
   imply that Damsel's live debugger needs explicit launch/attach flows, helper
   isolation, platform-denial problems, diagnostic redaction, and separate
   future tracks for remote, iOS, and kernel debugging.
+- Hopper's patching surface implies that byte edits, assembler, NOP, undo/redo,
+  and debugger launch must share one document/revision model rather than live in
+  a disconnected hex editor.
 
 Planning impact:
 
@@ -186,6 +198,9 @@ Planning impact:
   breakpoints, stop events, frames, registers, memory windows, and live
   Apple-runtime interpretations as structured project records rather than as a
   raw LLDB transcript.
+- Damsel's Patch Studio should start with patchability, dry-run previews,
+  copy-on-write source revisions, immutable originals, code-signing warnings,
+  and explicit export/evidence packages before any broad binary-rewriting claim.
 - In-place patching of shared caches or kernel collections remains outside the
   safe product path.
 

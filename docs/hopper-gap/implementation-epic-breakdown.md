@@ -38,7 +38,7 @@ gates, and "do not start before" constraints.
 | E14 | Automation/MCP | Scriptable document facts | E1-E4/E11 |
 | E15 | Debugger bridge and live Workbench | Static/dynamic route mapping plus native debugger surface | E5/E11/E12/E19/E21 |
 | E16 | Plugin/SDK boundary | Controlled extensibility | E11/E14 |
-| E17 | Patching design | Future binary mutation path | E3/E11 |
+| E17 | Patch Studio and binary revision design | Future binary mutation path with native preview/export UX | E3/E5/E11/E18/E19/E21 |
 | E18 | Diff/export/evidence | Apple OS build archaeology and reports | E4/E7-E12/E14 |
 | E19 | Native app trust/distribution/diagnostics | Trustworthy macOS workstation distribution and recovery | E1/E5/E11 |
 | E20 | Artifact intake/source registration | Apple artifact open/import/project/enrich workflow | E1/E11/E19 |
@@ -1001,46 +1001,71 @@ Risks:
 - loader, CPU/architecture, analyzer, exporter, and UI tool boundaries collapse
   into one unsafe generic plugin class
 
-## E17: Patching Design
+## E17: Patch Studio And Binary Revision Design
 
 Goal:
 
-- define future binary mutation without enabling accidental data loss
+- define future binary mutation and Patch Studio UX without enabling
+  accidental data loss
 
 Deliverables:
 
 - patch policy doc
 - read-only synchronized hex/data view
 - patchability model
+- Patch Studio target/editor/preview/impact/export layout
 - patch preview model
 - source revision model
 - patch transaction model
+- patch history model
 - assembler integration spike
 - AArch64 NOP generation spike
 - write-copy-only export design
+- Apple artifact export policy for standalone Mach-O, universal binaries, app
+  bundles, dyld shared-cache projections, kernel collections, and debug sidecars
 - code-signing warning model
+- evidence package export
+- debugger launch handoff for patched revisions
 - invalidation/reanalysis plan
+
+Source specs:
+
+- [Patching, Hex, Assembly, And Transaction Implementation Spec](patching-hex-assembly-transaction-implementation-spec.md)
+- [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md)
 
 Implementation tasks:
 
 - expose byte windows through project/source/address-space/revision identity
+- add patchability query APIs and Workbench status UI
 - model original/new byte ranges
 - model patch plans and operations
+- model patch previews, impacts, revisions, exports, and history
 - require source hash precondition
 - add diff preview concept
 - integrate architecture semantics for assembly/NOP preview
 - integrate invalidation/reanalysis
 - model derived source revisions
 - design no-in-place-cache/kernel rule
+- add code-signing, bundle, dyld cache, kernel collection, and debug sidecar
+  export warnings
+- add automation dry-run APIs and explicit apply/export capabilities
 
 Validation:
 
 - byte-window fixture
+- patchability fixture
 - patch preview fixture
 - assembler diagnostic fixture
+- NOP preview fixture
 - source hash precondition test
 - derived source revision test
 - no in-place mutation test
+- immutable original hash test
+- dyld cache/kernel readonly policy tests
+- code-signing warning snapshot
+- patch history snapshot
+- evidence export snapshot
+- automation capability denial test
 - warning text review
 
 Risks:

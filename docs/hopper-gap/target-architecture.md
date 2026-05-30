@@ -90,6 +90,10 @@ Companion blueprints:
 - [Debugger, Automation, Extension, And MCP Plan](debugger-automation-extension-plan.md)
   defines the safe route for scripting, MCP/AI, plugins/SDK boundaries, LLDB
   bridge work, and future binary mutation.
+- [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md)
+  defines the native patching product layer for patchability, byte edits,
+  assembler/NOP previews, copy-on-write patch revisions, Apple artifact export
+  policies, code-signing warnings, reanalysis, debugger handoff, and evidence.
 - [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
   defines the native runtime-overlay architecture for launch/attach workflows,
   debug targets/sessions/modules, route-backed breakpoints, stop-event UI,

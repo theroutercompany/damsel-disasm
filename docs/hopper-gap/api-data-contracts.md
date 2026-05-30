@@ -98,6 +98,11 @@ expands the live debugger API surface into debug targets, launch
 configurations, attach candidates, session event streams, control commands,
 module/source matching, route-backed breakpoints, register/value
 interpretations, memory read windows, diagnostics, and redacted exports.
+[Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md)
+expands the patching API surface into patchability queries, patch plans,
+previews, impact records, source revisions, assembler/NOP diagnostics,
+copy-on-write export plans, patch history, debugger launch handoff, and
+evidence packages.
 
 Automation and extension companions:
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)

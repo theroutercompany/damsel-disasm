@@ -54,6 +54,13 @@ bar state, breakpoint gutters, stopped-state layouts, current-PC overlays,
 register/frame/memory panes, LLDB/helper failure UX, permission errors, and
 redacted session exports.
 
+Patch Studio companion:
+[Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md)
+defines patching-specific native polish: patchability explanations, byte edit
+and assembler sheets, NOP previews, before/after diff panels, impact summaries,
+warning acknowledgements, patch history, export sheets, and debugger handoff
+for patched revisions.
+
 Research companion:
 [Hopper Interaction, Debugger, And Product Surface Research](hopper-interaction-debugger-product-research.md)
 grounds the interaction target in Hopper's public tutorial, debugger,
