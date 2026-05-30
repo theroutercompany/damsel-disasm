@@ -239,6 +239,46 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertFalse(InstructionFilter.matches(instruction, query: "ret"))
     }
 
+    func testInstructionFilterMatchesReferenceAndPayloadMetadata() throws {
+        let json = """
+        {
+          "address": 4294967296,
+          "opcode": 3506438144,
+          "mnemonic": "adrp",
+          "rendered": "adrp x0, 0x100004000",
+          "operands": ["x0", "0x100004000"],
+          "structured_operands": [
+            {"kind": "register", "name": "x0"}
+          ],
+          "references": [
+            {
+              "type": "data",
+              "target": 4294983680,
+              "symbol": "_printf",
+              "label": "literal pool",
+              "kind": "import",
+              "value": {"dylib": "/usr/lib/libSystem.B.dylib"}
+            }
+          ],
+          "annotations": [
+            {"kind": "objc-selector", "value": "applicationDidFinishLaunching:"}
+          ],
+          "recovered_values": [
+            {"register": "x0", "value": "0x100004000", "kind": "Address"}
+          ]
+        }
+        """
+        let instruction = try JSONDecoder().decode(InstructionRow.self, from: Data(json.utf8))
+
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "_printf"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "literal pool"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "libSystem"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "objc-selector"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "Address"))
+        XCTAssertTrue(InstructionFilter.matches(instruction, query: "register"))
+        XCTAssertFalse(InstructionFilter.matches(instruction, query: "_malloc"))
+    }
+
     @MainActor
     func testWindowSizeInputsStayMutuallyExclusive() {
         let store = WorkbenchStore()
