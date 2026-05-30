@@ -271,6 +271,27 @@ final class DamselCommandsTests: XCTestCase {
         )
     }
 
+    func testCommandPaletteAnalysisFactTitlesFallbackForEmptyNames() throws {
+        let analysis = try emptyNameAnalysis()
+
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "unnamed import", analysis: analysis).first?.title,
+            "Import unnamed import"
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "unnamed symbol", analysis: analysis).first?.title,
+            "Cache unnamed symbol"
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "unnamed reference", analysis: analysis).first?.title,
+            "ObjC reference unnamed reference"
+        )
+        XCTAssertEqual(
+            DamselCommandPalette.analysisFactResults(matching: "recovered unknown", analysis: analysis).first?.title,
+            "Recovered unknown = 0x100004000"
+        )
+    }
+
     private var sampleSections: [SectionSummary] {
         [
             SectionSummary(
@@ -420,6 +441,59 @@ final class DamselCommandsTests: XCTestCase {
               "value": 4294983680,
               "kind": "Address",
               "source": "AdrpAdd"
+            }
+          ]
+        }
+        """
+        return try JSONDecoder().decode(AnalysisPayload.self, from: Data(json.utf8))
+    }
+
+    private func emptyNameAnalysis() throws -> AnalysisPayload {
+        let json = """
+        {
+          "summary": {},
+          "imports": [
+            {
+              "instruction_address": 4294968496,
+              "dylib": "",
+              "name": " ",
+              "address": null
+            }
+          ],
+          "cache_links": [
+            {
+              "instruction_address": 4294968496,
+              "symbol_name": "",
+              "dylib": "",
+              "provider_image_id": "",
+              "provider_install_name": "",
+              "provider_member_name": "",
+              "provider_kind": "",
+              "target_dylib": null,
+              "target_symbol": null,
+              "resolved_target_image_id": null,
+              "resolved_target_install_name": null,
+              "resolved_target_member_name": null
+            }
+          ],
+          "objc_references": [
+            {
+              "instruction_address": 4294968496,
+              "target_address": 4294975488,
+              "resolved_address": null,
+              "kind": "",
+              "name": " ",
+              "import_dylib": null,
+              "import_symbol": null
+            }
+          ],
+          "recovered_values": [
+            {
+              "instruction_address": 4294968496,
+              "register": "",
+              "value": 4294983680,
+              "kind": "",
+              "source": ""
             }
           ]
         }

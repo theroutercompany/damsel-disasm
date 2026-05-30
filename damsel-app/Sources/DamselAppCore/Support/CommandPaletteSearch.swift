@@ -704,13 +704,15 @@ public enum DamselCommandPalette {
         }
 
         for use in analysis.indirectControls {
+            let controlKind = displayText(use.kind, fallback: "control")
+            let via = displayText(use.via, fallback: "unknown")
             let targetText = use.resolvedTarget.map { " · resolved \(DamselFormat.address($0))" } ?? " · unresolved"
             results.append(
                 analysisFact(
                     id: "indirect:\(use.id)",
                     kind: "indirect",
-                    title: "Indirect \(use.kind)",
-                    subtitle: "via \(use.via)\(targetText) · use \(DamselFormat.address(use.instructionAddress))",
+                    title: "Indirect \(controlKind)",
+                    subtitle: "via \(via)\(targetText) · use \(DamselFormat.address(use.instructionAddress))",
                     address: use.instructionAddress,
                     searchParts: [
                         "analysis",
@@ -725,11 +727,12 @@ public enum DamselCommandPalette {
         }
 
         for use in analysis.imports {
+            let name = displayText(use.name, fallback: "unnamed import")
             results.append(
                 analysisFact(
                     id: "import:\(use.id)",
                     kind: "import",
-                    title: "Import \(use.name)",
+                    title: "Import \(name)",
                     subtitle: "\(use.dylib) · use \(DamselFormat.address(use.instructionAddress))",
                     address: use.instructionAddress,
                     searchParts: [
@@ -745,12 +748,15 @@ public enum DamselCommandPalette {
         }
 
         for use in analysis.cacheLinks {
+            let symbolName = displayText(use.symbolName, fallback: "unnamed symbol")
+            let providerMemberName = displayText(use.providerMemberName, fallback: "unknown provider")
+            let providerKind = displayText(use.providerKind, fallback: "provider")
             results.append(
                 analysisFact(
                     id: "cache:\(use.id)",
                     kind: "cache",
-                    title: "Cache \(use.symbolName)",
-                    subtitle: "\(use.providerMemberName) · \(use.providerKind) · use \(DamselFormat.address(use.instructionAddress))",
+                    title: "Cache \(symbolName)",
+                    subtitle: "\(providerMemberName) · \(providerKind) · use \(DamselFormat.address(use.instructionAddress))",
                     address: use.instructionAddress,
                     searchParts: [
                         "analysis",
@@ -774,18 +780,14 @@ public enum DamselCommandPalette {
         }
 
         for use in analysis.objcReferences {
-            let displayName: String
-            if let name = use.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
-                displayName = name
-            } else {
-                displayName = "unnamed reference"
-            }
+            let displayName = displayText(use.name, fallback: "unnamed reference")
+            let kind = displayText(use.kind, fallback: "reference")
 
             results.append(
                 analysisFact(
                     id: "objc:\(use.id)",
                     kind: "objc",
-                    title: "ObjC \(use.kind) \(displayName)",
+                    title: "ObjC \(kind) \(displayName)",
                     subtitle: "target \(DamselFormat.address(use.targetAddress)) · use \(DamselFormat.address(use.instructionAddress))",
                     address: use.instructionAddress,
                     searchParts: [
@@ -828,11 +830,12 @@ public enum DamselCommandPalette {
         }
 
         for use in analysis.recoveredValues {
+            let register = displayText(use.register, fallback: "unknown")
             results.append(
                 analysisFact(
                     id: "recovered:\(use.id)",
                     kind: "recovered",
-                    title: "Recovered \(use.register) = \(DamselFormat.address(use.value))",
+                    title: "Recovered \(register) = \(DamselFormat.address(use.value))",
                     subtitle: "\(use.kind) · \(use.source) · use \(DamselFormat.address(use.instructionAddress))",
                     address: use.instructionAddress,
                     searchParts: [
@@ -871,6 +874,13 @@ public enum DamselCommandPalette {
                 .filter { !$0.isEmpty }
                 .joined(separator: " ")
         )
+    }
+
+    private static func displayText(_ value: String?, fallback: String) -> String {
+        guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return fallback
+        }
+        return text
     }
 
     private static func normalize(_ value: String) -> String {
