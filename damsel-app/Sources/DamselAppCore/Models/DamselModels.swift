@@ -176,6 +176,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
     public let cacheLinks: [AnalysisCacheLinkUse]
     public let objcReferences: [AnalysisObjCReferenceUse]
     public let jumpTables: [AnalysisJumpTableUse]
+    public let recoveredValues: [AnalysisRecoveredValueUse]
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -191,6 +192,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         case cacheLinks = "cache_links"
         case objcReferences = "objc_references"
         case jumpTables = "jump_tables"
+        case recoveredValues = "recovered_values"
     }
 
     public init(from decoder: Decoder) throws {
@@ -208,6 +210,7 @@ public struct AnalysisPayload: Decodable, Equatable, Sendable {
         cacheLinks = try container.decodeIfPresent([AnalysisCacheLinkUse].self, forKey: .cacheLinks) ?? []
         objcReferences = try container.decodeIfPresent([AnalysisObjCReferenceUse].self, forKey: .objcReferences) ?? []
         jumpTables = try container.decodeIfPresent([AnalysisJumpTableUse].self, forKey: .jumpTables) ?? []
+        recoveredValues = try container.decodeIfPresent([AnalysisRecoveredValueUse].self, forKey: .recoveredValues) ?? []
     }
 }
 
@@ -334,6 +337,26 @@ public struct AnalysisJumpTableUse: Decodable, Equatable, Identifiable, Sendable
         case tableBase = "table_base"
         case indexRegister = "index_register"
         case elementSize = "element_size"
+    }
+}
+
+public struct AnalysisRecoveredValueUse: Decodable, Equatable, Identifiable, Sendable {
+    public var id: String {
+        "\(DamselFormat.address(instructionAddress)):\(register):\(DamselFormat.address(value)):\(kind):\(source)"
+    }
+
+    public let instructionAddress: UInt64
+    public let register: String
+    public let value: UInt64
+    public let kind: String
+    public let source: String
+
+    enum CodingKeys: String, CodingKey {
+        case instructionAddress = "instruction_address"
+        case register
+        case value
+        case kind
+        case source
     }
 }
 

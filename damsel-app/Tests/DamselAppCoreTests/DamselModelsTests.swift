@@ -39,7 +39,7 @@ final class DamselModelsTests: XCTestCase {
               "data_reference_count": 1,
               "import_count": 1,
               "cache_link_count": 1,
-              "recovered_value_count": 0,
+              "recovered_value_count": 1,
               "jump_table_count": 1,
               "unresolved_indirect_count": 0
             },
@@ -139,6 +139,15 @@ final class DamselModelsTests: XCTestCase {
                 "index_register": "x9",
                 "element_size": 8
               }
+            ],
+            "recovered_values": [
+              {
+                "instruction_address": 4294967296,
+                "register": "x0",
+                "value": 4294983680,
+                "kind": "Address",
+                "source": "AdrpAdd"
+              }
             ]
           }
         }
@@ -188,6 +197,11 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertEqual(payload.analysis?.jumpTables.first?.tableBase, 4294987776)
         XCTAssertEqual(payload.analysis?.jumpTables.first?.indexRegister, "x9")
         XCTAssertEqual(payload.analysis?.jumpTables.first?.elementSize, 8)
+        XCTAssertEqual(payload.analysis?.recoveredValues.first?.instructionAddress, 4294967296)
+        XCTAssertEqual(payload.analysis?.recoveredValues.first?.register, "x0")
+        XCTAssertEqual(payload.analysis?.recoveredValues.first?.value, 4294983680)
+        XCTAssertEqual(payload.analysis?.recoveredValues.first?.kind, "Address")
+        XCTAssertEqual(payload.analysis?.recoveredValues.first?.source, "AdrpAdd")
     }
 
     func testAnalysisPayloadDefaultsLinkageArraysWhenMissing() throws {
@@ -203,6 +217,7 @@ final class DamselModelsTests: XCTestCase {
         XCTAssertTrue(payload.cacheLinks.isEmpty)
         XCTAssertTrue(payload.objcReferences.isEmpty)
         XCTAssertTrue(payload.jumpTables.isEmpty)
+        XCTAssertTrue(payload.recoveredValues.isEmpty)
         XCTAssertTrue(payload.directCalls.isEmpty)
         XCTAssertTrue(payload.indirectControls.isEmpty)
     }

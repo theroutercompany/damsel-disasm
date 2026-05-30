@@ -19,7 +19,11 @@ struct InspectorPane: View {
                         jumpTableSection(instruction, analysis: store.disassembly?.analysis)
                         payloadSection("Operands", values: instruction.structuredOperands ?? [])
                         payloadSection("Annotations", values: instruction.annotations)
-                        payloadSection("Recovered Values", values: instruction.recoveredValues)
+                        recoveredValueSection(
+                            instruction,
+                            values: instruction.recoveredValues,
+                            analysis: store.disassembly?.analysis
+                        )
                         analysisSection(store.disassembly?.analysis)
                         basicBlockSection(store.disassembly?.analysis)
                     }
@@ -208,6 +212,38 @@ struct InspectorPane: View {
 
     private func jumpTables(for instruction: InstructionRow, analysis: AnalysisPayload?) -> [AnalysisJumpTableUse] {
         analysis?.jumpTables.filter { $0.instructionAddress == instruction.address } ?? []
+    }
+
+    private func recoveredValueSection(
+        _ instruction: InstructionRow,
+        values: [JSONValue],
+        analysis: AnalysisPayload?
+    ) -> some View {
+        let typedValues = recoveredValues(for: instruction, analysis: analysis)
+        return InspectorSection(title: "Recovered Values") {
+            if typedValues.isEmpty && values.isEmpty {
+                EmptyDetail("None")
+            } else {
+                ForEach(typedValues) { value in
+                    RecoveredValueRow(value: value)
+                }
+                ForEach(Array(values.enumerated()), id: \.offset) { _, value in
+                    Text(value.compactDescription)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .lineLimit(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func recoveredValues(
+        for instruction: InstructionRow,
+        analysis: AnalysisPayload?
+    ) -> [AnalysisRecoveredValueUse] {
+        analysis?.recoveredValues.filter { $0.instructionAddress == instruction.address } ?? []
     }
 
     private func payloadSection(_ title: String, values: [JSONValue]) -> some View {
@@ -668,6 +704,32 @@ private struct JumpTableRow: View {
             }
 
             Text("index \(table.indexRegister) · element \(table.elementSize) bytes")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct RecoveredValueRow: View {
+    let value: AnalysisRecoveredValueUse
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(value.register)
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(DamselFormat.address(value.value))
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+
+            Text("\(value.kind) · \(value.source)")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
