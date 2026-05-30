@@ -59,6 +59,14 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
         )
         copyRow.target = context.coordinator
         menu.addItem(copyRow)
+
+        let copyRoute = NSMenuItem(
+            title: "Copy Route",
+            action: #selector(Coordinator.copyRoute(_:)),
+            keyEquivalent: ""
+        )
+        copyRoute.target = context.coordinator
+        menu.addItem(copyRoute)
         tableView.menu = menu
 
         let scrollView = NSScrollView()
@@ -205,6 +213,13 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
             writePasteboard(rowText(for: instruction))
         }
 
+        @objc func copyRoute(_ sender: Any?) {
+            guard let instruction = clickedInstruction else {
+                return
+            }
+            writePasteboard(routeText(for: instruction))
+        }
+
         func menuNeedsUpdate(_ menu: NSMenu) {
             menu.items.forEach { $0.isEnabled = clickedInstruction != nil }
         }
@@ -240,6 +255,10 @@ struct VirtualizedInstructionTable: NSViewRepresentable {
 
         private func rowText(for instruction: InstructionRow) -> String {
             DamselFormat.instructionRow(instruction)
+        }
+
+        private func routeText(for instruction: InstructionRow) -> String {
+            WorkbenchRoute(address: instruction.address).rawValue
         }
 
         private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
