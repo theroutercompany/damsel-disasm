@@ -37,6 +37,10 @@ The biggest gaps are:
 15. Native preference and workspace personalization layer: app/project/session
     settings, keymaps, themes, layout restore, analysis profiles, Apple
     artifact source roots, automation privacy gates, and diagnostics presets.
+16. Swift runtime metadata and Swift-Objective-C bridge layer: Swift section
+    inventory, demangled-name facts, nominal types, fields, protocols,
+    conformances, metadata accessors, witness tables, runtime calls, ObjC
+    bridge edges, Swift browser UX, and honest static/dynamic evidence split.
 
 ## Current Implemented Strengths
 
@@ -113,6 +117,26 @@ Missing relative to Hopper:
 - block invocation metadata and captured variables
 - manual method binding when static analysis cannot prove the receiver
 - xrefs from metadata to code and from code back to metadata
+
+### Swift Runtime Metadata
+
+Damsel can resolve executable Swift symbols by exact mangled name or by
+demangled query when `swift-demangle` is available. That is useful, but it is
+not yet Hopper-competitive Swift analysis.
+
+Missing relative to Hopper's public Objective-C and Swift positioning:
+
+- Swift section inventory as a first-class browser surface
+- durable Swift metadata model beside `ObjcMetadata`
+- demangling as project evidence with explicit failure records
+- Swift modules, nominal types, fields, protocols, and conformances
+- metadata accessor and witness table classification
+- Swift runtime call classification
+- Swift-Objective-C bridge edges
+- Swift metadata problem browser
+- dyld shared-cache projected-image Swift routes
+- large Swift-name batch performance budgets
+- debugger-time runtime metadata observations separated from static facts
 
 ### Native macOS Workbench
 

@@ -21,6 +21,13 @@ because ObjC encodings, C++ RTTI/vtables, Swift-adjacent names, KDK/dSYM
 profiles, panic-frame symbolication, and kernel structs all consume or produce
 type and signature facts.
 
+Swift runtime companion:
+[Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md)
+owns the deeper Swift object model that this document previously summarized as
+Swift-adjacent facts: Swift sections, demangled-name evidence, nominal types,
+fields, protocols, conformances, metadata accessors, runtime calls, and
+Swift-ObjC bridge relations.
+
 Workbench browser companion:
 [Apple Runtime, ObjC/C++/XNU, And System Browser Workbench Implementation Spec](apple-runtime-workbench-browsers-implementation-spec.md)
 defines how the object records and analysis passes in this document become

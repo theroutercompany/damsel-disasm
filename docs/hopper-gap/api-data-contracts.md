@@ -87,6 +87,14 @@ policy, and shared Workbench/CLI/API/automation application flows.
 adds API contract shapes for app preferences, project preferences, effective
 preference resolution, keymap validation, theme validation, workspace layout
 save/repair/reset, diagnostics/export presets, and settings import/export.
+[Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md)
+adds the Swift API family that sits beside ObjC/C++/kernel contracts:
+`/swift/summary`, `/swift/sections`, `/swift/modules`, `/swift/types`,
+`/swift/protocols`, `/swift/conformances`, `/swift/names`,
+`/swift/metadata-accessors`, `/swift/runtime-calls`, `/swift/objc-bridges`,
+and `/swift/problems`. Those routes must use project object ids and route ids,
+not raw demangled strings, so Swift facts can feed search, inspector,
+decompiler overlays, automation, ObjC bridge navigation, and evidence export.
 
 Procedure and decompiler companions:
 [Function Recovery And Procedure Database Plan](function-recovery-and-procedure-database-plan.md)

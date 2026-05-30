@@ -49,6 +49,7 @@ gates, and "do not start before" constraints.
 | E25 | Remote device debugging and target environments | Honest remote macOS/iOS/simulator debugger workflow | E15/E19/E20 |
 | E26 | Semantic editing and reanalysis hints | Analyst-authored knowledge and correction loop | E3/E12/E13/E21/E22/E24 |
 | E27 | Preferences, keymaps, layout, and theming | Native workstation personalization and recovery | E5/E11/E19/E21/E26 |
+| E28 | Swift runtime metadata and Swift-ObjC bridge | First-class Swift Apple-systems analysis lane | E2/E4/E7/E8/E11/E12/E21/E22 |
 
 ## E0: Docs Acceptance And Scope Lock
 
@@ -80,6 +81,7 @@ Deliverables:
 - Apple artifact intake/source-registration implementation spec reviewed
 - command/navigation/undo Workbench interaction implementation spec reviewed
 - Apple runtime Workbench browser implementation spec reviewed
+- Swift runtime metadata and Swift-ObjC bridge implementation spec reviewed
 
 Validation:
 
@@ -97,6 +99,7 @@ Validation:
 - patching/debugger implementation cross-link check
 - command/navigation/undo interaction cross-link check
 - Apple runtime browser suite cross-link check
+- Swift runtime metadata and bridge cross-link check
 
 Do not leave E0 until:
 
@@ -1387,6 +1390,79 @@ Risks:
 - layout restoration blocks first paint on large projects
 - analysis profiles hide expensive work
 - automation preferences become cosmetic toggles instead of enforced gates
+
+## E28: Swift Runtime Metadata And Swift-ObjC Bridge
+
+Goal:
+
+- make Swift metadata, names, conformances, accessors, runtime calls, and
+  Objective-C bridges first-class routeable project facts for Apple-system
+  analysis
+
+Primary spec:
+
+- [Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md)
+
+Deliverables:
+
+- `SwiftMetadata` root model
+- Swift section inventory
+- demangler service and failure records
+- Swift name facts and role classification
+- Swift module/type/protocol/conformance records
+- type-reference, reflection-string, and field-metadata parsers
+- witness table and metadata accessor classification
+- Swift runtime call classification
+- Swift-ObjC bridge relation records
+- Swift browser APIs and Workbench stores
+- Swift problem records
+- dyld shared-cache projected-image route preservation
+- large-name batch performance budgets
+
+Implementation tasks:
+
+- add `damsel-macho::swift` parser module
+- add `SwiftMetadata` models in `damsel-core`
+- move current `--swift-symbol` demangler shell-out behind a reusable
+  demangler service
+- add Swift section JSON commands
+- add Swift name-role facts and search indexes
+- add relative-pointer helpers with bounded failure modes
+- add typeref and reflection-string parsers
+- add field metadata parser
+- add protocol and conformance parsers
+- add metadata accessor and runtime-call classifiers
+- add Swift-ObjC bridge linker
+- add Swift Browser Workbench stores and paged APIs
+- add diagnostics redaction for Swift names, fields, and local paths
+
+Validation:
+
+- Swift section classifier snapshots
+- `swift-sample` raw/demangled lookup tests
+- demangler unavailable and timeout fixtures
+- Swift name-role corpus
+- typeref symbolic-reference rejection fixture
+- malformed typeref and field metadata bounded parse tests
+- field metadata fixture
+- protocol and conformance fixtures
+- witness accessor fixture
+- metadata accessor/runtime-call fixtures
+- mixed Swift/ObjC bridge fixture
+- Workbench Swift Home UI smoke
+- route reveal from Swift type to hex/assembly/ObjC bridge
+- large demangle batch performance sample
+- dyld shared-cache projected-image Swift route smoke
+
+Risks:
+
+- demangled strings are mistaken for real type recovery
+- malformed Swift metadata crashes the parser
+- SwiftUI materializes huge symbol/type lists
+- Swift-ObjC bridge edges overclaim certainty
+- ABI drift breaks parser assumptions
+- static metadata and future debugger runtime observations are merged without
+  evidence boundaries
 
 ## E16: Plugin / SDK Boundary
 

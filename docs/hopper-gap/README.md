@@ -63,6 +63,12 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   workspace layout restore, route repair, analysis profiles, Apple artifact
   source roots, automation/privacy gates, diagnostics presets, and settings
   import/export.
+- [Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md):
+  implementation-ready plan for making Swift a first-class Apple-systems lane:
+  Swift section inventory, demangler service, name role facts, type references,
+  field metadata, protocols, conformances, witness/accessor classification,
+  Swift-ObjC bridge records, Workbench browsers, API/CLI contracts,
+  performance budgets, diagnostics, and validation.
 - [Implementation Epic Breakdown](implementation-epic-breakdown.md):
   issue-sized epics, dependencies, deliverables, risks, and validation gates for
   turning this pack into real work.
@@ -170,6 +176,12 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   overlays, dyld cache images/providers, kernel collection members, KDK/dSYM
   symbolication state, XNU interfaces, panic frames, relationship graphs,
   runtime problems, paged APIs, commands, and performance gates.
+- [Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md):
+  implementation-ready Swift runtime metadata subsystem for Swift section
+  inventory, demangling as evidence, Swift modules/types/protocols/conformances,
+  witness tables, metadata accessors, runtime calls, Swift-ObjC bridges,
+  dyld-cache projections, Workbench browser UX, and honest static/dynamic
+  evidence separation.
 - [Type And Symbolication System Plan](type-symbolication-system-plan.md):
   provenance-aware names, types, dSYM/KDK/DWARF, ObjC encodings, C++ RTTI,
   Swift demangling, user overrides, and symbolication profiles.

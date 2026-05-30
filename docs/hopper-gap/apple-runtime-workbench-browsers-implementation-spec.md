@@ -25,6 +25,7 @@ Architecture companions:
 - [Apple Artifact Intake, Acquisition, And Source Registration Implementation Spec](apple-artifact-intake-source-registration-implementation-spec.md)
 - [Type, Signature, Symbolication, And Debug-Info Implementation Spec](type-signature-symbolication-implementation-spec.md)
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md)
+- [Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md)
 - [Project Kernel And Typed Byte Map Implementation Spec](project-kernel-byte-map-implementation-spec.md)
 - [Search, Navigation, And Index Plan](search-navigation-index-plan.md)
 - [Command, Navigation, Undo, And Native Workbench Interaction Implementation Spec](command-navigation-undo-workbench-implementation-spec.md)
@@ -1395,6 +1396,12 @@ First browser version:
 - method/function symbol grouping by module/type name
 - bridge evidence between Swift symbols and ObjC selectors where visible
 - unresolved Swift metadata problems
+
+The dedicated
+[Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md)
+expands this placeholder into the full parser, object model, Workbench store,
+API, CLI, diagnostics, and validation plan. This browser should consume those
+Swift project facts rather than implementing a separate Swift-only UI model.
 
 Out of first version:
 

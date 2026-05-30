@@ -19,6 +19,7 @@ This is a companion to:
 - [Apple Artifact Intake, Acquisition, And Source Registration Implementation Spec](apple-artifact-intake-source-registration-implementation-spec.md)
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md)
 - [Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md)
+- [Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md)
 
 ## Why This Exists
 
@@ -214,6 +215,9 @@ The implementation implication is direct:
 - ObjC ivars and stripped ObjC declarations must be represented as imperfect
   facts, not only display strings
 - Swift demangling must be a recoverable/imported fact with failure modes
+- full Swift metadata recovery is owned by the dedicated Swift runtime metadata
+  spec, so this document should treat Swift names as inputs to a richer
+  `SwiftMetadata` subsystem instead of as the final Swift product surface
 - C++ demangling must produce signature candidates, not just pretty labels
 - shared-cache extracted files need method navigation and type context
 - type editing needs field order, enum base type, relative pointers, and method

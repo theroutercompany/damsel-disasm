@@ -137,6 +137,15 @@ three-pane `ContentView`, and existing native menu shell into future
 project preference APIs, route repair, privacy presets, and settings
 validation.
 
+Swift runtime metadata companion:
+[Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md)
+maps the current `--swift-symbol` path in `damsel-cli/src/main.rs`, the
+`swift-sample` fixture tests, and the absence of a `damsel-macho::swift` module
+into a real subsystem: `SwiftMetadata`, Swift section inventory, demangler
+service, name-role facts, typeref/field/conformance parsers, metadata accessor
+classification, Swift-ObjC bridge records, Workbench Swift browser stores, and
+paged API routes.
+
 Processor semantics companion:
 [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
 maps current `Architecture`, `Operand`, `DecodedInstruction`,

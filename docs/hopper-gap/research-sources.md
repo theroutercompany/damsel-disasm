@@ -180,6 +180,18 @@ Damsel app/project/session preference ownership, renderer settings, keymaps,
 theme tokens, layout repair, analysis profiles, Apple artifact roots,
 automation/privacy gates, diagnostics presets, and settings import/export.
 
+For the Swift runtime metadata and Swift-ObjC bridge implementation pass, see
+[Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md).
+That document uses Hopper's homepage Objective-C and Swift positioning,
+Hopper's current changelog entries for Swift demangling, Swift strings, Swift
+metadata, and malformed/ciphered Swift metadata failures, Swift ABI mangling
+and type-metadata documentation, Swift ABI metadata headers, LLVM Mach-O Swift
+section-name constants, and public Swift reverse-engineering workflows. It maps
+those sources into Damsel Swift section inventory, demangler service, name
+roles, typeref/field/protocol/conformance parsing, metadata accessor and
+runtime-call classification, Swift-ObjC bridge records, browser APIs,
+diagnostics, static/dynamic evidence separation, and validation fixtures.
+
 For the automation and SDK-boundary implementation pass, see
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 and

@@ -38,6 +38,11 @@ The roadmap is intentionally split across companion docs:
   turns that plan into concrete type records, signature/calling-convention
   stores, local variable records, debug importers, KDK/dSYM profile handling,
   Workbench editors, CLI/API contracts, and validation gates.
+- [Swift Runtime Metadata And Swift-ObjC Bridge Implementation Spec](swift-runtime-metadata-implementation-spec.md)
+  expands Swift from demangled-name facts into Swift section inventory,
+  modules, nominal types, fields, protocols, conformances, metadata accessors,
+  runtime calls, Swift-ObjC bridge records, Workbench browsers, and large-artifact
+  validation.
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md)
   breaks the debug-info work into source discovery, dSYM/KDK matching,
   compile-unit and line-table import, inline callsites, variable locations,

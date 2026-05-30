@@ -29,6 +29,7 @@ Use these labels during audits:
 | Command/navigation/undo is specified | typed command registry, menu validation, palette, focus, route selection, navigation stack, transactions, activity log | `command-navigation-undo-workbench-implementation-spec.md` | Proven as docs |
 | Semantic editing and reanalysis hints are specified | analyst-authored comments, labels, tags, colors, manual refs, byte/type/function/decompiler/runtime hints, suggestions, conflicts, stale-route repair, reanalysis impacts, and redaction | `semantic-editing-reanalysis-hints-implementation-spec.md` | Proven as docs |
 | Preferences/keymaps/layout/theming is specified | app/project/session preference boundaries, renderer settings, keymap conflicts, theme tokens, layout restore, route repair, analysis profiles, Apple artifact roots, automation/privacy gates, diagnostics presets | `preferences-keymaps-layout-theming-implementation-spec.md` | Proven as docs |
+| Swift runtime metadata is specified | Swift section inventory, demangler service, name role facts, type references, field metadata, protocols, conformances, metadata accessors, runtime calls, Swift-ObjC bridges, browser APIs, diagnostics, performance budgets, and validation | `swift-runtime-metadata-implementation-spec.md` | Proven as docs |
 | Apple runtime Workbench browsers are specified | ObjC, dispatch, C++/ObjC++, IOKit, cache, kernel, KDK/dSYM, panic, relationship graph, problem browser pages and APIs | `apple-runtime-workbench-browsers-implementation-spec.md` | Proven as docs |
 | Performance responsiveness is specified | latency budgets, jobs, paging, metrics | `performance-responsiveness-architecture.md`, `large-project-performance-scheduler-indexing-implementation-spec.md` | Proven as docs |
 | Native app trust is specified | helper auth, source grants, signing/update policy, diagnostics redaction | `native-app-trust-distribution-diagnostics-implementation-spec.md` | Proven as docs |
@@ -66,6 +67,7 @@ Use these labels during audits:
 | Problems/hints | problem records, suppress/apply hint, reanalysis trigger tests | Planned |
 | ObjC browser | class/selector/method implementer/caller fixtures | Planned |
 | ObjC dispatch browser | message-send evidence, confidence buckets, manual binding undo tests | Planned |
+| Swift runtime metadata | section classifier snapshots, demangler failure fixtures, Swift name-role corpus, typeref/field/conformance fixtures, metadata-accessor/runtime-call classification, Swift-ObjC bridge fixtures, Workbench Swift browser UI tests, and large-name batch performance samples | Planned |
 | C++ browser | demangle/vtable/RTTI/virtual-call fixtures | Planned |
 | IOKit browser | user-client/external-method candidate fixtures with weak-evidence labeling | Planned |
 | Runtime relationship graph | ObjC/C++/cache/kernel/panic neighborhood graph snapshots and list fallback | Planned |
