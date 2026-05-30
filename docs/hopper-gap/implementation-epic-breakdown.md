@@ -48,6 +48,7 @@ gates, and "do not start before" constraints.
 | E24 | Decompiler quality and user-assisted recovery | Trustworthy pseudocode correction and validation loop | E12/E13/E22/E23 |
 | E25 | Remote device debugging and target environments | Honest remote macOS/iOS/simulator debugger workflow | E15/E19/E20 |
 | E26 | Semantic editing and reanalysis hints | Analyst-authored knowledge and correction loop | E3/E12/E13/E21/E22/E24 |
+| E27 | Preferences, keymaps, layout, and theming | Native workstation personalization and recovery | E5/E11/E19/E21/E26 |
 
 ## E0: Docs Acceptance And Scope Lock
 
@@ -1315,6 +1316,77 @@ Risks:
 - scripts pollute projects with untraceable edits
 - Apple runtime bindings overclaim certainty
 - shared-cache projects regress from full annotation scans
+
+## E27: Preferences, Keymaps, Layout, And Theming
+
+Goal:
+
+- make native Workbench personalization typed, recoverable, testable,
+  privacy-aware, accessible, and fast enough for daily reverse-engineering work
+
+Primary spec:
+
+- [Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](preferences-keymaps-layout-theming-implementation-spec.md)
+
+Deliverables:
+
+- typed app preference registry
+- project preference API
+- effective preference resolver
+- renderer preferences for assembly, graph, hex, search, and pseudocode
+- keymap profiles and shortcut conflict detection
+- theme token model and built-in accessible themes
+- workspace layout persistence, repair, and reset
+- analysis profile preferences
+- Apple artifact source root policies for shared caches, KDKs, dSYMs, device
+  symbols, IPSW/OTA roots, and panic logs
+- automation/assistant/MCP privacy preferences
+- diagnostics and evidence export presets
+- settings import/export bundle schema
+
+Implementation tasks:
+
+- add `PreferenceStore`, `ProjectPreferenceStore`, `KeymapStore`,
+  `ThemeStore`, `WorkspaceLayoutStore`, and diagnostics preference state
+- add Rust project tables for project preferences and workspace layouts
+- add app/project/effective preference API routes
+- add keymap validation and command-id binding APIs
+- add theme validation and contrast checks
+- add layout save/repair/reset APIs
+- add instruction-byte, fixed-hex-column, and fuzzy-search preferences as
+  first proof points
+- add settings UI tabs for General, Appearance, Assembly, Graph, Hex, Search,
+  Analysis, Apple Artifacts, Keybindings, Automation And AI, Privacy And
+  Diagnostics, and Advanced
+- add diagnostics redaction preset preview
+- add corrupt layout fallback and reset command
+
+Validation:
+
+- preference schema snapshots
+- effective preference snapshots
+- instruction-byte toggle UI/API test
+- fixed hex column UI/API test
+- fuzzy search toggle UI/API test
+- keymap conflict fixture
+- theme token and contrast fixtures
+- feature-map color distinguishability fixture
+- layout restore/repair/reset tests
+- corrupt layout fallback test
+- analysis profile preview test
+- Apple artifact root redaction test
+- diagnostics preset redaction test
+- preference hot-path performance samples
+
+Risks:
+
+- settings become unstructured Swift view state
+- project files leak local paths, keymaps, comments, or diagnostics choices
+- themes break byte-category meaning or accessibility
+- shortcut conflicts make navigation unreliable
+- layout restoration blocks first paint on large projects
+- analysis profiles hide expensive work
+- automation preferences become cosmetic toggles instead of enforced gates
 
 ## E16: Plugin / SDK Boundary
 

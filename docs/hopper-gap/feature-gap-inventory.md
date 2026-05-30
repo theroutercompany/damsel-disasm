@@ -34,6 +34,9 @@ The biggest gaps are:
 14. Semantic editing and reanalysis-hint layer: comments, labels, tags, manual
     references, byte/procedure/type/decompiler hints, Apple runtime bindings,
     suggestions, conflicts, stale-route repair, and privacy-aware exports.
+15. Native preference and workspace personalization layer: app/project/session
+    settings, keymaps, themes, layout restore, analysis profiles, Apple
+    artifact source roots, automation privacy gates, and diagnostics presets.
 
 ## Current Implemented Strengths
 

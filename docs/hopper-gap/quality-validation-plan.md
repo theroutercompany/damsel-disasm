@@ -61,6 +61,7 @@ The docs pack should include, at minimum:
 - graph/feature-map/hex representation sync implementation spec
 - command/navigation/undo Workbench interaction implementation spec
 - semantic editing/reanalysis hints implementation spec
+- preferences/keymaps/layout/theming implementation spec
 - Hopper public-web feature architecture audit
 - Hopper feature architecture public evidence
 - large-project performance/scheduler/indexing implementation spec

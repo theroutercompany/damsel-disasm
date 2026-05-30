@@ -83,6 +83,10 @@ expands the mutation side of those contracts into semantic edit records,
 targets, values, groups, suggestions, reviews, conflicts, stale-route repair,
 reanalysis impacts, Apple runtime relationship bindings, privacy/redaction
 policy, and shared Workbench/CLI/API/automation application flows.
+[Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](preferences-keymaps-layout-theming-implementation-spec.md)
+adds API contract shapes for app preferences, project preferences, effective
+preference resolution, keymap validation, theme validation, workspace layout
+save/repair/reset, diagnostics/export presets, and settings import/export.
 
 Procedure and decompiler companions:
 [Function Recovery And Procedure Database Plan](function-recovery-and-procedure-database-plan.md)

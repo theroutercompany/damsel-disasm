@@ -26,6 +26,12 @@ focus, selection, route history, transaction-backed undo/redo, activity logs,
 and disabled-command explanations should be implemented rather than treated as
 small one-off polish items.
 
+Preferences/keymaps/layout companion:
+[Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](preferences-keymaps-layout-theming-implementation-spec.md)
+defines the typed settings, keymap, theme-token, layout/session persistence,
+route-repair, analysis-profile, Apple-artifact-root, automation/privacy, and
+diagnostics-preset architecture behind the polish requirements in this plan.
+
 Apple runtime browser companion:
 [Apple Runtime, ObjC/C++/XNU, And System Browser Workbench Implementation Spec](apple-runtime-workbench-browsers-implementation-spec.md)
 defines the polished native browser behavior for Apple runtime workflows:

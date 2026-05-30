@@ -165,6 +165,21 @@ sources into Damsel semantic edit records, suggestions, review, conflict
 handling, stale-route repair, Apple runtime bindings, reanalysis impacts,
 automation capability gates, privacy, and evidence export.
 
+For the preferences, keymaps, layout, and theming implementation pass, see
+[Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](preferences-keymaps-layout-theming-implementation-spec.md).
+That document uses Hopper's tutorial evidence for instruction-encoding display
+preferences, fuzzy-search preferences, adaptive/fixed hex columns, pane
+visibility, keyboard graph movement, navigation stack behavior, feature-map
+colors, and contextual inspector modules; Hopper's homepage evidence for
+native Cocoa polish, keyboard shortcuts, synchronized representations,
+scripting, SDK, and MCP; public theme/plugin evidence from the Hopper plugin
+index; a public Hopper teaching workflow that exposes show/hide panes and the
+hex-column preference; and Apple documentation for app defaults, dark-mode
+expectations, and window restoration concepts. It maps those sources into
+Damsel app/project/session preference ownership, renderer settings, keymaps,
+theme tokens, layout repair, analysis profiles, Apple artifact roots,
+automation/privacy gates, diagnostics presets, and settings import/export.
+
 For the automation and SDK-boundary implementation pass, see
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 and

@@ -57,6 +57,12 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   local variables, type/signature edits, switch/dead-code/decompiler hints,
   ObjC/C++/XNU relationship bindings, suggestions, conflict handling,
   reanalysis invalidation, privacy, and evidence export.
+- [Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](preferences-keymaps-layout-theming-implementation-spec.md):
+  implementation-ready plan for typed app/project/session preferences,
+  renderer controls, keymap profiles, shortcut conflicts, theme tokens,
+  workspace layout restore, route repair, analysis profiles, Apple artifact
+  source roots, automation/privacy gates, diagnostics presets, and settings
+  import/export.
 - [Implementation Epic Breakdown](implementation-epic-breakdown.md):
   issue-sized epics, dependencies, deliverables, risks, and validation gates for
   turning this pack into real work.

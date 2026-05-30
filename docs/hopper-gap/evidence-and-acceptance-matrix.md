@@ -28,6 +28,7 @@ Use these labels during audits:
 | UX/app polish is specified | menus, keyboard, command palette, errors, accessibility | `competitive-ux-app-plan.md`, `native-app-polish-plan.md` | Proven as docs |
 | Command/navigation/undo is specified | typed command registry, menu validation, palette, focus, route selection, navigation stack, transactions, activity log | `command-navigation-undo-workbench-implementation-spec.md` | Proven as docs |
 | Semantic editing and reanalysis hints are specified | analyst-authored comments, labels, tags, colors, manual refs, byte/type/function/decompiler/runtime hints, suggestions, conflicts, stale-route repair, reanalysis impacts, and redaction | `semantic-editing-reanalysis-hints-implementation-spec.md` | Proven as docs |
+| Preferences/keymaps/layout/theming is specified | app/project/session preference boundaries, renderer settings, keymap conflicts, theme tokens, layout restore, route repair, analysis profiles, Apple artifact roots, automation/privacy gates, diagnostics presets | `preferences-keymaps-layout-theming-implementation-spec.md` | Proven as docs |
 | Apple runtime Workbench browsers are specified | ObjC, dispatch, C++/ObjC++, IOKit, cache, kernel, KDK/dSYM, panic, relationship graph, problem browser pages and APIs | `apple-runtime-workbench-browsers-implementation-spec.md` | Proven as docs |
 | Performance responsiveness is specified | latency budgets, jobs, paging, metrics | `performance-responsiveness-architecture.md`, `large-project-performance-scheduler-indexing-implementation-spec.md` | Proven as docs |
 | Native app trust is specified | helper auth, source grants, signing/update policy, diagnostics redaction | `native-app-trust-distribution-diagnostics-implementation-spec.md` | Proven as docs |
@@ -58,6 +59,7 @@ Use these labels during audits:
 | Command registry | descriptor snapshots, menu validation tests, palette discovery, disabled reasons | Planned |
 | Navigation stack | route push/back/forward/session restore tests across route kinds | Planned |
 | Command palette | command/object search, disabled reason display, keyboard-only execution tests | Planned |
+| Preferences, keymaps, layout, and theming | preference schema snapshots, instruction-byte/hex-column/fuzzy-search toggles, command-id keymap conflicts, theme token/contrast fixtures, layout restore/repair/reset tests, diagnostics redaction preset tests, and hot-path performance samples | Planned |
 | Annotations | label/comment/tag/bookmark/manual-ref transaction tests | Planned |
 | Semantic editing and reanalysis hints | semantic edit schema snapshots, suggestion review fixtures, stale-route repair tests, byte/procedure/type/decompiler hint reanalysis tests, ObjC/C++/XNU binding undo tests, conflict/redaction fixtures, and performance samples | Planned |
 | Undo/redo | model-level transaction replay tests | Planned |

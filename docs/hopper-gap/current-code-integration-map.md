@@ -129,6 +129,14 @@ automation/MCP suggestions, type/signature edits, decompiler hints, and
 ObjC/C++/XNU relationship browsers into one route-aware semantic edit,
 suggestion, conflict, reanalysis, and redaction model.
 
+Preferences/keymaps/layout companion:
+[Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](preferences-keymaps-layout-theming-implementation-spec.md)
+maps the current broad `WorkbenchStore`, notification-only command constants,
+three-pane `ContentView`, and existing native menu shell into future
+`PreferenceStore`, `KeymapStore`, `ThemeStore`, `WorkspaceLayoutStore`,
+project preference APIs, route repair, privacy presets, and settings
+validation.
+
 Processor semantics companion:
 [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
 maps current `Architecture`, `Operand`, `DecodedInstruction`,

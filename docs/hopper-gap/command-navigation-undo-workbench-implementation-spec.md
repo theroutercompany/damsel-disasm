@@ -38,6 +38,7 @@ Core companions:
 - [Graph, Feature Map, Hex, And Representation Sync Implementation Spec](graph-feature-map-hex-representation-sync-implementation-spec.md)
 - [Patching, Hex, Assembly, And Transaction Implementation Spec](patching-hex-assembly-transaction-implementation-spec.md)
 - [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
+- [Preferences, Keymaps, Layout Persistence, And Theming Implementation Spec](preferences-keymaps-layout-theming-implementation-spec.md)
 - [API And Data Contracts](api-data-contracts.md)
 - [Refactor And Subsystem Plan](refactor-subsystem-plan.md)
 - [Quality And Validation Plan](quality-validation-plan.md)
