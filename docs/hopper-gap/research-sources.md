@@ -138,6 +138,18 @@ route-backed breakpoints, stop-event views, register/frame/memory panes,
 helper isolation, permission diagnostics, Apple runtime live interpretation,
 and redacted session exports.
 
+For the remote/device debugger implementation pass, see
+[Remote Device Debugging And Target Environment Implementation Spec](remote-device-debugging-target-environment-implementation-spec.md).
+That document uses Hopper's Debugger Server page, Hopper tutorial/homepage
+debugger surface, LLDB's current remote-debugging documentation, Apple's LLDB
+standalone guide, Apple debugger entitlement and Developer Mode documentation,
+and Apple KDK/kernel-debugging documentation to separate local debugging from
+remote macOS, iOS/iPadOS device, simulator, and XNU-adjacent target
+environments. It defines target registries, transport records, debug-server
+lifecycle, preflight plans, remote module/source matching, device symbol
+state, runtime events, Workbench target browsers, redacted diagnostics, and
+honest unsupported-workflow boundaries.
+
 For the automation and SDK-boundary implementation pass, see
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 and

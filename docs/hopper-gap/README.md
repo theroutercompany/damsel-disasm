@@ -238,6 +238,12 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   stepping, registers, frames, memory windows, ObjC/C++/arm64e runtime
   interpretation, dyld shared-cache runtime mapping, LLDB helper isolation,
   permissions, diagnostics, exports, and validation gates.
+- [Remote Device Debugging And Target Environment Implementation Spec](remote-device-debugging-target-environment-implementation-spec.md):
+  implementation-ready plan for remote macOS, iOS/iPadOS device, simulator,
+  and XNU-adjacent target environments with target registries, transport
+  records, debug-server lifecycle, preflight plans, module/source matching,
+  device symbol state, runtime events, Workbench target browsers, redaction,
+  automation gates, and honest unsupported-workflow boundaries.
 - [Refactor And Subsystem Plan](refactor-subsystem-plan.md): the large
   subsystems and deep refactors required for a real app, not just small feature
   patches.

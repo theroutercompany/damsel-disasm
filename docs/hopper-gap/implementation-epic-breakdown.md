@@ -46,6 +46,7 @@ gates, and "do not start before" constraints.
 | E22 | Processor semantics and Apple ABI | Hopper-class CPU/ABI facts for Apple binaries | E1/E2/E4/E8-E10 |
 | E23 | Decompiler Workbench representation | Native synchronized pseudocode workspace | E5/E11-E13/E21/E22 |
 | E24 | Decompiler quality and user-assisted recovery | Trustworthy pseudocode correction and validation loop | E12/E13/E22/E23 |
+| E25 | Remote device debugging and target environments | Honest remote macOS/iOS/simulator debugger workflow | E15/E19/E20 |
 
 ## E0: Docs Acceptance And Scope Lock
 
@@ -1101,6 +1102,7 @@ Source specs:
 
 - [Debugger Static-Dynamic Integration Implementation Spec](debugger-static-dynamic-integration-implementation-spec.md)
 - [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](live-debugger-dynamic-workbench-implementation-spec.md)
+- [Remote Device Debugging And Target Environment Implementation Spec](remote-device-debugging-target-environment-implementation-spec.md)
 
 Implementation tasks:
 
@@ -1148,6 +1150,92 @@ Risks:
 - debugger UX distracts from static core
 - runtime/static mismatch confusion
 - helper process or event stream freezes Workbench if not isolated
+
+## E25: Remote Device Debugging And Target Environments
+
+Goal:
+
+- extend local debugger planning into explicit remote macOS, iOS/iPadOS,
+  simulator, and XNU-adjacent target-environment workflows without implying
+  platform bypass or unsafe hidden attach behavior
+
+Primary spec:
+
+- [Remote Device Debugging And Target Environment Implementation Spec](remote-device-debugging-target-environment-implementation-spec.md)
+
+Deliverables:
+
+- target environment registry
+- target host identity records
+- device identity records
+- debug transport records
+- debug-server instance lifecycle records
+- remote debug plan and preflight model
+- attach candidate model
+- remote module/source match records
+- device symbol source records
+- runtime event stream
+- reconnect/disconnect states
+- target environment browser
+- debug plan sheet
+- remote module view
+- device runtime problems drawer
+- remote stop report
+- iOS/simulator supported and unsupported workflow policy
+- Darwin kernel placeholder and KDK/panic relation records
+- redacted remote/device diagnostics
+- automation capability gates for remote connect, launch, attach, control, and
+  memory reads
+
+Implementation tasks:
+
+- add `TargetEnvironment`, `TargetHostIdentity`, `DeviceIdentity`,
+  `DebugTransport`, `DebugServerInstance`, `RemoteDebugPlan`,
+  `AttachCandidate`, `RuntimeModuleMatch`, `DeviceSymbolSource`, and
+  `RuntimeEvent`
+- add target list, connect/disconnect, preflight, attach-candidate, remote-plan,
+  runtime-module, event, stop-report, reconnect, and diagnostics endpoints
+- add simulator target placeholders and skipped-with-reason validation
+- model Developer Mode, pairing, toolchain, Xcode, debugserver, device-support,
+  and symbol-cache problem states
+- model remote source/install paths separately from local project source ids
+- add runtime module matching by UUID, install name, path, dyld-cache identity,
+  fileset member, and source revision
+- keep unsupported iOS App Store attach, jailbreak-only workflows, process
+  memory writes, and live kernel debugging behind explicit blocked states
+- add native target browser, plan sheet, module view, runtime problems drawer,
+  and stop report payloads
+- enforce redaction for device identifiers, paths, launch arguments,
+  environment, logs, registers, memory, and network endpoints
+
+Validation:
+
+- target environment JSON snapshots
+- duplicate target fixture
+- missing Xcode/debugserver/toolchain fixtures
+- Developer Mode disabled fixture
+- unpaired device fixture
+- simulator unavailable fixture
+- refused transport fixture
+- reconnect fixture
+- source mismatch fixture
+- dyld-cache image match fixture
+- missing dSYM/device-symbol fixture
+- unsupported App Store attach fixture
+- live kernel blocked fixture
+- runtime event paging fixture
+- remote stop report snapshot
+- redacted diagnostics snapshot
+- automation permission-denial tests
+
+Risks:
+
+- docs imply protected-device bypass capability
+- remote debugging turns into a general remote shell
+- runtime and static artifacts mismatch silently
+- device diagnostics leak identifiers or private paths
+- network/event streams freeze the Workbench
+- kernel debugging scope overwhelms static XNU analysis
 
 ## E16: Plugin / SDK Boundary
 

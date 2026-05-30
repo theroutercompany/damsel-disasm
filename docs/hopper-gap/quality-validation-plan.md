@@ -71,6 +71,7 @@ The docs pack should include, at minimum:
 - patching/hex/assembly/transaction implementation spec
 - decompiler quality and user-assisted recovery implementation spec
 - debugger static-dynamic integration implementation spec
+- remote device debugging and target environment implementation spec
 - native Workbench Hopper-grade implementation spec
 - Apple runtime Workbench browser implementation spec
 - native app trust/distribution/diagnostics implementation spec

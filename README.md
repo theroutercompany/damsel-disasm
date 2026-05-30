@@ -41,6 +41,7 @@ Planned next:
   - [docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md](./docs/hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)
   - [docs/hopper-gap/decompiler-quality-user-assisted-recovery-implementation-spec.md](./docs/hopper-gap/decompiler-quality-user-assisted-recovery-implementation-spec.md)
   - [docs/hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md](./docs/hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md)
+  - [docs/hopper-gap/remote-device-debugging-target-environment-implementation-spec.md](./docs/hopper-gap/remote-device-debugging-target-environment-implementation-spec.md)
   - [docs/hopper-gap/patch-studio-assembler-workbench-implementation-spec.md](./docs/hopper-gap/patch-studio-assembler-workbench-implementation-spec.md)
   - [docs/hopper-gap/automation-studio-scripting-plugin-workbench-implementation-spec.md](./docs/hopper-gap/automation-studio-scripting-plugin-workbench-implementation-spec.md)
   - [docs/hopper-gap/evidence-grounded-ai-assistant-workbench-implementation-spec.md](./docs/hopper-gap/evidence-grounded-ai-assistant-workbench-implementation-spec.md)

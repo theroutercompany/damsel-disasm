@@ -29,6 +29,7 @@ procedure records, and Workbench selection state can support a debugger later.
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md)
 - [Function Recovery And Procedure Database Plan](function-recovery-and-procedure-database-plan.md)
 - [Patching, Hex, Assembly, And Transaction Implementation Spec](patching-hex-assembly-transaction-implementation-spec.md)
+- [Remote Device Debugging And Target Environment Implementation Spec](remote-device-debugging-target-environment-implementation-spec.md)
 
 ## Public Hopper Evidence
 

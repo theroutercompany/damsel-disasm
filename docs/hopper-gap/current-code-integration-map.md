@@ -58,6 +58,12 @@ extends that bridge into the future product layer: launch/attach UX, debug
 targets and sessions, module snapshots, route-backed breakpoints, stop events,
 register/frame/memory stores, LLDB helper isolation, Apple runtime live
 interpretation, permission errors, and diagnostic redaction.
+[Remote Device Debugging And Target Environment Implementation Spec](remote-device-debugging-target-environment-implementation-spec.md)
+extends the same future debugger model beyond local launch/attach into target
+environment registries, remote transport records, debug-server lifecycle,
+device/simulator state, remote module/source matching, device symbol sources,
+runtime event streams, preflight diagnostics, and redacted remote/device
+session exports.
 [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md)
 extends the current byte providers and future transaction model into a native
 patching product surface: patchability, byte edit previews, assembler/NOP

@@ -110,6 +110,12 @@ expands the live debugger API surface into debug targets, launch
 configurations, attach candidates, session event streams, control commands,
 module/source matching, route-backed breakpoints, register/value
 interpretations, memory read windows, diagnostics, and redacted exports.
+[Remote Device Debugging And Target Environment Implementation Spec](remote-device-debugging-target-environment-implementation-spec.md)
+expands the debugger API into target environments, target host identities,
+device identities, debug transports, debug-server instances, remote debug
+plans, attach candidates, runtime module matches, device symbol sources,
+runtime event streams, stop reports, reconnect flows, and redacted target
+diagnostics.
 [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](patch-studio-assembler-workbench-implementation-spec.md)
 expands the patching API surface into patchability queries, patch plans,
 previews, impact records, source revisions, assembler/NOP diagnostics,

@@ -217,6 +217,7 @@ Planned future:
 - [Decompiler, Pseudocode, And Native Workbench Representation Implementation Spec](../hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)
 - [Decompiler Quality And User-Assisted Recovery Implementation Spec](../hopper-gap/decompiler-quality-user-assisted-recovery-implementation-spec.md)
 - [Live Debugger, Dynamic Analysis, And Runtime Workbench Implementation Spec](../hopper-gap/live-debugger-dynamic-workbench-implementation-spec.md)
+- [Remote Device Debugging And Target Environment Implementation Spec](../hopper-gap/remote-device-debugging-target-environment-implementation-spec.md)
 - [Patch Studio, Assembler, And Safe Binary Revision Workbench Implementation Spec](../hopper-gap/patch-studio-assembler-workbench-implementation-spec.md)
 - [Automation Studio, Scripting, MCP, And Plugin Workbench Implementation Spec](../hopper-gap/automation-studio-scripting-plugin-workbench-implementation-spec.md)
 - [Evidence-Grounded AI Assistant Workbench Implementation Spec](../hopper-gap/evidence-grounded-ai-assistant-workbench-implementation-spec.md)
