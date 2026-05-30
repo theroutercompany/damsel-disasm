@@ -27,6 +27,7 @@ Use these labels during audits:
 | Product requirements exist | user personas, priorities, non-goals | `product-requirements.md` | Proven as docs |
 | UX/app polish is specified | menus, keyboard, command palette, errors, accessibility | `competitive-ux-app-plan.md`, `native-app-polish-plan.md` | Proven as docs |
 | Command/navigation/undo is specified | typed command registry, menu validation, palette, focus, route selection, navigation stack, transactions, activity log | `command-navigation-undo-workbench-implementation-spec.md` | Proven as docs |
+| Semantic editing and reanalysis hints are specified | analyst-authored comments, labels, tags, colors, manual refs, byte/type/function/decompiler/runtime hints, suggestions, conflicts, stale-route repair, reanalysis impacts, and redaction | `semantic-editing-reanalysis-hints-implementation-spec.md` | Proven as docs |
 | Apple runtime Workbench browsers are specified | ObjC, dispatch, C++/ObjC++, IOKit, cache, kernel, KDK/dSYM, panic, relationship graph, problem browser pages and APIs | `apple-runtime-workbench-browsers-implementation-spec.md` | Proven as docs |
 | Performance responsiveness is specified | latency budgets, jobs, paging, metrics | `performance-responsiveness-architecture.md`, `large-project-performance-scheduler-indexing-implementation-spec.md` | Proven as docs |
 | Native app trust is specified | helper auth, source grants, signing/update policy, diagnostics redaction | `native-app-trust-distribution-diagnostics-implementation-spec.md` | Proven as docs |
@@ -58,6 +59,7 @@ Use these labels during audits:
 | Navigation stack | route push/back/forward/session restore tests across route kinds | Planned |
 | Command palette | command/object search, disabled reason display, keyboard-only execution tests | Planned |
 | Annotations | label/comment/tag/bookmark/manual-ref transaction tests | Planned |
+| Semantic editing and reanalysis hints | semantic edit schema snapshots, suggestion review fixtures, stale-route repair tests, byte/procedure/type/decompiler hint reanalysis tests, ObjC/C++/XNU binding undo tests, conflict/redaction fixtures, and performance samples | Planned |
 | Undo/redo | model-level transaction replay tests | Planned |
 | Problems/hints | problem records, suppress/apply hint, reanalysis trigger tests | Planned |
 | ObjC browser | class/selector/method implementer/caller fixtures | Planned |

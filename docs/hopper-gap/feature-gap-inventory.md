@@ -31,6 +31,9 @@ The biggest gaps are:
 13. Hopper-style document primitives: feature map, undoable user edits,
     procedure-local names, type database, problem list, and document automation
     APIs.
+14. Semantic editing and reanalysis-hint layer: comments, labels, tags, manual
+    references, byte/procedure/type/decompiler hints, Apple runtime bindings,
+    suggestions, conflicts, stale-route repair, and privacy-aware exports.
 
 ## Current Implemented Strengths
 
@@ -45,6 +48,7 @@ Missing relative to Hopper:
 
 - automatic byte typing across the whole image
 - persistent project-level names, comments, types, and manual changes
+- route-aware semantic edit transactions with reanalysis impact records
 - complete function list and function boundaries
 - strings list as a first-class navigation pane
 - data item creation and reinterpretation

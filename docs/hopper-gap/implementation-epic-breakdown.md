@@ -47,6 +47,7 @@ gates, and "do not start before" constraints.
 | E23 | Decompiler Workbench representation | Native synchronized pseudocode workspace | E5/E11-E13/E21/E22 |
 | E24 | Decompiler quality and user-assisted recovery | Trustworthy pseudocode correction and validation loop | E12/E13/E22/E23 |
 | E25 | Remote device debugging and target environments | Honest remote macOS/iOS/simulator debugger workflow | E15/E19/E20 |
+| E26 | Semantic editing and reanalysis hints | Analyst-authored knowledge and correction loop | E3/E12/E13/E21/E22/E24 |
 
 ## E0: Docs Acceptance And Scope Lock
 
@@ -1236,6 +1237,84 @@ Risks:
 - device diagnostics leak identifiers or private paths
 - network/event streams freeze the Workbench
 - kernel debugging scope overwhelms static XNU analysis
+
+## E26: Semantic Editing And Reanalysis Hints
+
+Goal:
+
+- make analyst-authored knowledge first-class, route-aware, undoable,
+  reanalysis-aware, automation-safe, and exportable with privacy controls
+
+Primary spec:
+
+- [Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md)
+
+Deliverables:
+
+- semantic edit schema
+- semantic edit target/value/group records
+- suggestion and review records
+- conflict and stale-route repair records
+- comment, label, tag, bookmark, color, and manual-reference edits
+- byte-type and procedure hint edits
+- type, signature, variable, local-label, and register-alias edits
+- switch/case, dead-code, and decompiler recovery hints
+- ObjC message, C++ vtable/virtual-call, IOKit, MIG/syscall/trap, KDK, and
+  panic-frame binding edits
+- reanalysis impact records
+- Workbench inspector edit decks
+- suggestion tray and conflict browser
+- CLI/API edit commands
+- automation capability gates
+- diagnostics and evidence export redaction policies
+
+Implementation tasks:
+
+- add semantic edit tables to project kernel schema
+- add route-target validation and stale-route repair policies
+- add edit kind/state/actor/source-surface enums
+- add set/clear comment, inline comment, label, tag, bookmark, and color
+  transactions
+- add manual xref transactions and xref-index integration
+- add byte-type and procedure hint transactions with reanalysis request records
+- add variable/type/signature edit transactions and debug-info conflict records
+- add decompiler hint transactions and decompiler cache invalidation hooks
+- add ObjC/C++/XNU runtime relationship binding transactions
+- add suggestion store, evidence records, review workflow, and capability checks
+- add Workbench inspector, suggestion tray, conflict browser, and stale-edit UI
+- add CLI/API list, preview, apply, undo, redo, suggest, and accept commands
+- add diagnostics redaction and evidence-package inclusion controls
+- add performance metrics for simple edits, bulk imports, and route repair
+
+Validation:
+
+- semantic edit schema snapshots
+- comment/label/tag/bookmark/color persistence and reopen tests
+- manual xref forward/reverse query tests
+- byte-type override conflict tests
+- procedure hint reanalysis request tests
+- variable rename/type assignment tests
+- function signature edit and profile-switch conflict tests
+- switch/dead-code/decompiler hint invalidation tests
+- ObjC message binding undo tests
+- C++ vtable/virtual-call binding undo tests
+- XNU/MIG/panic binding undo tests
+- suggestion accept/reject tests
+- capability denial tests
+- stale-route repair tests
+- diagnostics redaction tests
+- evidence export annotation inclusion tests
+- bulk script annotation performance tests
+
+Risks:
+
+- comments and labels become Swift-only UI state
+- user edits overwrite imported symbols or analyzer facts
+- reanalysis deletes or detaches user work without visibility
+- assistant suggestions become unreviewed mutations
+- scripts pollute projects with untraceable edits
+- Apple runtime bindings overclaim certainty
+- shared-cache projects regress from full annotation scans
 
 ## E16: Plugin / SDK Boundary
 

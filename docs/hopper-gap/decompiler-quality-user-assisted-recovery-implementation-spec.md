@@ -41,6 +41,13 @@ This spec adds the missing operating layer:
 - performance and cancellation proof
 - assistant and automation access to decompiler evidence
 
+Semantic editing companion:
+[Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md)
+defines the shared edit/suggestion/reanalysis transaction layer that should
+carry switch hints, dead-code hints, variable/type corrections, user-reviewed
+assistant suggestions, stale-route repair, conflict records, and privacy-aware
+evidence export for this decompiler quality loop.
+
 ## Public Hopper Evidence
 
 Official Hopper tutorial evidence:

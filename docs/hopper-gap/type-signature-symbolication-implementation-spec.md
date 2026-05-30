@@ -18,6 +18,7 @@ This is a companion to:
 - [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 - [Apple Artifact Intake, Acquisition, And Source Registration Implementation Spec](apple-artifact-intake-source-registration-implementation-spec.md)
 - [DWARF, dSYM, KDK, And Source-Level Debug-Info Implementation Spec](dwarf-dsym-kdk-debug-info-implementation-spec.md)
+- [Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md)
 
 ## Why This Exists
 

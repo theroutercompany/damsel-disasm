@@ -212,6 +212,7 @@ Planned future:
 - [Native App Trust, Distribution, Permissions, And Diagnostics Implementation Spec](../hopper-gap/native-app-trust-distribution-diagnostics-implementation-spec.md)
 - [Graph, Feature Map, Hex, And Representation Sync Implementation Spec](../hopper-gap/graph-feature-map-hex-representation-sync-implementation-spec.md)
 - [Command, Navigation, Undo, And Native Workbench Interaction Implementation Spec](../hopper-gap/command-navigation-undo-workbench-implementation-spec.md)
+- [Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](../hopper-gap/semantic-editing-reanalysis-hints-implementation-spec.md)
 - [Apple Runtime, ObjC/C++/XNU, And System Browser Workbench Implementation Spec](../hopper-gap/apple-runtime-workbench-browsers-implementation-spec.md)
 - [Processor Semantics And Apple ABI Implementation Spec](../hopper-gap/processor-semantics-apple-abi-implementation-spec.md)
 - [Decompiler, Pseudocode, And Native Workbench Representation Implementation Spec](../hopper-gap/decompiler-pseudocode-workbench-implementation-spec.md)

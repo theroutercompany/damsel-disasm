@@ -150,6 +150,21 @@ lifecycle, preflight plans, remote module/source matching, device symbol
 state, runtime events, Workbench target browsers, redacted diagnostics, and
 honest unsupported-workflow boundaries.
 
+For the semantic editing and reanalysis-hints implementation pass, see
+[Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md).
+That document uses Hopper's tutorial evidence for byte-type edits, undo/redo,
+graph comments/labels/grouping/colors/text edits, address naming, tags,
+manual references, switch/case hints, hex-editor invalidation, and inspector
+modules; Hopper's homepage evidence for direct CFG annotation, scripting, SDK,
+MCP, and native UX; public Hopper Python API stubs for comments, inline
+comments, labels, tags, colors, manual references, local labels, register
+aliases, byte-type setters, document save paths, and local variables; public
+script collections for analyzer-created annotations; and public workflow
+discussion around local-variable type editing and Manage Types. It maps those
+sources into Damsel semantic edit records, suggestions, review, conflict
+handling, stale-route repair, Apple runtime bindings, reanalysis impacts,
+automation capability gates, privacy, and evidence export.
+
 For the automation and SDK-boundary implementation pass, see
 [Automation, MCP, And Scripting Implementation Spec](automation-mcp-scripting-implementation-spec.md)
 and

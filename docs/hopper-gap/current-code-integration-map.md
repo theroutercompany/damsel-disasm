@@ -122,6 +122,13 @@ CLI JSON, and Workbench stores into provenance-aware names, type records,
 function signatures, variables, calling conventions, debug-info imports,
 symbolication profiles, conflict records, and edit transactions.
 
+Semantic edit companion:
+[Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md)
+maps the future project kernel, Workbench inspector, CLI/API command surfaces,
+automation/MCP suggestions, type/signature edits, decompiler hints, and
+ObjC/C++/XNU relationship browsers into one route-aware semantic edit,
+suggestion, conflict, reanalysis, and redaction model.
+
 Processor semantics companion:
 [Processor Semantics And Apple ABI Implementation Spec](processor-semantics-apple-abi-implementation-spec.md)
 maps current `Architecture`, `Operand`, `DecodedInstruction`,

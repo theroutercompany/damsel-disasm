@@ -51,6 +51,12 @@ caches, XNU-style system binaries, Objective-C, C++, and Objective-C++.
   navigation stack, undo/redo transactions, activity log, job dispatch, and
   Apple-system command families that make the native Workbench feel like a
   coherent Hopper-class document app.
+- [Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md):
+  implementation-ready plan for Hopper-class analyst-authored knowledge:
+  comments, labels, tags, colors, bookmarks, manual xrefs, byte-type overrides,
+  local variables, type/signature edits, switch/dead-code/decompiler hints,
+  ObjC/C++/XNU relationship bindings, suggestions, conflict handling,
+  reanalysis invalidation, privacy, and evidence export.
 - [Implementation Epic Breakdown](implementation-epic-breakdown.md):
   issue-sized epics, dependencies, deliverables, risks, and validation gates for
   turning this pack into real work.

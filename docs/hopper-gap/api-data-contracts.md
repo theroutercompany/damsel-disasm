@@ -78,6 +78,11 @@ adds concrete API contract shapes for command introspection, command
 availability, command execution, navigation-session persistence, transaction
 stack bridging, activity logs, disabled reasons, and route-backed command
 results shared by native UI, CLI, MCP, and future plugins.
+[Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md)
+expands the mutation side of those contracts into semantic edit records,
+targets, values, groups, suggestions, reviews, conflicts, stale-route repair,
+reanalysis impacts, Apple runtime relationship bindings, privacy/redaction
+policy, and shared Workbench/CLI/API/automation application flows.
 
 Procedure and decompiler companions:
 [Function Recovery And Procedure Database Plan](function-recovery-and-procedure-database-plan.md)

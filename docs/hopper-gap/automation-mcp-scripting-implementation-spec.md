@@ -30,6 +30,7 @@ transactions, byte access policy, and user-visible provenance.
 - [Native Workbench Hopper-Grade Implementation Spec](native-workbench-hopper-grade-implementation-spec.md)
 - [Patching, Hex, Assembly, And Transaction Implementation Spec](patching-hex-assembly-transaction-implementation-spec.md)
 - [Plugin And SDK Extension Boundary Implementation Spec](plugin-sdk-extension-boundary-implementation-spec.md)
+- [Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md)
 
 ## Public Hopper Evidence
 
@@ -769,4 +770,3 @@ The first product-complete automation slice requires read-only MCP plus audited
 annotation mutation over comments, labels, tags, bookmarks, and manual xrefs.
 Patch application, debugger control, process memory writes, and embedded Python
 remain later scopes.
-

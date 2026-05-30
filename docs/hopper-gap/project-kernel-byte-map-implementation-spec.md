@@ -14,6 +14,12 @@ kernel that owns sources, address spaces, object ids, byte classifications,
 facts, annotations, routes, jobs, problems, and deterministic snapshots. Every
 other competitive feature should hang from that kernel.
 
+Semantic editing companion:
+[Semantic Editing, Analyst Knowledge, And Reanalysis Hints Implementation Spec](semantic-editing-reanalysis-hints-implementation-spec.md)
+expands the annotation portion of this kernel into concrete semantic edit
+records, suggestions, review states, conflict handling, stale-route repair,
+reanalysis impacts, Workbench/CLI/API flows, and Apple runtime/XNU bindings.
+
 ## Why This Spec Exists
 
 The first Damsel architecture docs correctly named a future analysis database,
