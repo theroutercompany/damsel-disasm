@@ -557,7 +557,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(report.contains(directory.path))
         XCTAssertFalse(report.contains(fileURL.path))
 
-        store.bannerMessage = "Backend failed at \(fileURL.path)\ncache \(directory.path)"
+        store.showBanner("Backend failed at \(fileURL.path)\ncache \(directory.path)")
         let redactedReport = store.diagnosticsReport
         XCTAssertTrue(redactedReport.contains("Backend failed at [omitted-path]\\ncache [omitted-path]"))
         XCTAssertFalse(redactedReport.contains(directory.path))

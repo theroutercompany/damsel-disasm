@@ -17,7 +17,7 @@ public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var symbolSuggestions: [String] = []
     @Published public private(set) var isBusy = false
     @Published public private(set) var statusText = "Awaiting local binary"
-    @Published public var bannerMessage: String?
+    @Published public private(set) var bannerMessage: String?
 
     @Published public var targetKind: TargetKind = .section {
         didSet {
@@ -669,6 +669,10 @@ public final class WorkbenchStore: ObservableObject {
 
     public func clearBanner() {
         bannerMessage = nil
+    }
+
+    func showBanner(_ message: String) {
+        bannerMessage = message
     }
 
     public func clearInstructionFilter() {
