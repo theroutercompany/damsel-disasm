@@ -163,6 +163,22 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectingStaleInstructionDoesNotPolluteNavigationState() async throws {
+        let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
+        let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
+
+        try await store.runDisassembly()
+        let staleInstruction = try Self.sampleInstruction(address: 0x100000700, rendered: "blr x16")
+
+        store.selectInstruction(staleInstruction, recordsNavigation: true)
+
+        XCTAssertEqual(store.selectedInstructionAddress, 0x1000004b0)
+        XCTAssertEqual(store.recentAddressRoutes, [0x1000004b0])
+        XCTAssertEqual(store.backAddressRoutes, [])
+        XCTAssertEqual(store.forwardAddressRoutes, [])
+    }
+
+    @MainActor
     func testNavigationBackAndForwardUseAddressRouteStack() async throws {
         let client = SuggestionClient(response: [], disassemblyResponse: try Self.sampleDisassembly())
         let store = WorkbenchStore(client: client, loadedImage: Self.sampleImage())
@@ -675,6 +691,19 @@ final class WorkbenchStoreTests: XCTestCase {
         }
         """
         return try JSONDecoder().decode(DisassemblyResponse.self, from: Data(json.utf8))
+    }
+
+    fileprivate static func sampleInstruction(address: UInt64, rendered: String) throws -> InstructionRow {
+        let json = """
+        {
+          "address": \(address),
+          "opcode": 0,
+          "mnemonic": "\(rendered.split(separator: " ").first ?? "")",
+          "rendered": "\(rendered)",
+          "references": []
+        }
+        """
+        return try JSONDecoder().decode(InstructionRow.self, from: Data(json.utf8))
     }
 
     fileprivate static func sampleDisassemblyWithBasicBlock() throws -> DisassemblyResponse {

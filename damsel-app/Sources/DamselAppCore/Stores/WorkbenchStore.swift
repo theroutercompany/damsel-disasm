@@ -586,6 +586,9 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func selectInstruction(_ instruction: InstructionRow, recordsNavigation: Bool = false) {
+        guard disassembly?.instructions.contains(where: { $0.address == instruction.address }) == true else {
+            return
+        }
         if recordsNavigation {
             pushActiveAddressRouteForNavigation(to: instruction.address)
         }
