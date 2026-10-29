@@ -11,6 +11,7 @@
 mod image;
 mod ingest;
 mod loader;
+mod walker;
 
 pub use image::{ElfDynamicEntry, ElfImage, ElfSection, ElfSegment, ElfSymbol};
 pub use ingest::{ElfIngestError, ElfIngestOutcome, ingest_elf_image};

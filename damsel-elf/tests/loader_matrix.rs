@@ -68,7 +68,7 @@ fn shared_object_loads_dynamic_linkage() {
 
 #[test]
 fn elf_ingest_feeds_wave4_queries() {
-    use damsel_project::{Create, ProjectStore, TypedStore, open_store};
+    use damsel_project::{Create, ProjectStore, open_store};
 
     let dir = tempfile::tempdir().unwrap();
     let mut store = open_store(&dir.path().join("project.db"), Create::New, &meta()).unwrap();
@@ -99,6 +99,40 @@ fn meta() -> damsel_project::AnalysisProjectMeta {
         name: "elf-ingest".to_string(),
         analyzer_version: "0.1.0".to_string(),
     }
+}
+
+/// Wave 5B.3: section-header-stripped binaries parse via the segment-only
+/// PT_DYNAMIC walker — the gap both `object` and `goblin` punt on.
+#[test]
+fn nosections_loads_via_segment_only_walker() {
+    let image = load_bytes(Some("hard-stripped".into()), synth::elf_nosections())
+        .expect("hard-stripped ELF parses via PT_DYNAMIC walker");
+    assert!(image.sections.is_empty(), "no section headers to read");
+    assert_eq!(image.architecture, damsel_core::Architecture::X86_64);
+    assert!(image.is_position_independent);
+    assert_eq!(image.soname.as_deref(), Some("fake.so.1"));
+    assert!(image
+        .dynamic
+        .iter()
+        .any(|e| matches!(e, ElfDynamicEntry::Needed(n) if n == "libfake.so.1")));
+
+    // Walker-resolved symbols: same truth as the section-ful variant.
+    let exported = image
+        .symbols
+        .iter()
+        .find(|s| s.name == "exported_func")
+        .expect("exported_func via walker");
+    assert!(exported.defined);
+    let import = image
+        .symbols
+        .iter()
+        .find(|s| s.name == "malloc")
+        .expect("malloc import via walker");
+    assert!(import.is_import);
+
+    // Segment truth survives stripping: PT_LOAD + PT_DYNAMIC present.
+    assert!(image.segments.iter().any(|s| s.kind == "load"));
+    assert!(image.segments.iter().any(|s| s.kind == "dynamic"));
 }
 
 #[test]

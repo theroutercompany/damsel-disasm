@@ -60,11 +60,28 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
     let header = Header::parse(bytes.as_slice())
         .map_err(|e| ElfError::Malformed(format!("header: {e}")))?;
     let endian = header.endian().map_err(|e| ElfError::Malformed(e.to_string()))?;
-    let file = ElfFile::<Header, _>::parse(bytes.as_slice())
-        .map_err(|e| ElfError::Malformed(e.to_string()))?;
 
     let architecture = map_architecture(header.e_machine(endian))?;
     let is_position_independent = header.e_type(endian) == object::elf::ET_DYN;
+
+    // Hard-stripped binaries (no section headers) take the segment-only
+    // PT_DYNAMIC walker (Wave 5B.3) — sections/dynsym tables are absent
+    // and `object` cannot fill them (Research Sources §0 Round 3).
+    let sectionless = header.e_shoff(endian) == 0 || header.e_shnum(endian) == 0;
+    if sectionless {
+        let result = build_segment_only(
+            label,
+            architecture,
+            is_position_independent,
+            bytes.as_slice(),
+            header,
+            endian,
+        );
+        return result;
+    }
+
+    let file = ElfFile::<Header, _>::parse(bytes.as_slice())
+        .map_err(|e| ElfError::Malformed(e.to_string()))?;
 
     // Segments via typed headers (raw p_* fields).
     let mut segments = Vec::new();
@@ -185,6 +202,63 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
         soname,
         segments,
         sections,
+        symbols,
+        dynamic,
+    })
+}
+
+fn build_segment_only(
+    label: Option<String>,
+    architecture: Architecture,
+    is_position_independent: bool,
+    bytes: &[u8],
+    header: &Header,
+    endian: <Header as FileHeader>::Endian,
+) -> Result<ElfImage> {
+    let phoff = header.e_phoff(endian);
+    let phnum = header.e_phnum(endian);
+    let raw = crate::walker::parse_segments(bytes, phoff, phnum)
+        .ok_or_else(|| ElfError::Malformed("program headers out of range".to_string()))?;
+
+    let mut segments = Vec::new();
+    for segment in &raw {
+        let kind = match segment.p_type {
+            object::elf::PT_LOAD => "load",
+            object::elf::PT_DYNAMIC => "dynamic",
+            object::elf::PT_NOTE => "note",
+            object::elf::PT_INTERP => "interp",
+            object::elf::PT_GNU_EH_FRAME => "eh_frame_hdr",
+            object::elf::PT_PHDR => "phdr",
+            _ => "other",
+        };
+        segments.push(ElfSegment {
+            kind: kind.to_string(),
+            executable: segment.p_flags & 1 != 0,
+            writable: segment.p_flags & 2 != 0,
+            address: segment.p_vaddr,
+            size: segment.p_filesz,
+            file_offset: segment.p_offset,
+        });
+    }
+
+    let walked = crate::walker::walk_dynamic(bytes, &raw);
+    let (symbols, dynamic) = match walked {
+        Some(crate::walker::SegmentOnlyDynamic { symbols, entries }) => (symbols, entries),
+        None => (Vec::new(), Vec::new()),
+    };
+    let soname = dynamic.iter().find_map(|e| match e {
+        ElfDynamicEntry::Soname(s) => Some(s.clone()),
+        _ => None,
+    });
+
+    Ok(ElfImage {
+        label,
+        architecture,
+        is_position_independent,
+        build_id: None, // PT_NOTE walking for build-id lands with the note unit
+        soname,
+        segments,
+        sections: Vec::new(),
         symbols,
         dynamic,
     })

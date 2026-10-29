@@ -164,6 +164,19 @@ pub fn static_exec() -> Vec<u8> {
     file
 }
 
+/// Hard-stripped variant of `shared_object`: section headers zeroed
+/// (e_shoff = e_shnum = e_shstrndx = 0) — the `elf-nosections` case only
+/// the segment-only walker can parse.
+pub fn elf_nosections() -> Vec<u8> {
+    let mut bytes = shared_object();
+    // ehdr layout: … e_shoff at 0x28, e_flags 0x30, … e_shnum at 0x3C,
+    // e_shstrndx at 0x3E (ELF64 little-endian).
+    bytes[0x28..0x30].fill(0); // e_shoff = 0
+    bytes[0x3C..0x3E].fill(0); // e_shnum = 0
+    bytes[0x3E..0x40].fill(0); // e_shstrndx = 0
+    bytes
+}
+
 /// Minimal ET_DYN shared object: PT_LOAD + PT_DYNAMIC, `.text`,
 /// `.dynstr`/`.dynsym` (`exported_func` defined, `malloc` import),
 /// `.dynamic` with DT_SONAME/DT_NEEDED/DT_STRTAB/DT_STRSZ/DT_SYMTAB.
@@ -171,14 +184,15 @@ pub fn shared_object() -> Vec<u8> {
     let (text, _m, _h) = text_two_functions();
     let (dynstr, offs) = strtab_of(&["exported_func", "malloc", "libfake.so.1", "fake.so.1"]);
 
-    // Layout.
+    // Layout (standard toolchain order: dynsym directly precedes dynstr
+    // so the segment-only walker's strtab-adjacency heuristic resolves).
     let phoff = 0x40usize;
     let phnum = 2usize;
     let text_off = phoff + phnum * 56;
-    let dynstr_off = text_off + text.len();
-    let dynsym_off = dynstr_off + dynstr.len();
+    let dynsym_off = text_off + text.len();
     let dynsym_len = 24 * 3;
-    let dynamic_off = dynsym_off + dynsym_len;
+    let dynstr_off = dynsym_off + dynsym_len;
+    let dynamic_off = dynstr_off + dynstr.len();
     let mut dynamic: Vec<u8> = Vec::new();
     let mut dt = |tag: u64, val: u64, out: &mut Vec<u8>| {
         out.extend(tag.to_le_bytes());
@@ -193,7 +207,7 @@ pub fn shared_object() -> Vec<u8> {
     dt(0, 0, &mut dynamic); // DT_NULL
     let shstrtab_off = dynamic_off + dynamic.len();
     let (shstrtab, names) =
-        strtab_of(&[".text", ".dynstr", ".dynsym", ".dynamic", ".shstrtab"]);
+        strtab_of(&[".text", ".dynsym", ".dynstr", ".dynamic", ".shstrtab"]);
     let shoff = shstrtab_off + shstrtab.len();
 
     let mut file = ehdr(3, phoff as u64, phnum as u16, shoff as u64, 6, 5);
@@ -202,12 +216,12 @@ pub fn shared_object() -> Vec<u8> {
     file.extend(phdr(2, 6, dynamic_off as u64, dynamic.len() as u64)); // PT_DYNAMIC RW
     file.resize(text_off, 0);
     file.extend_from_slice(&text);
-    file.resize(dynstr_off, 0);
-    file.extend_from_slice(&dynstr);
     file.resize(dynsym_off, 0);
     file.extend_from_slice(&[0u8; 24]);
     file.extend_from_slice(&sym_defined(offs[0], text_off as u64, 15, 1));
     file.extend_from_slice(&sym_undefined(offs[1]));
+    file.resize(dynstr_off, 0);
+    file.extend_from_slice(&dynstr);
     file.resize(dynamic_off, 0);
     file.extend_from_slice(&dynamic);
     file.resize(shstrtab_off, 0);
@@ -215,15 +229,15 @@ pub fn shared_object() -> Vec<u8> {
     file.resize(shoff, 0);
     file.extend_from_slice(&[0u8; 64]);
     file.extend_from_slice(&shdr(names[0], 1, 0x6, text_off as u64, text.len() as u64, 0, 0));
-    file.extend_from_slice(&shdr(names[1], 3, 0x2, dynstr_off as u64, dynstr.len() as u64, 0, 0));
-    file.extend_from_slice(&shdr(names[2], 11, 0x2, dynsym_off as u64, dynsym_len as u64, 2, 24)); // link=.dynstr
+    file.extend_from_slice(&shdr(names[1], 11, 0x2, dynsym_off as u64, dynsym_len as u64, 3, 24)); // .dynsym, link=.dynstr (idx 3)
+    file.extend_from_slice(&shdr(names[2], 3, 0x2, dynstr_off as u64, dynstr.len() as u64, 0, 0)); // .dynstr
     file.extend_from_slice(&shdr(
         names[3],
         6,
         0x3,
         dynamic_off as u64,
         dynamic.len() as u64,
-        2, // link=.dynstr
+        3, // link=.dynstr (idx 3)
         16,
     ));
     file.extend_from_slice(&shdr(names[4], 3, 0, shstrtab_off as u64, shstrtab.len() as u64, 0, 0));
