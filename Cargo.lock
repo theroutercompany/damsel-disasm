@@ -409,6 +409,7 @@ dependencies = [
  "clap",
  "damsel-core",
  "damsel-macho",
+ "damsel-project",
  "insta",
  "predicates",
  "reqwest",

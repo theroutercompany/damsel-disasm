@@ -1,12 +1,13 @@
 //! Project identity and schema versioning.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Canonical display form of a project id: `<uuid-hex>`.
 ///
 /// Project ids are generated once at creation and stored in the database;
 /// they are stable inside the project file and never derived from content.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ProjectId(String);
 
 impl ProjectId {
@@ -33,7 +34,7 @@ impl fmt::Display for ProjectId {
 pub const SCHEMA_VERSION: i32 = 1;
 
 /// Project metadata recorded at creation and reported by every surface.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisProjectMeta {
     pub project_id: ProjectId,
     pub name: String,

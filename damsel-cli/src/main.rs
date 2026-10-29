@@ -12,12 +12,13 @@ use damsel_core::{
     Symbol, SymbolKind, SymbolicationMatch,
 };
 use damsel_macho::{
-    SharedCacheSession, analyze_disassembly_with_image, disassemble_v2, inspect_shared_cache, load,
+    SharedCacheSession, analyze_disassembly_with_image, disassemble_v2, ingest_binary_image,
+    inspect_shared_cache, load,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 #[derive(Debug, Parser)]
@@ -516,9 +517,35 @@ enum Command {
         #[arg(long)]
         no_open: bool,
     },
+    #[command(
+        about = "Analyze a binary into a persistent project database (RE Power Wave 4)",
+        long_about = "Analyze a binary into a persistent project database.\n\nCreates `<target>.damsel/` next to the target with a SQLite store, ingests sections/symbols/imports/ObjC as seed facts, and prints a summary. Existing projects require `--refresh` to rebuild."
+    )]
+    Analyze {
+        path: PathBuf,
+        #[arg(long, help = "Delete and rebuild an existing project directory")]
+        refresh: bool,
+    },
+    #[command(about = "Inspect or export an analysis project database")]
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
     Cache {
         #[command(subcommand)]
         command: CacheCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectCommand {
+    #[command(about = "Show project metadata, sources, and fact counts")]
+    Show { project: PathBuf },
+    #[command(about = "Write the canonical deterministic export")]
+    Export {
+        project: PathBuf,
+        #[arg(long, help = "Output file (defaults to stdout, bytes verbatim)")]
+        out: Option<PathBuf>,
     },
 }
 
@@ -1085,10 +1112,236 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
                 open_browser: !no_open,
             })?;
         }
+        Command::Analyze { path, refresh } => {
+            handle_analyze(path, refresh, &output_settings)?;
+        }
+        Command::Project { command } => handle_project_command(command, &output_settings)?,
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
     Ok(CliRunOutcome::Success)
+}
+
+fn analyzer_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+fn fresh_project_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    format!("{nanos:016x}-{}", std::process::id())
+}
+
+fn project_dir_for(target: &Path) -> PathBuf {
+    let file_name = format!("{}.damsel", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+    target.with_file_name(file_name)
+}
+
+fn resolve_project_dir(arg: &Path) -> Result<PathBuf, CliRunError> {
+    let has_store = |dir: &Path| dir.join("project.db").is_file();
+    if arg.is_dir() && has_store(arg) {
+        return Ok(arg.to_path_buf());
+    }
+    let adjacent = project_dir_for(arg);
+    if adjacent.is_dir() && has_store(&adjacent) {
+        return Ok(adjacent);
+    }
+    Err(CliRunError::command(
+        "project_not_found",
+        format!("no project database found for `{}`", arg.display()),
+    ))
+}
+
+fn map_store_error(error: damsel_project::StoreError) -> CliRunError {
+    match error {
+        damsel_project::StoreError::AlreadyExists(path) => CliRunError::command(
+            "project_exists",
+            format!(
+                "project already exists at `{}`; pass --refresh to rebuild",
+                path.parent().map(|p| p.display().to_string()).unwrap_or_default()
+            ),
+        ),
+        damsel_project::StoreError::UnsupportedSchema { path, found, supported } => CliRunError {
+            code: "stale_schema",
+            message: format!(
+                "project at `{}` has schema version {found}; this damsel supports {supported}",
+                path.display()
+            ),
+            details: None,
+        },
+        damsel_project::StoreError::ProjectNotFound(p) => {
+            CliRunError::command("project_not_found", p)
+        }
+        other => CliRunError {
+            code: "store_error",
+            message: other.to_string(),
+            details: None,
+        },
+    }
+}
+
+fn map_ingest_error(error: damsel_macho::IngestError) -> CliRunError {
+    CliRunError::command("ingest_error", error.to_string())
+}
+
+fn project_json(value: serde_json::Value) -> String {
+    serde_json::to_string(&value).unwrap_or_default()
+}
+
+fn handle_analyze(
+    path: PathBuf,
+    refresh: bool,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{AnalysisProjectMeta, Create, ProjectId, ProjectStore, open_store};
+
+    let image = load_image(path.clone())?;
+    let project_dir = project_dir_for(&path);
+    if project_dir.exists() && !refresh {
+        return Err(CliRunError::command(
+            "project_exists",
+            format!(
+                "project already exists at `{}`; pass --refresh to rebuild",
+                project_dir.display()
+            ),
+        ));
+    }
+    if refresh && project_dir.exists() {
+        std::fs::remove_dir_all(&project_dir).map_err(|e| CliRunError::command(
+            "store_error",
+            format!("failed to remove {}: {e}", project_dir.display()),
+        ))?;
+    }
+    let name = path
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "project".to_string());
+    let meta = AnalysisProjectMeta {
+        project_id: ProjectId::new(fresh_project_id()),
+        name,
+        analyzer_version: analyzer_version().to_string(),
+    };
+    let db_path = project_dir.join("project.db");
+    let mut store = open_store(&db_path, damsel_project::Create::New, &meta)
+        .map_err(map_store_error)?;
+    let outcome = ingest_binary_image(&mut store, &image, analyzer_version())
+        .map_err(map_ingest_error)?;
+    let source_count = store.sources().map_err(map_store_error)?.len();
+    let store_meta = store.meta().map_err(map_store_error)?;
+    drop(store);
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "analyze",
+            "project": store_meta,
+            "project_path": project_dir.display().to_string(),
+            "sources": source_count,
+            "objects": outcome.object_count,
+            "facts": outcome.fact_count,
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("analyzed -> {}", project_dir.display());
+        println!("  project_id  = {}", store_meta.project_id);
+        println!("  sources     = {source_count}");
+        println!("  objects     = {}", outcome.object_count);
+        println!("  facts       = {}", outcome.fact_count);
+    }
+    Ok(())
+}
+
+fn handle_project_command(
+    command: ProjectCommand,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, open_store};
+
+    let version = analyzer_version().to_string();
+    match command {
+        ProjectCommand::Show { project } => {
+            let project_dir = resolve_project_dir(&project)?;
+            let meta_for_open = AnalysisProjectMetaShim::meta_for_open(&version);
+            let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+                .map_err(map_store_error)?;
+            let meta = store.meta().map_err(map_store_error)?;
+            let sources = store.sources().map_err(map_store_error)?;
+            let facts = store.facts().map_err(map_store_error)?;
+            if output_settings.format == output::OutputFormat::Json {
+                let value = serde_json::json!({
+                    "command": "project_show",
+                    "project": meta,
+                    "sources": sources.iter().map(|s| serde_json::json!({
+                        "source_id": s.source_id,
+                        "kind": s.kind.as_str(),
+                        "label": s.label,
+                        "address_spaces": s.address_spaces.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+                    })).collect::<Vec<_>>(),
+                    "facts": facts.len(),
+                });
+                println!("{}", project_json(value));
+            } else {
+                println!("project {} ({})", meta.name, meta.project_id);
+                println!("  analyzer = {}", meta.analyzer_version);
+                for source in &sources {
+                    println!(
+                        "  source {}/{} {} {:?}",
+                        source.source_id,
+                        source.kind,
+                        source.label.as_deref().unwrap_or(""),
+                        source.address_spaces.iter().map(|a| a.as_str()).collect::<Vec<_>>()
+                    );
+                }
+                println!("  facts    = {}", facts.len());
+            }
+        }
+        ProjectCommand::Export { project, out } => {
+            let project_dir = resolve_project_dir(&project)?;
+            let meta_for_open = AnalysisProjectMetaShim::meta_for_open(&version);
+            let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+                .map_err(map_store_error)?;
+            let bytes = store.export_canonical().map_err(map_store_error)?;
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, &bytes).map_err(|e| CliRunError::command(
+                        "store_error",
+                        format!("failed to write {}: {e}", path.display()),
+                    ))?;
+                    if output_settings.format == output::OutputFormat::Text {
+                        println!("wrote {} bytes to {}", bytes.len(), path.display());
+                    } else {
+                        println!("{}", project_json(serde_json::json!({
+                            "command": "project_export",
+                            "path": path.display().to_string(),
+                            "bytes": bytes.len(),
+                        })));
+                    }
+                }
+                None => {
+                    use std::io::Write;
+                    std::io::stdout()
+                        .write_all(&bytes)
+                        .map_err(|e| CliRunError::command("store_error", e.to_string()))?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `project show/export` open with the current analyzer version; the store
+/// records observed-version drift without rewriting stored metadata.
+struct AnalysisProjectMetaShim;
+impl AnalysisProjectMetaShim {
+    fn meta_for_open(version: &str) -> damsel_project::AnalysisProjectMeta {
+        damsel_project::AnalysisProjectMeta {
+            project_id: damsel_project::ProjectId::new("open"),
+            name: String::new(),
+            analyzer_version: version.to_string(),
+        }
+    }
 }
 
 fn handle_cache_command(

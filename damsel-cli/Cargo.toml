@@ -13,6 +13,7 @@ axum.workspace = true
 clap.workspace = true
 damsel-core = { path = "../damsel-core" }
 damsel-macho = { path = "../damsel-macho" }
+damsel-project = { path = "../damsel-project" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

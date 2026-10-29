@@ -49,10 +49,22 @@ exists; N-1 real-db fixture lands with the first schema bump).
   (sections/symbols/imports truth; ObjC IMP seeds; byte-identical exports
   across two independent ingests) + damsel-project 6/6.
 
+### Unit 4.3 — `damsel analyze` + `damsel project show/export` CLI — DONE
+
+- Commands: `analyze <target> [--refresh]`, `project show <project>`,
+  `project export <project> [--out]` (stdout = raw canonical bytes).
+  Project dir = `<target>.damsel/` with `project.db`; resolution accepts
+  both the dir and adjacent-target forms. Typed errors: `project_exists`
+  (suggests --refresh), `project_not_found`, `stale_schema`,
+  `store_error`, `ingest_error`. Text + JSON output, sorted keys.
+- Proof: `cargo test -p damsel-cli --test project_cli` 3/3 (round trip
+  incl. export canonical-order prefix assertion; typed refusal +
+  refresh rebuild; unknown-project typed error). Workspace: 35 suites,
+  0 failures.
+
 ### Next units (queue order)
 
-- 4.3 `damsel analyze` CLI (project create + ingest; `--format json`
-  events) + `project show/export` commands.
+- 4.3 `damsel analyze` CLI — DONE (see above)
 - 4.4 function seed collector (ranks 1–5 exact sources) + recovery
   worker v1; `functions` command; `bin/function-recovery-audit.sh` gate.
 - 4.5 xref harvesting from `DisassemblyAnalysis` promotion; `xrefs`
