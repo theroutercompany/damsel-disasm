@@ -346,3 +346,188 @@ fn branch_target(instruction: &DecodedInstruction) -> Option<&u64> {
         _ => None,
     })
 }
+
+// ---------------------------------------------------------------------------
+// x86-64 lift (Wave 6; shares the D1 vocabulary). Floor set: mov/movabs
+// (reg↔imm/reg/mem), lea, add/sub/and/or/xor/shl/shr, call (direct via
+// references, indirect → Unknown target), ret/jmp/jcc/trap terminators.
+// Indexed memory (base+index*scale) stays `Unknown` until D2 models
+// scale — never guessed.
+// ---------------------------------------------------------------------------
+
+pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
+    use damsel_core::semantics_x86_64 as sem;
+
+    let mut blocks: Vec<IrBlock> = Vec::new();
+    let mut current = IrBlock {
+        id: 0,
+        start_address: instructions.first().map(|i| i.address).unwrap_or(0),
+        statements: Vec::new(),
+        terminator: IrTerminator::WindowEnd,
+    };
+    let mut unknown_count = 0usize;
+
+    for instruction in instructions {
+        let lower = instruction.mnemonic.to_ascii_lowercase();
+        let site = instruction.address;
+
+        // Terminator first (x86 terminators emit no statements).
+        if sem::is_return(&lower) || matches!(lower.as_str(), "jmp" | "ljmp")
+            || sem::is_conditional_branch(&lower) || sem::is_trap(&lower)
+        {
+            let next = instruction.address + instruction.size as u64;
+            let terminator = if sem::is_return(&lower) {
+                IrTerminator::Return
+            } else if sem::is_trap(&lower) {
+                IrTerminator::Trap
+            } else if let Some(target) = instruction.references.iter().find_map(|r| match r {
+                damsel_core::Reference::Branch { target } => Some(*target),
+                _ => None,
+            }) {
+                if sem::is_conditional_branch(&lower) {
+                    IrTerminator::CondBranch {
+                        condition: IrCondition::Raw(lower.clone()),
+                        taken: target,
+                        fallthrough: next,
+                    }
+                } else {
+                    IrTerminator::Branch(target)
+                }
+            } else {
+                IrTerminator::Unknown { mnemonic: lower.clone() }
+            };
+            current.terminator = terminator;
+            blocks.push(std::mem::replace(
+                &mut current,
+                IrBlock {
+                    id: blocks.len() + 1,
+                    start_address: next,
+                    statements: Vec::new(),
+                    terminator: IrTerminator::WindowEnd,
+                },
+            ));
+            unknown_count += usize::from(matches!(
+                blocks.last().unwrap().terminator,
+                IrTerminator::Unknown { .. }
+            ));
+            continue;
+        }
+
+        let binary_op = match lower.as_str() {
+            "add" => Some(IrBinOp::Add),
+            "sub" => Some(IrBinOp::Sub),
+            "and" => Some(IrBinOp::And),
+            "or" => Some(IrBinOp::Or),
+            "xor" => Some(IrBinOp::Xor),
+            "shl" => Some(IrBinOp::Shl),
+            "shr" => Some(IrBinOp::Shr),
+            _ => None,
+        };
+        let destination = instruction.operands.first().and_then(register_of);
+
+        let statement = if let (Some(op), Some(dst)) = (binary_op, destination.clone()) {
+            Some(IrStatement::Assign {
+                destination: dst,
+                expression: IrExpr::BinOp {
+                    op,
+                    lhs: Box::new(operand_expr(instruction.operands.first())),
+                    rhs: Box::new(operand_expr(instruction.operands.get(1))),
+                },
+            })
+        } else {
+            match lower.as_str() {
+                "mov" | "movabs" | "movq" | "movl" => {
+                    let first = instruction.operands.first();
+                    let second = instruction.operands.get(1);
+                    match (first, second) {
+                        (Some(dst_op), Some(src_op)) => {
+                            if let Some(dst) = register_of(dst_op) {
+                                if matches!(src_op, Operand::Memory { .. }) {
+                                    memory_expr_from(src_op).map(|address| IrStatement::Load {
+                                        destination: dst,
+                                        address,
+                                    })
+                                } else {
+                                    Some(IrStatement::Assign {
+                                        destination: dst,
+                                        expression: operand_expr(Some(src_op)),
+                                    })
+                                }
+                            } else if let (Some(address), Some(value)) =
+                                (memory_expr_from(dst_op), operand_expr_opt(Some(src_op)))
+                            {
+                                Some(IrStatement::Store { address, value })
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                }
+                "lea" => {
+                    let destination = destination.clone();
+                    instruction
+                        .operands
+                        .get(1)
+                        .and_then(memory_expr_from)
+                        .map(|address| IrStatement::Assign {
+                            destination: destination.unwrap_or_default(),
+                            expression: address,
+                        })
+                }
+                "call" | "lcall" => {
+                    let target = instruction.references.iter().find_map(|r| match r {
+                        damsel_core::Reference::Call { target } => {
+                            Some(IrCallTarget::Function(*target))
+                        }
+                        damsel_core::Reference::IndirectCall { via } => {
+                            Some(IrCallTarget::Unknown(via.clone()))
+                        }
+                        _ => None,
+                    });
+                    target.map(|target| IrStatement::Call { target, site })
+                }
+                _ => None,
+            }
+        };
+
+        match statement {
+            Some(statement) => current.statements.push(statement),
+            None => {
+                unknown_count += 1;
+                current.statements.push(IrStatement::Unknown { mnemonic: lower, site });
+            }
+        }
+    }
+    if !current.statements.is_empty() || (blocks.is_empty() && !instructions.is_empty()) {
+        blocks.push(current);
+    }
+
+    IrFunction {
+        entry_address: instructions.first().map(|i| i.address).unwrap_or(0),
+        blocks,
+        instruction_count: instructions.len(),
+        unknown_count,
+    }
+}
+
+fn memory_expr_from(operand: &Operand) -> Option<IrExpr> {
+    match operand {
+        Operand::Memory { base, index, displacement, .. } => {
+            if index.is_some() {
+                // Indexed addressing awaits D2 scale modeling.
+                None
+            } else {
+                Some(IrExpr::AddrOf {
+                    base: base.clone(),
+                    displacement: *displacement,
+                })
+            }
+        }
+        _ => None,
+    }
+}
+
+fn operand_expr_opt(operand: Option<&Operand>) -> Option<IrExpr> {
+    operand.map(|o| operand_expr(Some(o)))
+}

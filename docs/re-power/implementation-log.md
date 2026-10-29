@@ -299,8 +299,22 @@ sufficient; syscall intrinsic table required).
 - Proof: d5_render 2/2, project_cli 10/10. Workspace 47 suites,
   0 failures.
 
-Next 6.x: D2 slice 2 (per-block renaming), D4 structuring (if/else
-from CondBranch chains), type seeds, x86_64 lift.
+### Unit 6.5 — x86_64 lift + cross-format decompile — DONE
+
+- `lift_x86_64`: floor set (mov family reg↔imm/reg/mem, lea, binops,
+  call direct/indirect→Unknown target, ret/jmp/jcc/trap terminators
+  via semantics_x86_64); indexed memory stays visible `Unknown` (scale
+  models in D2); push/pop visible unknowns v1. CLI `decompile` branches
+  on ELF: resolves the function + recovered bound from project facts,
+  decodes via the x86_64 mapper, lifts, renders.
+- **Cross-format decompilation proven**: `exported_func` on the
+  synthetic ELF renders with resolved `sub_f7()` call.
+- Proof: d5_x86_lift 2/2, project_cli 11/11. Workspace 48 suites,
+  0 failures.
+
+Next 6.x: D2 slice 2 (per-block renaming + scale modeling), D4
+structuring (if/else from CondBranch chains), type seeds, then
+real-binary decompile spot-checks on the lab.
 
 ## Lab notes
 

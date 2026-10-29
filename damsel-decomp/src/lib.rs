@@ -15,7 +15,7 @@ mod summary;
 
 pub use ir::{
     IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement,
-    IrTerminator, IrValue, lift_arm64,
+    IrTerminator, IrValue, lift_arm64, lift_x86_64,
 };
 pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
 pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};

@@ -1393,6 +1393,15 @@ fn handle_decompile(
             "decompile requires the target binary next to the project",
         ));
     };
+    // ELF path (Wave 6.5): decode via the x86_64 mapper inside the
+    // function's recovered bound; Mach-O keeps the engine path.
+    let is_elf = std::fs::read(&target)
+        .map(|bytes| bytes.len() >= 4 && bytes[0..4] == *b"\x7fELF")
+        .unwrap_or(false);
+    if is_elf {
+        return handle_decompile_elf(project, selector, output_settings);
+    }
+
     let image = load_image(target)?;
     let request = damsel_core::DisassemblyRequestV2 {
         target: if let Some(hex) = selector.strip_prefix("0x") {
@@ -1435,6 +1444,94 @@ fn handle_decompile(
                 .collect::<Vec<_>>()
                 .join(",");
             println!("{:>10}  {}", if addresses.is_empty() { String::new() } else { addresses }, line.text);
+        }
+    }
+    Ok(())
+}
+
+fn handle_decompile_elf(
+    project: PathBuf,
+    selector: &str,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, TypedStore, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let target_path = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".damsel"))
+        .map(|stem| project_dir.with_file_name(stem));
+    let Some(target_path) = target_path.filter(|p| p.is_file()) else {
+        return Err(CliRunError::command(
+            "project_not_found",
+            "decompile requires the target binary next to the project",
+        ));
+    };
+    let image = damsel_elf::load(&target_path)
+        .map_err(|e| CliRunError::command("unsupported_input", e.to_string()))?;
+
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+        .map_err(map_store_error)?;
+    let source = store
+        .sources()
+        .map_err(map_store_error)?
+        .first()
+        .ok_or_else(|| CliRunError::command("project_not_found", "no sources"))?
+        .clone();
+
+    // Resolve the function (by name or address) and its bound.
+    let summaries = damsel_project::function_summaries(&store).map_err(map_store_error)?;
+    let summary = summaries
+        .iter()
+        .find(|f| {
+            f.name.as_deref() == Some(selector)
+                || format!("{:#x}", f.address) == selector
+        })
+        .ok_or_else(|| CliRunError::command("function_not_found", selector.to_string()))?;
+
+    let facts = store.facts_for_source(source.source_id).map_err(map_store_error)?;
+    let bound = facts
+        .iter()
+        .find(|f| {
+            f.kind.as_str() == "function_bound"
+                && f.object_id
+                    .as_ref()
+                    .is_some_and(|o| o.key() == format!("{:#x}", summary.address))
+        })
+        .and_then(|f| {
+            let (range, _) = f.payload.split_once("|stop=")?;
+            let (start, end) = range.split_once('-')?;
+            Some((
+                u64::from_str_radix(start.trim_start_matches("0x"), 16).ok()?,
+                u64::from_str_radix(end.trim_start_matches("0x"), 16).ok()?,
+            ))
+        })
+        .unwrap_or((summary.address, summary.address));
+
+    let length = (bound.1 - bound.0) as usize;
+    let Some(bytes) = image.read_at_vaddr(bound.0, length) else {
+        return Err(CliRunError::command(
+            "function_not_found",
+            "function bytes unreadable",
+        ));
+    };
+    let instructions = damsel_core::decode_x86_64(bytes, bound.0, None)
+        .map_err(|e| CliRunError::command("engine_error", e.to_string()))?;
+    let function = damsel_decomp::lift_x86_64(&instructions);
+    let pseudocode = damsel_decomp::render_pseudocode(&function, Some(selector));
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "decompile",
+            "pseudocode": serde_json::to_value(&pseudocode).unwrap_or_default(),
+            "unknown_count": function.unknown_count,
+        });
+        println!("{}", project_json(value));
+    } else {
+        for line in &pseudocode.lines {
+            println!("{}", line.text);
         }
     }
     Ok(())

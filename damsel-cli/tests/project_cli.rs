@@ -377,6 +377,28 @@ fn decompile_command_renders_pseudocode_with_provenance() {
 }
 
 #[test]
+fn decompile_elf_function_via_x86_lift() {
+    let dir = smoke_dir("decompile-elf");
+    let target = dir.join("libfake.so.1");
+    std::fs::write(&target, damsel_elf::synth::shared_object()).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    let out = damsel()
+        .arg("decompile").arg(&target)
+        .arg("--function").arg("exported_func")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let lines = body["pseudocode"]["lines"].as_array().unwrap();
+    let texts: Vec<&str> = lines.iter().map(|l| l["text"].as_str().unwrap()).collect();
+    // .text at 0xE8 → helper at 0xF7; the call renders resolved.
+    assert!(texts.iter().any(|t| t.contains("sub_f7(")), "got: {texts:?}");
+    assert!(texts.iter().any(|t| *t == "return;"));
+    assert!(texts.iter().any(|t| t.contains("/* unknown: push */")));
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");
