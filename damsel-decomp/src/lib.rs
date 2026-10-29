@@ -7,8 +7,13 @@
 //! SSA, structuring, pseudocode — strategy D1–D5) consume the same
 //! facts plus Wave 5A semantics; no stage may emit only a string.
 
+mod ir;
 mod summary;
 
+pub use ir::{
+    IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement,
+    IrTerminator, IrValue, lift_arm64,
+};
 pub use summary::{
     CallSite, FunctionSummaryReport, SummaryError, summarize_function, summarize_named,
 };

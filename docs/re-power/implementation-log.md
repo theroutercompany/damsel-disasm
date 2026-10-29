@@ -251,8 +251,21 @@ sufficient; syscall intrinsic table required).
   join; ELF `exported_func` call to `0xf7`; typed selector errors);
   project_cli 9/9. Workspace 43 suites, 0 failures.
 
-Next 6.x: D1 low-level IR lift from Wave 5A semantics (arm64 first),
-stack-frame facts, then structuring (D4).
+### Unit 6.1 — D1 low-level IR + arm64 lift — DONE
+
+- `damsel-decomp::ir`: typed, serde-serializable D1 vocabulary
+  (IrValue/IrExpr/IrStatement/IrTerminator/IrBlock/IrFunction) per the
+  decompiler-ir-strategy shape. `lift_arm64`: strategy floor set
+  (mov/movz/movk, add/sub/and/orr/eor/lsl/lsr, ldr/ldur/str/stur,
+  bl→resolved Call, terminators ret/trap/b/b.cond via semantics
+  predicates); everything else lifts as visible `Unknown` with honest
+  `unknown_count` accounting; empty windows lift to zero blocks.
+- Proof: d1_lift 3/3 (`_main`: return-terminated block + Call to
+  0x100000460; unknown-count invariant; deterministic serialize
+  round-trip; empty window). Workspace 44 suites, 0 failures.
+
+Next 6.x: D2 data-flow (register SSA over blocks), stack-frame facts,
+then structuring (D4) + pseudocode renderer (D5).
 
 ## Lab notes
 

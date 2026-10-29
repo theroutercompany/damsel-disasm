@@ -433,10 +433,12 @@ dependencies = [
 name = "damsel-decomp"
 version = "0.1.0"
 dependencies = [
+ "damsel-core",
  "damsel-elf",
  "damsel-macho",
  "damsel-project",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]

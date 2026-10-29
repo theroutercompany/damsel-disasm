@@ -9,11 +9,13 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
+damsel-core = { path = "../damsel-core" }
 damsel-project = { path = "../damsel-project" }
 thiserror.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 damsel-macho = { path = "../damsel-macho" }
 damsel-elf = { path = "../damsel-elf" }
 tempfile.workspace = true
