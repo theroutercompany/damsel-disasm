@@ -530,8 +530,18 @@ sufficient; syscall intrinsic table required).
   resolved Data reference); non-RIP lea keeps the address expression.
 - Proof: workspace 51 suites, 0 failures.
 
+### Lab evidence run 7 (2026-10-29) — delta run 5 — DONE
+
+- Four glibc allocator functions:
+  - `_int_malloc`: **1** unknown, 105 lines (was 2)
+  - `__GI___libc_malloc`: 2 unknowns, 43 lines (segment ops)
+  - `malloc_consolidate`: 1 unknown, 37 lines
+  - `sysmalloc` (NEW): **2** unknowns, 113 lines
+- Remaining unknowns are segment-register ops (fs:/gs:) and one
+  exotic SIMD — genuinely outside the v1 floor set.
+
 Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
-migration, then real-binary delta run 5.
+migration.
 
 ## Lab notes
 
