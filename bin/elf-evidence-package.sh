@@ -16,13 +16,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DAMSEL="${DAMSEL:-target/debug/damsel-cli}"
-if [[ ! -x "$DAMSEL" ]]; then
-  echo "damsel binary not found at $DAMSEL (build with cargo build -p damsel-cli or set DAMSEL)" >&2
-  exit 1
-fi
-DAMSEL="$(cd "$(dirname "$DAMSEL")" && pwd)/$(basename "$DAMSEL")"
-
 VERIFY=0
 if [[ "${1:-}" == "--verify" ]]; then
   VERIFY=1
@@ -38,6 +31,13 @@ if [[ "$VERIFY" == 1 ]]; then
     || { echo "elf-evidence verify: FAILED" >&2; exit 1; }
   exit 0
 fi
+
+DAMSEL="${DAMSEL:-target/debug/damsel-cli}"
+if [[ ! -x "$DAMSEL" ]]; then
+  echo "damsel binary not found at $DAMSEL (build with cargo build -p damsel-cli or set DAMSEL)" >&2
+  exit 1
+fi
+DAMSEL="$(cd "$(dirname "$DAMSEL")" && pwd)/$(basename "$DAMSEL")"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
