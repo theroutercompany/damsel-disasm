@@ -168,6 +168,31 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
             .first()
             .and_then(register_of)
             .map(|d| d.clone());
+        // Memory-destination arithmetic: add [rax], 5 → Load temp;
+        // Store temp + 5 back. v1: load to a synthetic temp, apply op,
+        // store back — the D2 renaming gives it a proper name.
+        if let Some(op) = binary_op {
+            let first_is_mem = matches!(instruction.operands.first(), Some(Operand::Memory { .. }));
+            if first_is_mem {
+                if let Some(address) = instruction.operands.first().and_then(memory_expr_from) {
+                    let temp = "_mem";
+                    let value = operand_expr(instruction.operands.get(1));
+                    statements.push(IrStatement::Load {
+                        destination: temp.to_string(),
+                        address: address.clone(),
+                    });
+                    statements.push(IrStatement::Store {
+                        address,
+                        value: IrExpr::BinOp {
+                            op,
+                            lhs: Box::new(IrExpr::Value(IrValue::Register(temp.to_string()))),
+                            rhs: Box::new(value),
+                        },
+                    });
+                    return;
+                }
+            }
+        }
         if let Some(op) = flag_op {
             // Register-destination variants (subs/adds/ands) compare
             // operands [1],[2]; compare-only forms (cmp/cmn/tst) use
@@ -516,6 +541,34 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
             "test" => Some(IrBinOp::And),
             _ => None,
         };
+        // Memory-destination arithmetic: add [rax], 5 → Load temp,
+        // Store temp+5 (read-modify-write).
+        if let Some(op) = binary_op {
+            if matches!(instruction.operands.first(), Some(Operand::Memory { .. })) {
+                if let Some(address) = instruction.operands.first().and_then(memory_expr_from) {
+                    let temp = "_mem";
+                    let value = operand_expr(instruction.operands.get(1));
+                    let statement = IrStatement::Store {
+                        address,
+                        value: IrExpr::BinOp {
+                            op,
+                            lhs: Box::new(IrExpr::Value(IrValue::Register(temp.to_string()))),
+                            rhs: Box::new(value),
+                        },
+                    };
+                    current.statements.push(IrStatement::Load {
+                        destination: temp.to_string(),
+                        address: instruction
+                            .operands
+                            .first()
+                            .and_then(memory_expr_from)
+                            .unwrap_or(IrExpr::Value(IrValue::Unknown("mem".to_string()))),
+                    });
+                    current.statements.push(statement);
+                    continue;
+                }
+            }
+        }
         let statement = if let Some(op) = flag_op {
             Some(IrStatement::Assign {
                 destination: "flags".to_string(),

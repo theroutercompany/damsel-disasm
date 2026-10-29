@@ -560,8 +560,15 @@ sufficient; syscall intrinsic table required).
   (`add [rax], 5`), unhandled operand shapes. These are the next lift
   targets.
 
-Next: cross-block phi-SSA, memory-destination arithmetic in the x86
-lift, rmcp transport spike, synthesize dispatch migration.
+### Unit 6.22 — memory-destination arithmetic — DONE
+
+- `add [rax], 5` / `add [sp], #8` lift as read-modify-write: Load
+  temp + Store temp∘value. Both arm64 and x86_64 lifts covered.
+  Remaining glibc unknowns: operand-shape edge cases only.
+- Proof: workspace 51 suites, 0 failures.
+
+Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
+migration, then lab delta run 7 for final numbers.
 
 ## Lab notes
 
