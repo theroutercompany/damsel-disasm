@@ -608,6 +608,18 @@ sufficient; syscall intrinsic table required).
   existing endpoints; new endpoints verified via compile + manual
   smoke).
 
+### Lab evidence run 10 (2026-10-29) — broad-function survey — DONE
+
+- Nine glibc functions surveyed:
+  - **Zero-unknown**: `_int_malloc` (106 lines), `__assert` (7),
+    `_dl_start` (6) — 3/9 fully decompiled
+  - Near-zero: `__GI___libc_malloc` (1/44), `malloc_consolidate`
+    (1/37), `__malloc_usable_size` (1/19)
+  - Low: `__GI_abort` (2/31), `sysmalloc` (2/113), `__malloc_trim`
+    (3/132)
+  - Total: **10 / 495 lines (2.0% unknown rate)** across diverse
+    function types (allocator, assert, loader startup)
+
 Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
 migration, Workbench pane integration.
 
