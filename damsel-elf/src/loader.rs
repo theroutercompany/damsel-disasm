@@ -209,6 +209,21 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
     });
 
     // Build-id via the Object trait (sections, PT_NOTE fallback).
+    // Dynamic relocations: one raw Rela walker for both paths (DT_JMPREL
+    // + DT_RELA; exact r_type values, symbol names by table index).
+    // Table-ordered dynsym names (null symbol occupies index 0).
+    let mut dynsym_by_index: Vec<(String, Option<String>)> = vec![(String::new(), None)];
+    for symbol in symbols.iter().filter(|s| s.dynamic) {
+        dynsym_by_index.push((symbol.name.clone(), symbol.version.clone()));
+    }
+    let raw_segments = crate::walker::parse_segments(
+        bytes.as_slice(),
+        header.e_phoff(endian),
+        header.e_phnum(endian),
+    )
+    .unwrap_or_default();
+    let relocations = crate::walker::walk_relocations(bytes.as_slice(), &raw_segments, &dynsym_by_index);
+
     let build_id = file
         .build_id()
         .ok()
@@ -217,8 +232,7 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
 
     // PT_LOAD mapping via raw program headers (single source with the
     // segment-only path).
-    let raw_loads = crate::walker::parse_segments(bytes.as_slice(), header.e_phoff(endian), header.e_phnum(endian))
-        .unwrap_or_default();
+    let raw_loads = raw_segments.clone();
     let loads: Vec<(u64, u64, u64)> = raw_loads
         .iter()
         .filter(|s| s.p_type == object::elf::PT_LOAD)
@@ -236,6 +250,7 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
         sections,
         symbols,
         dynamic,
+        relocations,
     })
 }
 
@@ -274,8 +289,10 @@ fn build_segment_only(
     }
 
     let walked = crate::walker::walk_dynamic(bytes, &raw);
-    let (symbols, dynamic) = match walked {
-        Some(crate::walker::SegmentOnlyDynamic { symbols, entries }) => (symbols, entries),
+    let (symbols, dynamic) = match &walked {
+        Some(crate::walker::SegmentOnlyDynamic { symbols, entries }) => {
+            (symbols.clone(), entries.clone())
+        }
         None => (Vec::new(), Vec::new()),
     };
     let soname = dynamic.iter().find_map(|e| match e {
@@ -288,6 +305,15 @@ fn build_segment_only(
         .filter(|s| s.p_type == object::elf::PT_LOAD)
         .map(|s| (s.p_vaddr, s.p_filesz, s.p_offset))
         .collect();
+    let relocations = {
+        let mut dynsym_by_index: Vec<(String, Option<String>)> = vec![(String::new(), None)];
+        for symbol in &symbols {
+            if symbol.dynamic {
+                dynsym_by_index.push((symbol.name.clone(), symbol.version.clone()));
+            }
+        }
+        crate::walker::walk_relocations(bytes, &raw, &dynsym_by_index)
+    };
     Ok(ElfImage {
         label,
         data: std::sync::Arc::from(bytes.to_vec().into_boxed_slice()),
@@ -300,6 +326,7 @@ fn build_segment_only(
         sections: Vec::new(),
         symbols,
         dynamic,
+        relocations,
     })
 }
 

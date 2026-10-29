@@ -95,6 +95,29 @@ pub fn ingest_elf_image(
         }
     }
 
+    // Dynamic relocations → binding facts (PLT/GOT; Wave 5B.6).
+    for relocation in &image.relocations {
+        let payload = match &relocation.symbol {
+            Some(symbol) => format!(
+                "{}|got={:#x}|name={}{}|addend={}",
+                relocation.kind,
+                relocation.offset,
+                symbol.name,
+                symbol
+                    .version
+                    .as_deref()
+                    .map(|v| format!("@{v}"))
+                    .unwrap_or_default(),
+                relocation.addend
+            ),
+            None => format!(
+                "{}|got={:#x}|addend={}",
+                relocation.kind, relocation.offset, relocation.addend
+            ),
+        };
+        emit!(None::<ObjectId>, "reloc", payload);
+    }
+
     // Dynamic linkage → dependency facts (mirrors cache image-deps).
     for entry in &image.dynamic {
         if let ElfDynamicEntry::Needed(needed) = entry {

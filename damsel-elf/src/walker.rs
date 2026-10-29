@@ -355,3 +355,77 @@ fn resolve_versions(
     }
     out
 }
+
+/// Walk dynamic relocations (Elf64_Rela) from DT_JMPREL (PLT) and
+/// DT_RELA tables: `{r_offset, r_info = sym<<32|type, r_addend}`.
+pub fn walk_relocations(
+    bytes: &[u8],
+    segments: &[RawSegment],
+    dynsym: &[(String, Option<String>)],
+) -> Vec<crate::image::ElfRelocation> {
+    use crate::image::{ElfRelocation, ElfRelocationSymbol};
+    let mut out = Vec::new();
+    let Some(entries) = parse_dynamic_entries(bytes, segments) else {
+        return out;
+    };
+    let get = |tag: u64| entries.iter().find(|e| e.tag == tag).map(|e| e.value);
+
+    let mut tables: Vec<(u64, u64, bool)> = Vec::new(); // (addr, size, is_plt)
+    if let (Some(addr), Some(size)) = (
+        get(0x17), // DT_JMPREL
+        get(0x2),  // DT_PLTRELSZ
+    ) {
+        tables.push((addr, size, true));
+    }
+    if let (Some(addr), Some(size)) = (
+        get(0x7), // DT_RELA
+        get(0x8), // DT_RELASZ
+    ) {
+        tables.push((addr, size, false));
+    }
+    for (addr, size, _is_plt) in tables {
+        let Some(start) = vaddr_to_offset(segments, addr) else { continue };
+        let start = start as usize;
+        let end = match start.checked_add(size as usize) {
+            Some(end) if end <= bytes.len() => end,
+            _ => continue,
+        };
+        for chunk in bytes[start..end].chunks_exact(24) {
+            let read_u64 = |off: usize| {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&chunk[off..off + 8]);
+                u64::from_le_bytes(buf)
+            };
+            let offset = read_u64(0);
+            let info = read_u64(8);
+            let addend = read_u64(16) as i64;
+            let r_type = (info & 0xffff_ffff) as u32;
+            let sym_index = (info >> 32) as usize;
+            let kind = match r_type {
+                7 => "jump_slot",
+                6 => "glob_dat",
+                8 => "relative",
+                37 => "irelative",
+                _ => "other",
+            }
+            .to_string();
+            let symbol = if sym_index > 0 {
+                dynsym.get(sym_index).map(|(name, version)| {
+                    ElfRelocationSymbol {
+                        name: name.clone(),
+                        version: version.clone(),
+                    }
+                })
+            } else {
+                None
+            };
+            out.push(ElfRelocation {
+                offset,
+                kind,
+                symbol,
+                addend,
+            });
+        }
+    }
+    out
+}

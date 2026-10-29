@@ -25,6 +25,27 @@ pub struct ElfImage {
     pub symbols: Vec<ElfSymbol>,
     /// Dynamic entries of interest (needed libraries, rpath, soname).
     pub dynamic: Vec<ElfDynamicEntry>,
+    /// Dynamic relocations (PLT/GOT bindings; Wave 5B.6).
+    pub relocations: Vec<ElfRelocation>,
+}
+
+/// A dynamic relocation (Elf64_Rela resolved onto the model).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElfRelocation {
+    /// Place being relocated (GOT slot / pointer address).
+    pub offset: u64,
+    /// Resolved kind name: `jump_slot`, `glob_dat`, `relative`,
+    /// `irelative`, or `other(<raw>)`.
+    pub kind: String,
+    /// Bound symbol (name + version) for symbol relocations.
+    pub symbol: Option<ElfRelocationSymbol>,
+    pub addend: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElfRelocationSymbol {
+    pub name: String,
+    pub version: Option<String>,
 }
 
 impl ElfImage {

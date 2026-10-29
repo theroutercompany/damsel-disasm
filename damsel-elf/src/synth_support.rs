@@ -226,7 +226,14 @@ pub fn shared_object() -> Vec<u8> {
     push_u16(2, &mut verneed);
     push_u32(offs[4] as u32, &mut verneed);
     push_u32(0, &mut verneed);
-    let dynamic_off = verneed_off + verneed.len();
+    // .rela.plt: one R_X86_64_JUMP_SLOT for malloc at GOT slot 0x3000.
+    // sym index 2 (malloc), type 7: r_info = (2 << 32) | 7.
+    let rela_off = verneed_off + verneed.len();
+    let rela: Vec<u8> = [0x3000u64, (2u64 << 32) | 7, 0i64 as u64]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    let dynamic_off = rela_off + rela.len();
     let mut dynamic: Vec<u8> = Vec::new();
     // dynamic entries gain DT_VERSYM/DT_VERNEED so the walker path resolves.
     let mut dt = |tag: u64, val: u64, out: &mut Vec<u8>| {
@@ -239,17 +246,20 @@ pub fn shared_object() -> Vec<u8> {
     dt(10, dynstr.len() as u64, &mut dynamic); // DT_STRSZ
     dt(6, dynsym_off as u64, &mut dynamic); // DT_SYMTAB
     dt(11, 24, &mut dynamic); // DT_SYMENT
+    dt(23, rela_off as u64, &mut dynamic); // DT_JMPREL
+    dt(2, rela.len() as u64, &mut dynamic); // DT_PLTRELSZ
+    dt(20, 7, &mut dynamic); // DT_PLTREL = RELA
     dt(0x6ffffff0, versym_off as u64, &mut dynamic); // DT_VERSYM
     dt(0x6ffffffe, verneed_off as u64, &mut dynamic); // DT_VERNEED
     dt(0, 0, &mut dynamic); // DT_NULL
     let shstrtab_off = dynamic_off + dynamic.len();
     let (shstrtab, names) = strtab_of(&[
         ".text", ".rodata", ".dynsym", ".dynstr", ".gnu.version",
-        ".gnu.version_r", ".dynamic", ".shstrtab",
+        ".gnu.version_r", ".rela.plt", ".dynamic", ".shstrtab",
     ]);
     let shoff = shstrtab_off + shstrtab.len();
 
-    let mut file = ehdr(3, phoff as u64, phnum as u16, shoff as u64, 9, 8);
+    let mut file = ehdr(3, phoff as u64, phnum as u16, shoff as u64, 10, 9);
     debug_assert_eq!(file.len(), phoff);
     file.extend(phdr(1, 5, 0, shoff as u64)); // PT_LOAD R|X covering headers+data
     file.extend(phdr(2, 6, dynamic_off as u64, dynamic.len() as u64)); // PT_DYNAMIC RW
@@ -267,6 +277,8 @@ pub fn shared_object() -> Vec<u8> {
     file.extend_from_slice(&versym);
     file.resize(verneed_off, 0);
     file.extend_from_slice(&verneed);
+    file.resize(rela_off, 0);
+    file.extend_from_slice(&rela);
     file.resize(dynamic_off, 0);
     file.extend_from_slice(&dynamic);
     file.resize(shstrtab_off, 0);
@@ -281,6 +293,15 @@ pub fn shared_object() -> Vec<u8> {
     file.extend_from_slice(&shdr(names[5], 0x6ffffffe, 0x2, verneed_off as u64, verneed.len() as u64, 3, 0)); // .gnu.version_r, link=.dynsym (idx 3)
     file.extend_from_slice(&shdr(
         names[6],
+        4, // SHT_RELA
+        0x2,
+        rela_off as u64,
+        rela.len() as u64,
+        4, // link=.dynstr (idx 4)
+        24,
+    )); // .rela.plt
+    file.extend_from_slice(&shdr(
+        names[7],
         6,
         0x3,
         dynamic_off as u64,
@@ -288,6 +309,6 @@ pub fn shared_object() -> Vec<u8> {
         4, // link=.dynstr (idx 4)
         16,
     )); // .dynamic
-    file.extend_from_slice(&shdr(names[7], 3, 0, shstrtab_off as u64, shstrtab.len() as u64, 0, 0)); // .shstrtab
+    file.extend_from_slice(&shdr(names[8], 3, 0, shstrtab_off as u64, shstrtab.len() as u64, 0, 0)); // .shstrtab
     file
 }

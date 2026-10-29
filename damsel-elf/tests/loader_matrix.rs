@@ -170,6 +170,34 @@ fn versioned_symbols_resolve_on_both_paths() {
 }
 
 #[test]
+fn relocations_resolve_on_both_paths_and_ingest_as_binding_facts() {
+    use damsel_project::{Create, TypedStore, open_store};
+
+    // Both paths see the JUMP_SLOT for malloc (GOT slot 0x3000).
+    let sectionful = load_bytes(Some("rela".into()), synth::shared_object()).unwrap();
+    let walker = load_bytes(Some("rela-stripped".into()), synth::elf_nosections()).unwrap();
+    for image in [&sectionful, &walker] {
+        let slot = image
+            .relocations
+            .iter()
+            .find(|r| r.kind == "jump_slot")
+            .expect("jump_slot relocation");
+        assert_eq!(slot.offset, 0x3000);
+        let symbol = slot.symbol.as_ref().expect("bound symbol");
+        assert_eq!(symbol.name, "malloc");
+        assert_eq!(symbol.version.as_deref(), Some("GLIBC_2.2.5"));
+    }
+
+    // Ingest emits a binding fact with the versioned name.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&dir.path().join("project.db"), Create::New, &meta()).unwrap();
+    let outcome = damsel_elf::ingest_elf_image(&mut store, &sectionful, "0.1.0").unwrap();
+    let facts = store.facts_for_source(outcome.source_id).unwrap();
+    assert!(facts.iter().any(|f| f.kind.as_str() == "reloc"
+        && f.payload == "jump_slot|got=0x3000|name=malloc@GLIBC_2.2.5|addend=0"));
+}
+
+#[test]
 fn truncated_and_malformed_inputs_fail_typed() {
     let full = synth::static_exec();
     for cut in [4usize, 16, 40, 64, 100] {
