@@ -85,7 +85,17 @@ impl InstructionDecoder for Bad64Decoder {
             let detail = cs
                 .insn_detail(insn)
                 .map_err(|err| DecodeError::InvalidInstruction(err.to_string()))?;
-            let ArchDetail::Arm64Detail(arm64_detail) = detail.arch_detail();
+            // Wave 5A.3: enabling capstone's x86 backend makes ArchDetail
+            // multi-variant; the arm64 decoder rejects other architectures
+            // explicitly instead of assuming exhaustiveness.
+            let arm64_detail = match detail.arch_detail() {
+                ArchDetail::Arm64Detail(arm64_detail) => arm64_detail,
+                _ => {
+                    return Err(DecodeError::InvalidInstruction(
+                        "non-arm64 architecture detail in arm64 decoder".to_string(),
+                    ))
+                }
+            };
             let arm64_operands = arm64_detail.operands().collect::<Vec<_>>();
             let direct_control_target =
                 direct_control_target_operand_index(&cs, &detail, &mnemonic, &arm64_operands);

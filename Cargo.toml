@@ -12,7 +12,7 @@ homepage = "https://github.com/theroutercompany/damsel-disasm"
 [workspace.dependencies]
 assert_cmd = "2.0.17"
 axum = { version = "0.8.6", features = ["json", "multipart", "query", "tokio"] }
-capstone = { version = "0.14.0", default-features = false, features = ["std", "full", "arch_arm64"] }
+capstone = { version = "0.14.0", default-features = false, features = ["std", "full", "arch_arm64", "arch_x86"] }
 clap = { version = "4.5.38", features = ["derive"] }
 criterion = { version = "0.5.1", default-features = false }
 goblin = "0.10.5"

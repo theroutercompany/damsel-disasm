@@ -123,6 +123,73 @@ pub mod arm64 {
     }
 }
 
+pub mod x86_64 {
+    //! x86-64 (SysV) control-flow classification (RE Power Wave 5A.3).
+    //!
+    //! Mnemonic-only v1: x86 directness (immediate vs register/memory
+    //! target) is an operand property, so callers pass `indirect` from
+    //! decoder detail — exactly the split the spike validated (capstone
+    //! x86 exposes RIP-relative bases and implicit regs).
+    use super::ControlFlowClass;
+
+    /// Indirectness of the transfer target, from decoder operand detail.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum Transfer {
+        /// Immediate/PC-relative target.
+        Direct,
+        /// Register or memory target.
+        Indirect,
+    }
+
+    pub fn is_return(lower: &str) -> bool {
+        matches!(lower, "ret" | "retf" | "iretd" | "iretq" | "iretw" | "ud1")
+            || lower.starts_with("ret")
+    }
+
+    pub fn is_trap(lower: &str) -> bool {
+        matches!(lower, "int3" | "int1" | "into" | "ud2" | "hlt" | "bnd")
+            || lower.starts_with("int ")
+    }
+
+    pub fn is_conditional_branch(lower: &str) -> bool {
+        const SET: &[&str] = &[
+            "jo", "jno", "js", "jns", "je", "jz", "jne", "jnz", "jb", "jc", "jnae",
+            "jnb", "jnc", "jae", "jbe", "jna", "ja", "jnbe", "jl", "jnge", "jge",
+            "jnl", "jle", "jng", "jg", "jnle", "jp", "jpe", "jnp", "jpo", "jcxz",
+            "jecxz", "jrcxz", "loop", "loope", "loopne", "loopz", "loopnz",
+        ];
+        SET.contains(&lower)
+    }
+
+    pub fn is_unconditional_transfer(lower: &str) -> bool {
+        matches!(lower, "jmp" | "ljmp")
+    }
+
+    /// Classify with target transfer kind. `syscall` is not a terminator
+    /// (it returns to the caller) — v1 keeps it `Other`.
+    pub fn classify(lower: &str, transfer: Transfer) -> ControlFlowClass {
+        if is_return(lower) {
+            ControlFlowClass::Return
+        } else if is_trap(lower) {
+            ControlFlowClass::Trap
+        } else if matches!(lower, "call" | "lcall") {
+            match transfer {
+                Transfer::Direct => ControlFlowClass::DirectCall,
+                Transfer::Indirect => ControlFlowClass::IndirectCall,
+            }
+        } else if is_unconditional_transfer(lower) {
+            match transfer {
+                Transfer::Direct => ControlFlowClass::DirectBranch,
+                Transfer::Indirect => ControlFlowClass::IndirectBranch,
+            }
+        } else if is_conditional_branch(lower) {
+            ControlFlowClass::ConditionalBranch
+        } else {
+            ControlFlowClass::Other
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::arm64;
@@ -181,6 +248,40 @@ mod tests {
         assert!(!arm64::is_conditional_branch("bl"));
         assert!(!arm64::is_conditional_branch("b"));
         assert!(!arm64::is_return("brk"));
+    }
+
+    mod x86 {
+        use crate::semantics::x86_64::*;
+        use crate::semantics::ControlFlowClass::*;
+
+        #[test]
+        fn classifies_control_flow_families() {
+            assert_eq!(classify("call", Transfer::Direct), DirectCall);
+            assert_eq!(classify("call", Transfer::Indirect), IndirectCall);
+            assert_eq!(classify("jmp", Transfer::Direct), DirectBranch);
+            assert_eq!(classify("jmp", Transfer::Indirect), IndirectBranch);
+            assert_eq!(classify("jne", Transfer::Direct), ConditionalBranch);
+            assert_eq!(classify("ret", Transfer::Direct), Return);
+            assert_eq!(classify("retf", Transfer::Direct), Return);
+            assert_eq!(classify("int3", Transfer::Direct), Trap);
+            assert_eq!(classify("ud2", Transfer::Direct), Trap);
+            assert_eq!(classify("syscall", Transfer::Direct), Other);
+            assert_eq!(classify("endbr64", Transfer::Direct), Other);
+            assert_eq!(classify("add", Transfer::Direct), Other);
+            // Spike window instructions round-trip.
+            assert_eq!(classify("push", Transfer::Direct), Other);
+            assert_eq!(classify("lea", Transfer::Direct), Other);
+        }
+
+        #[test]
+        fn conditional_family_is_complete_for_common_forms() {
+            for m in ["je", "jnz", "jge", "ja", "jbe", "jrcxz", "loopne"] {
+                assert!(is_conditional_branch(m), "{m}");
+            }
+            for m in ["jmp", "call", "ret", "add", "nop"] {
+                assert!(!is_conditional_branch(m), "{m}");
+            }
+        }
     }
 
     #[test]

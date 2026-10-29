@@ -163,9 +163,27 @@ exists; N-1 real-db fixture lands with the first schema bump).
 - Proof: semantics unit tests extended (boundary set + PAC kinds);
   workspace 35 suites, 0 failures.
 
+### Unit 5A.3 — `arch_x86` feature flip + x86_64 semantics classifier — DONE
+
+- Workspace capstone features now include `arch_x86` (research-verified
+  one-line change; `full` ≠ architectures). Arm64 decoder made explicit
+  about non-arm64 detail (typed rejection instead of assumed
+  exhaustiveness).
+- `semantics::x86_64` v1: control-flow classifier with `Transfer`
+  (Direct/Indirect) — directness is an operand property on x86; full
+  jcc/loop/jcxz family; `syscall` deliberately `Other` (returns);
+  `endbr64` `Other` (not a terminator).
+- In-workspace spike replication: `damsel-core/tests/x86_decode_smoke`
+  decodes the spike window via capstone x86 and asserts implicit
+  `rflags` writes (add/cmp) + `rip` reads (lea rip-rel) — proving the
+  producer prerequisite inside the workspace, not just standalone.
+- Proof: damsel-core lib 6/6, x86_decode_smoke 1/1; workspace 36
+  suites, 0 failures.
+
 Next 5A steps: operand-aware helpers (written-destination registers,
-value-flow dispatch) behind the same oracle; then the x86_64 producer
-+ `arch_x86` feature flip. First step: 5A semantics producer behind differential
+value-flow dispatch) behind the same oracle; then the x86_64 decode
+mapper in `decode.rs` (Variable-length windows) and engine migration
+PRs (a)–(f). First step: 5A semantics producer behind differential
 oracles (arm64), then `arch_x86` feature flip + x86 producer (spike-proven
 sufficient; syscall intrinsic table required).
 
