@@ -548,8 +548,20 @@ sufficient; syscall intrinsic table required).
   function (exotic SIMD only).
 - Proof: workspace 51 suites, 0 failures.
 
-Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
-migration, lab delta run 6.
+### Lab evidence run 8 (2026-10-29) — delta run 6 — DONE
+
+- Five glibc functions, stable numbers:
+  - `_int_malloc`: 1 / 105 lines (0.95%)
+  - `__GI___libc_malloc`: 2 / 43 (4.7%) — memory-dest add + one operand
+  - `malloc_consolidate`: 1 / 37 (2.7%)
+  - `sysmalloc`: 2 / 113 (1.8%)
+  - `__malloc_trim` (NEW): 3 / 132 (2.3%)
+- Remaining unknown classes: memory-destination arithmetic
+  (`add [rax], 5`), unhandled operand shapes. These are the next lift
+  targets.
+
+Next: cross-block phi-SSA, memory-destination arithmetic in the x86
+lift, rmcp transport spike, synthesize dispatch migration.
 
 ## Lab notes
 
