@@ -140,6 +140,30 @@ exists; N-1 real-db fixture lands with the first schema bump).
 
 ## Wave 5 — ELF + x86_64 (parallelizable from 5A)
 
+### Unit 5B.1 — `damsel-elf` crate + synthetic ELF fixtures — DONE
+
+- `damsel-elf`: typed ELF64-LE loader on the `object` backend
+  (`NotAnElf`/`UnsupportedLayout`/`Malformed` taxonomy; ELF32/BE are typed
+  rejections). `ElfImage` model: architecture, PIE flag, build-id (hex),
+  SONAME, segments (X/W flags), sections (exec flags + kind), symbols
+  (dynsym-first, defined/text/import flags), dynamic entries
+  (Needed/Soname/Rpath/Runpath).
+- Synthetic fixture builders (`tests/support/synth.rs`): deterministic
+  in-process ELF64 bytes — static ET_EXEC (two functions with a real
+  call rel32, symtab, GNU build-id note) and shared ET_DYN (PT_LOAD +
+  PT_DYNAMIC, .dynsym with exported + undefined import, DT_SONAME/
+  DT_NEEDED/DT_STRTAB/DT_SYMTAB). Three fixture bugs caught by the
+  probe before landing (sh_link indices, code-size math, containment
+  bounds).
+- Proof: loader_matrix 4/4 (sections/symbols/build-id truth; dynamic
+  linkage incl. import/soname/needed; typed truncation/class/endianness
+  failures; file-path parity). Workspace 37 suites, 0 failures.
+
+Next 5B steps: PT_DYNAMIC walker for section-less ELF (the
+`elf-noseconds` gap), versioned symbols (.gnu.version), relocations →
+binding facts, then the Wave 4 `FormatBackend` seam so `damsel analyze`
+works on ELF end to end.
+
 ### Unit 5A.1 — `damsel-core::semantics` module (arm64 control-flow) — DONE
 
 - `ControlFlowClass` vocabulary + `semantics::arm64` predicates ported

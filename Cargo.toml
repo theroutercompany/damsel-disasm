@@ -1,5 +1,5 @@
 [workspace]
-members = ["damsel-core", "damsel-macho", "damsel-cli", "damsel-project"]
+members = ["damsel-core", "damsel-macho", "damsel-cli", "damsel-project", "damsel-elf"]
 resolver = "2"
 
 [workspace.package]

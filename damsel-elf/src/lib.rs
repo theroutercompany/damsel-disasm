@@ -1,0 +1,30 @@
+//! `damsel-elf` — ELF64 loading and analysis for the RE Power program
+//! (Wave 5B of `docs/roadmaps/re-power-roadmap.md`).
+//!
+//! Scope v1: userspace ELF64 (little-endian first), ET_EXEC and ET_DYN,
+//! via the `object` crate as parse backend. Owns identity (build-id,
+//! SONAME), segments/sections/symbols/imports. The segment-only
+//! `PT_DYNAMIC` walker for section-header-stripped binaries (Research
+//! Sources §0 Round 3: both `object` and `goblin` punt here) lands with
+//! the `elf-nosections` fixture unit.
+
+mod image;
+mod loader;
+
+pub use image::{ElfDynamicEntry, ElfImage, ElfSection, ElfSegment, ElfSymbol};
+pub use loader::{ElfError, Result, load, load_bytes};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn elf_load_rejects_garbage_with_typed_error() {
+        let error = load_bytes(Some("garbage".to_string()), vec![0u8; 64])
+            .expect_err("garbage must be rejected");
+        assert!(
+            matches!(error, ElfError::NotAnElf(_)),
+            "expected NotAnElf, got {error:?}"
+        );
+    }
+}

@@ -428,6 +428,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "damsel-elf"
+version = "0.1.0"
+dependencies = [
+ "damsel-core",
+ "object",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "damsel-macho"
 version = "0.1.0"
 dependencies = [
