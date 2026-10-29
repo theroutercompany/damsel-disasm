@@ -153,3 +153,115 @@ fn read_registers(expression: &IrExpr, visit: &mut impl FnMut(&str)) {
         }
     }
 }
+
+/// Per-block versioned renaming: `x0` becomes `x0_v1`, `x0_v2` on each
+/// redefinition within a block. Cross-block renaming (phi-true SSA)
+/// awaits the next D2 slice; v1 gives the renderer stable, unique
+/// variable names per block so consecutive writes read correctly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenamedFunction {
+    pub blocks: Vec<RenamedBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenamedBlock {
+    pub id: usize,
+    pub start_address: u64,
+    pub statements: Vec<crate::ir::IrStatement>,
+}
+
+pub fn rename_registers(function: &crate::ir::IrFunction) -> RenamedFunction {
+    let mut blocks = Vec::new();
+    for block in &function.blocks {
+        let mut versions: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut statements = Vec::new();
+        for statement in &block.statements {
+            let renamed = rename_statement(statement, &mut versions);
+            statements.push(renamed);
+        }
+        blocks.push(RenamedBlock {
+            id: block.id,
+            start_address: block.start_address,
+            statements,
+        });
+    }
+    RenamedFunction { blocks }
+}
+
+fn rename_statement(
+    statement: &crate::ir::IrStatement,
+    versions: &mut std::collections::BTreeMap<String, usize>,
+) -> crate::ir::IrStatement {
+    use crate::ir::{IrExpr, IrStatement, IrValue};
+    match statement {
+        IrStatement::Assign { destination, expression } => {
+            let version = versions.entry(destination.clone()).or_insert(0);
+            *version += 1;
+            let renamed_dest = format!("{destination}_v{version}");
+            IrStatement::Assign {
+                destination: renamed_dest,
+                expression: rename_expr(expression, versions, false),
+            }
+        }
+        IrStatement::Load { destination, address } => {
+            let version = versions.entry(destination.clone()).or_insert(0);
+            *version += 1;
+            let renamed_dest = format!("{destination}_v{version}");
+            IrStatement::Load {
+                destination: renamed_dest,
+                address: rename_expr(address, versions, false),
+            }
+        }
+        IrStatement::Store { address, value } => IrStatement::Store {
+            address: rename_expr(address, versions, false),
+            value: rename_expr(value, versions, false),
+        },
+        other => other.clone(),
+    }
+}
+
+fn rename_expr(
+    expression: &crate::ir::IrExpr,
+    versions: &std::collections::BTreeMap<String, usize>,
+    _write: bool,
+) -> crate::ir::IrExpr {
+    use crate::ir::{IrExpr, IrValue};
+    match expression {
+        IrExpr::Value(IrValue::Register(register)) => {
+            let version = versions.get(register).copied().unwrap_or(0);
+            if version > 0 {
+                IrExpr::Value(IrValue::Register(format!("{register}_v{version}")))
+            } else {
+                expression.clone()
+            }
+        }
+        IrExpr::BinOp { op, lhs, rhs } => IrExpr::BinOp {
+            op: *op,
+            lhs: Box::new(rename_expr(lhs, versions, false)),
+            rhs: Box::new(rename_expr(rhs, versions, false)),
+        },
+        IrExpr::AddrOf { base, displacement } => IrExpr::AddrOf {
+            base: rename_register(base, versions),
+            displacement: *displacement,
+        },
+        IrExpr::IndexedAddr { base, index, scale, displacement } => IrExpr::IndexedAddr {
+            base: rename_register(base, versions),
+            index: rename_register(index, versions),
+            scale: *scale,
+            displacement: *displacement,
+        },
+        _ => expression.clone(),
+    }
+}
+
+fn rename_register(
+    register: &str,
+    versions: &std::collections::BTreeMap<String, usize>,
+) -> String {
+    let version = versions.get(register).copied().unwrap_or(0);
+    if version > 0 {
+        format!("{register}_v{version}")
+    } else {
+        register.to_string()
+    }
+}

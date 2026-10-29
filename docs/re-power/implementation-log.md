@@ -411,7 +411,17 @@ sufficient; syscall intrinsic table required).
 - Proof: workspace 49 suites, 0 failures (blob expectation fixed to
   the stronger zero-unknown contract).
 
-Next 6.x: D2 renaming, type seeds, Wave 5A value-flow dispatch port.
+### Unit 6.17 — D2 register renaming — DONE
+
+- `rename_registers`: per-block versioned renaming (`x0_v1`, `x0_v2`
+  on redefinition); uses resolve to the latest def; AddrOf /
+  IndexedAddr bases and indices rename; Store value renames. Phi-true
+  cross-block SSA is the next D2 slice.
+- Proof: d2_ssa 4/4 (sequential defs version; use resolves latest).
+  Workspace 49 suites, 0 failures.
+
+Next 6.x: type seeds, Wave 5A value-flow dispatch port, cross-block
+phi-SSA.
 
 ## Lab notes
 

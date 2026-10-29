@@ -96,3 +96,50 @@ fn phi_candidates_flag_multi_def_registers_at_merges() {
     // x1 has one def → never a candidate.
     assert!(!report.phi_candidates.iter().any(|p| p.register == "x1"));
 }
+
+#[test]
+fn register_renaming_versions_per_block() {
+    use damsel_decomp::rename_registers;
+    use damsel_decomp::{IrBlock, IrExpr, IrFunction, IrStatement, IrTerminator, IrValue};
+
+    let function = IrFunction {
+        entry_address: 0,
+        blocks: vec![IrBlock {
+            id: 0,
+            start_address: 0,
+            statements: vec![
+                IrStatement::Assign {
+                    destination: "x0".into(),
+                    expression: IrExpr::Value(IrValue::Const(1)),
+                },
+                IrStatement::Assign {
+                    destination: "x0".into(),
+                    expression: IrExpr::Value(IrValue::Const(2)),
+                },
+                IrStatement::Assign {
+                    destination: "x1".into(),
+                    expression: IrExpr::Value(IrValue::Register("x0".into())),
+                },
+            ],
+            terminator: IrTerminator::Return,
+        }],
+        instruction_count: 3,
+        unknown_count: 0,
+    };
+
+    let renamed = rename_registers(&function);
+    let statements = &renamed.blocks[0].statements;
+
+    // First def: x0_v1 = 1
+    assert!(matches!(&statements[0],
+        IrStatement::Assign { destination, expression: IrExpr::Value(IrValue::Const(1)) }
+            if destination == "x0_v1"));
+    // Second def: x0_v2 = 2
+    assert!(matches!(&statements[1],
+        IrStatement::Assign { destination, expression: IrExpr::Value(IrValue::Const(2)) }
+            if destination == "x0_v2"));
+    // Use of the latest version: x1_v1 = x0_v2
+    assert!(matches!(&statements[2],
+        IrStatement::Assign { destination, expression: IrExpr::Value(IrValue::Register(r)) }
+            if destination == "x1_v1" && r == "x0_v2"));
+}

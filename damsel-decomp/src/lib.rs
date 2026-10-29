@@ -21,7 +21,7 @@ pub use ir::{
 pub use structure::{Diamond, LoopBack, NaturalLoop, ResolvedCondition, find_diamonds, find_loops, find_natural_loops, resolve_condition};
 pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
 pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};
-pub use ssa::{PhiCandidate, SsaReport, build_ssa};
+pub use ssa::{PhiCandidate, RenamedBlock, RenamedFunction, SsaReport, build_ssa, rename_registers};
 pub use summary::{
     CallSite, FunctionSummaryReport, SummaryError, summarize_function, summarize_named,
 };
