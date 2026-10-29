@@ -332,9 +332,17 @@ sufficient; syscall intrinsic table required).
   diamond detection, structured render without gotos). Workspace 49
   suites, 0 failures.
 
-Next 6.x: loops (back-edge detection + while form), D2 slice 2
-(renaming + scale), type seeds, arm64 condition resolution (ccmp),
-then re-run the lab malloc decompile for a before/after delta.
+### Unit 6.8 — loop detection (back edges) — DONE
+
+- `find_loops`: back edges (Branch/CondBranch to earlier-or-equal
+  layout, incl. self-loops — boundary bug caught by the test);
+  conditions resolved via the flags substrate; renderer annotates
+  `goto …; /* loop back */`. while/do-while reconstruction needs
+  dominance (later slice, logged).
+- Proof: d4_structure 6/6. Workspace 49 suites, 0 failures.
+
+Next 6.x: lab before/after malloc delta with D4+flags, D2 slice 2
+(renaming + scale modeling), type seeds, arm64 condition resolution.
 
 ## Lab notes
 

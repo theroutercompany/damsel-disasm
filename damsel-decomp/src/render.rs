@@ -29,7 +29,30 @@ pub struct Pseudocode {
 
 pub fn render_pseudocode(function: &IrFunction, name: Option<&str>) -> Pseudocode {
     let diamonds = crate::structure::find_diamonds(function);
-    render_pseudocode_impl(function, name, &diamonds)
+    render_pseudocode_with_loops(function, name, &diamonds)
+}
+
+pub fn render_pseudocode_with_loops(
+    function: &IrFunction,
+    name: Option<&str>,
+    diamonds: &[crate::structure::Diamond],
+) -> Pseudocode {
+    let loops = crate::structure::find_loops(function);
+    let mut pseudocode = render_pseudocode_impl(function, name, diamonds);
+    for line in &mut pseudocode.lines {
+        if let Some(address) = parse_goto_target(&line.text) {
+            if loops.iter().any(|l| l.to_address == address) {
+                line.text.push_str(" /* loop back */");
+            }
+        }
+    }
+    pseudocode
+}
+
+fn parse_goto_target(text: &str) -> Option<u64> {
+    let rest = text.strip_prefix("goto sub_")?;
+    let hex = rest.strip_suffix(";")?;
+    u64::from_str_radix(hex, 16).ok()
 }
 
 fn render_pseudocode_impl(

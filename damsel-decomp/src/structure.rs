@@ -158,3 +158,40 @@ pub fn render_condition_text(condition: &ResolvedCondition) -> String {
         ResolvedCondition::Unresolved(raw) => format!("flags:{raw}"),
     }
 }
+
+/// A detected loop back edge (target earlier than source layout).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopBack {
+    pub from_block: usize,
+    pub to_address: u64,
+    pub condition: Option<ResolvedCondition>,
+}
+
+/// Detect back edges: Branch/CondBranch targets that are earlier in
+/// layout than the branching block. Honest v1: detection + annotation;
+/// while/do-while reconstruction needs dominance (later slice).
+pub fn find_loops(function: &IrFunction) -> Vec<LoopBack> {
+    let mut out = Vec::new();
+    for block in &function.blocks {
+        match &block.terminator {
+            IrTerminator::Branch(target) if *target <= block.start_address => {
+                out.push(LoopBack {
+                    from_block: block.id,
+                    to_address: *target,
+                    condition: None,
+                });
+            }
+            IrTerminator::CondBranch { taken, fallthrough, .. }
+                if *taken <= block.start_address && *fallthrough > block.start_address =>
+            {
+                out.push(LoopBack {
+                    from_block: block.id,
+                    to_address: *taken,
+                    condition: Some(resolve_condition(function, block.id)),
+                });
+            }
+            _ => {}
+        }
+    }
+    out
+}

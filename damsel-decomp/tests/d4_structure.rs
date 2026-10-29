@@ -175,3 +175,53 @@ fn diamonds_are_detected() {
         ResolvedCondition::Relational { ref op, .. } if op == "!="
     ));
 }
+
+#[test]
+fn back_edges_are_detected_and_annotated() {
+    // Entry → body; body loops back conditionally to itself-ish.
+    let function = IrFunction {
+        entry_address: 0,
+        blocks: vec![
+            IrBlock {
+                id: 0,
+                start_address: 0x00,
+                statements: vec![],
+                terminator: IrTerminator::Branch(0x10),
+            },
+            IrBlock {
+                id: 1,
+                start_address: 0x10,
+                statements: vec![IrStatement::Assign {
+                    destination: "flags".into(),
+                    expression: IrExpr::BinOp {
+                        op: IrBinOp::Sub,
+                        lhs: Box::new(IrExpr::Value(IrValue::Register("eax".into()))),
+                        rhs: Box::new(IrExpr::Value(IrValue::Const(0))),
+                    },
+                }],
+                terminator: IrTerminator::CondBranch {
+                    condition: IrCondition::Raw("jne".into()),
+                    taken: 0x10,
+                    fallthrough: 0x20,
+                },
+            },
+            IrBlock {
+                id: 2,
+                start_address: 0x20,
+                statements: vec![],
+                terminator: IrTerminator::Return,
+            },
+        ],
+        instruction_count: 4,
+        unknown_count: 0,
+    };
+    let loops = find_loops(&function);
+    assert_eq!(loops.len(), 1);
+    assert_eq!(loops[0].from_block, 1);
+    assert_eq!(loops[0].to_address, 0x10);
+
+    // Rendering annotates the back-edge goto.
+    let pseudocode = render_pseudocode(&function, Some("loop"));
+    let texts: Vec<&str> = pseudocode.lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(texts.iter().any(|t| t.contains("goto sub_10; /* loop back */")), "got: {texts:?}");
+}
