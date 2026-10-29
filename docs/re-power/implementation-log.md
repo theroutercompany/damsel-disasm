@@ -457,8 +457,17 @@ sufficient; syscall intrinsic table required).
   different-binary adds/removes, determinism). project_cli 14/14.
   Workspace 51 suites, 0 failures.
 
-Next: MCP server via rmcp, then 5A value-flow dispatch port +
-cross-block phi-SSA.
+### Unit 7.4 — MCP tool contracts frozen + `serve` command — DONE
+
+- `damsel serve` command registered (MCP transport wiring is a
+  dedicated spike; rmcp 0.5 verified to compile). The seven tool JSON
+  contracts are frozen in `mcp.rs::tool_shapes()` and exercised
+  through the CLI JSON tests (same shapes, same vocabulary) — the
+  MCP server will serve these exact schemas.
+- Proof: workspace 51 suites, 0 failures.
+
+Next: 5A value-flow dispatch port, cross-block phi-SSA, rmcp
+transport spike, then lab re-run for delta 4.
 
 ## Lab notes
 

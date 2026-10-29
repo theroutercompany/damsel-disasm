@@ -1,3 +1,4 @@
+mod mcp;
 mod output;
 mod ui;
 
@@ -545,6 +546,11 @@ enum Command {
     Diff {
         left: PathBuf,
         right: PathBuf,
+    },
+    #[command(about = "Run as an MCP server exposing typed analysis tools (Wave 7)")]
+    Serve {
+        #[arg(long, help = "Default project path for tools that accept relative targets")]
+        project: Option<PathBuf>,
     },
     #[command(about = "Batch-analyze a list of binaries, writing JSONL results (Wave 7)")]
     Batch {
@@ -1211,6 +1217,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         }
         Command::Diff { left, right } => {
             handle_diff(left, right, &output_settings)?;
+        }
+        Command::Serve { project } => {
+            mcp::run_mcp(mcp::McpConfig { project })?;
         }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
