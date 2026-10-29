@@ -598,8 +598,18 @@ sufficient; syscall intrinsic table required).
   high-entropy sections → StringEncryption finding with evidence.
 - Proof: recon 12/12. Workspace 51 suites, 0 failures.
 
+### Unit 7.8 — UI server project endpoints — DONE
+
+- `GET /api/projects/{id}/functions` (filter by name, limit),
+  `GET /api/projects/{id}/xrefs?to=0x…`, `GET /api/projects/{id}/
+  decompile/{function}` — project-backed analysis now served over
+  HTTP for the web UI and Workbench.
+- Proof: workspace 51 suites, 0 failures (UI API tests cover the
+  existing endpoints; new endpoints verified via compile + manual
+  smoke).
+
 Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
-migration, UI workbench integration.
+migration, Workbench pane integration.
 
 ## Lab notes
 

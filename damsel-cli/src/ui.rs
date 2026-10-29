@@ -51,6 +51,225 @@ struct ApiError {
     error: output::ErrorResponse,
 }
 
+async fn project_functions(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    // For now, project_id is the path to the .damsel directory.
+    let project_path = std::path::PathBuf::from(&project_id);
+    let db = project_path.join("project.db");
+    if !db.is_file() {
+        return ApiError {
+            status: StatusCode::NOT_FOUND,
+            error: crate::output::ErrorResponse {
+                code: "project_not_found",
+                message: format!("no project at {}", project_path.display()),
+                details: None,
+            },
+        }
+        .into_response();
+    }
+    let meta = damsel_project::AnalysisProjectMeta {
+        project_id: damsel_project::ProjectId::new("ui"),
+        name: String::new(),
+        analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let Ok(store) = damsel_project::open_store(&db, damsel_project::Create::Existing, &meta) else {
+        return ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: crate::output::ErrorResponse {
+                code: "store_error",
+                message: "failed to open project".into(),
+                details: None,
+            },
+        }
+        .into_response();
+    };
+    let Ok(functions) = damsel_project::function_summaries(&store) else {
+        return ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: crate::output::ErrorResponse {
+                code: "store_error",
+                message: "failed to list functions".into(),
+                details: None,
+            },
+        }
+        .into_response();
+    };
+    let limit = query
+        .get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+    let filtered: Vec<_> = functions
+        .into_iter()
+        .filter(|f| {
+            query
+                .get("name")
+                .map(|pattern| {
+                    f.name
+                        .as_deref()
+                        .is_some_and(|n| n.contains(pattern.as_str()))
+                })
+                .unwrap_or(true)
+        })
+        .take(limit)
+        .map(|f| {
+            json!({
+                "address": format!("{:#x}", f.address),
+                "name": f.name,
+                "seeds": f.seeds,
+            })
+        })
+        .collect();
+    Json(json!({ "functions": filtered, "count": filtered.len() })).into_response()
+}
+
+async fn project_xrefs(
+    State(_state): State<AppState>,
+    Path(project_id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let project_path = std::path::PathBuf::from(&project_id);
+    let db = project_path.join("project.db");
+    if !db.is_file() {
+        return ApiError {
+            status: StatusCode::NOT_FOUND,
+            error: crate::output::ErrorResponse {
+                code: "project_not_found",
+                message: format!("no project at {}", project_path.display()),
+                details: None,
+            },
+        }
+        .into_response();
+    }
+    let meta = damsel_project::AnalysisProjectMeta {
+        project_id: damsel_project::ProjectId::new("ui"),
+        name: String::new(),
+        analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let Ok(store) = damsel_project::open_store(&db, damsel_project::Create::Existing, &meta) else {
+        return ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: crate::output::ErrorResponse {
+                code: "store_error",
+                message: "failed to open project".into(),
+                details: None,
+            },
+        }
+        .into_response();
+    };
+    let Some(to_addr) = query.get("to").and_then(|v| {
+        v.trim_start_matches("0x").parse::<u64>().ok().or_else(|| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+    }) else {
+        return ApiError {
+            status: StatusCode::BAD_REQUEST,
+            error: crate::output::ErrorResponse {
+                code: "invalid_args",
+                message: "missing or invalid `to` address".into(),
+                details: None,
+            },
+        }
+        .into_response();
+    };
+    let Ok(facts) = damsel_project::ProjectStore::facts(&store) else {
+        return ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: crate::output::ErrorResponse {
+                code: "store_error",
+                message: "failed to read facts".into(),
+                details: None,
+            },
+        }
+        .into_response();
+    };
+    let xrefs: Vec<_> = facts
+        .iter()
+        .filter(|f| f.kind.as_str() == "xref")
+        .filter_map(|f| {
+            let object = f.object_id.as_ref()?;
+            if object.kind() != "instruction" { return None; }
+            let from = u64::from_str_radix(object.key().trim_start_matches("0x"), 16).ok()?;
+            let (_, target) = f.payload.split_once("|to=")?;
+            let (_, addr) = target.split_once(':')?;
+            let target_addr = u64::from_str_radix(addr.trim_start_matches("0x"), 16).ok()?;
+            if target_addr == to_addr {
+                Some(json!({ "from": format!("{from:#x}"), "kind": f.payload.split('|').next().unwrap_or(""), "to": target }))
+            } else { None }
+        })
+        .collect();
+    Json(json!({ "xrefs": xrefs, "count": xrefs.len() })).into_response()
+}
+
+async fn project_decompile(
+    State(_state): State<AppState>,
+    Path((project_id, function)): Path<(String, String)>,
+) -> Response {
+    let project_path = std::path::PathBuf::from(&project_id);
+    let db = project_path.join("project.db");
+    if !db.is_file() {
+        return ApiError {
+            status: StatusCode::NOT_FOUND,
+            error: crate::output::ErrorResponse {
+                code: "project_not_found",
+                message: format!("no project at {}", project_path.display()),
+                details: None,
+            },
+        }
+        .into_response();
+    }
+    let meta = damsel_project::AnalysisProjectMeta {
+        project_id: damsel_project::ProjectId::new("ui"),
+        name: String::new(),
+        analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let Ok(store) = damsel_project::open_store(&db, damsel_project::Create::Existing, &meta) else {
+        return ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: crate::output::ErrorResponse {
+                code: "store_error",
+                message: "failed to open project".into(),
+                details: None,
+            },
+        }
+        .into_response();
+    };
+    let Ok(sources) = damsel_project::ProjectStore::sources(&store) else {
+        return ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: crate::output::ErrorResponse {
+                code: "store_error",
+                message: "failed to list sources".into(),
+                details: None,
+            },
+        }
+        .into_response();
+    };
+    let Some(source) = sources.first() else {
+        return ApiError {
+            status: StatusCode::NOT_FOUND,
+            error: crate::output::ErrorResponse {
+                code: "project_not_found",
+                message: "project has no sources".into(),
+                details: None,
+            },
+        }
+        .into_response();
+    };
+    match damsel_decomp::summarize_named(&store, source.source_id, &function) {
+        Ok(report) => Json(json!({ "summary": report })).into_response(),
+        Err(e) => ApiError {
+            status: StatusCode::NOT_FOUND,
+            error: crate::output::ErrorResponse {
+                code: "function_not_found",
+                message: e.to_string(),
+                details: None,
+            },
+        }
+        .into_response(),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct SymbolQuery {
     q: Option<String>,
@@ -198,6 +417,9 @@ async fn run_async(config: UiConfig) -> Result<(), CliRunError> {
         .route("/api/images", post(upload_image))
         .route("/api/images/{image_id}/symbols", get(symbol_suggestions))
         .route("/api/images/{image_id}/disasm", post(disassemble_image))
+        .route("/api/projects/{project_id}/functions", get(project_functions))
+        .route("/api/projects/{project_id}/xrefs", get(project_xrefs))
+        .route("/api/projects/{project_id}/decompile/{function}", get(project_decompile))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(state);
 
