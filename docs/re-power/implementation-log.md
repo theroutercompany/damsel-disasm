@@ -446,8 +446,19 @@ sufficient; syscall intrinsic table required).
 - Proof: project_cli 13/13 (mixed pass/fail list, exit codes, JSONL
   shape). Workspace 50 suites, 0 failures.
 
-Next: MCP server via rmcp, diff mode, then 5A value-flow dispatch
-port + cross-block phi-SSA.
+### Unit 7.3 — binary diff — DONE
+
+- `damsel_decomp::diff_functions`: exact-symbol matching → exact-
+  address fallback; unmatched reported as added/removed; every match
+  carries strategy evidence. CLI `damsel diff <left> <right>` (text
+  with +/-/= notation + JSON). Real output on fixture pair: 4 matched
+  (3 symbol + 1 address for stripped `_helper`).
+- Proof: diff 3/3 (identical, stripped-vs-symbolized cross-match,
+  different-binary adds/removes, determinism). project_cli 14/14.
+  Workspace 51 suites, 0 failures.
+
+Next: MCP server via rmcp, then 5A value-flow dispatch port +
+cross-block phi-SSA.
 
 ## Lab notes
 

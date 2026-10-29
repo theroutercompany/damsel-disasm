@@ -541,6 +541,11 @@ enum Command {
     },
     #[command(about = "First-touch triage: stripped-ness, entropy, packers, anti-analysis (Wave 7)")]
     Recon { path: PathBuf },
+    #[command(about = "Diff two analyzed projects (function-level, Wave 7)")]
+    Diff {
+        left: PathBuf,
+        right: PathBuf,
+    },
     #[command(about = "Batch-analyze a list of binaries, writing JSONL results (Wave 7)")]
     Batch {
         #[arg(long, help = "File with one binary path per line")]
@@ -1204,6 +1209,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Batch { inputs, out, fail_fast } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
+        Command::Diff { left, right } => {
+            handle_diff(left, right, &output_settings)?;
+        }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
@@ -1496,6 +1504,59 @@ fn run_batch_target(path: &std::path::Path, out_dir: &std::path::Path) -> Result
 
 fn line_of(path: &std::path::Path) -> String {
     path.display().to_string()
+}
+
+fn handle_diff(
+    left: PathBuf,
+    right: PathBuf,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, open_store};
+
+    let left_dir = resolve_project_dir(&left)?;
+    let right_dir = resolve_project_dir(&right)?;
+    let meta_l = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let meta_r = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let left_store = open_store(&left_dir.join("project.db"), Create::Existing, &meta_l)
+        .map_err(map_store_error)?;
+    let right_store = open_store(&right_dir.join("project.db"), Create::Existing, &meta_r)
+        .map_err(map_store_error)?;
+    let left_name = left_store.meta().map_err(map_store_error)?.name;
+    let right_name = right_store.meta().map_err(map_store_error)?.name;
+
+    let report = damsel_decomp::diff_functions(&left_store, &right_store, &left_name, &right_name)
+        .map_err(|e| CliRunError::command("diff_error", e.to_string()))?;
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "diff",
+            "report": serde_json::to_value(&report).unwrap_or_default(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("diff: {} -> {}", report.left_name, report.right_name);
+        println!("  matched: {}", report.matched.len());
+        for m in &report.matched {
+            let name = m.name.as_deref().unwrap_or("?");
+            let strategy = match m.strategy {
+                damsel_decomp::MatchStrategy::ExactSymbol => "symbol",
+                damsel_decomp::MatchStrategy::ExactAddress => "address",
+                damsel_decomp::MatchStrategy::Structural => "structural",
+            };
+            println!("  = {name:<32} {:#010x} -> {:#010x} ({strategy})", m.left_address, m.right_address);
+        }
+        println!("  added:   {}", report.added.len());
+        for f in &report.added {
+            let name = f.name.as_deref().unwrap_or("?");
+            println!("  + {name:<32} {:#010x}", f.address);
+        }
+        println!("  removed: {}", report.removed.len());
+        for f in &report.removed {
+            let name = f.name.as_deref().unwrap_or("?");
+            println!("  - {name:<32} {:#010x}", f.address);
+        }
+    }
+    Ok(())
 }
 
 fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Result<(), CliRunError> {

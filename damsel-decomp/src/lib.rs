@@ -8,6 +8,7 @@
 //! facts plus Wave 5A semantics; no stage may emit only a string.
 
 mod ir;
+mod diff;
 mod recon;
 mod render;
 mod ssa;
@@ -21,6 +22,10 @@ pub use ir::{
 };
 pub use structure::{Diamond, LoopBack, NaturalLoop, ResolvedCondition, find_diamonds, find_loops, find_natural_loops, resolve_condition};
 pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
+pub use diff::{
+    DiffError, DiffFunction, DiffReport, MatchedFunction, MatchStrategy,
+    diff_functions,
+};
 pub use recon::{
     AntiAnalysisIndicator, PackerSignature, ReconReport, SectionEntropy, Verdict,
     assess, detect_anti_analysis, detect_packers, shannon_entropy,

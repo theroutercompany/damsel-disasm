@@ -447,6 +447,29 @@ fn batch_processes_list_with_typed_failures() {
 }
 
 #[test]
+fn diff_reports_symbol_and_address_matches() {
+    let dir = smoke_dir("diff");
+    let left = dir.join("arm64-symbolized");
+    let right = dir.join("arm64-stripped");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &left).unwrap();
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-stripped"), &right).unwrap();
+    damsel().arg("analyze").arg(&left).assert().success();
+    damsel().arg("analyze").arg(&right).assert().success();
+
+    let out = damsel()
+        .arg("diff").arg(&left).arg(&right)
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success());
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let report = &body["report"];
+    let matched = report["matched"].as_array().unwrap();
+    assert!(matched.len() >= 3);
+    assert!(matched.iter().any(|m| m["strategy"] == "ExactSymbol"));
+    assert!(matched.iter().any(|m| m["name"] == "_main"));
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");
