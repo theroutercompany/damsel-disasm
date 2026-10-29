@@ -250,6 +250,25 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     statements.push(IrStatement::Unknown { mnemonic: lower, site });
                 }
             }
+            "adrp" | "adr" => {
+                // Page/label materialization: the decoder already
+                // resolved the absolute target into a Page/Data
+                // reference — lift as a constant assignment.
+                let target = instruction.references.iter().find_map(|r| match r {
+                    damsel_core::Reference::Page { target }
+                    | damsel_core::Reference::Data { target } => Some(*target),
+                    _ => None,
+                });
+                if let (Some(dst), Some(target)) = (destination.clone(), target) {
+                    statements.push(IrStatement::Assign {
+                        destination: dst,
+                        expression: IrExpr::Value(IrValue::Const(target)),
+                    });
+                } else {
+                    *unknowns += 1;
+                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                }
+            }
             "ldr" | "ldur" => {
                 if let Some(dst) = destination.clone() {
                     if let Some(address) = memory_expr(instruction) {

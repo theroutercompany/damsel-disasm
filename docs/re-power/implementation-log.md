@@ -379,8 +379,16 @@ sufficient; syscall intrinsic table required).
   (was dest-only).
 - Proof: d1_lift 4/4. Workspace 49 suites, 0 failures.
 
+### Unit 6.13 — adrp/adr materialization — DONE
+
+- arm64 lift resolves page materializations (decoder Page/Data refs)
+  into constant assignments. Real `_main` renders the string address
+  chain (`x0 = 0x100000000; x0 = (x0 + 0x500);`) — adrp no longer in
+  unknowns.
+- Proof: workspace 49 suites, 0 failures.
+
 Next 6.x: D2 renaming, type seeds, real-binary delta run 3, Wave 5A
-value-flow dispatch port.
+value-flow dispatch port, cset modeling.
 
 ## Lab notes
 
