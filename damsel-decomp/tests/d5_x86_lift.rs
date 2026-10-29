@@ -116,3 +116,22 @@ fn push_pop_model_as_stack_stores() {
             if base == "sp" && destination == "rbp")), "pop modeled");
     assert_eq!(function.unknown_count, 0, "push/pop no longer blanket-unknown");
 }
+
+#[test]
+fn movzx_and_movsx_lift_as_assignments() {
+    // movzx eax, al = 0F B6 C0; movsx rax, eax = 63 C0
+    let code: Vec<u8> = vec![0x0F, 0xB6, 0xC0, 0x48, 0x63, 0xC0];
+    let instructions = damsel_core::decode_x86_64(&code, 0x5000, None).unwrap();
+    let function = lift_x86_64(&instructions);
+    use damsel_decomp::IrStatement;
+    let statements: Vec<&IrStatement> = function
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .collect();
+    // Both lift as assignments, not unknowns
+    assert!(statements.iter().any(|s| matches!(s,
+        IrStatement::Assign { destination, .. } if destination == "eax")));
+    assert!(statements.len() >= 2, "both movzx and movsxd produce statements: {statements:?}");
+    assert_eq!(function.unknown_count, 0, "movzx/movsx modeled");
+}

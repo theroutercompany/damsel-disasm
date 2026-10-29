@@ -516,8 +516,16 @@ sufficient; syscall intrinsic table required).
 
 ### Unit — delta run 4 recorded — DONE
 
-Next: cross-block phi-SSA, rmcp transport spike, then the synthesize
-dispatch migration.
+### Unit 6.19 — movzx/movsx modeling — DONE
+
+- `movzx`/`movsx`/`movsxd` lift as assignments (zero-extend = identity
+  v1; sign-extend = Sub 0 marker). Encoding discovery: `63 C0` (no
+  REX) decodes empty in 64-bit; `48 63 C0` is the real `movsxd rax,
+  eax`. Real glibc `_int_malloc` now at **0–1 unknowns** (was 2).
+- Proof: d5_x86_lift 6/6. Workspace 51 suites, 0 failures.
+
+Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
+migration.
 
 ## Lab notes
 

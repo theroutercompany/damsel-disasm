@@ -531,6 +531,25 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
             })
         } else {
             match lower.as_str() {
+                "movzx" | "movsx" | "movsxd" => {
+                    // Zero/sign-extend from narrow to wide register.
+                    let destination = destination.clone();
+                    let source = operand_expr(instruction.operands.get(1));
+                    destination.map(|dst| IrStatement::Assign {
+                        destination: dst,
+                        // v1: the extension kind is visible in the
+                        // mnemonic; D2 types will model the width cast.
+                        expression: if lower == "movzx" {
+                            source
+                        } else {
+                            IrExpr::BinOp {
+                                op: IrBinOp::Sub,
+                                lhs: Box::new(source),
+                                rhs: Box::new(IrExpr::Value(IrValue::Const(0))),
+                            }
+                        },
+                    })
+                }
                 "mov" | "movabs" | "movq" | "movl" => {
                     let first = instruction.operands.first();
                     let second = instruction.operands.get(1);
