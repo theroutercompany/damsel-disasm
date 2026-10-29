@@ -645,8 +645,14 @@ sufficient; syscall intrinsic table required).
   no external dependencies).
 - Proof: workspace 51 suites, 0 failures; HTML smoke on fixture pair.
 
+### Unit 7.11 — recon Markdown export — DONE
+
+- `render_recon_markdown`: verdict + symbols + entropy table + packer
+  signatures + anti-analysis indicators, with emoji indicators.
+- Proof: workspace 51 suites, 0 failures.
+
 Next: rmcp transport spike, synthesize dispatch migration, Workbench
-pane integration, lab re-verification, then merge to main.
+pane integration, lab re-verification.
 
 ## Lab notes
 

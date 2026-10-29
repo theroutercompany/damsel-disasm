@@ -291,3 +291,42 @@ pub fn detect_string_encryption(
         Vec::new()
     }
 }
+
+/// Render a recon report as Markdown (evidence profile).
+pub fn render_recon_markdown(report: &ReconReport) -> String {
+    let mut out = String::new();
+    let verdict = match report.verdict {
+        Verdict::Clean => "✅ Clean",
+        Verdict::LikelyPacked => "🚨 Likely Packed",
+        Verdict::LikelyObfuscated => "⚠️ Likely Obfuscated",
+        Verdict::NeedsManualReview => "⚠️ Needs Manual Review",
+    };
+    out.push_str(&format!("# Recon Report\n\n**Verdict:** {verdict}\n\n"));
+    out.push_str(&format!(
+        "**Symbols:** {} ({})\n\n",
+        report.symbol_count,
+        if report.stripped { "stripped" } else { "not stripped" }
+    ));
+    if !report.section_entropies.is_empty() {
+        out.push_str("## Section Entropy\n\n| Section | Entropy |\n|---|---|\n");
+        for se in &report.section_entropies {
+            let indicator = if se.entropy > 7.0 { " ⚠️" } else { "" };
+            out.push_str(&format!("| {} | {:.2}{} |\n", se.section, se.entropy, indicator));
+        }
+        out.push('\n');
+    }
+    if !report.packer_signatures.is_empty() {
+        out.push_str("## Packer Signatures\n\n");
+        for p in &report.packer_signatures {
+            out.push_str(&format!("- **{}**: {}\n", p.name, p.evidence));
+        }
+        out.push('\n');
+    }
+    if !report.anti_analysis_indicators.is_empty() {
+        out.push_str("## Anti-Analysis Indicators\n\n");
+        for i in &report.anti_analysis_indicators {
+            out.push_str(&format!("- **{}**: {} at `{}`\n", i.name, i.evidence, i.location));
+        }
+    }
+    out
+}
