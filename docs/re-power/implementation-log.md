@@ -567,8 +567,13 @@ sufficient; syscall intrinsic table required).
   Remaining glibc unknowns: operand-shape edge cases only.
 - Proof: workspace 51 suites, 0 failures.
 
-Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
-migration, then lab delta run 7 for final numbers.
+### Unit 6.23 — xchg + imul — DONE
+
+- `xchg reg,reg` → three-assignment temp swap; `imul`/`mul` →
+  BinOp Mul. `IrBinOp::Mul` added to the vocabulary + renderer.
+- Proof: workspace 51 suites, 0 failures.
+
+Next: lab delta run 7, then cross-block phi-SSA + rmcp transport.
 
 ## Lab notes
 

@@ -19,6 +19,7 @@ pub enum IrValue {
 pub enum IrBinOp {
     Add,
     Sub,
+    Mul,
     And,
     Or,
     Xor,
@@ -676,6 +677,50 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                         _ => None,
                     });
                     target.map(|target| IrStatement::Call { target, site })
+                }
+                "xchg" => {
+                    // v1: swap as two assignments through a temp.
+                    let (a, b) = (
+                        instruction.operands.first().and_then(register_of),
+                        instruction.operands.get(1).and_then(register_of),
+                    );
+                    if let (Some(a), Some(b)) = (a, b) {
+                        current.statements.push(IrStatement::Assign {
+                            destination: "_tmp".into(),
+                            expression: IrExpr::Value(IrValue::Register(a.clone())),
+                        });
+                        current.statements.push(IrStatement::Assign {
+                            destination: a,
+                            expression: IrExpr::Value(IrValue::Register(b.clone())),
+                        });
+                        current.statements.push(IrStatement::Assign {
+                            destination: b,
+                            expression: IrExpr::Value(IrValue::Register("_tmp".into())),
+                        });
+                    }
+                    None // handled inline
+                }
+                "imul" | "mul" => {
+                    // v1: single-operand imul/mul = dest = dest * src
+                    let destination = destination.clone();
+                    let source = operand_expr(instruction.operands.get(1));
+                    destination.map(|dst| {
+                        if instruction.operands.len() >= 2 {
+                            IrStatement::Assign {
+                                destination: dst.clone(),
+                                expression: IrExpr::BinOp {
+                                    op: IrBinOp::Mul,
+                                    lhs: Box::new(IrExpr::Value(IrValue::Register(dst))),
+                                    rhs: Box::new(source),
+                                },
+                            }
+                        } else {
+                            IrStatement::Assign {
+                                destination: dst,
+                                expression: IrExpr::Value(IrValue::Register("rax".into())),
+                            }
+                        }
+                    })
                 }
                 "nop" | "nopl" | "endbr64" => {
                     // Explicit no-ops: consume a statement slot, no effect.

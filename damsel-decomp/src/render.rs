@@ -293,6 +293,7 @@ fn render_expr(expression: &IrExpr) -> String {
                 crate::ir::IrBinOp::And => "&",
                 crate::ir::IrBinOp::Or => "|",
                 crate::ir::IrBinOp::Xor => "^",
+                crate::ir::IrBinOp::Mul => "*",
                 crate::ir::IrBinOp::Shl => "<<",
                 crate::ir::IrBinOp::Shr => ">>",
             };
