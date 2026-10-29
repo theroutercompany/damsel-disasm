@@ -3,7 +3,7 @@ mod model;
 mod semantics;
 
 pub use decode::DecodeError;
-pub use decode::decode_aarch64_v2;
+pub use decode::{decode_aarch64_v2, decode_x86_64, decode_x86_64_with_limit};
 pub use semantics::ControlFlowClass;
 pub use semantics::arm64 as semantics_arm64;
 pub use semantics::x86_64 as semantics_x86_64;

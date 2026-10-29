@@ -458,3 +458,176 @@ fn opcode_from_bytes(bytes: &[u8]) -> u32 {
     }
     u32::from_le_bytes(opcode)
 }
+
+// ---------------------------------------------------------------------------
+// x86-64 decoder (RE Power Wave 5A.5): maps Capstone x86 detail onto the
+// shared DecodedInstruction model. Operand and reference vocabularies are
+// the same ones the arm64 mapper emits, so downstream analysis consumes
+// both ISAs unchanged.
+// ---------------------------------------------------------------------------
+
+pub fn decode_x86_64(
+    bytes: &[u8],
+    start_address: u64,
+    max_instructions: Option<usize>,
+) -> Result<Vec<DecodedInstruction>, DecodeError> {
+    decode_x86_64_with_limit(
+        bytes,
+        start_address,
+        max_instructions
+            .map(DisassemblyLimit::Instructions)
+            .unwrap_or(DisassemblyLimit::Unlimited),
+        DisassemblyOptions::default(),
+    )
+}
+
+pub fn decode_x86_64_with_limit(
+    bytes: &[u8],
+    start_address: u64,
+    limit: DisassemblyLimit,
+    options: DisassemblyOptions,
+) -> Result<Vec<DecodedInstruction>, DecodeError> {
+    use capstone::arch::x86::{X86OpMem, X86Operand, X86OperandType};
+
+    let cs = Capstone::new()
+        .x86()
+        .mode(arch::x86::ArchMode::Mode64)
+        .detail(true)
+        .build()
+        .map_err(|err| DecodeError::InvalidInstruction(err.to_string()))?;
+    let insns = cs
+        .disasm_all(bytes, start_address)
+        .map_err(|err| DecodeError::InvalidInstruction(err.to_string()))?;
+    let instruction_cap = limit.instruction_cap().unwrap_or(usize::MAX);
+    let mut instructions = Vec::new();
+
+    for insn in insns.iter().take(instruction_cap) {
+        let mnemonic = insn.mnemonic().unwrap_or("unknown").to_string();
+        let lower = mnemonic.to_ascii_lowercase();
+        let detail = cs
+            .insn_detail(insn)
+            .map_err(|err| DecodeError::InvalidInstruction(err.to_string()))?;
+        let ArchDetail::X86Detail(x86_detail) = detail.arch_detail() else {
+            return Err(DecodeError::InvalidInstruction(
+                "non-x86 architecture detail in x86_64 decoder".to_string(),
+            ));
+        };
+        let x86_operands: Vec<X86Operand> = x86_detail.operands().collect();
+
+        let reg_name =
+            |register: capstone::RegId| -> String { cs.reg_name(register).unwrap_or_default() };
+
+        // Control-flow classification with operand-derived directness.
+        let is_call = matches!(lower.as_str(), "call" | "lcall");
+        let is_jump = matches!(lower.as_str(), "jmp" | "ljmp");
+        let is_conditional = crate::semantics_x86_64::is_conditional_branch(&lower);
+        let mut direct_target: Option<u64> = None;
+        let mut indirect_via: Option<String> = None;
+        for operand in &x86_operands {
+            match operand.op_type {
+                X86OperandType::Imm(value) if is_call || is_jump || is_conditional => {
+                    if value >= 0 {
+                        direct_target = Some(value as u64);
+                    }
+                }
+                X86OperandType::Reg(register)
+                    if (is_call || is_jump) && direct_target.is_none() =>
+                {
+                    indirect_via = Some(reg_name(register));
+                }
+                X86OperandType::Mem(ref mem)
+                    if (is_call || is_jump) && direct_target.is_none() =>
+                {
+                    indirect_via = Some(format_memory_operand(&reg_name, mem));
+                }
+                _ => {}
+            }
+        }
+
+        let mut references = Vec::new();
+        if is_call {
+            match (direct_target, &indirect_via) {
+                (Some(target), _) => references.push(Reference::Call { target }),
+                (None, Some(via)) => references.push(Reference::IndirectCall { via: via.clone() }),
+                _ => {}
+            }
+        } else if is_jump || is_conditional {
+            match (direct_target, &indirect_via) {
+                (Some(target), _) => references.push(Reference::Branch { target }),
+                (None, Some(via)) => references.push(Reference::IndirectBranch { via: via.clone() }),
+                _ => {}
+            }
+        }
+
+        // RIP-relative memory references resolve to absolute data targets.
+        for operand in &x86_operands {
+            if let X86OperandType::Mem(ref mem) = operand.op_type {
+                let base = reg_name(mem.base());
+                if base == "rip" {
+                    let next_ip = insn.address() + insn.bytes().len() as u64;
+                    let target = next_ip.wrapping_add_signed(i64::from(mem.disp()));
+                    references.push(Reference::Data { target });
+                }
+            }
+        }
+
+        let mut operands = Vec::with_capacity(x86_operands.len());
+        for operand in &x86_operands {
+            operands.push(match operand.op_type {
+                X86OperandType::Reg(register) => Operand::Register(reg_name(register)),
+                X86OperandType::Imm(value) => {
+                    let is_control_target = (is_call || is_jump || is_conditional)
+                        && direct_target == Some(value.max(0) as u64);
+                    if is_control_target && value >= 0 {
+                        Operand::Label(value as u64)
+                    } else if value < 0 {
+                        Operand::ImmediateSigned(value)
+                    } else {
+                        Operand::ImmediateUnsigned(value as u64)
+                    }
+                }
+                X86OperandType::Mem(ref mem) => Operand::Memory {
+                    base: reg_name(mem.base()),
+                    index: cs.reg_name(mem.index()),
+                    index_modifier: (mem.scale() > 1)
+                        .then(|| format!("*{}", mem.scale()))
+                        .or_else(|| None),
+                    displacement: i64::from(mem.disp()),
+                    writeback: None,
+                },
+                _ => Operand::Other(format!("{}", operand.size)),
+            });
+        }
+
+        let mut annotations = Vec::new();
+        if options.include_annotations && insn.address() == start_address {
+            annotations.push(Annotation::Note("range start".to_string()));
+        }
+
+        instructions.push(DecodedInstruction {
+            address: insn.address(),
+            size: insn.bytes().len().try_into().unwrap_or(1),
+            opcode: 0, // x86 has no fixed 32-bit opcode word; bytes carry it
+            mnemonic,
+            operands,
+            recovered_values: Vec::new(),
+            references,
+            annotations,
+        });
+    }
+
+    Ok(instructions)
+}
+
+fn format_memory_operand(
+    reg_name: &impl Fn(capstone::RegId) -> String,
+    mem: &capstone::arch::x86::X86OpMem,
+) -> String {
+    let base = reg_name(mem.base());
+    let index = reg_name(mem.index());
+    if index.is_empty() {
+        format!("[{base}+{}]", mem.disp())
+    } else {
+        format!("[{base}+{index}*{}]", mem.scale())
+    }
+}

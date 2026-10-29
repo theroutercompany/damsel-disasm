@@ -216,10 +216,24 @@ works on ELF end to end.
   pair/atomic destination extraction.
 - Proof: damsel-core lib 7/7; workspace 36 suites, 0 failures.
 
-Next 5A steps: value-flow dispatch (the `synthesize_*_value` ladder)
-and jump-table recognizers behind the same oracle; then the x86_64
-decode mapper in `decode.rs` (variable-length windows) and engine
-migration PRs (d)–(f). First step: 5A semantics producer behind differential
+### Unit 5A.5 — x86_64 decode mapper — DONE
+
+- `damsel_core::decode_x86_64{,_with_limit}`: Capstone x86 (Mode64,
+  detail) mapped onto the shared `DecodedInstruction` vocabulary —
+  operands (Register/Immediate/Label/Memory incl. index scale), Call/
+  Branch references with operand-derived directness, IndirectCall/
+  IndirectBranch via register or memory expression, RIP-relative
+  memory → absolute `Data` references (next-ip + disp). Documented
+  contract: garbage decodes to an empty stream (capstone skip
+  semantics), variable lengths via existing `DisassemblyLimit`.
+- Proof: x86_decode_mapper 4/4 (two-function blob with call target at
+  0x4F; rip-relative lea → Data 0x223B — test arithmetic bug caught and
+  fixed; call rax → IndirectCall via register; limit + garbage
+  contract). Workspace 40 suites, 0 failures.
+
+Remaining 5A: value-flow dispatch + jump-table recognizers behind the
+oracle; ELF engine integration (FormatBackend analysis path) unlocks
+xrefs/recovery/strings for ELF. First step: 5A semantics producer behind differential
 oracles (arm64), then `arch_x86` feature flip + x86 producer (spike-proven
 sufficient; syscall intrinsic table required).
 
