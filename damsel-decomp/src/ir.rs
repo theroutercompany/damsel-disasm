@@ -168,6 +168,46 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     });
                 }
             }
+            "stp" | "stp.nu" => {
+                // Pair store: reg1 at [base+d], reg2 at [base+d+8].
+                // The pre-index writeback's sp adjustment is tracked by
+                // the stack-frame analyzer via the explicit sub/add sp.
+                if let Some(IrExpr::AddrOf { base, displacement }) = memory_expr(instruction) {
+                    for (index, operand) in instruction.operands.iter().take(2).enumerate() {
+                        if let Some(register) = register_of(operand) {
+                            statements.push(IrStatement::Store {
+                                address: IrExpr::AddrOf {
+                                    base: base.clone(),
+                                    displacement: displacement + 8 * index as i64,
+                                },
+                                value: IrExpr::Value(IrValue::Register(register)),
+                            });
+                        }
+                    }
+                } else {
+                    *unknowns += 1;
+                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                }
+            }
+            "ldp" | "ldp.nu" => {
+                // Pair load: mirrors stp.
+                if let Some(IrExpr::AddrOf { base, displacement }) = memory_expr(instruction) {
+                    for (index, operand) in instruction.operands.iter().take(2).enumerate() {
+                        if let Some(register) = register_of(operand) {
+                            statements.push(IrStatement::Load {
+                                destination: register,
+                                address: IrExpr::AddrOf {
+                                    base: base.clone(),
+                                    displacement: displacement + 8 * index as i64,
+                                },
+                            });
+                        }
+                    }
+                } else {
+                    *unknowns += 1;
+                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                }
+            }
             "ldr" | "ldur" => {
                 if let Some(dst) = destination.clone() {
                     if let Some(address) = memory_expr(instruction) {

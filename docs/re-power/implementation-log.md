@@ -275,8 +275,20 @@ sufficient; syscall intrinsic table required).
   empty function; hand-built merge IR flags x0 as phi candidate with
   2 preds, x1 excluded). Workspace 45 suites, 0 failures.
 
-Next 6.x: D2 slice 2 (per-block versioned renaming), stack-frame
-facts, D4 structuring, D5 pseudocode renderer.
+### Unit 6.3 — stack-frame facts — DONE
+
+- Lift gained `stp`/`ldp` paired Store/Load semantics (base+d /
+  base+d+8; writeback sp-adjust stays explicit via sub/add sp —
+  documented). `analyze_stack_frame`: frame size + epilogue restore
+  from `sub/add sp,sp,#N`, saved registers (fp/lr/x29/x30/x19–x28)
+  from frame-base stores, local slot displacements from other
+  frame-base accesses.
+- Proof on the REAL `_main` prologue: frame 0x20, restore 0x20, saved
+  [fp, lr], local at fp−4 (`stur wzr,[fp,#-4]`). d3_stack_frame 2/2.
+  Workspace 46 suites, 0 failures.
+
+Next 6.x: D2 slice 2 (per-block versioned renaming), D4 structuring,
+D5 pseudocode renderer.
 
 ## Lab notes
 

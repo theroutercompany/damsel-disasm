@@ -9,12 +9,14 @@
 
 mod ir;
 mod ssa;
+mod stack_frame;
 mod summary;
 
 pub use ir::{
     IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement,
     IrTerminator, IrValue, lift_arm64,
 };
+pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
 pub use ssa::{PhiCandidate, SsaReport, build_ssa};
 pub use summary::{
     CallSite, FunctionSummaryReport, SummaryError, summarize_function, summarize_named,
