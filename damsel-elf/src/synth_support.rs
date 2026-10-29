@@ -190,11 +190,13 @@ pub fn shared_object() -> Vec<u8> {
     // Layout (standard toolchain order: dynsym directly precedes dynstr
     // so the segment-only walker's strtab-adjacency heuristic resolves).
     let phoff = 0x40usize;
-    let phnum = 2usize;
+    let phnum = 3usize; // PT_LOAD, PT_DYNAMIC, PT_NOTE
     let text_off = phoff + phnum * 56;
     let rodata_off = text_off + text.len();
     let rodata = b"hello from damsel elf\0".to_vec();
-    let dynsym_off = rodata_off + rodata.len();
+    let note_off = rodata_off + rodata.len();
+    let note = build_id_note();
+    let dynsym_off = note_off + note.len();
     let dynsym_len = 24 * 3;
     let dynstr_off = dynsym_off + dynsym_len;
     // .gnu.version: [0 (null), 2 (exported_func -> FAKE_1.0), 1 (malloc -> GLIBC_2.2.5)]
@@ -263,10 +265,13 @@ pub fn shared_object() -> Vec<u8> {
     debug_assert_eq!(file.len(), phoff);
     file.extend(phdr(1, 5, 0, shoff as u64)); // PT_LOAD R|X covering headers+data
     file.extend(phdr(2, 6, dynamic_off as u64, dynamic.len() as u64)); // PT_DYNAMIC RW
+    file.extend(phdr(4, 4, note_off as u64, note.len() as u64)); // PT_NOTE R
     file.resize(text_off, 0);
     file.extend_from_slice(&text);
     file.resize(rodata_off, 0);
     file.extend_from_slice(&rodata);
+    file.resize(note_off, 0);
+    file.extend_from_slice(&note);
     file.resize(dynsym_off, 0);
     file.extend_from_slice(&[0u8; 24]);
     file.extend_from_slice(&sym_defined(offs[0], text_off as u64, 15, 1));

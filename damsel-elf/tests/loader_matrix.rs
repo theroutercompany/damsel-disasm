@@ -198,6 +198,15 @@ fn relocations_resolve_on_both_paths_and_ingest_as_binding_facts() {
 }
 
 #[test]
+fn build_id_resolves_on_both_paths() {
+    let sectionful = load_bytes(Some("bid".into()), synth::shared_object()).unwrap();
+    let walker = load_bytes(Some("bid-stripped".into()), synth::elf_nosections()).unwrap();
+    assert_eq!(sectionful.build_id.as_deref(), Some("aabbccddee112233"));
+    // PT_NOTE walk (no sections) — same identity.
+    assert_eq!(walker.build_id.as_deref(), Some("aabbccddee112233"));
+}
+
+#[test]
 fn truncated_and_malformed_inputs_fail_typed() {
     let full = synth::static_exec();
     for cut in [4usize, 16, 40, 64, 100] {

@@ -224,11 +224,14 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
     .unwrap_or_default();
     let relocations = crate::walker::walk_relocations(bytes.as_slice(), &raw_segments, &dynsym_by_index);
 
+    // Build-id: section notes first, PT_NOTE fallback (object skips
+    // segment notes when sections exist).
     let build_id = file
         .build_id()
         .ok()
         .flatten()
-        .map(|desc| desc.iter().map(|b| format!("{b:02x}")).collect());
+        .map(|desc| desc.iter().map(|b| format!("{b:02x}")).collect())
+        .or_else(|| crate::walker::walk_build_id(bytes.as_slice(), &raw_segments));
 
     // PT_LOAD mapping via raw program headers (single source with the
     // segment-only path).
@@ -320,7 +323,7 @@ fn build_segment_only(
         loads,
         architecture,
         is_position_independent,
-        build_id: None, // PT_NOTE walking for build-id lands with the note unit
+        build_id: crate::walker::walk_build_id(bytes, &raw),
         soname,
         segments,
         sections: Vec::new(),

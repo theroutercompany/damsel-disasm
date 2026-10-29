@@ -429,3 +429,47 @@ pub fn walk_relocations(
     }
     out
 }
+
+/// Walk PT_NOTE segments for the GNU build-id (NT_GNU_BUILD_ID = 3).
+pub fn walk_build_id(bytes: &[u8], segments: &[RawSegment]) -> Option<String> {
+    for segment in segments.iter().filter(|s| s.p_type == object::elf::PT_NOTE) {
+        let start = segment.p_offset as usize;
+        let end = start.checked_add(segment.p_filesz as usize)?;
+        if end > bytes.len() {
+            continue;
+        }
+        let data = &bytes[start..end];
+        let mut cursor = 0usize;
+        while cursor + 12 <= data.len() {
+            let read_u32 = |off: usize| {
+                u32::from_le_bytes([
+                    data[off],
+                    data[off + 1],
+                    data[off + 2],
+                    data[off + 3],
+                ])
+            };
+            let namesz = read_u32(cursor) as usize;
+            let descsz = read_u32(cursor + 4) as usize;
+            let note_type = read_u32(cursor + 8);
+            let name_start = cursor + 12;
+            let align = |v: usize| (v + 3) & !3;
+            let name_end = name_start.checked_add(namesz)?;
+            let desc_start = align(name_end);
+            let desc_end = desc_start.checked_add(descsz)?;
+            if desc_end > data.len() {
+                break;
+            }
+            if note_type == 3 && &data[name_start..name_end] == b"GNU\0" {
+                return Some(
+                    data[desc_start..desc_end]
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect(),
+                );
+            }
+            cursor = align(desc_end);
+        }
+    }
+    None
+}

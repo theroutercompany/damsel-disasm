@@ -276,10 +276,11 @@ fn analyze_elf_end_to_end_functions_and_search() {
     assert!(exported["bound"].is_string(), "bounds present: {:?}", exported["bound"]);
 
     // xrefs --to the helper resolves the call site. Shared-fixture
-    // layout: .text at 0xB0, helper (ret) at 0xBF, call at 0xB4.
+    // layout: 3 phdrs (LOAD/DYNAMIC/NOTE) put .text at 0xE8; helper
+    // (ret) at 0xF7, call at 0xEC.
     let out = damsel()
         .arg("xrefs").arg(&target)
-        .arg("--to").arg("0xbf")
+        .arg("--to").arg("0xf7")
         .arg("--format").arg("json")
         .output().unwrap();
     assert!(out.status.success());
