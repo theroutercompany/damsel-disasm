@@ -420,8 +420,15 @@ sufficient; syscall intrinsic table required).
 - Proof: d2_ssa 4/4 (sequential defs version; use resolves latest).
   Workspace 49 suites, 0 failures.
 
-Next 6.x: type seeds, Wave 5A value-flow dispatch port, cross-block
-phi-SSA.
+### Unit 6.18 — ABI type seeds — DONE
+
+- `arm64_abi_roles()` (AAPCS64) and `x86_64_abi_roles()` (SysV):
+  argument registers + indices, return, callee/caller-saved, SP/FP/LR.
+  These seed the type system from ABI facts — no guessing.
+- Proof: d2_ssa 5/5. Workspace 49 suites, 0 failures.
+
+Next 6.x: Wave 5A value-flow dispatch port, cross-block phi-SSA,
+ObjC type encodings as additional seed source.
 
 ## Lab notes
 

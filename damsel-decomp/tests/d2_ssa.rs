@@ -143,3 +143,19 @@ fn register_renaming_versions_per_block() {
         IrStatement::Assign { destination, expression: IrExpr::Value(IrValue::Register(r)) }
             if destination == "x1_v1" && r == "x0_v2"));
 }
+
+#[test]
+fn abi_roles_cover_argument_return_and_callee_saved() {
+    use damsel_decomp::{AbiRole, arm64_abi_roles, x86_64_abi_roles};
+
+    let arm = arm64_abi_roles();
+    assert!(arm.iter().any(|r| matches!(r.role, AbiRole::Argument { index: 0 }) && r.register == "x0"));
+    assert!(arm.iter().any(|r| r.role == AbiRole::Return && r.register == "x0"));
+    assert!(arm.iter().any(|r| r.role == AbiRole::CalleeSaved && r.register == "x19"));
+    assert!(arm.iter().any(|r| r.role == AbiRole::StackPointer && r.register == "sp"));
+
+    let x86 = x86_64_abi_roles();
+    assert!(x86.iter().any(|r| matches!(r.role, AbiRole::Argument { index: 0 }) && r.register == "rdi"));
+    assert!(x86.iter().any(|r| r.role == AbiRole::Return && r.register == "rax"));
+    assert!(x86.iter().any(|r| r.role == AbiRole::CalleeSaved && r.register == "rbx"));
+}

@@ -265,3 +265,80 @@ fn rename_register(
         register.to_string()
     }
 }
+
+/// ABI type seeds for arm64 (AAPCS64) and x86-64 (SysV): which
+/// registers carry arguments / returns, their bit widths, and
+/// callee-saved status. These seed the type system (Wave 6 spec §3)
+/// from ABI facts rather than guessing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbiRegisterRole {
+    pub register: String,
+    pub role: AbiRole,
+    pub width_bits: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AbiRole {
+    Argument { index: usize },
+    Return,
+    CalleeSaved,
+    CallerSaved,
+    StackPointer,
+    FramePointer,
+    LinkRegister,
+    Flags,
+}
+
+pub fn arm64_abi_roles() -> Vec<AbiRegisterRole> {
+    let mut roles = Vec::new();
+    // Arguments x0–x7
+    for index in 0..8 {
+        roles.push(AbiRegisterRole {
+            register: format!("x{index}"),
+            role: AbiRole::Argument { index },
+            width_bits: 64,
+        });
+    }
+    // Return x0
+    roles.push(AbiRegisterRole { register: "x0".into(), role: AbiRole::Return, width_bits: 64 });
+    // SP / FP / LR
+    roles.push(AbiRegisterRole { register: "sp".into(), role: AbiRole::StackPointer, width_bits: 64 });
+    roles.push(AbiRegisterRole { register: "fp".into(), role: AbiRole::FramePointer, width_bits: 64 });
+    roles.push(AbiRegisterRole { register: "lr".into(), role: AbiRole::LinkRegister, width_bits: 64 });
+    // Callee-saved x19–x28
+    for index in 19..29 {
+        roles.push(AbiRegisterRole {
+            register: format!("x{index}"),
+            role: AbiRole::CalleeSaved,
+            width_bits: 64,
+        });
+    }
+    // Caller-saved x8–x18 (scratch, indirect result at x8)
+    for index in 8..19 {
+        roles.push(AbiRegisterRole {
+            register: format!("x{index}"),
+            role: AbiRole::CallerSaved,
+            width_bits: 64,
+        });
+    }
+    roles
+}
+
+pub fn x86_64_abi_roles() -> Vec<AbiRegisterRole> {
+    let mut roles = Vec::new();
+    let args = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+    for (index, register) in args.iter().enumerate() {
+        roles.push(AbiRegisterRole {
+            register: register.to_string(),
+            role: AbiRole::Argument { index },
+            width_bits: 64,
+        });
+    }
+    roles.push(AbiRegisterRole { register: "rax".into(), role: AbiRole::Return, width_bits: 64 });
+    roles.push(AbiRegisterRole { register: "rsp".into(), role: AbiRole::StackPointer, width_bits: 64 });
+    roles.push(AbiRegisterRole { register: "rbp".into(), role: AbiRole::FramePointer, width_bits: 64 });
+    for register in ["rbx", "r12", "r13", "r14", "r15"] {
+        roles.push(AbiRegisterRole { register: register.into(), role: AbiRole::CalleeSaved, width_bits: 64 });
+    }
+    roles
+}

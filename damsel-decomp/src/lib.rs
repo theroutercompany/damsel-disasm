@@ -21,7 +21,10 @@ pub use ir::{
 pub use structure::{Diamond, LoopBack, NaturalLoop, ResolvedCondition, find_diamonds, find_loops, find_natural_loops, resolve_condition};
 pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
 pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};
-pub use ssa::{PhiCandidate, RenamedBlock, RenamedFunction, SsaReport, build_ssa, rename_registers};
+pub use ssa::{
+    AbiRegisterRole, AbiRole, PhiCandidate, RenamedBlock, RenamedFunction, SsaReport,
+    arm64_abi_roles, build_ssa, rename_registers, x86_64_abi_roles,
+};
 pub use summary::{
     CallSite, FunctionSummaryReport, SummaryError, summarize_function, summarize_named,
 };
