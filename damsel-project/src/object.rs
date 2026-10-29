@@ -17,15 +17,15 @@ pub struct ObjectId {
 impl ObjectId {
     /// Construct an object id from a kind and a deterministic key.
     ///
-    /// Kind and key must be non-empty and must not contain `:`.
+    /// The kind must be non-empty and must not contain `:` (it is the
+    /// prefix before the first separator). The key may contain `:` — for
+    /// example ObjC symbols like `-[Greeter say:to:]` — because parsing
+    /// splits on the first separator only.
     pub fn new(kind: impl Into<String>, key: impl Into<String>) -> Self {
         let kind = kind.into();
         let key = key.into();
         debug_assert!(!kind.is_empty() && !key.is_empty(), "object id parts must be non-empty");
-        debug_assert!(
-            !kind.contains(':') && !key.contains(':'),
-            "object id parts must not contain ':'"
-        );
+        debug_assert!(!kind.contains(':'), "object id kind must not contain ':'");
         let value = format!("{kind}:{key}");
         Self { kind, key, value }
     }

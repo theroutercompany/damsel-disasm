@@ -14,9 +14,11 @@ goblin.workspace = true
 memmap2.workspace = true
 object.workspace = true
 thiserror.workspace = true
+damsel-project = { path = "../damsel-project" }
 
 [dev-dependencies]
 criterion.workspace = true
+tempfile.workspace = true
 
 [[bench]]
 name = "decode_bench"

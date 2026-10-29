@@ -36,10 +36,21 @@ order; typed refusals incl. future-schema). Full workspace: 33 suites, 0
 failures. Evidence rows: 4.1 ✓, 4.3 ✓, 4.4 partial (typed upgrade path
 exists; N-1 real-db fixture lands with the first schema bump).
 
+### Unit 4.2 — `BinaryImage → project facts` ingest (`ingest_v1`) — DONE
+
+- `damsel-macho::analysis::ingest`: source registration (macho_image,
+  image_vmaddr space), section `byte_class` ranges, rank-1 symbol-table
+  seeds, rank-2 function-starts seeds, rank-3 ObjC IMP seeds
+  (classes+categories, deduped), entry-point seed, import facts,
+  project-level ingest marker. Canonical payload formats documented in the
+  module header; `ObjectId` keys may contain `:` (ObjC symbols) — kinds may
+  not.
+- Proof: `cargo test -p damsel-macho --test analysis_ingest` 3/3
+  (sections/symbols/imports truth; ObjC IMP seeds; byte-identical exports
+  across two independent ingests) + damsel-project 6/6.
+
 ### Next units (queue order)
 
-- 4.2 ingest mapping: `BinaryImage` → sources/objects/facts (sections,
-  symbols, imports/exports, ObjC) with byte-map seed ranges.
 - 4.3 `damsel analyze` CLI (project create + ingest; `--format json`
   events) + `project show/export` commands.
 - 4.4 function seed collector (ranks 1–5 exact sources) + recovery

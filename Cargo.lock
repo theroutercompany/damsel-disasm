@@ -432,9 +432,11 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "damsel-core",
+ "damsel-project",
  "goblin",
  "memmap2",
  "object",
+ "tempfile",
  "thiserror",
 ]
 
