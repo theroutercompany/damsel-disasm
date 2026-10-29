@@ -539,6 +539,12 @@ enum Command {
         #[arg(long, help = "Maximum rows to print")]
         limit: Option<usize>,
     },
+    #[command(about = "D0 function summary: calls, imports, strings, problems (Wave 6)")]
+    Summary {
+        project: PathBuf,
+        #[arg(long, help = "Function name or 0x address")]
+        function: String,
+    },
     #[command(about = "Search functions, symbols, imports, sections, and strings")]
     Search {
         project: PathBuf,
@@ -1169,6 +1175,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Search { project, query, kind, limit } => {
             handle_search(project, &query, kind, limit, &output_settings)?;
         }
+        Command::Summary { project, function } => {
+            handle_summary(project, &function, &output_settings)?;
+        }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
@@ -1350,6 +1359,53 @@ fn handle_analyze(
         println!("  xrefs       = {} ({} function windows)", xref_outcome.xref_count, xref_outcome.function_windows);
         println!("  bounds      = {} ({} rank-6, {} problems)", recovery_outcome.bounds, recovery_outcome.rank6_seeded, recovery_outcome.problems);
         println!("  strings     = {}", strings_outcome.strings);
+    }
+    Ok(())
+}
+
+fn handle_summary(
+    project: PathBuf,
+    selector: &str,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, TypedStore, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+        .map_err(map_store_error)?;
+    let sources = store.sources().map_err(map_store_error)?;
+    let Some(source) = sources.first() else {
+        return Err(CliRunError::command("project_not_found", "project has no sources"));
+    };
+    let report = damsel_decomp::summarize_named(&store, source.source_id, selector)
+        .map_err(|e| CliRunError::command("function_not_found", e.to_string()))?;
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "summary",
+            "summary": serde_json::to_value(&report).unwrap_or_default(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("{} ({})", report.function, report.name.as_deref().unwrap_or(""));
+        if let Some(bound) = &report.bound {
+            println!("  bound   {bound}");
+        }
+        println!("  seeds   [{}]", report.seeds.join(","));
+        for call in &report.calls {
+            let flag = if call.unresolved { " (unresolved)" } else { "" };
+            println!("  {}  {} -> {}{}", call.from, call.kind, call.target, flag);
+        }
+        for import in &report.imports {
+            println!("  import  {import}");
+        }
+        for string in &report.strings {
+            println!("  string  {string}");
+        }
+        for problem in &report.problems {
+            println!("  problem {problem}");
+        }
     }
     Ok(())
 }

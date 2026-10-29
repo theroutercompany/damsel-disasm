@@ -1,0 +1,19 @@
+[package]
+name = "damsel-decomp"
+version.workspace = true
+edition.workspace = true
+description = "Decompiler pipeline for Damsel (RE Power Wave 6); D0 function summaries first."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+damsel-project = { path = "../damsel-project" }
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+damsel-macho = { path = "../damsel-macho" }
+damsel-elf = { path = "../damsel-elf" }
+tempfile.workspace = true

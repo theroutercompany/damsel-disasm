@@ -237,6 +237,23 @@ xrefs/recovery/strings for ELF. First step: 5A semantics producer behind differe
 oracles (arm64), then `arch_x86` feature flip + x86 producer (spike-proven
 sufficient; syscall intrinsic table required).
 
+## Wave 6 — Decompiler
+
+### Unit 6.0 — `damsel-decomp` crate, D0 function summaries — DONE
+
+- `summarize_function`/`summarize_named`: fact-derived D0 reports —
+  bound, seeds, call sites (with unresolved flags for
+  indirect/register targets), imports, string joins, problems.
+  Format-neutral by construction: one summary surface for Mach-O and
+  ELF. CLI `summary <project> --function <name|0xaddr>` (text/JSON,
+  typed `function_not_found`/`ambiguous_name`).
+- Proof: d0_summary 3/3 (Mach-O `_main` incl. `_puts` import + string
+  join; ELF `exported_func` call to `0xf7`; typed selector errors);
+  project_cli 9/9. Workspace 43 suites, 0 failures.
+
+Next 6.x: D1 low-level IR lift from Wave 5A semantics (arm64 first),
+stack-frame facts, then structuring (D4).
+
 ## Lab notes
 
 - Linux lab: `nixos-rex` (Tailscale, NixOS x86_64, 12 cores / 62 GB,

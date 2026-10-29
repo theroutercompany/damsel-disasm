@@ -310,6 +310,40 @@ fn analyze_elf_end_to_end_functions_and_search() {
 }
 
 #[test]
+fn summary_command_reports_d0_function_summary() {
+    let dir = smoke_dir("summary");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    let out = damsel()
+        .arg("summary").arg(&target)
+        .arg("--function").arg("_main")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success());
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["command"], "summary");
+    let summary = &body["summary"];
+    assert_eq!(summary["name"], "_main");
+    assert!(summary["bound"].as_str().unwrap().contains("stop=return"));
+    let calls = summary["calls"].as_array().unwrap();
+    assert!(calls.iter().any(|c| c["target"] == "import:_puts"));
+    assert!(summary["imports"].as_array().unwrap().iter().any(|i| i == "_puts"));
+    assert!(!summary["strings"].as_array().unwrap().is_empty());
+
+    // Unknown selector is a typed error.
+    let out = damsel()
+        .arg("summary").arg(&target)
+        .arg("--function").arg("nope")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err_text = String::from_utf8(out.stderr).unwrap_or_default();
+    assert!(err_text.contains("function_not_found"), "got: {err_text}");
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");

@@ -408,6 +408,7 @@ dependencies = [
  "axum",
  "clap",
  "damsel-core",
+ "damsel-decomp",
  "damsel-elf",
  "damsel-macho",
  "damsel-project",
@@ -425,6 +426,18 @@ name = "damsel-core"
 version = "0.1.0"
 dependencies = [
  "capstone",
+ "thiserror",
+]
+
+[[package]]
+name = "damsel-decomp"
+version = "0.1.0"
+dependencies = [
+ "damsel-elf",
+ "damsel-macho",
+ "damsel-project",
+ "serde",
+ "tempfile",
  "thiserror",
 ]
 
