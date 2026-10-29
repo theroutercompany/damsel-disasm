@@ -178,6 +178,97 @@ fn string_harvest_extracts_cstring_with_value_at_address() {
     }
 }
 
+/// Evidence row 4.5: recovery recall >= 95% and FP <= 2% against hidden
+/// symbol-table ground truth (rank-1 seeds disabled; function-starts,
+/// entry point, and rank-6 call targets only).
+#[test]
+fn recovery_audit_recall_and_false_positives() {
+    use damsel_macho::{IngestOptions, harvest_xrefs, recover_functions};
+
+    let image = load(fixture("arm64-symbolized")).unwrap();
+
+    // Ground truth: defined text symbols inside executable sections.
+    // `__mh_execute_header` sits before the first section and is excluded
+    // by the section-range filter; symbol sizes are not populated by the
+    // loader and must not gate truth.
+    let exec: Vec<(u64, u64)> = image
+        .sections()
+        .iter()
+        .filter(|s| s.executable)
+        .map(|s| (s.address, s.address + s.size))
+        .collect();
+    let truth: std::collections::BTreeSet<u64> = image
+        .symbols()
+        .iter()
+        .filter(|sym| {
+            sym.defined
+                && matches!(sym.kind, damsel_core::SymbolKind::Text)
+                && exec.iter().any(|(a, b)| sym.address >= *a && sym.address < *b)
+        })
+        .map(|sym| sym.address)
+        .collect();
+    assert!(truth.len() >= 3, "fixture must have >=3 ground-truth functions");
+
+    // Stripped-mode pipeline: no rank-1 symbol seeds.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&dir.path().join("project.db"), Create::New, &meta()).unwrap();
+    let outcome = damsel_macho::ingest_binary_image_with_options(
+        &mut store,
+        &image,
+        "0.1.0",
+        &IngestOptions { include_symbol_seeds: false },
+    )
+    .unwrap();
+    let seeds: Vec<u64> = damsel_project::function_summaries(&store)
+        .unwrap()
+        .iter()
+        .map(|f| f.address)
+        .collect();
+    harvest_xrefs(&mut store, &image, outcome.source_id, &seeds, "0.1.0").unwrap();
+    let recovery = recover_functions(
+        &mut store,
+        &image,
+        outcome.source_id,
+        &seeds,
+        "0.1.0",
+    )
+    .unwrap();
+
+    // Recovered set: functions with bounds (rank-1..5 seeds + rank-6).
+    let facts = store.facts_for_source(outcome.source_id).unwrap();
+    let recovered: std::collections::BTreeSet<u64> = facts
+        .iter()
+        .filter(|f| f.kind.as_str() == "function_bound")
+        .filter_map(|f| {
+            f.object_id
+                .as_ref()
+                .and_then(|o| u64::from_str_radix(o.key().trim_start_matches("0x"), 16).ok())
+        })
+        .collect();
+    assert!(recovery.bounds >= 3);
+
+    let hits = truth.intersection(&recovered).count();
+    let recall = hits as f64 / truth.len() as f64;
+    let false_positives = recovered.difference(&truth).count();
+    let fp_rate = false_positives as f64 / recovered.len().max(1) as f64;
+    println!(
+        "recovery audit: truth={} recovered={} hits={} recall={:.3} fp_rate={:.3}",
+        truth.len(),
+        recovered.len(),
+        hits,
+        recall,
+        fp_rate
+    );
+    assert!(
+        recall >= 0.95,
+        "recall {recall:.3} below 95% gate (evidence row 4.5)"
+    );
+    assert!(
+        fp_rate <= 0.02,
+        "false-positive rate {fp_rate:.3} above 2% gate (evidence row 4.5)"
+    );
+}
+
 #[test]
 fn ingest_is_export_deterministic() {
     let a = tempfile::tempdir().unwrap();

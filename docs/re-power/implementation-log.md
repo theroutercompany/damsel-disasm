@@ -115,12 +115,26 @@ exists; N-1 real-db fixture lands with the first schema bump).
   surface complete: analyze, project show/export, functions, xrefs,
   strings, search.
 
+### Unit 4.4b — recovery worker (`recovery_v1`) + audit gate — DONE
+
+- `damsel_macho::recover_functions`: linear-decode bounds to first hard
+  terminator (`return`/`trap`), stop reasons (`return|trap|seed_boundary|
+  section_end`), rank-6 call-target seeding with stub-section exclusion
+  (stub FP caught in smoke), overlap `function_problem` facts (ambiguous,
+  never silent merges). `analyze` reports bounds/rank6/problems;
+  `functions` shows bounds. `IngestOptions.include_symbol_seeds` enables
+  stripped-mode ingest for auditing.
+- Audit gate: `bin/function-recovery-audit.sh` → **PASS on current
+  fixtures: truth=3 recovered=3 recall=1.000 fp=0.000** (evidence row
+  4.5; thresholds recall≥95% fp≤2%). Note: gate tightens when the
+  planned `xref-rich`/`data-in-text` fixtures land (queue 4.7).
+- Proof: analysis_ingest 8/8; workspace 35 suites, 0 failures.
+
 ### Next units (queue order)
 
 - 4.3 `damsel analyze` CLI — DONE (see above)
 - 4.4b recovery worker v1 (bounds/blocks from CFG walk) + audit gate.
 - 4.5 xref harvesting — DONE (see above)
-- 4.4b recovery worker (bounds/blocks, ranks 6-8 seeds) + audit gate.
 - 4.7 budget fixtures (stripped-30mb) + bench wiring.
 - 4.7 budgets on `stripped-30mb` fixture (corpus bench rows 4.10).
 

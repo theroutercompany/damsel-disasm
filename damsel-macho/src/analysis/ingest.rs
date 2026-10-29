@@ -43,11 +43,34 @@ pub struct IngestOutcome {
 const PASS: &str = "ingest_v1";
 const CONF: Confidence = Confidence::Exact;
 
+/// Ingest options (used by the recovery-audit gate to hide symbol seeds
+/// and measure recall against hidden ground truth).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IngestOptions {
+    /// Rank-1 symbol-table function seeds (default: enabled).
+    pub include_symbol_seeds: bool,
+}
+
+impl Default for IngestOptions {
+    fn default() -> Self {
+        Self { include_symbol_seeds: true }
+    }
+}
+
 /// Register the standalone image as a project source and emit seed facts.
 pub fn ingest_binary_image(
     store: &mut impl TypedStore,
     image: &BinaryImage,
     analyzer_version: &str,
+) -> Result<IngestOutcome, IngestError> {
+    ingest_binary_image_with_options(store, image, analyzer_version, &IngestOptions::default())
+}
+
+pub fn ingest_binary_image_with_options(
+    store: &mut impl TypedStore,
+    image: &BinaryImage,
+    analyzer_version: &str,
+    options: &IngestOptions,
 ) -> Result<IngestOutcome, IngestError> {
     let label = image
         .source()
@@ -100,13 +123,14 @@ pub fn ingest_binary_image(
     }
 
     // Text symbols → rank-1 function seeds (function-recovery plan §Seed
-    // Collection). Non-text symbols → symbol facts.
+    // Collection). Non-text symbols → symbol facts. The audit gate hides
+    // rank-1 seeds to measure recovery recall.
     for symbol in image.symbols() {
         if !symbol.defined || symbol.address == 0 {
             continue;
         }
         match &symbol.kind {
-            SymbolKind::Text => {
+            SymbolKind::Text if options.include_symbol_seeds => {
                 let object = ObjectId::new("function", format!("{:#x}", symbol.address));
                 let payload = format!(
                     "symbol_table|name={}|size={}",

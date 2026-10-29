@@ -1250,7 +1250,7 @@ fn handle_analyze(
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{AnalysisProjectMeta, ProjectId, ProjectStore, open_store};
-    use damsel_macho::{harvest_strings, harvest_xrefs};
+    use damsel_macho::{harvest_strings, harvest_xrefs, recover_functions};
 
     let image = load_image(path.clone())?;
     let project_dir = project_dir_for(&path);
@@ -1297,6 +1297,14 @@ fn handle_analyze(
         analyzer_version(),
     )
     .map_err(|e| CliRunError::command("xref_error", e.to_string()))?;
+    let recovery_outcome = recover_functions(
+        &mut store,
+        &image,
+        outcome.source_id,
+        &function_addresses,
+        analyzer_version(),
+    )
+    .map_err(|e| CliRunError::command("recovery_error", e.to_string()))?;
     let strings_outcome = harvest_strings(
         &mut store,
         &image,
@@ -1318,6 +1326,9 @@ fn handle_analyze(
             "facts": outcome.fact_count,
             "function_windows": xref_outcome.function_windows,
             "xrefs": xref_outcome.xref_count,
+            "function_bounds": recovery_outcome.bounds,
+            "rank6_seeded": recovery_outcome.rank6_seeded,
+            "recovery_problems": recovery_outcome.problems,
             "strings": strings_outcome.strings,
         });
         println!("{}", project_json(value));
@@ -1328,6 +1339,7 @@ fn handle_analyze(
         println!("  objects     = {}", outcome.object_count);
         println!("  facts       = {}", outcome.fact_count);
         println!("  xrefs       = {} ({} function windows)", xref_outcome.xref_count, xref_outcome.function_windows);
+        println!("  bounds      = {} ({} rank-6, {} problems)", recovery_outcome.bounds, recovery_outcome.rank6_seeded, recovery_outcome.problems);
         println!("  strings     = {}", strings_outcome.strings);
     }
     Ok(())
@@ -1718,6 +1730,21 @@ fn handle_functions(
         summaries.truncate(limit);
     }
 
+    // Join stored bounds (recovery_v1) onto summaries by address.
+    let bound_by_address: std::collections::BTreeMap<u64, String> = store
+        .facts()
+        .map_err(map_store_error)?
+        .iter()
+        .filter_map(|fact| {
+            if fact.kind.as_str() != "function_bound" {
+                return None;
+            }
+            let object = fact.object_id.as_ref()?;
+            let address = u64::from_str_radix(object.key().trim_start_matches("0x"), 16).ok()?;
+            Some((address, fact.payload.clone()))
+        })
+        .collect();
+
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({
             "command": "functions",
@@ -1727,6 +1754,7 @@ fn handle_functions(
                 "address": format!("{:#x}", f.address),
                 "name": f.name,
                 "seeds": f.seeds,
+                "bound": bound_by_address.get(&f.address),
             })).collect::<Vec<_>>(),
         });
         println!("{}", project_json(value));
@@ -1734,7 +1762,11 @@ fn handle_functions(
         println!("functions: {total}");
         for f in &summaries {
             let name = f.name.as_deref().unwrap_or("");
-            println!("  {:#010x}  {:<32} [{}]", f.address, name, f.seeds.join(","));
+            let bound = bound_by_address
+                .get(&f.address)
+                .map(|b| b.as_str())
+                .unwrap_or("-");
+            println!("  {:#010x}  {:<24} [{:<28}] {}", f.address, name, f.seeds.join(","), bound);
         }
     }
     Ok(())
