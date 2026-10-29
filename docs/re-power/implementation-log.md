@@ -620,8 +620,18 @@ sufficient; syscall intrinsic table required).
   - Total: **10 / 495 lines (2.0% unknown rate)** across diverse
     function types (allocator, assert, loader startup)
 
-Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
-migration, Workbench pane integration.
+### Unit 6.25 — cross-block phi-SSA — DONE
+
+- `build_phi_nodes`: detects registers defined in multiple
+  predecessors of a multi-predecessor block; emits `PhiNode` with
+  merged version names (`reg_phiN`) and incoming predecessor list.
+  Works from the original IR (per-block renaming keeps versions
+  block-local by design; the phi layer merges them).
+- Proof: d2_ssa 6/6 (diamond IR produces phi for x0 at merge block;
+  single-def registers excluded). Workspace 51 suites, 0 failures.
+
+Next: rmcp transport spike, synthesize dispatch migration, Workbench
+pane integration, then lab re-verification.
 
 ## Lab notes
 

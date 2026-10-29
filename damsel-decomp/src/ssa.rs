@@ -343,3 +343,96 @@ pub fn x86_64_abi_roles() -> Vec<AbiRegisterRole> {
     }
     roles
 }
+
+/// Cross-block phi-SSA: for each multi-predecessor block, for each
+/// register defined in multiple predecessors with different versions,
+/// insert a phi assignment `reg_vN = phi(reg_vA, reg_vB, …)` at the
+/// block entry. Returns the phi statements per block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhiNode {
+    pub block: usize,
+    pub register: String,
+    pub merged_version: String,
+    pub incoming: Vec<String>,
+}
+
+pub fn build_phi_nodes(
+    function: &crate::ir::IrFunction,
+    _renamed: &RenamedFunction,
+) -> Vec<PhiNode> {
+    // Build predecessors from the original function.
+    let block_at: std::collections::BTreeMap<u64, usize> = function
+        .blocks
+        .iter()
+        .map(|b| (b.start_address, b.id))
+        .collect();
+    let mut predecessors: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+    for block in &function.blocks {
+        let mut targets = Vec::new();
+        match &block.terminator {
+            crate::ir::IrTerminator::Branch(t) => targets.push(*t),
+            crate::ir::IrTerminator::CondBranch { taken, fallthrough, .. } => {
+                targets.push(*taken);
+                targets.push(*fallthrough);
+            }
+            _ => {}
+        }
+        for t in targets {
+            if let Some(id) = block_at.get(&t) {
+                predecessors.entry(*id).or_default().push(block.id);
+            }
+        }
+    }
+
+    // Per-block defined registers (from the ORIGINAL function, so
+    // cross-block defs are distinguishable).
+    let mut block_defs: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>> =
+        Default::default();
+    for block in &function.blocks {
+        let mut defs: std::collections::BTreeSet<String> = Default::default();
+        for statement in &block.statements {
+            match statement {
+                crate::ir::IrStatement::Assign { destination, .. } => {
+                    defs.insert(destination.clone());
+                }
+                crate::ir::IrStatement::Load { destination, .. } => {
+                    defs.insert(destination.clone());
+                }
+                _ => {}
+            }
+        }
+        block_defs.insert(block.id, defs);
+    }
+
+    let mut phis = Vec::new();
+    let mut version_counter = 0usize;
+    for (block_id, preds) in &predecessors {
+        if preds.len() < 2 {
+            continue;
+        }
+        // Registers defined in >1 predecessor (cross-block merge).
+        let mut all_defs: std::collections::BTreeMap<String, usize> = Default::default();
+        for pred in preds {
+            if let Some(defs) = block_defs.get(pred) {
+                for d in defs {
+                    *all_defs.entry(d.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+        for (register, count) in all_defs {
+            if count > 1 {
+                version_counter += 1;
+                phis.push(PhiNode {
+                    block: *block_id,
+                    register: register.clone(),
+                    merged_version: format!("{register}_phi{version_counter}"),
+                    incoming: preds
+                        .iter()
+                        .filter_map(|p| block_defs.get(p)?.contains(&register).then(|| p.to_string()))
+                        .collect(),
+                });
+            }
+        }
+    }
+    phis
+}

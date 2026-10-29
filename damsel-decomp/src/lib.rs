@@ -33,8 +33,9 @@ pub use recon::{
 };
 pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};
 pub use ssa::{
-    AbiRegisterRole, AbiRole, PhiCandidate, RenamedBlock, RenamedFunction, SsaReport,
-    arm64_abi_roles, build_ssa, rename_registers, x86_64_abi_roles,
+    AbiRegisterRole, AbiRole, PhiCandidate, PhiNode, RenamedBlock, RenamedFunction,
+    SsaReport, arm64_abi_roles, build_phi_nodes, build_ssa, rename_registers,
+    x86_64_abi_roles,
 };
 pub use summary::{
     CallSite, FunctionSummaryReport, SummaryError, summarize_function, summarize_named,

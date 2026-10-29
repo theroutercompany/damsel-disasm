@@ -159,3 +159,54 @@ fn abi_roles_cover_argument_return_and_callee_saved() {
     assert!(x86.iter().any(|r| r.role == AbiRole::Return && r.register == "rax"));
     assert!(x86.iter().any(|r| r.role == AbiRole::CalleeSaved && r.register == "rbx"));
 }
+
+#[test]
+fn phi_nodes_merge_cross_block_versions() {
+    use damsel_decomp::*;
+    use damsel_decomp::{IrBinOp, IrBlock, IrCondition, IrExpr, IrStatement, IrTerminator, IrValue};
+
+    // Two blocks define x0 differently; block 2 has both as preds.
+    let function = IrFunction {
+        entry_address: 0,
+        blocks: vec![
+            IrBlock {
+                id: 0,
+                start_address: 0,
+                statements: vec![IrStatement::Assign {
+                    destination: "x0".into(),
+                    expression: IrExpr::Value(IrValue::Const(1)),
+                }],
+                terminator: IrTerminator::CondBranch {
+                    condition: IrCondition::Raw("b.eq".into()),
+                    taken: 0x20,
+                    fallthrough: 0x10,
+                },
+            },
+            IrBlock {
+                id: 1,
+                start_address: 0x10,
+                statements: vec![IrStatement::Assign {
+                    destination: "x0".into(),
+                    expression: IrExpr::Value(IrValue::Const(2)),
+                }],
+                terminator: IrTerminator::Branch(0x20),
+            },
+            IrBlock {
+                id: 2,
+                start_address: 0x20,
+                statements: vec![],
+                terminator: IrTerminator::Return,
+            },
+        ],
+        instruction_count: 5,
+        unknown_count: 0,
+    };
+
+    let renamed = rename_registers(&function);
+    let phis = build_phi_nodes(&function, &renamed);
+    assert_eq!(phis.len(), 1, "x0 needs a phi at block 2");
+    assert_eq!(phis[0].block, 2);
+    assert_eq!(phis[0].register, "x0");
+    assert_eq!(phis[0].incoming.len(), 2, "merges defs from both preds");
+    assert!(phis[0].merged_version.starts_with("x0_phi"));
+}
