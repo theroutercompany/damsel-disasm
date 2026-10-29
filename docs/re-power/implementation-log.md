@@ -264,8 +264,19 @@ sufficient; syscall intrinsic table required).
   0x100000460; unknown-count invariant; deterministic serialize
   round-trip; empty window). Workspace 44 suites, 0 failures.
 
-Next 6.x: D2 data-flow (register SSA over blocks), stack-frame facts,
-then structuring (D4) + pseudocode renderer (D5).
+### Unit 6.2 — D2 data-flow v1 (versioning, CFG, phi candidates) — DONE
+
+- `damsel-decomp::ssa`: block CFG from terminators (branch/cond/
+  window-fallthrough), register def/use counts, and phi candidates
+  (multi-def registers read in multi-predecessor blocks). Honest v1:
+  linear counting, no dominance frontiers yet — flagged in the module
+  docs as the next D2 slice.
+- Proof: d2_ssa 3/3 (defs/uses on `_main` + deterministic serialize;
+  empty function; hand-built merge IR flags x0 as phi candidate with
+  2 preds, x1 excluded). Workspace 45 suites, 0 failures.
+
+Next 6.x: D2 slice 2 (per-block versioned renaming), stack-frame
+facts, D4 structuring, D5 pseudocode renderer.
 
 ## Lab notes
 

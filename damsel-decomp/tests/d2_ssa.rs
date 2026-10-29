@@ -1,0 +1,98 @@
+//! D2 data-flow contract tests over the lifted `_main` fixture.
+
+mod support;
+
+use damsel_core::{DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2, DisassemblyTarget};
+use damsel_decomp::{build_ssa, lift_arm64};
+
+fn lift_main() -> damsel_decomp::IrFunction {
+    let image = damsel_macho::load(support::fixture("arm64-symbolized")).unwrap();
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Symbol("_main".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Unlimited,
+        options: DisassemblyOptions {
+            include_annotations: false,
+            include_value_flow: false,
+        },
+    };
+    let result = damsel_macho::disassemble_v2(&image, &request).unwrap();
+    lift_arm64(&result.instructions)
+}
+
+#[test]
+fn ssa_reports_defs_uses_and_cfg() {
+    let function = lift_main();
+    let report = build_ssa(&function);
+    assert!(report.total_defs > 0, "main writes registers");
+    assert!(report.total_uses > 0, "main reads registers");
+    assert!(!report.defs.is_empty());
+    // Deterministic serialization for snapshots.
+    let a = serde_json::to_string(&report).unwrap();
+    let b = serde_json::to_string(&build_ssa(&lift_main())).unwrap();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn empty_function_is_empty_report() {
+    let function = lift_arm64(&[]);
+    let report = build_ssa(&function);
+    assert_eq!(report.total_defs, 0);
+    assert_eq!(report.total_uses, 0);
+    assert!(report.phi_candidates.is_empty());
+}
+
+#[test]
+fn phi_candidates_flag_multi_def_registers_at_merges() {
+    // Hand-built IR: two defs of x0 merging into a multi-predecessor
+    // block that reads x0.
+    use damsel_decomp::*;
+    let function = IrFunction {
+        entry_address: 0,
+        blocks: vec![
+            IrBlock {
+                id: 0,
+                start_address: 0,
+                statements: vec![IrStatement::Assign {
+                    destination: "x0".into(),
+                    expression: IrExpr::Value(IrValue::Const(1)),
+                }],
+                terminator: IrTerminator::CondBranch {
+                    condition: IrCondition::Raw("b.eq".into()),
+                    taken: 16,
+                    fallthrough: 8,
+                },
+            },
+            IrBlock {
+                id: 1,
+                start_address: 8,
+                statements: vec![IrStatement::Assign {
+                    destination: "x0".into(),
+                    expression: IrExpr::Value(IrValue::Const(2)),
+                }],
+                terminator: IrTerminator::Branch(16),
+            },
+            IrBlock {
+                id: 2,
+                start_address: 16,
+                statements: vec![IrStatement::Assign {
+                    destination: "x1".into(),
+                    expression: IrExpr::Value(IrValue::Register("x0".into())),
+                }],
+                terminator: IrTerminator::Return,
+            },
+        ],
+        instruction_count: 6,
+        unknown_count: 0,
+    };
+    let report = build_ssa(&function);
+    // Block 2 has two predecessors (blocks 0 and 1).
+    assert_eq!(report.predecessors.get(&2).unwrap().len(), 2);
+    // x0 has two defs and is read in block 2 → phi candidate.
+    assert!(report
+        .phi_candidates
+        .iter()
+        .any(|p| p.register == "x0" && p.block == 2 && p.defs == 2));
+    // x1 has one def → never a candidate.
+    assert!(!report.phi_candidates.iter().any(|p| p.register == "x1"));
+}
