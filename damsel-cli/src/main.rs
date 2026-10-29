@@ -1252,6 +1252,15 @@ fn handle_analyze(
     use damsel_project::{AnalysisProjectMeta, ProjectId, ProjectStore, open_store};
     use damsel_macho::{harvest_strings, harvest_xrefs, recover_functions};
 
+    // Format branch (Wave 5B.2): ELF ingests seeds only — engine passes
+    // (xrefs/recovery/strings) wait on the x86_64 decode mapper.
+    let is_elf = std::fs::read(&path)
+        .map(|bytes| bytes.len() >= 4 && bytes[0..4] == *b"\x7fELF")
+        .unwrap_or(false);
+    if is_elf {
+        return handle_analyze_elf(path, refresh, output_settings);
+    }
+
     let image = load_image(path.clone())?;
     let project_dir = project_dir_for(&path);
     if project_dir.exists() && !refresh {
@@ -1768,6 +1777,74 @@ fn handle_functions(
                 .unwrap_or("-");
             println!("  {:#010x}  {:<24} [{:<28}] {}", f.address, name, f.seeds.join(","), bound);
         }
+    }
+    Ok(())
+}
+
+fn handle_analyze_elf(
+    path: PathBuf,
+    refresh: bool,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{AnalysisProjectMeta, ProjectId, ProjectStore, open_store};
+
+    let image = damsel_elf::load(&path)
+        .map_err(|e| CliRunError::command("unsupported_input", e.to_string()))?;
+    let project_dir = project_dir_for(&path);
+    if project_dir.exists() && !refresh {
+        return Err(CliRunError::command(
+            "project_exists",
+            format!(
+                "project already exists at `{}`; pass --refresh to rebuild",
+                project_dir.display()
+            ),
+        ));
+    }
+    if refresh && project_dir.exists() {
+        std::fs::remove_dir_all(&project_dir).map_err(|e| {
+            CliRunError::command("store_error", format!("{}: {e}", project_dir.display()))
+        })?;
+    }
+    let name = path
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "project".to_string());
+    let meta = AnalysisProjectMeta {
+        project_id: ProjectId::new(fresh_project_id()),
+        name,
+        analyzer_version: analyzer_version().to_string(),
+    };
+    let mut store = open_store(&project_dir.join("project.db"), damsel_project::Create::New, &meta)
+        .map_err(map_store_error)?;
+    let outcome = damsel_elf::ingest_elf_image(&mut store, &image, analyzer_version())
+        .map_err(|e| CliRunError::command("ingest_error", e.to_string()))?;
+    let source_count = store.sources().map_err(map_store_error)?.len();
+    drop(store);
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "analyze",
+            "project": meta,
+            "project_path": project_dir.display().to_string(),
+            "sources": source_count,
+            "objects": outcome.object_count,
+            "facts": outcome.fact_count,
+            "engine_passes": "ingest_only (x86_64 engine passes pending)",
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("analyzed -> {}", project_dir.display());
+        println!("  project_id  = {}", meta.project_id);
+        println!(
+            "  arch        = {} (ELF, {})",
+            image.architecture,
+            if image.is_position_independent { "PIE" } else { "static" }
+        );
+        if let Some(soname) = &image.soname {
+            println!("  soname      = {soname}");
+        }
+        println!("  objects     = {}", outcome.object_count);
+        println!("  facts       = {}", outcome.fact_count);
+        println!("  engine      = ingest only (xrefs/recovery pending x86_64 decode mapper)");
     }
     Ok(())
 }

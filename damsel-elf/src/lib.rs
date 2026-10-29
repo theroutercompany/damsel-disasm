@@ -9,10 +9,21 @@
 //! the `elf-nosections` fixture unit.
 
 mod image;
+mod ingest;
 mod loader;
 
 pub use image::{ElfDynamicEntry, ElfImage, ElfSection, ElfSegment, ElfSymbol};
+pub use ingest::{ElfIngestError, ElfIngestOutcome, ingest_elf_image};
 pub use loader::{ElfError, Result, load, load_bytes};
+
+/// Synthetic ELF fixture builders (deterministic in-process bytes).
+///
+/// `#[doc(hidden)]` test-support surface shared with the CLI contract
+/// tests until the checked-in fixture lane (Wave 5C) replaces it.
+#[doc(hidden)]
+pub mod synth {
+    include!("synth_support.rs");
+}
 
 #[cfg(test)]
 mod tests {

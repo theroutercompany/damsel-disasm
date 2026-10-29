@@ -242,6 +242,44 @@ fn search_ranks_across_kinds_with_filters() {
 }
 
 #[test]
+fn analyze_elf_end_to_end_functions_and_search() {
+    let dir = smoke_dir("elf");
+    let target = dir.join("libfake.so.1");
+    std::fs::write(&target, damsel_elf::synth::shared_object()).unwrap();
+
+    let out = damsel()
+        .arg("analyze").arg(&target)
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["command"], "analyze");
+    assert!(body["facts"].as_u64().unwrap() > 0);
+    assert_eq!(body["engine_passes"], "ingest_only (x86_64 engine passes pending)");
+
+    // Wave 4 queries work unchanged on the ELF project.
+    let out = damsel()
+        .arg("functions").arg(&target)
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success());
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(body["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["name"] == "exported_func"));
+
+    let out = damsel()
+        .arg("search").arg(&target).arg("exported")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["results"][0]["kind"], "function");
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");

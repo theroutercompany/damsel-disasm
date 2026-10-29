@@ -67,6 +67,41 @@ fn shared_object_loads_dynamic_linkage() {
 }
 
 #[test]
+fn elf_ingest_feeds_wave4_queries() {
+    use damsel_project::{Create, ProjectStore, TypedStore, open_store};
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&dir.path().join("project.db"), Create::New, &meta()).unwrap();
+    let image = load_bytes(Some("libfake".into()), synth::shared_object()).unwrap();
+    let outcome = damsel_elf::ingest_elf_image(&mut store, &image, "0.1.0").unwrap();
+    assert!(outcome.fact_count > 0);
+
+    let sources = store.sources().unwrap();
+    assert_eq!(sources[0].kind, damsel_project::AnalysisSourceKind::ElfObject);
+    assert_eq!(sources[0].address_spaces[0].as_str(), "elf_vaddr");
+
+    // Wave 4 query surface works unchanged across formats.
+    let summaries = damsel_project::function_summaries(&store).unwrap();
+    assert!(summaries.iter().any(|f| f.name.as_deref() == Some("exported_func")));
+
+    let facts = store.facts().unwrap();
+    assert!(facts
+        .iter()
+        .any(|f| f.kind.as_str() == "linkage" && f.payload == "dt_needed|libfake.so.1"));
+    assert!(facts
+        .iter()
+        .any(|f| f.kind.as_str() == "import" && f.object_id.as_ref().unwrap().key() == "malloc"));
+}
+
+fn meta() -> damsel_project::AnalysisProjectMeta {
+    damsel_project::AnalysisProjectMeta {
+        project_id: damsel_project::ProjectId::new("00000000-elf-ingest-000000000001"),
+        name: "elf-ingest".to_string(),
+        analyzer_version: "0.1.0".to_string(),
+    }
+}
+
+#[test]
 fn truncated_and_malformed_inputs_fail_typed() {
     let full = synth::static_exec();
     for cut in [4usize, 16, 40, 64, 100] {

@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 damsel-core = { path = "../damsel-core" }
+damsel-project = { path = "../damsel-project" }
 object.workspace = true
 thiserror.workspace = true
 

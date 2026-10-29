@@ -408,6 +408,7 @@ dependencies = [
  "axum",
  "clap",
  "damsel-core",
+ "damsel-elf",
  "damsel-macho",
  "damsel-project",
  "insta",
@@ -432,6 +433,7 @@ name = "damsel-elf"
 version = "0.1.0"
 dependencies = [
  "damsel-core",
+ "damsel-project",
  "object",
  "tempfile",
  "thiserror",
