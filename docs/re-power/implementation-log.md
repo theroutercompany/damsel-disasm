@@ -484,8 +484,17 @@ sufficient; syscall intrinsic table required).
 - Proof: recon 10/10 (constant-sub flags flagged; variable-condition
   not). Workspace 51 suites, 0 failures.
 
-Next: 5A value-flow dispatch port, cross-block phi-SSA, rmcp
-transport spike, then lab re-run for delta 4.
+### Unit 5A.6 — value-flow family predicates — DONE
+
+- `semantics::arm64` gains multiply (mul/madd/msub/smull/umull/
+  smulh/umulh), divide (sdiv/udiv), extend (sxt*/uxt*), shift
+  (asr/ror), reverse (rev*/rbit), count (clz/cls/ctz) predicates —
+  the full dispatch vocabulary the engine's `synthesize_*_value`
+  ladder needs for its migration to semantics queries.
+- Proof: damsel-core lib 8/8. Workspace 51 suites, 0 failures.
+
+Next: engine `synthesize_*` dispatch migration behind the oracle,
+cross-block phi-SSA, rmcp transport spike, lab delta run 4.
 
 ## Lab notes
 

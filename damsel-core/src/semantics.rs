@@ -196,6 +196,41 @@ pub mod arm64 {
         destination_register(instruction).into_iter().collect()
     }
 
+    /// Multiply-family mnemonics (v1 set for the value-flow dispatch
+    /// port; full MRS/SIMD families land with their own slices).
+    pub fn is_multiply(lower: &str) -> bool {
+        matches!(lower, "mul" | "madd" | "msub" | "smull" | "umull" | "smulh" | "umulh")
+            || lower.starts_with("mul")
+    }
+
+    /// Divide mnemonics.
+    pub fn is_divide(lower: &str) -> bool {
+        matches!(lower, "sdiv" | "udiv")
+    }
+
+    /// Extend mnemonics (sign/zero extend from narrow registers).
+    pub fn is_extend(lower: &str) -> bool {
+        matches!(
+            lower,
+            "sxtb" | "sxth" | "sxtw" | "uxtb" | "uxth" | "uxtw"
+        )
+    }
+
+    /// Shift mnemonics beyond lsl/lsr (explicit register variants).
+    pub fn is_shift(lower: &str) -> bool {
+        matches!(lower, "asr" | "lsl" | "lsr" | "ror" | "asl")
+    }
+
+    /// Reverse bit/byte mnemonics.
+    pub fn is_reverse(lower: &str) -> bool {
+        matches!(lower, "rev" | "rev16" | "rev32" | "rev64" | "rbit")
+    }
+
+    /// Count-zeroes / count-leading-signs family.
+    pub fn is_count(lower: &str) -> bool {
+        matches!(lower, "clz" | "cls" | "ctz")
+    }
+
     /// Classify with the documented precedence.
     pub fn classify(lower: &str) -> ControlFlowClass {
         if is_return(lower) {
@@ -439,6 +474,27 @@ mod tests {
             ),
             vec!["x1".to_string()]
         );
+    }
+
+    #[test]
+    fn value_flow_families_classified() {
+        assert!(arm64::is_multiply("mul"));
+        assert!(arm64::is_multiply("smull"));
+        assert!(!arm64::is_multiply("add"));
+        assert!(arm64::is_divide("sdiv"));
+        assert!(arm64::is_divide("udiv"));
+        assert!(!arm64::is_divide("mul"));
+        assert!(arm64::is_extend("sxtw"));
+        assert!(arm64::is_extend("uxtb"));
+        assert!(!arm64::is_extend("mov"));
+        assert!(arm64::is_shift("asr"));
+        assert!(arm64::is_shift("ror"));
+        assert!(!arm64::is_shift("add"));
+        assert!(arm64::is_reverse("rev"));
+        assert!(arm64::is_reverse("rbit"));
+        assert!(arm64::is_count("clz"));
+        assert!(arm64::is_count("cls"));
+        assert!(!arm64::is_count("mul"));
     }
 
     #[test]
