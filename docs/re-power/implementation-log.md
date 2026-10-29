@@ -140,7 +140,22 @@ exists; N-1 real-db fixture lands with the first schema bump).
 
 ## Wave 5 — ELF + x86_64 (parallelizable from 5A)
 
-Not started. First step: 5A semantics producer behind differential
+### Unit 5A.1 — `damsel-core::semantics` module (arm64 control-flow) — DONE
+
+- `ControlFlowClass` vocabulary + `semantics::arm64` predicates ported
+  verbatim from the engine's private helpers (`is_return_mnemonic`,
+  `is_unconditional_transfer_mnemonic`, `terminator_kind` ordering).
+  Engine now delegates (`terminator_kind`,
+  `is_unconditional_transfer_mnemonic`); behavior identical — the
+  existing disasm/stub/matrices are the differential oracle (Wave 5
+  spec §5A.2 step 1). Unit tests cover every family + precedence
+  (eret→Return, br→IndirectBranch, blr→IndirectCall, b.ne ≠ b).
+- Proof: damsel-core lib tests incl. 3 semantics suites; workspace 35
+  suites, 0 failures (all engine matrices green post-delegation).
+
+Next 5A steps: port remaining mnemonic helpers (written-regs,
+value-flow dispatch) behind the same oracle; then the x86_64 producer
++ `arch_x86` feature flip. First step: 5A semantics producer behind differential
 oracles (arm64), then `arch_x86` feature flip + x86 producer (spike-proven
 sufficient; syscall intrinsic table required).
 

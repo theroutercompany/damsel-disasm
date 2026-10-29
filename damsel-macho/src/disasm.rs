@@ -1230,26 +1230,19 @@ fn terminal_window_terminator_kind(kind: BasicBlockTerminatorKind) -> BasicBlock
 }
 
 fn terminator_kind(mnemonic: &str) -> BasicBlockTerminatorKind {
-    let lower = mnemonic.to_ascii_lowercase();
-    if is_return_mnemonic(&lower) {
-        BasicBlockTerminatorKind::Return
-    } else if is_terminal_trap_mnemonic(&lower) {
-        BasicBlockTerminatorKind::Trap
-    } else if is_conditional_branch_mnemonic(&lower) {
-        BasicBlockTerminatorKind::ConditionalBranch
-    } else if matches!(lower.as_str(), "br" | "braa" | "braaz" | "brab" | "brabz") {
-        BasicBlockTerminatorKind::IndirectBranch
-    } else if is_unconditional_transfer_mnemonic(&lower) {
-        BasicBlockTerminatorKind::Branch
-    } else if matches!(
-        lower.as_str(),
-        "blr" | "blraa" | "blraaz" | "blrab" | "blrabz"
-    ) {
-        BasicBlockTerminatorKind::IndirectCall
-    } else if is_call_mnemonic(&lower) {
-        BasicBlockTerminatorKind::Call
-    } else {
-        BasicBlockTerminatorKind::Fallthrough
+    // Wave 5A step 1: classification lives in damsel-core::semantics;
+    // this maps its result onto the engine's terminator vocabulary.
+    match damsel_core::semantics_arm64::classify(&mnemonic.to_ascii_lowercase()) {
+        damsel_core::ControlFlowClass::Return => BasicBlockTerminatorKind::Return,
+        damsel_core::ControlFlowClass::Trap => BasicBlockTerminatorKind::Trap,
+        damsel_core::ControlFlowClass::ConditionalBranch => {
+            BasicBlockTerminatorKind::ConditionalBranch
+        }
+        damsel_core::ControlFlowClass::IndirectBranch => BasicBlockTerminatorKind::IndirectBranch,
+        damsel_core::ControlFlowClass::DirectBranch => BasicBlockTerminatorKind::Branch,
+        damsel_core::ControlFlowClass::IndirectCall => BasicBlockTerminatorKind::IndirectCall,
+        damsel_core::ControlFlowClass::DirectCall => BasicBlockTerminatorKind::Call,
+        damsel_core::ControlFlowClass::Other => BasicBlockTerminatorKind::Fallthrough,
     }
 }
 
@@ -1517,10 +1510,7 @@ fn is_conditional_branch_mnemonic(mnemonic: &str) -> bool {
 }
 
 fn is_unconditional_transfer_mnemonic(mnemonic: &str) -> bool {
-    matches!(
-        mnemonic,
-        "b" | "br" | "braa" | "braaz" | "brab" | "brabz" | "eret"
-    )
+    damsel_core::semantics_arm64::is_unconditional_transfer(mnemonic)
 }
 
 fn is_return_mnemonic(mnemonic: &str) -> bool {
