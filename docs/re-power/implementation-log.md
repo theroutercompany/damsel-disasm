@@ -667,8 +667,13 @@ sufficient; syscall intrinsic table required).
   Ready for handoff/reporting workflows.
 - Proof: workspace 51 suites, 0 failures; `_main` renders full report.
 
-Next: rmcp transport spike, Workbench pane integration, lab
-re-verification, then merge to main.
+### Lab evidence run 11 (2026-10-29) — final verification — DONE
+
+- Full evidence package on latest code: ls + libc, 9-line JSONL,
+  verify OK. Recon on libc: Clean, 11,760 symbols, 62 sections.
+- All surfaces verified on real distro binaries.
+
+Next: merge to main, then rmcp transport + Workbench integration.
 
 ## Lab notes
 
