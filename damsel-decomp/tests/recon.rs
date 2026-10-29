@@ -142,3 +142,19 @@ fn variable_condition_not_flagged_as_opaque() {
     };
     assert!(detect_opaque_predicates(&function).is_empty());
 }
+
+#[test]
+fn string_encryption_detected_by_xor_and_entropy() {
+    use damsel_decomp::{SectionEntropy, detect_string_encryption};
+    let entropies = vec![SectionEntropy { section: ".data".into(), entropy: 7.2 }];
+    let found = detect_string_encryption("decrypt_strings", 5, 3, &entropies);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].evidence.contains("5 xor/shift ops"));
+}
+
+#[test]
+fn clean_function_not_flagged_for_encryption() {
+    use damsel_decomp::{SectionEntropy, detect_string_encryption};
+    let entropies = vec![SectionEntropy { section: ".rodata".into(), entropy: 3.5 }];
+    assert!(detect_string_encryption("normal_fn", 1, 1, &entropies).is_empty());
+}

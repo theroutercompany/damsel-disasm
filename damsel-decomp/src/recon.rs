@@ -256,3 +256,38 @@ fn expression_text(expression: &crate::ir::IrExpr) -> &'static str {
         _ => "expr",
     }
 }
+
+/// String-encryption indicator: functions that reference encrypted
+/// data (high-entropy .data section) and then call XOR/ADD loops on
+/// it. v1 heuristic: >= 3 xor/shift arithmetic statements + >= 1
+/// data reference into a high-entropy section.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StringEncryption {
+    pub function: String,
+    pub arithmetic_count: usize,
+    pub data_references: usize,
+    pub evidence: String,
+}
+
+pub fn detect_string_encryption(
+    function_name: &str,
+    xor_shift_count: usize,
+    data_ref_count: usize,
+    section_entropies: &[SectionEntropy],
+) -> Vec<StringEncryption> {
+    let has_high_entropy_data = section_entropies
+        .iter()
+        .any(|s| s.entropy > 6.5 && (s.section.contains("data") || s.section.contains("DATA")));
+    if xor_shift_count >= 3 && data_ref_count >= 1 && has_high_entropy_data {
+        vec![StringEncryption {
+            function: function_name.to_string(),
+            arithmetic_count: xor_shift_count,
+            data_references: data_ref_count,
+            evidence: format!(
+                "{xor_shift_count} xor/shift ops + {data_ref_count} data refs into high-entropy section"
+            ),
+        }]
+    } else {
+        Vec::new()
+    }
+}

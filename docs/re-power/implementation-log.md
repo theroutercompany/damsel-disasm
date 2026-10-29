@@ -592,6 +592,12 @@ sufficient; syscall intrinsic table required).
   `movs`/`stos` string ops simplified to their register effects.
 - Proof: workspace 51 suites, 0 failures.
 
+### Unit 7.7 — string-encryption indicator — DONE
+
+- `detect_string_encryption`: xor/shift count + data refs into
+  high-entropy sections → StringEncryption finding with evidence.
+- Proof: recon 12/12. Workspace 51 suites, 0 failures.
+
 Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
 migration, UI workbench integration.
 
