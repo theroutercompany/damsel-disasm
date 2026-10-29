@@ -244,6 +244,17 @@ sufficient; syscall intrinsic table required).
   `nixos-rex` is the working builder. Remote shell is **fish** — wrap
   commands in `bash -c`.
 
+### Lab evidence run 2 (2026-10-29) — row 5.13 artifact — DONE
+
+- `bin/elf-evidence-package.sh` real mode on `nixos-rex` against
+  `/tmp/lab/ls` + `/tmp/lab/libc.so.6`: 9-line JSONL package
+  (meta/analyze/functions/strings/selfcheck per target), sha256
+  manifest, `--verify` OK (manifest-only path — verify needs no
+  damsel binary). Recorded results: ls = 4,941 facts / 1,798 bounds /
+  78,142 xrefs; libc.so.6 = 10,337 / 3,953 / 80,765.
+- Script bugs caught in flight: SIGPIPE from `head` under pipefail;
+  binary check blocked `--verify`. Both fixed with tests/re-runs.
+
 ### Lab evidence run 1 (2026-10-29) — first real-ELF proof — DONE
 
 - Branch shipped via `git bundle` + scp (no GitHub auth needed on the
