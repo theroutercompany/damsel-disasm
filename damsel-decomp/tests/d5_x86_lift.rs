@@ -43,6 +43,33 @@ fn x86_blob_lifts_call_and_return() {
 }
 
 #[test]
+fn cmp_and_test_lift_as_flag_assignments() {
+    // cmp eax, 0x10 / test rax, rax → flags = (a - b) / (a & b).
+    let code: Vec<u8> = vec![
+        0x83, 0xF8, 0x10, // cmp eax, 0x10
+        0x48, 0x85, 0xC0, // test rax, rax
+    ];
+    let instructions = damsel_core::decode_x86_64(&code, 0x2000, None).unwrap();
+    let function = lift_x86_64(&instructions);
+    let statements: Vec<&IrStatement> = function
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .collect();
+    use damsel_decomp::{IrBinOp, IrExpr, IrValue};
+    assert!(statements.iter().any(|s| matches!(s,
+        IrStatement::Assign { destination, expression: IrExpr::BinOp { op: IrBinOp::Sub, .. } }
+            if destination == "flags")));
+    assert!(statements.iter().any(|s| matches!(s,
+        IrStatement::Assign { destination, expression: IrExpr::BinOp { op: IrBinOp::And, .. } }
+            if destination == "flags")));
+    // Both are modeled, not unknown.
+    assert!(!statements.iter().any(|s| matches!(s,
+        IrStatement::Unknown { mnemonic, .. } if mnemonic == "cmp" || mnemonic == "test")));
+    let _ = IrValue::Const(0);
+}
+
+#[test]
 fn x86_empty_window_is_empty() {
     let function = lift_x86_64(&[]);
     assert!(function.blocks.is_empty());

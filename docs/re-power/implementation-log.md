@@ -312,9 +312,16 @@ sufficient; syscall intrinsic table required).
 - Proof: d5_x86_lift 2/2, project_cli 11/11. Workspace 48 suites,
   0 failures.
 
-Next 6.x: D2 slice 2 (per-block renaming + scale modeling), D4
-structuring (if/else from CondBranch chains), type seeds, then
-real-binary decompile spot-checks on the lab.
+### Unit 6.6 — flag statements (cmp/test) — DONE
+
+- x86 lift models `cmp`/`test` as assignments to a synthetic `flags`
+  register (Sub/And) — visible, typed, and the substrate for D4 jcc
+  condition resolution (top unknowns from the glibc run eliminated).
+- Proof: d5_x86_lift 3/3. Workspace 48 suites, 0 failures.
+
+Next 6.x: D4 structuring (jcc conditions from flag assignments,
+if/else from CondBranch chains), D2 slice 2 (renaming + scale), type
+seeds.
 
 ## Lab notes
 

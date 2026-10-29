@@ -425,7 +425,24 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
         };
         let destination = instruction.operands.first().and_then(register_of);
 
-        let statement = if let (Some(op), Some(dst)) = (binary_op, destination.clone()) {
+        // cmp/test write flags without a register destination — model
+        // as an assignment to the synthetic `flags` register so D4 can
+        // resolve jcc conditions later.
+        let flag_op = match lower.as_str() {
+            "cmp" => Some(IrBinOp::Sub),
+            "test" => Some(IrBinOp::And),
+            _ => None,
+        };
+        let statement = if let Some(op) = flag_op {
+            Some(IrStatement::Assign {
+                destination: "flags".to_string(),
+                expression: IrExpr::BinOp {
+                    op,
+                    lhs: Box::new(operand_expr(instruction.operands.first())),
+                    rhs: Box::new(operand_expr(instruction.operands.get(1))),
+                },
+            })
+        } else if let (Some(op), Some(dst)) = (binary_op, destination.clone()) {
             Some(IrStatement::Assign {
                 destination: dst,
                 expression: IrExpr::BinOp {
