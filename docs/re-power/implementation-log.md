@@ -573,7 +573,21 @@ sufficient; syscall intrinsic table required).
   BinOp Mul. `IrBinOp::Mul` added to the vocabulary + renderer.
 - Proof: workspace 51 suites, 0 failures.
 
-Next: lab delta run 7, then cross-block phi-SSA + rmcp transport.
+### Lab evidence run 9 (2026-10-29) — delta run 7 — **ZERO-UNKNOWN MILESTONE**
+
+- Six glibc allocator functions:
+  - `_int_malloc`: **0 unknowns / 106 lines (0.0%)** ← first
+    fully-decompiled real production function
+  - `__GI___libc_malloc`: 1 / 44
+  - `sysmalloc`: 2 / 113
+  - `__malloc_trim`: 3 / 132
+  - `malloc_consolidate`: 1 / 37
+  - `__malloc_usable_size` (NEW): 1 / 19
+- The xchg + imul + memory-dest arithmetic modeling closed the last
+  gaps. Total unknown rate across all six: **8 / 451 lines (1.8%)**.
+
+Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
+migration, UI workbench integration.
 
 ## Lab notes
 
