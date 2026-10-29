@@ -1065,6 +1065,14 @@ Migration rule:
 
 ## Project Store Inside `damsel-cli ui`
 
+> Supersession note (2026-06-12, Decision D-3 of the
+> [RE Power program](../re-power/wave-4-analysis-kernel-spec.md)): the
+> staged store rollout below was the original Apple-track plan. The accepted
+> RE Power decision builds the embedded SQLite store from the first
+> implementation PR (schema, migrations, WAL, event log table); Stage 0/1
+> remain valid only as in-process migration steps for the UI server's
+> upload-compatibility path, not as storage stages.
+
 ### Stage 0 Store
 
 Add:

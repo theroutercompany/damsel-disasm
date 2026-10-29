@@ -27,6 +27,16 @@ Current analysis scope:
 - A compatibility-oriented `doctor` command that reports host/tool readiness and supports CI/operator threshold checks.
 
 Planned next:
+- the accepted next product phase is the
+  [Reverse-Engineering Power Roadmap](./docs/roadmaps/re-power-roadmap.md)
+  (Waves 4-8: analysis kernel/project database, ELF + x86_64 lane,
+  decompiler MVP, efficiency/automation/diff, gated proprietary-target depth),
+  per the accepted
+  [ADR-0003](./docs/adr/ADR-0003-cross-platform-re-scope.md) and the roadmap
+  decision log; the implementation-ready specs, audit, competitive analysis,
+  and evidence matrix live in the
+  [RE Power documentation pack](./docs/re-power/README.md). Implementation
+  has not started yet.
 - richer graph/trace workflows on top of the current point-query cache explorer
 - deeper system-framework spelunking and cross-image navigation
 - any future live-debugger integration remains deferred and will be documented separately

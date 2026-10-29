@@ -205,6 +205,10 @@ Planned future:
 
 - [ADR-0001: Apple Runtime Focus](../adr/ADR-0001-apple-runtime-focus.md)
 - [ADR-0002: Shared-Cache Container Model](../adr/ADR-0002-shared-cache-container-model.md)
+- [ADR-0003: Cross-Platform RE Scope (accepted)](../adr/ADR-0003-cross-platform-re-scope.md)
+- [Reverse-Engineering Power Roadmap (Waves 4-8, accepted)](re-power-roadmap.md)
+- [RE Power Documentation Pack](../re-power/README.md) (audit, competitive
+  landscape, wave specs, evidence matrix, research sources)
 - [Apple Runtime Analysis Architecture](../architecture/apple-runtime-analysis-architecture.md)
 - [dyld Shared Cache v1 Spec](../specs/dyld-shared-cache-v1.md)
 - [Hopper Gap Documentation Pack](../hopper-gap/README.md)
