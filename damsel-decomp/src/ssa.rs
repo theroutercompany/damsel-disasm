@@ -151,6 +151,7 @@ fn read_registers(expression: &IrExpr, visit: &mut impl FnMut(&str)) {
             visit(base);
             visit(index);
         }
+        IrExpr::SegmentAddr { segment, .. } => visit(segment),
     }
 }
 

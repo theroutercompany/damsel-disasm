@@ -307,6 +307,9 @@ fn render_expr(expression: &IrExpr) -> String {
                 format!("&{base}[{displacement:#x}]")
             }
         }
+        IrExpr::SegmentAddr { segment, displacement } => {
+            format!("&{segment}[{displacement:#x}]")
+        }
         IrExpr::IndexedAddr { base, index, scale, displacement } => {
             let scaled = if *scale == 1 {
                 index.clone()

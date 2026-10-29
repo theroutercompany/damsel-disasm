@@ -540,8 +540,16 @@ sufficient; syscall intrinsic table required).
 - Remaining unknowns are segment-register ops (fs:/gs:) and one
   exotic SIMD — genuinely outside the v1 floor set.
 
+### Unit 6.21 — segment-register memory (fs:/gs:) — DONE
+
+- `IrExpr::SegmentAddr { segment, displacement }` for x86 TLS
+  accesses (`mov rax, fs:[0]` → `rax = *(&fs[0x0])`); renderer,
+  SSA reads covered. Remaining glibc unknowns after this: 0–1 per
+  function (exotic SIMD only).
+- Proof: workspace 51 suites, 0 failures.
+
 Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
-migration.
+migration, lab delta run 6.
 
 ## Lab notes
 

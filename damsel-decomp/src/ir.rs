@@ -48,6 +48,11 @@ pub enum IrExpr {
         scale: u64,
         displacement: i64,
     },
+    /// Segment-relative address (x86 fs:/gs: TLS access).
+    SegmentAddr {
+        segment: String,
+        displacement: i64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -679,6 +684,13 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
 fn memory_expr_from(operand: &Operand) -> Option<IrExpr> {
     match operand {
         Operand::Memory { base, index, index_modifier, displacement, .. } => {
+            // Segment-prefixed memory (fs:/gs:) → SegmentAddr.
+            if base == "fs" || base == "gs" {
+                return Some(IrExpr::SegmentAddr {
+                    segment: base.clone(),
+                    displacement: *displacement,
+                });
+            }
             match (index, index_modifier) {
                 (Some(index), Some(modifier)) => {
                     let scale = modifier
