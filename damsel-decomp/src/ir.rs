@@ -141,20 +141,48 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
             "lsr" => Some(IrBinOp::Shr),
             _ => None,
         };
+        // Flag-setting compares (arm64: cmp/cmn/tst) mirror the x86
+        // cmp/test model — the shared substrate for condition resolution.
+        let flag_op = match lower.as_str() {
+            "cmp" => Some(IrBinOp::Sub),
+            "cmn" => Some(IrBinOp::Add),
+            "tst" => Some(IrBinOp::And),
+            _ => None,
+        };
         let destination = instruction
             .operands
             .first()
             .and_then(register_of)
             .map(|d| d.clone());
+        if let Some(op) = flag_op {
+            statements.push(IrStatement::Assign {
+                destination: "flags".to_string(),
+                expression: IrExpr::BinOp {
+                    op,
+                    lhs: Box::new(operand_expr(instruction.operands.first())),
+                    rhs: Box::new(operand_expr(instruction.operands.get(1))),
+                },
+            });
+            // Subs-style variants also write their destination.
+            if let (Some(op), Some(dst)) = (binary_op, destination.clone()) {
+                statements.push(IrStatement::Assign {
+                    destination: dst,
+                    expression: IrExpr::BinOp {
+                        op,
+                        lhs: Box::new(operand_expr(instruction.operands.get(1))),
+                        rhs: Box::new(operand_expr(instruction.operands.get(2))),
+                    },
+                });
+            }
+            return;
+        }
         if let (Some(op), Some(dst)) = (binary_op, destination.clone()) {
-            let lhs = operand_expr(instruction.operands.get(1));
-            let rhs = operand_expr(instruction.operands.get(2));
             statements.push(IrStatement::Assign {
                 destination: dst,
                 expression: IrExpr::BinOp {
                     op,
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
+                    lhs: Box::new(operand_expr(instruction.operands.get(1))),
+                    rhs: Box::new(operand_expr(instruction.operands.get(2))),
                 },
             });
             return;

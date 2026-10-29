@@ -341,8 +341,18 @@ sufficient; syscall intrinsic table required).
   dominance (later slice, logged).
 - Proof: d4_structure 6/6. Workspace 49 suites, 0 failures.
 
-Next 6.x: lab before/after malloc delta with D4+flags, D2 slice 2
-(renaming + scale modeling), type seeds, arm64 condition resolution.
+### Unit 6.9 — arm64 condition substrate — DONE
+
+- arm64 lift: `cmp`/`cmn`/`tst` → flags assignments (Sub/Add/And);
+  resolver accepts `b.eq/ne/lt/le/gt/ge/lo/ls/hi/hs` (+ cmn equals).
+  Regression caught: my refactor briefly made plain `sub` lift as
+  Unknown (frame_size regression in the CLI test) — binary-op path
+  restored; the suite caught it before commit.
+- Proof: d4_structure 8/8. Workspace 49 suites, 0 failures (incl.
+  restored Mach-O decompile frame check).
+
+Next 6.x: D2 slice 2 (per-block renaming + scale modeling for indexed
+memory), type seeds, subs-flags emission, while-form loops.
 
 ## Lab notes
 

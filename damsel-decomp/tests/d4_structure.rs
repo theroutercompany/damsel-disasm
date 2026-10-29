@@ -225,3 +225,64 @@ fn back_edges_are_detected_and_annotated() {
     let texts: Vec<&str> = pseudocode.lines.iter().map(|l| l.text.as_str()).collect();
     assert!(texts.iter().any(|t| t.contains("goto sub_10; /* loop back */")), "got: {texts:?}");
 }
+
+#[test]
+fn arm64_cmp_and_b_cond_resolve() {
+    // cmp w0, #5; b.ge elsewhere  → flags = (w0 - 5); w0 >= 0x5.
+    let function = IrFunction {
+        entry_address: 0,
+        blocks: vec![IrBlock {
+            id: 0,
+            start_address: 0,
+            statements: vec![IrStatement::Assign {
+                destination: "flags".into(),
+                expression: IrExpr::BinOp {
+                    op: IrBinOp::Sub,
+                    lhs: Box::new(IrExpr::Value(IrValue::Register("w0".into()))),
+                    rhs: Box::new(IrExpr::Value(IrValue::Const(5))),
+                },
+            }],
+            terminator: IrTerminator::CondBranch {
+                condition: IrCondition::Raw("b.ge".into()),
+                taken: 0x20,
+                fallthrough: 0x10,
+            },
+        }],
+        instruction_count: 2,
+        unknown_count: 0,
+    };
+    match resolve_condition(&function, 0) {
+        ResolvedCondition::Relational { lhs, op, rhs } => {
+            assert_eq!((lhs.as_str(), op.as_str(), rhs.as_str()), ("w0", ">=", "0x5"));
+        }
+        other => panic!("expected relational, got {other:?}"),
+    }
+}
+
+#[test]
+fn arm64_lift_emits_flags_for_cmp() {
+    // Real decode: cmp w0, #0x2a then b.ne — craft via decode of a tiny
+    // authored stream using the fixture engine is heavy; use lift on a
+    // synthetic instruction through the public API instead.
+    use damsel_core::{DecodedInstruction, Operand};
+    let instruction = DecodedInstruction {
+        address: 0,
+        size: 4,
+        opcode: 0,
+        mnemonic: "cmp".to_string(),
+        operands: vec![
+            Operand::Register("w0".to_string()),
+            Operand::ImmediateUnsigned(0x2a),
+        ],
+        recovered_values: Vec::new(),
+        references: Vec::new(),
+        annotations: Vec::new(),
+    };
+    let function = lift_arm64(&[instruction]);
+    let statements = &function.blocks[0].statements;
+    assert!(statements.iter().any(|s| matches!(s,
+        IrStatement::Assign { destination, expression }
+            if destination == "flags"
+                && matches!(expression, IrExpr::BinOp { op: IrBinOp::Sub, .. }))));
+    assert_eq!(function.unknown_count, 0, "cmp is modeled, not unknown");
+}

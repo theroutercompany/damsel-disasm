@@ -50,18 +50,24 @@ pub fn resolve_condition(function: &IrFunction, block_id: usize) -> ResolvedCond
     let (lhs, rhs) = (render_operand(lhs), render_operand(rhs));
     let mnemonic = condition_raw(condition);
     match (op, mnemonic.as_str()) {
-        (IrBinOp::Sub, "je") => rel(lhs, "==", rhs),
-        (IrBinOp::Sub, "jne") => rel(lhs, "!=", rhs),
-        (IrBinOp::Sub, "jl") => rel(lhs, "<", rhs),
-        (IrBinOp::Sub, "jle") => rel(lhs, "<=", rhs),
-        (IrBinOp::Sub, "jg") => rel(lhs, ">", rhs),
-        (IrBinOp::Sub, "jge") => rel(lhs, ">=", rhs),
-        (IrBinOp::Sub, "jb") => rel(lhs, "<u", rhs),
-        (IrBinOp::Sub, "jbe") => rel(lhs, "<=u", rhs),
-        (IrBinOp::Sub, "ja") => rel(lhs, ">u", rhs),
-        (IrBinOp::Sub, "jae") => rel(lhs, ">=u", rhs),
-        (IrBinOp::And, "je") => ResolvedCondition::Mask { lhs, rhs, nonzero: false },
-        (IrBinOp::And, "jne") => ResolvedCondition::Mask { lhs, rhs, nonzero: true },
+        (IrBinOp::Sub, "je") | (IrBinOp::Sub, "b.eq") => rel(lhs, "==", rhs),
+        (IrBinOp::Sub, "jne") | (IrBinOp::Sub, "b.ne") => rel(lhs, "!=", rhs),
+        (IrBinOp::Sub, "jl") | (IrBinOp::Sub, "b.lt") => rel(lhs, "<", rhs),
+        (IrBinOp::Sub, "jle") | (IrBinOp::Sub, "b.le") => rel(lhs, "<=", rhs),
+        (IrBinOp::Sub, "jg") | (IrBinOp::Sub, "b.gt") => rel(lhs, ">", rhs),
+        (IrBinOp::Sub, "jge") | (IrBinOp::Sub, "b.ge") => rel(lhs, ">=", rhs),
+        (IrBinOp::Sub, "jb") | (IrBinOp::Sub, "b.lo") => rel(lhs, "<u", rhs),
+        (IrBinOp::Sub, "jbe") | (IrBinOp::Sub, "b.ls") => rel(lhs, "<=u", rhs),
+        (IrBinOp::Sub, "ja") | (IrBinOp::Sub, "b.hi") => rel(lhs, ">u", rhs),
+        (IrBinOp::Sub, "jae") | (IrBinOp::Sub, "b.hs") => rel(lhs, ">=u", rhs),
+        (IrBinOp::Add, "b.eq") => rel(lhs, "==", rhs),
+        (IrBinOp::Add, "b.ne") => rel(lhs, "!=", rhs),
+        (IrBinOp::And, "je") | (IrBinOp::And, "b.eq") => {
+            ResolvedCondition::Mask { lhs, rhs, nonzero: false }
+        }
+        (IrBinOp::And, "jne") | (IrBinOp::And, "b.ne") => {
+            ResolvedCondition::Mask { lhs, rhs, nonzero: true }
+        }
         _ => ResolvedCondition::Unresolved(mnemonic),
     }
 }
