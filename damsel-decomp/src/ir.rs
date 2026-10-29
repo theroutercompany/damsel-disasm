@@ -579,15 +579,33 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                     }
                 }
                 "lea" => {
+                    // lea reg, [rip+disp] → constant (decoder resolved
+                    // the absolute target into a Data reference).
+                    // lea reg, [base+disp] → address expression.
                     let destination = destination.clone();
-                    instruction
-                        .operands
-                        .get(1)
-                        .and_then(memory_expr_from)
-                        .map(|address| IrStatement::Assign {
-                            destination: destination.unwrap_or_default(),
-                            expression: address,
+                    let rip_target = instruction.references.iter().find_map(|r| match r {
+                        damsel_core::Reference::Data { target } => Some(*target),
+                        _ => None,
+                    });
+                    if let (Some(dst), Some(target)) = (destination, rip_target) {
+                        Some(IrStatement::Assign {
+                            destination: dst,
+                            expression: IrExpr::Value(IrValue::Const(target)),
                         })
+                    } else {
+                        instruction
+                            .operands
+                            .get(1)
+                            .and_then(memory_expr_from)
+                            .map(|address| IrStatement::Assign {
+                                destination: instruction
+                                    .operands
+                                    .first()
+                                    .and_then(register_of)
+                                    .unwrap_or_default(),
+                                expression: address,
+                            })
+                    }
                 }
                 "call" | "lcall" => {
                     let target = instruction.references.iter().find_map(|r| match r {

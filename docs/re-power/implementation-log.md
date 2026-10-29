@@ -524,8 +524,14 @@ sufficient; syscall intrinsic table required).
   eax`. Real glibc `_int_malloc` now at **0–1 unknowns** (was 2).
 - Proof: d5_x86_lift 6/6. Workspace 51 suites, 0 failures.
 
+### Unit 6.20 — rip-relative lea + recon UX note — DONE
+
+- `lea reg, [rip+disp]` lifts as a constant assignment (decoder-
+  resolved Data reference); non-RIP lea keeps the address expression.
+- Proof: workspace 51 suites, 0 failures.
+
 Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
-migration.
+migration, then real-binary delta run 5.
 
 ## Lab notes
 

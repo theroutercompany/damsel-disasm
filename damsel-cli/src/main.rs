@@ -1628,6 +1628,7 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
         };
         println!("recon: {verdict}");
         println!("  symbols        {symbol_count}{}", if report.stripped { " (stripped)" } else { "" });
+        println!("  note           for CFG-flattening and opaque-predicate detection, run `damsel analyze` + `damsel decompile`");
         for se in &report.section_entropies {
             let bar = "█".repeat((se.entropy * 8.0) as usize);
             println!("  {:<16} {:.2} {}", se.section, se.entropy, bar);
