@@ -166,6 +166,43 @@ fn xrefs_command_queries_by_direction_and_kind() {
 }
 
 #[test]
+fn strings_command_lists_values_and_filters() {
+    let dir = smoke_dir("strings");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    let out = damsel()
+        .arg("strings").arg(&target)
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success());
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["command"], "strings");
+    assert_eq!(body["values_available"], true);
+    let strings = body["strings"].as_array().unwrap();
+    assert!(!strings.is_empty());
+    let value = strings[0]["value"].as_str().unwrap();
+    assert!(value.contains("hello from damsel"));
+
+    // name filter narrows to the match; a miss returns zero.
+    let out = damsel()
+        .arg("strings").arg(&target)
+        .arg("--name").arg("hello")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["count"], 1);
+    let out = damsel()
+        .arg("strings").arg(&target)
+        .arg("--name").arg("no-such-string")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["count"], 0);
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");

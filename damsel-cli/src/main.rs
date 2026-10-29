@@ -539,6 +539,18 @@ enum Command {
         #[arg(long, help = "Maximum rows to print")]
         limit: Option<usize>,
     },
+    #[command(about = "List strings harvested from an analyzed project")]
+    Strings {
+        project: PathBuf,
+        #[arg(long, help = "Filter by value substring (requires the target binary on disk)")]
+        name: Option<String>,
+        #[arg(long, help = "Filter by class (url, path, format, selector_like)")]
+        class: Option<String>,
+        #[arg(long, help = "Minimum value length in characters")]
+        min_len: Option<usize>,
+        #[arg(long, help = "Maximum rows to print")]
+        limit: Option<usize>,
+    },
     #[command(about = "Query stored cross-references by direction")]
     Xrefs {
         project: PathBuf,
@@ -1142,6 +1154,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Xrefs { project, to, from, kind, limit } => {
             handle_xrefs(project, to, from, kind, limit, &output_settings)?;
         }
+        Command::Strings { project, name, class, min_len, limit } => {
+            handle_strings(project, name, class, min_len, limit, &output_settings)?;
+        }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
@@ -1223,7 +1238,7 @@ fn handle_analyze(
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{AnalysisProjectMeta, ProjectId, ProjectStore, open_store};
-    use damsel_macho::harvest_xrefs;
+    use damsel_macho::{harvest_strings, harvest_xrefs};
 
     let image = load_image(path.clone())?;
     let project_dir = project_dir_for(&path);
@@ -1270,6 +1285,13 @@ fn handle_analyze(
         analyzer_version(),
     )
     .map_err(|e| CliRunError::command("xref_error", e.to_string()))?;
+    let strings_outcome = harvest_strings(
+        &mut store,
+        &image,
+        outcome.source_id,
+        analyzer_version(),
+    )
+    .map_err(|e| CliRunError::command("strings_error", e.to_string()))?;
     let source_count = store.sources().map_err(map_store_error)?.len();
     let store_meta = store.meta().map_err(map_store_error)?;
     drop(store);
@@ -1284,6 +1306,7 @@ fn handle_analyze(
             "facts": outcome.fact_count,
             "function_windows": xref_outcome.function_windows,
             "xrefs": xref_outcome.xref_count,
+            "strings": strings_outcome.strings,
         });
         println!("{}", project_json(value));
     } else {
@@ -1293,6 +1316,123 @@ fn handle_analyze(
         println!("  objects     = {}", outcome.object_count);
         println!("  facts       = {}", outcome.fact_count);
         println!("  xrefs       = {} ({} function windows)", xref_outcome.xref_count, xref_outcome.function_windows);
+        println!("  strings     = {}", strings_outcome.strings);
+    }
+    Ok(())
+}
+
+fn handle_strings(
+    project: PathBuf,
+    name_filter: Option<String>,
+    class_filter: Option<String>,
+    min_len: Option<usize>,
+    limit: Option<usize>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+        .map_err(map_store_error)?;
+    let facts = store.facts().map_err(map_store_error)?;
+
+    // String facts: object `string:<addr>`, payload `utf8|len=N`.
+    // Class facts attach to the same objects.
+    let mut classes: std::collections::BTreeMap<String, String> = Default::default();
+    for fact in &facts {
+        if fact.kind.as_str() == "string_class" {
+            if let Some(object) = &fact.object_id {
+                classes.insert(object.as_str().to_string(), fact.payload.clone());
+            }
+        }
+    }
+    let mut rows: Vec<(u64, &str, usize, Option<&str>)> = Vec::new();
+    for fact in &facts {
+        if fact.kind.as_str() != "string" {
+            continue;
+        }
+        let Some(object) = &fact.object_id else { continue };
+        let Ok(address) =
+            u64::from_str_radix(object.key().trim_start_matches("0x"), 16)
+        else {
+            continue;
+        };
+        let (encoding, len_part) = fact.payload.split_once("|len=").unwrap_or(("utf8", "0"));
+        let byte_len: usize = len_part.parse().unwrap_or(0);
+        let class = classes.get(object.as_str()).map(String::as_str);
+        if let Some(want) = &class_filter {
+            if class != Some(want.as_str()) {
+                continue;
+            }
+        }
+        rows.push((address, encoding, byte_len, class));
+    }
+    rows.sort();
+
+    // Value display requires the target binary (bytes stay out of the
+    // project by privacy design). Resolve it best-effort.
+    let target_path = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".damsel"))
+        .map(|stem| project_dir.with_file_name(stem));
+    let image = target_path
+        .as_deref()
+        .filter(|p| p.is_file())
+        .and_then(|p| load(p.clone()).ok());
+
+    let mut display: Vec<(u64, &str, usize, Option<&str>, Option<String>)> = rows
+        .into_iter()
+        .filter_map(|(address, encoding, len, class)| {
+            let value = image.as_ref().and_then(|img| {
+                img.read_c_string_at_address(address, len.saturating_add(1))
+            });
+            if let Some(min) = min_len {
+                let chars = value.as_deref().map(|v| v.chars().count()).unwrap_or(len);
+                if chars < min {
+                    return None;
+                }
+            }
+            if let Some(pattern) = &name_filter {
+                let Some(v) = &value else { return None };
+                if !v.contains(pattern.as_str()) {
+                    return None;
+                }
+            }
+            Some((address, encoding, len, class, value))
+        })
+        .collect();
+    let total = display.len();
+    let truncated = limit.is_some_and(|l| display.len() > l);
+    if let Some(limit) = limit {
+        display.truncate(limit);
+    }
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "strings",
+            "count": total,
+            "truncated": truncated,
+            "values_available": image.is_some(),
+            "strings": display.iter().map(|(address, encoding, len, class, value)| {
+                serde_json::json!({
+                    "address": format!("{address:#x}"),
+                    "encoding": encoding,
+                    "bytes": len,
+                    "class": class,
+                    "value": value,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("strings: {total}");
+        for (address, encoding, _len, class, value) in &display {
+            let class_text = class.unwrap_or("");
+            let value_text = value.as_deref().unwrap_or("");
+            println!("  {address:#010x}  {encoding:<8} {class_text:<12} {value_text}");
+        }
     }
     Ok(())
 }

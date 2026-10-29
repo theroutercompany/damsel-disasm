@@ -150,6 +150,35 @@ fn xref_harvest_round_trips_from_both_ends() {
 }
 
 #[test]
+fn string_harvest_extracts_cstring_with_value_at_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let image = load(fixture("arm64-symbolized")).unwrap();
+    let mut store = open_store(&dir.path().join("project.db"), Create::New, &meta()).unwrap();
+    let outcome = ingest_binary_image(&mut store, &image, "0.1.0").unwrap();
+    let strings = damsel_macho::harvest_strings(&mut store, &image, outcome.source_id, "0.1.0")
+        .unwrap();
+    assert!(strings.strings >= 1, "expected at least one cstring");
+
+    // The stored address must be the string START (regression for the
+    // cursor-advance bug) and the value must read back at that address.
+    let facts = store.facts_for_source(outcome.source_id).unwrap();
+    for fact in &facts {
+        if fact.kind.as_str() != "string" {
+            continue;
+        }
+        let object = fact.object_id.as_ref().unwrap();
+        let address =
+            u64::from_str_radix(object.key().trim_start_matches("0x"), 16).unwrap();
+        let (_, len_part) = fact.payload.split_once("|len=").unwrap();
+        let len: usize = len_part.parse().unwrap();
+        let value = image
+            .read_c_string_at_address(address, len + 1)
+            .expect("value readable at stored address");
+        assert!(value.chars().count() >= 4);
+    }
+}
+
+#[test]
 fn ingest_is_export_deterministic() {
     let a = tempfile::tempdir().unwrap();
     let b = tempfile::tempdir().unwrap();

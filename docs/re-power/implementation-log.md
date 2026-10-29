@@ -89,12 +89,27 @@ exists; N-1 real-db fixture lands with the first schema bump).
   targets), project_cli 5/5 (direction + kind filter + typed
   invalid_args). Workspace 35 suites, 0 failures.
 
+### Unit 4.6 — strings pass (`strings_v1`) + `strings` command — DONE
+
+- `damsel_macho::harvest_strings`: walks string-classified sections
+  (UTF-8 via existing `read_c_string_at_address`, UTF-16LE for
+  `__ustring`), min length 4, emits `string:<addr>` objects + `string`
+  facts (`utf8|len=N`) and inferred `string_class` facts
+  (url/path/format/selector_like). Values stay out of the project
+  (privacy design); `strings` CLI reads them best-effort from the
+  adjacent target with `values_available` honesty. Two bugs caught by
+  smoke + regression tests: cursor-advance address off-by-len, and
+  64-byte read overflowing small sections.
+- Proof: analysis_ingest 6/6 (address-is-start + value-readback
+  regression), project_cli 6/6 (values, name filter). Workspace 35
+  suites, 0 failures.
+
 ### Next units (queue order)
 
 - 4.3 `damsel analyze` CLI — DONE (see above)
 - 4.4b recovery worker v1 (bounds/blocks from CFG walk) + audit gate.
 - 4.5 xref harvesting — DONE (see above)
-- 4.6 strings pass + `strings` command; search index + `search`.
+- 4.6a search index + `search` command (strings/symbols/functions unified).
 - 4.7 budgets on `stripped-30mb` fixture (corpus bench rows 4.10).
 
 ## Wave 5 — ELF + x86_64 (parallelizable from 5A)
