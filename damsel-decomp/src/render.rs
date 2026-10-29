@@ -261,5 +261,17 @@ fn render_expr(expression: &IrExpr) -> String {
                 format!("&{base}[{displacement:#x}]")
             }
         }
+        IrExpr::IndexedAddr { base, index, scale, displacement } => {
+            let scaled = if *scale == 1 {
+                index.clone()
+            } else {
+                format!("{index} * {scale:#x}")
+            };
+            match displacement {
+                0 => format!("&{base}[{scaled}]"),
+                d if *d < 0 => format!("&{base}[{scaled} - {:#x}]", d.unsigned_abs()),
+                d => format!("&{base}[{scaled} + {d:#x}]"),
+            }
+        }
     }
 }

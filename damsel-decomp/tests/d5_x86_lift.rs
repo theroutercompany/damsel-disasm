@@ -75,3 +75,20 @@ fn x86_empty_window_is_empty() {
     assert!(function.blocks.is_empty());
     assert_eq!(function.instruction_count, 0);
 }
+
+#[test]
+fn indexed_memory_lifts_with_scale() {
+    // mov rax, [rbx + rcx*8 + 0x10] → Load rax, IndexedAddr(8).
+    // Encoding: 48 8b 44 cb 10
+    let code: Vec<u8> = vec![0x48, 0x8B, 0x44, 0xCB, 0x10];
+    let instructions = damsel_core::decode_x86_64(&code, 0x3000, None).unwrap();
+    assert_eq!(instructions.len(), 1);
+    let function = lift_x86_64(&instructions);
+    let statements = &function.blocks[0].statements;
+    use damsel_decomp::{IrExpr, IrStatement};
+    assert!(statements.iter().any(|s| matches!(s,
+        IrStatement::Load { address: IrExpr::IndexedAddr { base, index, scale, displacement }, .. }
+            if base == "rbx" && index == "rcx" && *scale == 8 && *displacement == 0x10)),
+        "got: {statements:?}");
+    assert_eq!(function.unknown_count, 0, "indexed memory is modeled");
+}

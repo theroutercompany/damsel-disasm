@@ -351,8 +351,18 @@ sufficient; syscall intrinsic table required).
 - Proof: d4_structure 8/8. Workspace 49 suites, 0 failures (incl.
   restored Mach-O decompile frame check).
 
-Next 6.x: D2 slice 2 (per-block renaming + scale modeling for indexed
-memory), type seeds, subs-flags emission, while-form loops.
+### Unit 6.10 — indexed-memory modeling (scale) — DONE
+
+- `IrExpr::IndexedAddr { base, index, scale, displacement }`; x86
+  memory operands parse `[base+idx*scale+disp]` (incl. scale-1 form);
+  renderer prints `&rbx[rcx * 0x8 + 0x10]`; SSA reads count index
+  registers. Kills the last blanket-unknown memory class from the
+  glibc run.
+- Proof: d5_x86_lift 4/4 (authored `mov rax,[rbx+rcx*8+0x10]`).
+  Workspace 49 suites, 0 failures.
+
+Next 6.x: subs-flags emission, while-form loops (dominance), D2
+renaming, type seeds, real-binary delta run 3.
 
 ## Lab notes
 

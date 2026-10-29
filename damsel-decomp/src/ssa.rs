@@ -147,5 +147,9 @@ fn read_registers(expression: &IrExpr, visit: &mut impl FnMut(&str)) {
             read_registers(rhs, visit);
         }
         IrExpr::AddrOf { base, .. } => visit(base),
+        IrExpr::IndexedAddr { base, index, .. } => {
+            visit(base);
+            visit(index);
+        }
     }
 }

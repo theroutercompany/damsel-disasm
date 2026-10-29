@@ -39,6 +39,15 @@ pub enum IrExpr {
         base: String,
         displacement: i64,
     },
+    /// Indexed address: base + index * scale + displacement
+    /// (scale 1 = plain index; models x86 [base+idx*scale+disp] and
+    /// arm64 [base, idx, lsl #n] once the lift forwards shifts).
+    IndexedAddr {
+        base: String,
+        index: String,
+        scale: u64,
+        displacement: i64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -558,15 +567,30 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
 
 fn memory_expr_from(operand: &Operand) -> Option<IrExpr> {
     match operand {
-        Operand::Memory { base, index, displacement, .. } => {
-            if index.is_some() {
-                // Indexed addressing awaits D2 scale modeling.
-                None
-            } else {
-                Some(IrExpr::AddrOf {
+        Operand::Memory { base, index, index_modifier, displacement, .. } => {
+            match (index, index_modifier) {
+                (Some(index), Some(modifier)) => {
+                    let scale = modifier
+                        .strip_prefix('*')
+                        .and_then(|n| n.parse::<u64>().ok())
+                        .unwrap_or(1);
+                    Some(IrExpr::IndexedAddr {
+                        base: base.clone(),
+                        index: index.clone(),
+                        scale,
+                        displacement: *displacement,
+                    })
+                }
+                (Some(index), None) => Some(IrExpr::IndexedAddr {
+                    base: base.clone(),
+                    index: index.clone(),
+                    scale: 1,
+                    displacement: *displacement,
+                }),
+                _ => Some(IrExpr::AddrOf {
                     base: base.clone(),
                     displacement: *displacement,
-                })
+                }),
             }
         }
         _ => None,
