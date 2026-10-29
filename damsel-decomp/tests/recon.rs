@@ -79,3 +79,66 @@ fn normal_cfg_not_flagged() {
     let found = detect_cfg_flattening(&bounds, &targets);
     assert!(found.is_empty(), "no dispatcher with >=6 in-degree");
 }
+
+#[test]
+fn opaque_predicate_detected_from_constant_flags() {
+    use damsel_decomp::{IrBlock, IrCondition, IrExpr, IrFunction, IrStatement, IrTerminator, IrValue, detect_opaque_predicates};
+
+    // flags = (5 - 5) → constant zero → conditional branch is opaque
+    let function = IrFunction {
+        entry_address: 0,
+        blocks: vec![IrBlock {
+            id: 0,
+            start_address: 0x100,
+            statements: vec![IrStatement::Assign {
+                destination: "flags".into(),
+                expression: IrExpr::BinOp {
+                    op: damsel_decomp::IrBinOp::Sub,
+                    lhs: Box::new(IrExpr::Value(IrValue::Const(5))),
+                    rhs: Box::new(IrExpr::Value(IrValue::Const(5))),
+                },
+            }],
+            terminator: IrTerminator::CondBranch {
+                condition: IrCondition::Raw("b.eq".into()),
+                taken: 0x200,
+                fallthrough: 0x180,
+            },
+        }],
+        instruction_count: 2,
+        unknown_count: 0,
+    };
+    let found = detect_opaque_predicates(&function);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].branch_address, 0x100);
+    assert!(found[0].evidence.contains("constant operands"));
+}
+
+#[test]
+fn variable_condition_not_flagged_as_opaque() {
+    use damsel_decomp::{IrBlock, IrCondition, IrExpr, IrFunction, IrStatement, IrTerminator, IrValue, detect_opaque_predicates};
+
+    // flags = (x0 - 5) → variable → NOT opaque
+    let function = IrFunction {
+        entry_address: 0,
+        blocks: vec![IrBlock {
+            id: 0,
+            start_address: 0x100,
+            statements: vec![IrStatement::Assign {
+                destination: "flags".into(),
+                expression: IrExpr::BinOp {
+                    op: damsel_decomp::IrBinOp::Sub,
+                    lhs: Box::new(IrExpr::Value(IrValue::Register("x0".into()))),
+                    rhs: Box::new(IrExpr::Value(IrValue::Const(5))),
+                },
+            }],
+            terminator: IrTerminator::CondBranch {
+                condition: IrCondition::Raw("b.eq".into()),
+                taken: 0x200,
+                fallthrough: 0x180,
+            },
+        }],
+        instruction_count: 2,
+        unknown_count: 0,
+    };
+    assert!(detect_opaque_predicates(&function).is_empty());
+}

@@ -205,3 +205,54 @@ pub fn detect_cfg_flattening(
     }
     out
 }
+
+/// Opaque-predicate detection: conditional branches whose condition
+/// is provably constant (e.g., `mov w0, #1; cbz w0, …`). Uses the IR
+/// flags substrate: if the flags register was assigned a BinOp with
+/// two Const operands, the branch is opaque.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OpaquePredicate {
+    pub branch_address: u64,
+    pub condition: String,
+    pub evidence: String,
+}
+
+pub fn detect_opaque_predicates(function: &crate::ir::IrFunction) -> Vec<OpaquePredicate> {
+    use crate::ir::{IrExpr, IrStatement, IrTerminator, IrValue};
+    let mut out = Vec::new();
+    for block in &function.blocks {
+        // Find CondBranch terminators preceded by a flags assignment
+        // with two Const operands.
+        let IrTerminator::CondBranch { .. } = block.terminator else {
+            continue;
+        };
+        let last_flags = block.statements.iter().rev().find(|s| {
+            matches!(s, IrStatement::Assign { destination, .. } if destination == "flags")
+        });
+        let Some(IrStatement::Assign { expression, .. }) = last_flags else {
+            continue;
+        };
+        if let IrExpr::BinOp { lhs, rhs, .. } = expression {
+            if matches!(
+                (&**lhs, &**rhs),
+                (IrExpr::Value(IrValue::Const(_)), IrExpr::Value(IrValue::Const(_)))
+            ) {
+                out.push(OpaquePredicate {
+                    branch_address: block.start_address,
+                    condition: format!("const"),
+                    evidence: format!("flags = {} with constant operands", expression_text(expression)),
+                });
+            }
+        }
+    }
+    out
+}
+
+fn expression_text(expression: &crate::ir::IrExpr) -> &'static str {
+    match expression {
+        crate::ir::IrExpr::BinOp { op: crate::ir::IrBinOp::Sub, .. } => "a - b",
+        crate::ir::IrExpr::BinOp { op: crate::ir::IrBinOp::And, .. } => "a & b",
+        crate::ir::IrExpr::BinOp { op: crate::ir::IrBinOp::Add, .. } => "a + b",
+        _ => "expr",
+    }
+}

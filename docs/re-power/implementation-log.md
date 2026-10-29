@@ -475,6 +475,15 @@ sufficient; syscall intrinsic table required).
 - Proof: recon 8/8 (flattened simulation detected; normal CFG not
   flagged). Workspace 51 suites, 0 failures.
 
+### Unit 7.6 — opaque-predicate detection — DONE
+
+- `detect_opaque_predicates`: CondBranch blocks whose flags assignment
+  has two Const operands are provably opaque (constant condition).
+  Uses the D1 IR flags substrate — same typed path that powers
+  condition resolution and D4 structuring.
+- Proof: recon 10/10 (constant-sub flags flagged; variable-condition
+  not). Workspace 51 suites, 0 failures.
+
 Next: 5A value-flow dispatch port, cross-block phi-SSA, rmcp
 transport spike, then lab re-run for delta 4.
 
