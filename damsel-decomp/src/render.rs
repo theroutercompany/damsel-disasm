@@ -38,15 +38,61 @@ pub fn render_pseudocode_with_loops(
     diamonds: &[crate::structure::Diamond],
 ) -> Pseudocode {
     let loops = crate::structure::find_loops(function);
+    let natural = crate::structure::find_natural_loops(function);
     let mut pseudocode = render_pseudocode_impl(function, name, diamonds);
+
+    // do-while: a natural loop whose back edge is the header's own
+    // CondBranch renders `} while (cond);`. Other back edges get their
+    // specific goto annotated in place.
     for line in &mut pseudocode.lines {
-        if let Some(address) = parse_goto_target(&line.text) {
-            if loops.iter().any(|l| l.to_address == address) {
-                line.text.push_str(" /* loop back */");
+        let Some((taken, _fall)) = parse_goto_branch(&line.text) else {
+            // Bare `goto sub_X;` lines (Branch terminators).
+            if let Some(address) = parse_goto_target(&line.text) {
+                if loops.iter().any(|l| l.to_address == address) {
+                    line.text = line
+                        .text
+                        .replace(&format!("goto sub_{address:x};"), &format!("goto sub_{address:x}; /* loop back */"));
+                }
             }
+            continue;
+        };
+        if let Some(natural_loop) = natural
+            .iter()
+            .find(|l| l.back_edge_from == l.header_block && l.to_address == taken)
+        {
+            if let Some(condition) = &natural_loop.condition {
+                let text = crate::structure::render_condition_text(condition);
+                line.text = format!("}} while ({text});");
+                continue;
+            }
+        }
+        if loops.iter().any(|l| l.to_address == taken) {
+            line.text = line.text.replace(
+                &format!("goto sub_{taken:x};"),
+                &format!("goto sub_{taken:x}; /* loop back */"),
+            );
         }
     }
     pseudocode
+}
+
+fn parse_goto_branch(text: &str) -> Option<(u64, u64)> {
+    // "if (…) { goto sub_A; } else { goto sub_B; }" → (A, B).
+    // Only the hex run immediately after each "sub_" counts.
+    let mut targets = Vec::new();
+    for part in text.split("goto sub_").skip(1) {
+        let hex: String = part
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit())
+            .collect();
+        if let Ok(address) = u64::from_str_radix(&hex, 16) {
+            targets.push(address);
+        }
+    }
+    match (targets.first().copied(), targets.get(1).copied()) {
+        (Some(a), Some(b)) => Some((a, b)),
+        _ => None,
+    }
 }
 
 fn parse_goto_target(text: &str) -> Option<u64> {

@@ -18,7 +18,7 @@ pub use ir::{
     IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement,
     IrTerminator, IrValue, lift_arm64, lift_x86_64,
 };
-pub use structure::{Diamond, LoopBack, ResolvedCondition, find_diamonds, find_loops, resolve_condition};
+pub use structure::{Diamond, LoopBack, NaturalLoop, ResolvedCondition, find_diamonds, find_loops, find_natural_loops, resolve_condition};
 pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
 pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};
 pub use ssa::{PhiCandidate, SsaReport, build_ssa};

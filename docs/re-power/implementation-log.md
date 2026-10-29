@@ -361,8 +361,18 @@ sufficient; syscall intrinsic table required).
 - Proof: d5_x86_lift 4/4 (authored `mov rax,[rbx+rcx*8+0x10]`).
   Workspace 49 suites, 0 failures.
 
-Next 6.x: subs-flags emission, while-form loops (dominance), D2
-renaming, type seeds, real-binary delta run 3.
+### Unit 6.11 — natural loops + do-while rendering — DONE
+
+- `find_natural_loops`: v1 dominance approximation (header's
+  predecessors all inside the header..source range); self-loop
+  CondBranch renders `} while (cond);`; other back edges annotate
+  their specific goto in place (`goto …; /* loop back */`). Goto-parse
+  bug caught by tests (hex letters in "flags:jne" matched as targets)
+  — rewritten to exact `sub_` runs.
+- Proof: d4_structure 9/9. Workspace 49 suites, 0 failures.
+
+Next 6.x: subs-flags emission, D2 renaming, type seeds, real-binary
+delta run 3, then Wave 5A value-flow dispatch port.
 
 ## Lab notes
 

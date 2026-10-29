@@ -201,3 +201,77 @@ pub fn find_loops(function: &IrFunction) -> Vec<LoopBack> {
     }
     out
 }
+
+/// A natural loop recognized for while-form rendering (v1): a back
+/// edge whose target block dominates nothing else in the cycle —
+/// approximated by "target has no predecessors outside the
+/// source-to-target chain". Honest scope: single back edge, target
+/// reachable from entry, arms of the header stay inline.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NaturalLoop {
+    pub header_block: usize,
+    pub back_edge_from: usize,
+    pub to_address: u64,
+    pub condition: Option<ResolvedCondition>,
+}
+
+pub fn find_natural_loops(function: &IrFunction) -> Vec<NaturalLoop> {
+    let block_at: std::collections::BTreeMap<u64, usize> = function
+        .blocks
+        .iter()
+        .map(|b| (b.start_address, b.id))
+        .collect();
+
+    let mut predecessors: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+    for block in &function.blocks {
+        let mut targets = Vec::new();
+        match &block.terminator {
+            IrTerminator::Branch(target) => targets.push(*target),
+            IrTerminator::CondBranch { taken, fallthrough, .. } => {
+                targets.push(*taken);
+                targets.push(*fallthrough);
+            }
+            _ => {}
+        }
+        for target in targets {
+            if let Some(id) = block_at.get(&target) {
+                predecessors.entry(*id).or_default().push(block.id);
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for back in find_loops(function) {
+        let Some(header_id) = block_at.get(&back.to_address) else { continue };
+        // v1 dominance approximation: the header's predecessors are all
+        // inside the loop — i.e. every predecessor lies in the address
+        // range [header, back-edge source].
+        let source = function
+            .blocks
+            .iter()
+            .find(|b| b.id == back.from_block)
+            .map(|b| b.start_address)
+            .unwrap_or(u64::MAX);
+        let inside = |id: usize| {
+            function
+                .blocks
+                .iter()
+                .find(|b| b.id == id)
+                .map(|b| b.start_address >= back.to_address && b.start_address <= source)
+                .unwrap_or(false)
+        };
+        let all_inside = predecessors
+            .get(header_id)
+            .map(|pres| pres.iter().all(|p| inside(*p)))
+            .unwrap_or(false);
+        if all_inside {
+            out.push(NaturalLoop {
+                header_block: *header_id,
+                back_edge_from: back.from_block,
+                to_address: back.to_address,
+                condition: back.condition,
+            });
+        }
+    }
+    out
+}

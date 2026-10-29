@@ -286,3 +286,50 @@ fn arm64_lift_emits_flags_for_cmp() {
                 && matches!(expression, IrExpr::BinOp { op: IrBinOp::Sub, .. }))));
     assert_eq!(function.unknown_count, 0, "cmp is modeled, not unknown");
 }
+
+#[test]
+fn do_while_loop_renders_naturally() {
+    // Header/body block loops to itself conditionally (do-while shape).
+    let function = IrFunction {
+        entry_address: 0,
+        blocks: vec![
+            IrBlock {
+                id: 0,
+                start_address: 0x00,
+                statements: vec![
+                    IrStatement::Assign {
+                        destination: "flags".into(),
+                        expression: IrExpr::BinOp {
+                            op: IrBinOp::Sub,
+                            lhs: Box::new(IrExpr::Value(IrValue::Register("eax".into()))),
+                            rhs: Box::new(IrExpr::Value(IrValue::Const(0))),
+                        },
+                    },
+                ],
+                terminator: IrTerminator::CondBranch {
+                    condition: IrCondition::Raw("jne".into()),
+                    taken: 0x00, // back edge to self
+                    fallthrough: 0x10,
+                },
+            },
+            IrBlock {
+                id: 1,
+                start_address: 0x10,
+                statements: vec![],
+                terminator: IrTerminator::Return,
+            },
+        ],
+        instruction_count: 3,
+        unknown_count: 0,
+    };
+    let natural = find_natural_loops(&function);
+    assert_eq!(natural.len(), 1, "self-loop is a natural loop");
+    assert_eq!(natural[0].header_block, 0);
+
+    let pseudocode = render_pseudocode(&function, Some("dowhile"));
+    let texts: Vec<&str> = pseudocode.lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(
+        texts.iter().any(|t| t.starts_with("} while (") && t.ends_with(");")),
+        "expected do-while render, got: {texts:?}"
+    );
+}
