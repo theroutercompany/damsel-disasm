@@ -539,6 +539,18 @@ enum Command {
         #[arg(long, help = "Maximum rows to print")]
         limit: Option<usize>,
     },
+    #[command(about = "Query stored cross-references by direction")]
+    Xrefs {
+        project: PathBuf,
+        #[arg(long, value_parser = parse_address, help = "Target address (0x…); references TO it")]
+        to: Option<u64>,
+        #[arg(long, value_parser = parse_address, help = "Source address (0x…); references FROM it")]
+        from: Option<u64>,
+        #[arg(long, help = "Filter by xref kind (call, branch, data, import, …)")]
+        kind: Option<String>,
+        #[arg(long, help = "Maximum rows to print")]
+        limit: Option<usize>,
+    },
     Cache {
         #[command(subcommand)]
         command: CacheCommand,
@@ -1127,6 +1139,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Functions { project, name, limit } => {
             handle_functions(project, name, limit, &output_settings)?;
         }
+        Command::Xrefs { project, to, from, kind, limit } => {
+            handle_xrefs(project, to, from, kind, limit, &output_settings)?;
+        }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
@@ -1207,7 +1222,8 @@ fn handle_analyze(
     refresh: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
-    use damsel_project::{AnalysisProjectMeta, Create, ProjectId, ProjectStore, open_store};
+    use damsel_project::{AnalysisProjectMeta, ProjectId, ProjectStore, open_store};
+    use damsel_macho::harvest_xrefs;
 
     let image = load_image(path.clone())?;
     let project_dir = project_dir_for(&path);
@@ -1240,6 +1256,20 @@ fn handle_analyze(
         .map_err(map_store_error)?;
     let outcome = ingest_binary_image(&mut store, &image, analyzer_version())
         .map_err(map_ingest_error)?;
+    // Xref pass over seeded function windows (Wave 4 §4 pass 4–5).
+    let function_addresses: Vec<u64> = damsel_project::function_summaries(&store)
+        .map_err(map_store_error)?
+        .iter()
+        .map(|f| f.address)
+        .collect();
+    let xref_outcome = harvest_xrefs(
+        &mut store,
+        &image,
+        outcome.source_id,
+        &function_addresses,
+        analyzer_version(),
+    )
+    .map_err(|e| CliRunError::command("xref_error", e.to_string()))?;
     let source_count = store.sources().map_err(map_store_error)?.len();
     let store_meta = store.meta().map_err(map_store_error)?;
     drop(store);
@@ -1252,6 +1282,8 @@ fn handle_analyze(
             "sources": source_count,
             "objects": outcome.object_count,
             "facts": outcome.fact_count,
+            "function_windows": xref_outcome.function_windows,
+            "xrefs": xref_outcome.xref_count,
         });
         println!("{}", project_json(value));
     } else {
@@ -1260,6 +1292,112 @@ fn handle_analyze(
         println!("  sources     = {source_count}");
         println!("  objects     = {}", outcome.object_count);
         println!("  facts       = {}", outcome.fact_count);
+        println!("  xrefs       = {} ({} function windows)", xref_outcome.xref_count, xref_outcome.function_windows);
+    }
+    Ok(())
+}
+
+fn handle_xrefs(
+    project: PathBuf,
+    to: Option<u64>,
+    from: Option<u64>,
+    kind_filter: Option<String>,
+    limit: Option<usize>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, function_summaries, open_store};
+
+    if to.is_none() && from.is_none() {
+        return Err(CliRunError::invalid_args(
+            "xrefs requires --to <addr> or --from <addr>",
+        ));
+    }
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+        .map_err(map_store_error)?;
+
+    let names: std::collections::BTreeMap<u64, String> = function_summaries(&store)
+        .map_err(map_store_error)?
+        .into_iter()
+        .filter_map(|f| f.name.map(|n| (f.address, n)))
+        .collect();
+
+    let facts = store.facts().map_err(map_store_error)?;
+    let mut rows: Vec<(u64, String, String)> = Vec::new(); // (from_addr, kind, to_object)
+    for fact in &facts {
+        if fact.kind.as_str() != "xref" {
+            continue;
+        }
+        let Some(object) = &fact.object_id else { continue };
+        if object.kind() != "instruction" {
+            continue;
+        }
+        let Some(from_addr) =
+            u64::from_str_radix(object.key().trim_start_matches("0x"), 16).ok()
+        else {
+            continue;
+        };
+        let Some((kind, target)) = fact.payload.split_once("|to=") else {
+            continue;
+        };
+        if let Some(want) = from {
+            if from_addr != want {
+                continue;
+            }
+        }
+        if let Some(want_addr) = to {
+            // Match any target object whose address component equals the
+            // requested address (function/data/stub objects).
+            let Some((_, key)) = target.split_once(':') else { continue };
+            let Ok(target_addr) = u64::from_str_radix(key.trim_start_matches("0x"), 16) else {
+                continue;
+            };
+            if target_addr != want_addr {
+                continue;
+            }
+        }
+        if let Some(kind_want) = &kind_filter {
+            if kind != kind_want.as_str() {
+                continue;
+            }
+        }
+        rows.push((from_addr, kind.to_string(), target.to_string()));
+    }
+    rows.sort();
+    rows.dedup();
+    let total = rows.len();
+    let truncated = limit.is_some_and(|l| rows.len() > l);
+    if let Some(limit) = limit {
+        rows.truncate(limit);
+    }
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "xrefs",
+            "count": total,
+            "truncated": truncated,
+            "xrefs": rows.iter().map(|(from, kind, target)| {
+                // v1 attribution: nearest seeded function at or below the
+                // call site (true containment lands with recovery bounds).
+                let from_function = names
+                    .range(..=*from)
+                    .next_back()
+                    .map(|(_, name)| name.clone());
+                serde_json::json!({
+                    "from": format!("{from:#x}"),
+                    "from_function": from_function,
+                    "kind": kind,
+                    "to": target,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("xrefs: {total}");
+        for (from, kind, target) in &rows {
+            println!("  {from:#010x}  {kind:<12} -> {target}");
+        }
     }
     Ok(())
 }

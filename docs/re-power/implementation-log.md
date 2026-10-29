@@ -74,12 +74,26 @@ exists; N-1 real-db fixture lands with the first schema bump).
   4/4 (JSON listing + name filter). Workspace 36 suites, 0 failures.
 - Recovery worker (bounds/blocks/conflicts, rank-6..8 seeds) is Unit 4.4b.
 
+### Unit 4.5 — xref harvest (`xref_v1`) + `xrefs --to/--from` command — DONE
+
+- `damsel_macho::harvest_xrefs`: disassembles each seeded function
+  window (seed → next seed / section end), promotes engine references
+  into `xref` facts on `instruction:<addr>` objects with canonical
+  payloads `<kind>|to=<object>` (call/branch/data/import/stub/…);
+  `analyze` now runs it and reports windows/xref counts. CLI `xrefs
+  <project> --to|--from <addr> [--kind] [--limit]` with
+  nearest-below function attribution (v1) and `count`/`truncated`
+  contract. Hex-only address parsing (decimal-parse bug caught in
+  smoke, fixed + regression-covered).
+- Proof: analysis_ingest 5/5 (round trip incl. name-bearing import
+  targets), project_cli 5/5 (direction + kind filter + typed
+  invalid_args). Workspace 35 suites, 0 failures.
+
 ### Next units (queue order)
 
 - 4.3 `damsel analyze` CLI — DONE (see above)
 - 4.4b recovery worker v1 (bounds/blocks from CFG walk) + audit gate.
-- 4.5 xref harvesting from `DisassemblyAnalysis` promotion; `xrefs`
-  command; round-trip fixtures.
+- 4.5 xref harvesting — DONE (see above)
 - 4.6 strings pass + `strings` command; search index + `search`.
 - 4.7 budgets on `stripped-30mb` fixture (corpus bench rows 4.10).
 

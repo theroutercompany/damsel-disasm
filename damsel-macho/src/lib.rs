@@ -7,7 +7,7 @@ mod objc;
 mod shared_cache;
 mod shared_cache_query;
 
-pub use analysis::{IngestError, IngestOutcome, ingest_binary_image};
+pub use analysis::{IngestError, IngestOutcome, XrefError, XrefOutcome, harvest_xrefs, ingest_binary_image};
 pub use damsel_core::{
     CacheImageId, CacheImageRecord, CacheLookupResult, SharedCache, SharedCacheHeader,
     SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,

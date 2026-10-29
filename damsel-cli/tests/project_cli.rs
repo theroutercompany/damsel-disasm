@@ -127,6 +127,45 @@ fn functions_command_lists_seeded_functions() {
 }
 
 #[test]
+fn xrefs_command_queries_by_direction_and_kind() {
+    let dir = smoke_dir("xrefs");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    // --to a known function address: exactly the call site, attributed.
+    let out = damsel()
+        .arg("xrefs").arg(&target)
+        .arg("--to").arg("0x100000460")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success());
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["command"], "xrefs");
+    assert_eq!(body["count"], 1);
+    let row = &body["xrefs"][0];
+    assert_eq!(row["kind"], "call");
+    assert_eq!(row["to"], "function:0x100000460");
+    assert_eq!(row["from_function"], "_main");
+
+    // kind filter narrows; a kind with no matches returns count 0.
+    let out = damsel()
+        .arg("xrefs").arg(&target)
+        .arg("--to").arg("0x100000460")
+        .arg("--kind").arg("data")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["count"], 0);
+
+    // missing direction is a typed argument error (exit 1, code invalid_args)
+    let out = damsel().arg("xrefs").arg(&target).arg("--format").arg("json").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err_text = String::from_utf8(out.stderr).unwrap_or_default();
+    assert!(err_text.contains("invalid_args"), "got: {err_text}");
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");

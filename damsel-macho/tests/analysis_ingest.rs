@@ -105,6 +105,51 @@ fn function_summaries_group_seeds_by_address() {
 }
 
 #[test]
+fn xref_harvest_round_trips_from_both_ends() {
+    let dir = tempfile::tempdir().unwrap();
+    let image = load(fixture("arm64-symbolized")).unwrap();
+    let mut store = open_store(&dir.path().join("project.db"), Create::New, &meta()).unwrap();
+    let outcome = ingest_binary_image(&mut store, &image, "0.1.0").unwrap();
+    let addresses: Vec<u64> = damsel_project::function_summaries(&store)
+        .unwrap()
+        .iter()
+        .map(|f| f.address)
+        .collect();
+    let xref_outcome = damsel_macho::harvest_xrefs(
+        &mut store, &image, outcome.source_id, &addresses, "0.1.0",
+    )
+    .unwrap();
+    assert!(xref_outcome.xref_count > 0);
+    assert_eq!(xref_outcome.function_windows, 3);
+
+    // Round trip: every xref fact is discoverable by target address.
+    let facts = store.facts_for_source(outcome.source_id).unwrap();
+    let xref_facts: Vec<_> = facts
+        .iter()
+        .filter(|f| f.kind.as_str() == "xref")
+        .collect();
+    assert!(!xref_facts.is_empty());
+    for fact in &xref_facts {
+        assert!(fact.payload.contains("|to="), "payload shape: {}", fact.payload);
+        let (_, target) = fact.payload.split_once("|to=").unwrap();
+        let (kind, key) = target.split_once(':').unwrap();
+        assert!(!kind.is_empty() && !key.is_empty());
+        // Address-bearing kinds must parse as hex; name-bearing kinds
+        // (import) just need a non-empty name.
+        if matches!(kind, "function" | "data" | "stub") {
+            assert!(
+                u64::from_str_radix(key.trim_start_matches("0x"), 16).is_ok(),
+                "target address parses hex: {target}"
+            );
+        }
+    }
+    // A call into _exported_sum exists and is attributed to _main's window.
+    assert!(xref_facts
+        .iter()
+        .any(|f| f.payload == "call|to=function:0x100000460"));
+}
+
+#[test]
 fn ingest_is_export_deterministic() {
     let a = tempfile::tempdir().unwrap();
     let b = tempfile::tempdir().unwrap();
