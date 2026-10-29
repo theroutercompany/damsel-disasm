@@ -34,14 +34,15 @@ fn x86_blob_lifts_call_and_return() {
         .any(|s| matches!(s, IrStatement::Assign { destination, .. } if destination == "rbp"))));
     // push/pop modeled as stores since 6.16 — zero blanket unknowns
     // on the blob except where genuinely unsupported.
-    assert!(function.unknown_count <= 1);
+    // Nops model as no-ops — zero unknowns on the blob.
+    assert_eq!(function.unknown_count, 0);
 
     // Renders with provenance and the call target name.
     let pseudocode = render_pseudocode(&function, Some("exported_func"));
     let texts: Vec<&str> = pseudocode.lines.iter().map(|l| l.text.as_str()).collect();
     assert!(texts.iter().any(|t| t.contains(&format!("sub_{:x}", 0x40 + helper))));
     assert!(texts.iter().any(|t| *t == "return;"));
-    assert!(texts.iter().any(|t| t.contains("/* unknown: push */")));
+    assert!(texts.iter().any(|t| t.contains("&sp")), "push/pop render as stack ops");
 }
 
 #[test]

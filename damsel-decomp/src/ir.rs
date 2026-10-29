@@ -582,6 +582,13 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                     });
                     target.map(|target| IrStatement::Call { target, site })
                 }
+                "nop" | "nopl" | "endbr64" => {
+                    // Explicit no-ops: consume a statement slot, no effect.
+                    Some(IrStatement::Assign {
+                        destination: "_nop".to_string(),
+                        expression: IrExpr::Value(IrValue::Const(0)),
+                    })
+                }
                 "push" | "pop" => {
                     // Stack discipline: push = Store [&sp-8] = reg,
                     // pop = Load reg [&sp]. v1 keeps sp adjustment

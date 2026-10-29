@@ -402,6 +402,15 @@ sufficient; syscall intrinsic table required).
 
 ### Unit 6.15 — delta run 3 recorded — DONE
 
+### Unit 6.16 — push/pop/nop modeling — DONE
+
+- push = Store [&sp−8], pop = Load [&sp]; nop/nopl/endbr64 = no-op
+  statements. The synthetic blob now lifts with **zero** blanket
+  unknowns; real-binary remaining unknowns are only genuinely exotic
+  (segment ops, simd).
+- Proof: workspace 49 suites, 0 failures (blob expectation fixed to
+  the stronger zero-unknown contract).
+
 Next 6.x: D2 renaming, type seeds, Wave 5A value-flow dispatch port.
 
 ## Lab notes
