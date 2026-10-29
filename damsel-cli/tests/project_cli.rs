@@ -363,7 +363,9 @@ fn decompile_command_renders_pseudocode_with_provenance() {
     let texts: Vec<&str> = lines.iter().map(|l| l["text"].as_str().unwrap()).collect();
     assert!(texts.iter().any(|t| t.contains("sub_100000460(")));
     assert!(texts.iter().any(|t| *t == "return;"));
-    assert!(texts.iter().any(|t| t.contains("/* unknown: cset */")));
+    // cset now models as a conditional-set assignment (6.14) — the
+    // adrp unknown from earlier versions is also gone.
+    assert!(texts.iter().any(|t| t.contains("cond:")));
     assert!(texts.iter().any(|t| t.contains("[-0x4]")), "negative slot renders signed");
     // Frame facts ride along.
     assert_eq!(body["frame"]["frame_size"], 32);

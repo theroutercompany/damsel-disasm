@@ -250,6 +250,23 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     statements.push(IrStatement::Unknown { mnemonic: lower, site });
                 }
             }
+            "cset" | "cinc" => {
+                // Conditional set: dest = (flags condition) ? 1 : 0.
+                // v1 renders the condition from the mnemonic suffix —
+                // resolved precisely in the D4 pass.
+                if let Some(dst) = destination.clone() {
+                    statements.push(IrStatement::Assign {
+                        destination: dst,
+                        expression: IrExpr::Value(IrValue::Unknown(format!(
+                            "cond:{}",
+                            lower.trim_start_matches("cset").trim_start_matches("cinc")
+                        ))),
+                    });
+                } else {
+                    *unknowns += 1;
+                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                }
+            }
             "adrp" | "adr" => {
                 // Page/label materialization: the decoder already
                 // resolved the absolute target into a Page/Data

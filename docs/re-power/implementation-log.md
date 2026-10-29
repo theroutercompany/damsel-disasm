@@ -387,8 +387,15 @@ sufficient; syscall intrinsic table required).
   unknowns.
 - Proof: workspace 49 suites, 0 failures.
 
+### Unit 6.14 — cset modeling — DONE
+
+- `cset`/`cinc` lift as conditional-set assignments (`cond:` unknowns
+  carrying the condition suffix) — D4 resolves precisely. `_main` now
+  decompiles with zero blanket unknowns; expectations updated.
+- Proof: workspace 49 suites, 0 failures.
+
 Next 6.x: D2 renaming, type seeds, real-binary delta run 3, Wave 5A
-value-flow dispatch port, cset modeling.
+value-flow dispatch port.
 
 ## Lab notes
 
