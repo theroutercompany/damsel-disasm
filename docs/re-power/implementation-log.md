@@ -503,8 +503,21 @@ sufficient; syscall intrinsic table required).
   `synthesize_*_value` ladder (paired with phi-SSA).
 - Proof: workspace 51 suites, 0 failures (casp test green after fix).
 
-Next: cross-block phi-SSA, rmcp transport spike, lab delta run 4,
-then the synthesize dispatch migration.
+### Lab evidence run 6 (2026-10-29) — delta run 4 — DONE
+
+- Three real glibc allocator functions decompiled:
+  - `__GI___libc_malloc`: 12 → 5 → 3 → **2** unknowns (43 lines)
+  - `malloc_consolidate`: **1** unknown (37 lines)
+  - `_int_malloc` (the 190-line allocator core): **2** unknowns, 105
+    pseudocode lines
+- The indexed-memory + flags + adrp + push/pop modeling eliminated
+  nearly all blanket unknowns. Remaining 1-2 per function are segment
+  ops / exotic SIMD.
+
+### Unit — delta run 4 recorded — DONE
+
+Next: cross-block phi-SSA, rmcp transport spike, then the synthesize
+dispatch migration.
 
 ## Lab notes
 
