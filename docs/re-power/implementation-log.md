@@ -638,8 +638,15 @@ sufficient; syscall intrinsic table required).
 - Proof: workspace 51 suites, 0 failures; smoke on symbolized-vs-objc
   pair shows 2 matched / 27 added / 2 removed in table format.
 
+### Unit 7.10 — diff HTML export — DONE
+
+- `damsel diff --html`: self-contained HTML report (inline CSS,
+  summary cards with matched/added/removed counts, styled tables,
+  no external dependencies).
+- Proof: workspace 51 suites, 0 failures; HTML smoke on fixture pair.
+
 Next: rmcp transport spike, synthesize dispatch migration, Workbench
-pane integration, then lab re-verification.
+pane integration, lab re-verification, then merge to main.
 
 ## Lab notes
 

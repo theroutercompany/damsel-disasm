@@ -24,7 +24,7 @@ pub use structure::{Diamond, LoopBack, NaturalLoop, ResolvedCondition, find_diam
 pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
 pub use diff::{
     DiffError, DiffFunction, DiffReport, MatchedFunction, MatchStrategy,
-    diff_functions, render_diff_markdown,
+    diff_functions, render_diff_html, render_diff_markdown,
 };
 pub use recon::{
     AntiAnalysisIndicator, FlatteningIndicator, PackerSignature, ReconReport, SectionEntropy,

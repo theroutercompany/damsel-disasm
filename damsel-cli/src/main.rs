@@ -548,6 +548,8 @@ enum Command {
         right: PathBuf,
         #[arg(long, help = "Output Markdown report instead of text/JSON")]
         markdown: bool,
+        #[arg(long, help = "Output self-contained HTML report")]
+        html: bool,
     },
     #[command(about = "Run as an MCP server exposing typed analysis tools (Wave 7)")]
     Serve {
@@ -1217,8 +1219,8 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Batch { inputs, out, fail_fast } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
-        Command::Diff { left, right, markdown } => {
-            handle_diff(left, right, markdown, &output_settings)?;
+        Command::Diff { left, right, markdown, html } => {
+            handle_diff(left, right, markdown, html, &output_settings)?;
         }
         Command::Serve { project } => {
             mcp::run_mcp(mcp::McpConfig { project })?;
@@ -1521,6 +1523,7 @@ fn handle_diff(
     left: PathBuf,
     right: PathBuf,
     markdown: bool,
+    html: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{Create, ProjectStore, open_store};
@@ -1541,6 +1544,10 @@ fn handle_diff(
 
     if markdown {
         print!("{}", damsel_decomp::render_diff_markdown(&report));
+        return Ok(());
+    }
+    if html {
+        print!("{}", damsel_decomp::render_diff_html(&report));
         return Ok(());
     }
 

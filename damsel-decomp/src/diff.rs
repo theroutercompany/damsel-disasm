@@ -180,3 +180,83 @@ pub fn render_diff_markdown(report: &DiffReport) -> String {
     }
     out
 }
+
+/// Render a diff report as a self-contained HTML page (inline CSS,
+/// no external dependencies — evidence profile).
+pub fn render_diff_html(report: &DiffReport) -> String {
+    let mut out = String::new();
+    out.push_str(r#"<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Binary Diff Report</title>
+<style>
+body { font-family: -apple-system, BlinkOnSystemFont, 'Segoe UI', sans-serif; margin: 2rem; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { text-align: left; padding: 0.5rem 1rem; border: 1px solid #ddd; }
+th { background: #f5f5f5; }
+.added { color: #28a745; }
+.removed { color: #dc3545; }
+.matched { color: #0366d6; }
+.summary { display: flex; gap: 2rem; margin: 1rem 0; }
+.summary .card { padding: 1rem 2rem; border-radius: 8px; background: #f8f9fa; }
+.summary .num { font-size: 2rem; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Binary Diff Report</h1>
+<p><strong>#LEFT#</strong> → <strong>#RIGHT#</strong></p>
+<div class="summary">
+<div class="card"><div class="num matched">#MATCHED#</div>Matched</div>
+<div class="card"><div class="num added">#ADDED#</div>Added</div>
+<div class="card"><div class="num removed">#REMOVED#</div>Removed</div>
+</div>
+"#);
+    // Matched table
+    if !report.matched.is_empty() {
+        out.push_str("<h2>Matched Functions</h2>\n<table>\n<tr><th>Name</th><th>Left</th><th>Right</th><th>Strategy</th></tr>\n");
+        for m in &report.matched {
+            let strategy = match m.strategy {
+                MatchStrategy::ExactSymbol => "symbol",
+                MatchStrategy::ExactAddress => "address",
+                MatchStrategy::Structural => "structural",
+            };
+            out.push_str(&format!(
+                "<tr><td>{}</td><td><code>{:#x}</code></td><td><code>{:#x}</code></td><td>{}</td></tr>\n",
+                m.name.as_deref().unwrap_or("—"),
+                m.left_address, m.right_address, strategy
+            ));
+        }
+        out.push_str("</table>\n");
+    }
+    if !report.added.is_empty() {
+        out.push_str("<h2 class=\"added\">Added</h2>\n<ul>\n");
+        for f in &report.added {
+            out.push_str(&format!(
+                "<li class=\"added\"><code>{:#x}</code> {}</li>\n",
+                f.address, f.name.as_deref().unwrap_or("—")
+            ));
+        }
+        out.push_str("</ul>\n");
+    }
+    if !report.removed.is_empty() {
+        out.push_str("<h2 class=\"removed\">Removed</h2>\n<ul>\n");
+        for f in &report.removed {
+            out.push_str(&format!(
+                "<li class=\"removed\"><code>{:#x}</code> {}</li>\n",
+                f.address, f.name.as_deref().unwrap_or("—")
+            ));
+        }
+        out.push_str("</ul>\n");
+    }
+    out.push_str("</body>\n</html>\n");
+
+    // Substitute placeholders
+    out = out
+        .replace("#LEFT#", &report.left_name)
+        .replace("#RIGHT#", &report.right_name)
+        .replace("#MATCHED#", &report.matched.len().to_string())
+        .replace("#ADDED#", &report.added.len().to_string())
+        .replace("#REMOVED#", &report.removed.len().to_string());
+    out
+}
