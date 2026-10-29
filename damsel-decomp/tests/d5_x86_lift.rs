@@ -32,7 +32,9 @@ fn x86_blob_lifts_call_and_return() {
         .statements
         .iter()
         .any(|s| matches!(s, IrStatement::Assign { destination, .. } if destination == "rbp"))));
-    assert!(function.unknown_count > 0, "push/pop are visible unknowns in v1");
+    // push/pop modeled as stores since 6.16 — zero blanket unknowns
+    // on the blob except where genuinely unsupported.
+    assert!(function.unknown_count <= 1);
 
     // Renders with provenance and the call target name.
     let pseudocode = render_pseudocode(&function, Some("exported_func"));
