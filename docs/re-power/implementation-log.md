@@ -153,7 +153,17 @@ exists; N-1 real-db fixture lands with the first schema bump).
 - Proof: damsel-core lib tests incl. 3 semantics suites; workspace 35
   suites, 0 failures (all engine matrices green post-delegation).
 
-Next 5A steps: port remaining mnemonic helpers (written-regs,
+### Unit 5A.2 — remaining pure-mnemonic classifiers delegated — DONE
+
+- `is_return_mnemonic`, `is_terminal_trap_mnemonic`,
+  `is_conditional_branch_mnemonic`, `is_call_mnemonic`,
+  `is_cfg_boundary_mnemonic`, `indirect_control_kind` now delegate to
+  `semantics::arm64` (new: `is_cfg_boundary`, `indirect_control_kind`
+  returning &'static str). Behavior identical; matrices green.
+- Proof: semantics unit tests extended (boundary set + PAC kinds);
+  workspace 35 suites, 0 failures.
+
+Next 5A steps: operand-aware helpers (written-destination registers,
 value-flow dispatch) behind the same oracle; then the x86_64 producer
 + `arch_x86` feature flip. First step: 5A semantics producer behind differential
 oracles (arm64), then `arch_x86` feature flip + x86 producer (spike-proven

@@ -1497,16 +1497,11 @@ fn objc_message_send_selector_from_symbol(symbol: &str) -> Option<&str> {
 }
 
 fn is_cfg_boundary_mnemonic(mnemonic: &str) -> bool {
-    is_conditional_branch_mnemonic(mnemonic)
-        || is_unconditional_transfer_mnemonic(mnemonic)
-        || is_return_mnemonic(mnemonic)
-        || is_terminal_trap_mnemonic(mnemonic)
+    damsel_core::semantics_arm64::is_cfg_boundary(mnemonic)
 }
 
 fn is_conditional_branch_mnemonic(mnemonic: &str) -> bool {
-    mnemonic.starts_with("b.")
-        || mnemonic.starts_with("bc.")
-        || matches!(mnemonic, "cbz" | "cbnz" | "tbz" | "tbnz")
+    damsel_core::semantics_arm64::is_conditional_branch(mnemonic)
 }
 
 fn is_unconditional_transfer_mnemonic(mnemonic: &str) -> bool {
@@ -1514,14 +1509,11 @@ fn is_unconditional_transfer_mnemonic(mnemonic: &str) -> bool {
 }
 
 fn is_return_mnemonic(mnemonic: &str) -> bool {
-    matches!(
-        mnemonic,
-        "ret" | "retaa" | "retab" | "eret" | "eretaa" | "eretab" | "drps"
-    )
+    damsel_core::semantics_arm64::is_return(mnemonic)
 }
 
 fn is_terminal_trap_mnemonic(mnemonic: &str) -> bool {
-    matches!(mnemonic, "brk" | "hlt" | "udf")
+    damsel_core::semantics_arm64::is_trap(mnemonic)
 }
 
 fn non_default_return_register(instruction: &DecodedInstruction) -> Option<String> {
@@ -3238,15 +3230,7 @@ fn indirect_control_register(instruction: &DecodedInstruction) -> Option<String>
 }
 
 fn indirect_control_kind(mnemonic: &str) -> String {
-    if matches!(mnemonic, "blraa" | "blraaz" | "blrab" | "blrabz") {
-        "authenticated-call".to_string()
-    } else if matches!(mnemonic, "braa" | "braaz" | "brab" | "brabz") {
-        "authenticated-branch".to_string()
-    } else if is_call_mnemonic(mnemonic) {
-        "call".to_string()
-    } else {
-        "branch".to_string()
-    }
+    damsel_core::semantics_arm64::indirect_control_kind(mnemonic).to_string()
 }
 
 fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
@@ -3279,10 +3263,7 @@ fn store_exclusive_writes_status(mnemonic: &str) -> bool {
 }
 
 fn is_call_mnemonic(mnemonic: &str) -> bool {
-    matches!(
-        mnemonic,
-        "bl" | "blr" | "blraa" | "blraaz" | "blrab" | "blrabz"
-    )
+    damsel_core::semantics_arm64::is_call(mnemonic)
 }
 
 fn synthesize_mov_wide_value(

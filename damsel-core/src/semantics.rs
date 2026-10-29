@@ -78,6 +78,29 @@ pub mod arm64 {
         matches!(lower, "bl") || is_indirect_call(lower)
     }
 
+    /// True for any instruction that ends a basic block (conditional
+    /// branch, unconditional transfer, return, or trap).
+    pub fn is_cfg_boundary(lower: &str) -> bool {
+        is_conditional_branch(lower)
+            || is_unconditional_transfer(lower)
+            || is_return(lower)
+            || is_trap(lower)
+    }
+
+    /// Indirect-control display kind used by the engine's summaries:
+    /// authenticated call/branch (PAC), plain call, or branch.
+    pub fn indirect_control_kind(lower: &str) -> &'static str {
+        if matches!(lower, "blraa" | "blraaz" | "blrab" | "blrabz") {
+            "authenticated-call"
+        } else if matches!(lower, "braa" | "braaz" | "brab" | "brabz") {
+            "authenticated-branch"
+        } else if is_call(lower) {
+            "call"
+        } else {
+            "branch"
+        }
+    }
+
     /// Classify with the documented precedence.
     pub fn classify(lower: &str) -> ControlFlowClass {
         if is_return(lower) {
@@ -158,5 +181,19 @@ mod tests {
         assert!(!arm64::is_conditional_branch("bl"));
         assert!(!arm64::is_conditional_branch("b"));
         assert!(!arm64::is_return("brk"));
+    }
+
+    #[test]
+    fn cfg_boundary_and_indirect_kind_match_engine_behavior() {
+        for m in ["b", "b.eq", "br", "ret", "brk", "cbz", "eret"] {
+            assert!(arm64::is_cfg_boundary(m), "{m} is a boundary");
+        }
+        for m in ["bl", "blr", "add", "nop", "str"] {
+            assert!(!arm64::is_cfg_boundary(m), "{m} is not a boundary");
+        }
+        assert_eq!(arm64::indirect_control_kind("blraaz"), "authenticated-call");
+        assert_eq!(arm64::indirect_control_kind("brab"), "authenticated-branch");
+        assert_eq!(arm64::indirect_control_kind("blr"), "call");
+        assert_eq!(arm64::indirect_control_kind("br"), "branch");
     }
 }
