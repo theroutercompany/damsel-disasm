@@ -287,8 +287,20 @@ sufficient; syscall intrinsic table required).
   [fp, lr], local at fp−4 (`stur wzr,[fp,#-4]`). d3_stack_frame 2/2.
   Workspace 46 suites, 0 failures.
 
-Next 6.x: D2 slice 2 (per-block versioned renaming), D4 structuring,
-D5 pseudocode renderer.
+### Unit 6.4 — D5 pseudocode renderer v1 + `decompile` CLI — DONE
+
+- `render_pseudocode`: line model with per-line source addresses
+  (block start + statement sites), honest goto-form control flow until
+  D4, visible `/* unknown */` comments (adrp/cset on `_main`), signed
+  negative slots. CLI `decompile <project> --function <name|0x>` with
+  frame facts + unknown_count in JSON; address-gutter text mode.
+- **First damsel pseudocode** (real `_main`): frame ops, both calls
+  resolved, honest unknowns — nothing fabricated.
+- Proof: d5_render 2/2, project_cli 10/10. Workspace 47 suites,
+  0 failures.
+
+Next 6.x: D2 slice 2 (per-block renaming), D4 structuring (if/else
+from CondBranch chains), type seeds, x86_64 lift.
 
 ## Lab notes
 

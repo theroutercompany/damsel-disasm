@@ -539,6 +539,12 @@ enum Command {
         #[arg(long, help = "Maximum rows to print")]
         limit: Option<usize>,
     },
+    #[command(about = "Decompile a function to provenance-carrying pseudocode (Wave 6 D5)")]
+    Decompile {
+        project: PathBuf,
+        #[arg(long, help = "Function name or 0x address")]
+        function: String,
+    },
     #[command(about = "D0 function summary: calls, imports, strings, problems (Wave 6)")]
     Summary {
         project: PathBuf,
@@ -1178,6 +1184,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Summary { project, function } => {
             handle_summary(project, &function, &output_settings)?;
         }
+        Command::Decompile { project, function } => {
+            handle_decompile(project, &function, &output_settings)?;
+        }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
@@ -1359,6 +1368,74 @@ fn handle_analyze(
         println!("  xrefs       = {} ({} function windows)", xref_outcome.xref_count, xref_outcome.function_windows);
         println!("  bounds      = {} ({} rank-6, {} problems)", recovery_outcome.bounds, recovery_outcome.rank6_seeded, recovery_outcome.problems);
         println!("  strings     = {}", strings_outcome.strings);
+    }
+    Ok(())
+}
+
+fn handle_decompile(
+    project: PathBuf,
+    selector: &str,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    // v1 lift path: Mach-O arm64 via the engine's symbol/addr windows.
+    // Full project-fact-driven lifting (both formats) follows with D2/D4.
+    let target_path = resolve_project_dir(&project)
+        .ok()
+        .and_then(|dir| {
+            dir.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".damsel"))
+                .map(|stem| dir.with_file_name(stem))
+        });
+    let Some(target) = target_path.filter(|p| p.is_file()) else {
+        return Err(CliRunError::command(
+            "project_not_found",
+            "decompile requires the target binary next to the project",
+        ));
+    };
+    let image = load_image(target)?;
+    let request = damsel_core::DisassemblyRequestV2 {
+        target: if let Some(hex) = selector.strip_prefix("0x") {
+            damsel_core::DisassemblyTarget::Address(
+                u64::from_str_radix(hex, 16)
+                    .map_err(|_| CliRunError::invalid_args("bad address"))?,
+            )
+        } else {
+            damsel_core::DisassemblyTarget::Symbol(selector.to_string())
+        },
+        range: None,
+        limit: damsel_core::DisassemblyLimit::Unlimited,
+        options: damsel_core::DisassemblyOptions {
+            include_annotations: false,
+            include_value_flow: false,
+        },
+    };
+    let result = disassemble_v2(&image, &request)
+        .map_err(map_macho_error)?;
+    if result.instructions.is_empty() {
+        return Err(CliRunError::command("function_not_found", selector.to_string()));
+    }
+    let function = damsel_decomp::lift_arm64(&result.instructions);
+    let pseudocode = damsel_decomp::render_pseudocode(&function, Some(selector));
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "decompile",
+            "pseudocode": serde_json::to_value(&pseudocode).unwrap_or_default(),
+            "frame": serde_json::to_value(damsel_decomp::analyze_stack_frame(&function)).unwrap_or_default(),
+            "unknown_count": function.unknown_count,
+        });
+        println!("{}", project_json(value));
+    } else {
+        for line in &pseudocode.lines {
+            let addresses = line
+                .source_addresses
+                .iter()
+                .map(|a| format!("{a:#x}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!("{:>10}  {}", if addresses.is_empty() { String::new() } else { addresses }, line.text);
+        }
     }
     Ok(())
 }

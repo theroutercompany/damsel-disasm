@@ -1,0 +1,166 @@
+//! D5 pseudocode renderer v1 (Wave 6; strategy §Pseudocode Renderer).
+//!
+//! Line model: every line carries the addresses it was derived from
+//! (v1 granularity: block start; statement-level sites where the IR
+//! records them). Control flow renders in honest goto form until D4
+//! structuring lands; `Unknown` statements render as visible comments
+//! — never fabricated arithmetic.
+
+use crate::ir::{IrCallTarget, IrExpr, IrFunction, IrStatement, IrTerminator, IrValue};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PseudocodeLine {
+    pub indent: usize,
+    pub text: String,
+    /// Addresses this line derives from (v1: block start + statement
+    /// sites where recorded).
+    pub source_addresses: Vec<u64>,
+    /// Warnings (unknown semantics, unresolved targets).
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pseudocode {
+    pub function: String,
+    pub name: Option<String>,
+    pub lines: Vec<PseudocodeLine>,
+}
+
+pub fn render_pseudocode(function: &IrFunction, name: Option<&str>) -> Pseudocode {
+    let mut lines = vec![PseudocodeLine {
+        indent: 0,
+        text: format!("fn {}() {{", name.unwrap_or(&function.function_id_placeholder())),
+        source_addresses: vec![function.entry_address],
+        warnings: Vec::new(),
+    }];
+
+    for block in &function.blocks {
+        for statement in &block.statements {
+            let (text, warnings) = render_statement(statement);
+            let mut source = vec![block.start_address];
+            match statement {
+                IrStatement::Call { site, .. } | IrStatement::Unknown { site, .. } => {
+                    source.push(*site)
+                }
+                _ => {}
+            }
+            lines.push(PseudocodeLine {
+                indent: 1,
+                text,
+                source_addresses: source,
+                warnings,
+            });
+        }
+        let (text, warnings) = render_terminator(&block.terminator);
+        if !text.is_empty() {
+            lines.push(PseudocodeLine {
+                indent: 1,
+                text,
+                source_addresses: vec![block.start_address],
+                warnings,
+            });
+        }
+    }
+
+    lines.push(PseudocodeLine {
+        indent: 0,
+        text: "}".to_string(),
+        source_addresses: Vec::new(),
+        warnings: Vec::new(),
+    });
+
+    Pseudocode {
+        function: format!("{:#x}", function.entry_address),
+        name: name.map(str::to_string),
+        lines,
+    }
+}
+
+impl IrFunction {
+    fn function_id_placeholder(&self) -> String {
+        format!("sub_{:x}", self.entry_address)
+    }
+}
+
+fn render_statement(statement: &IrStatement) -> (String, Vec<String>) {
+    match statement {
+        IrStatement::Assign { destination, expression } => {
+            (format!("{destination} = {};", render_expr(expression)), Vec::new())
+        }
+        IrStatement::Load { destination, address } => {
+            (format!("{destination} = *({});", render_expr(address)), Vec::new())
+        }
+        IrStatement::Store { address, value } => {
+            (format!("*({}) = {};", render_expr(address), render_expr(value)), Vec::new())
+        }
+        IrStatement::Call { target, .. } => match target {
+            IrCallTarget::Function(address) => {
+                (format!("sub_{address:x}();"), Vec::new())
+            }
+            IrCallTarget::Unknown(via) => (
+                format!("call_unknown({via});"),
+                vec!["unresolved target".to_string()],
+            ),
+        },
+        IrStatement::Unknown { mnemonic, .. } => (
+            format!("/* unknown: {mnemonic} */"),
+            vec![format!("no v1 semantics for `{mnemonic}`")],
+        ),
+    }
+}
+
+fn render_terminator(terminator: &IrTerminator) -> (String, Vec<String>) {
+    match terminator {
+        IrTerminator::Return => ("return;".to_string(), Vec::new()),
+        IrTerminator::Branch(target) => (format!("goto sub_{target:x};"), Vec::new()),
+        IrTerminator::CondBranch { condition, taken, fallthrough } => (
+            format!(
+                "if ({}) {{ goto sub_{taken:x}; }} else {{ goto sub_{fallthrough:x}; }}",
+                render_condition(condition)
+            ),
+            Vec::new(),
+        ),
+        IrTerminator::Trap => ("trap;".to_string(), Vec::new()),
+        IrTerminator::WindowEnd => (String::new(), Vec::new()),
+        IrTerminator::Unknown { mnemonic } => (
+            format!("/* terminator unknown: {mnemonic} */"),
+            vec!["unresolved terminator".to_string()],
+        ),
+    }
+}
+
+fn render_condition(condition: &crate::ir::IrCondition) -> String {
+    match condition {
+        crate::ir::IrCondition::Raw(raw) => format!("flags:{raw}"),
+    }
+}
+
+fn render_expr(expression: &IrExpr) -> String {
+    match expression {
+        IrExpr::Value(IrValue::Const(value)) => format!("{value:#x}"),
+        IrExpr::Value(IrValue::Register(register)) => register.clone(),
+        IrExpr::Value(IrValue::Unknown(what)) => format!("unknown({what})"),
+        IrExpr::BinOp { op, lhs, rhs } => {
+            let op = match op {
+                crate::ir::IrBinOp::Add => "+",
+                crate::ir::IrBinOp::Sub => "-",
+                crate::ir::IrBinOp::And => "&",
+                crate::ir::IrBinOp::Or => "|",
+                crate::ir::IrBinOp::Xor => "^",
+                crate::ir::IrBinOp::Shl => "<<",
+                crate::ir::IrBinOp::Shr => ">>",
+            };
+            format!("({} {} {})", render_expr(lhs), op, render_expr(rhs))
+        }
+        IrExpr::AddrOf { base, displacement } => {
+            if *displacement == 0 {
+                format!("&{base}[0]")
+            } else if *displacement < 0 {
+                format!("&{base}[-{:#x}]", displacement.unsigned_abs())
+            } else {
+                format!("&{base}[{displacement:#x}]")
+            }
+        }
+    }
+}

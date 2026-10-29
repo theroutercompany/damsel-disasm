@@ -344,6 +344,39 @@ fn summary_command_reports_d0_function_summary() {
 }
 
 #[test]
+fn decompile_command_renders_pseudocode_with_provenance() {
+    let dir = smoke_dir("decompile");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    let out = damsel()
+        .arg("decompile").arg(&target)
+        .arg("--function").arg("_main")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success());
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["command"], "decompile");
+    assert_eq!(body["pseudocode"]["name"], "_main");
+    let lines = body["pseudocode"]["lines"].as_array().unwrap();
+    let texts: Vec<&str> = lines.iter().map(|l| l["text"].as_str().unwrap()).collect();
+    assert!(texts.iter().any(|t| t.contains("sub_100000460(")));
+    assert!(texts.iter().any(|t| *t == "return;"));
+    assert!(texts.iter().any(|t| t.contains("/* unknown: cset */")));
+    assert!(texts.iter().any(|t| t.contains("[-0x4]")), "negative slot renders signed");
+    // Frame facts ride along.
+    assert_eq!(body["frame"]["frame_size"], 32);
+
+    // Unknown function is typed.
+    let out = damsel()
+        .arg("decompile").arg(&target)
+        .arg("--function").arg("nope")
+        .output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");
