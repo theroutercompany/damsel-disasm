@@ -2695,75 +2695,15 @@ fn push_recovered_value(target: &mut Vec<RecoveredValue>, value: RecoveredValue)
 }
 
 fn destination_register(instruction: &DecodedInstruction) -> Option<String> {
-    match instruction.operands.first() {
-        Some(Operand::Register(register)) => Some(register.clone()),
-        Some(Operand::QualifiedRegister { register, .. }) => Some(register.clone()),
-        Some(Operand::SystemRegister(register)) => Some(register.clone()),
-        _ => None,
-    }
+    damsel_core::semantics_arm64::destination_register(instruction)
 }
 
 fn written_destination_registers(instruction: &DecodedInstruction, mnemonic: &str) -> Vec<String> {
-    if !instruction_writes_destination(mnemonic) {
-        return Vec::new();
-    }
-
-    if atomic_read_modify_write_writes_second_operand(mnemonic) {
-        return instruction
-            .operands
-            .iter()
-            .skip(1)
-            .take(1)
-            .filter_map(register_operand_name)
-            .collect();
-    }
-
-    if atomic_pair_compare_swap_writes_first_two_operands(mnemonic) {
-        return instruction
-            .operands
-            .iter()
-            .take(2)
-            .filter_map(register_operand_name)
-            .collect();
-    }
-
-    if load_pair_writes_two_destinations(mnemonic) {
-        return instruction
-            .operands
-            .iter()
-            .take(2)
-            .filter_map(register_operand_name)
-            .collect();
-    }
-
-    destination_register(instruction).into_iter().collect()
+    damsel_core::semantics_arm64::written_destination_registers(instruction, mnemonic)
 }
 
 fn register_operand_name(operand: &Operand) -> Option<String> {
-    match operand {
-        Operand::Register(register) => Some(register.clone()),
-        Operand::QualifiedRegister { register, .. } => Some(register.clone()),
-        Operand::SystemRegister(register) => Some(register.clone()),
-        _ => None,
-    }
-}
-
-fn atomic_read_modify_write_writes_second_operand(mnemonic: &str) -> bool {
-    [
-        "swp", "ldadd", "ldclr", "ldeor", "ldset", "ldsmax", "ldsmin", "ldumax", "ldumin",
-    ]
-    .iter()
-    .any(|prefix| mnemonic.starts_with(prefix))
-}
-
-fn atomic_pair_compare_swap_writes_first_two_operands(mnemonic: &str) -> bool {
-    matches!(mnemonic, "casp" | "caspa" | "caspl" | "caspal")
-}
-
-fn load_pair_writes_two_destinations(mnemonic: &str) -> bool {
-    mnemonic.starts_with("ldp")
-        || mnemonic.starts_with("ldnp")
-        || matches!(mnemonic, "ldxp" | "ldaxp")
+    damsel_core::semantics_arm64::register_operand_name(operand)
 }
 
 fn store_pair_writes_two_memory_slots(mnemonic: &str) -> bool {
@@ -2787,7 +2727,7 @@ fn pair_memory_second_slot_target(
 }
 
 fn pair_memory_access_width(instruction: &DecodedInstruction, mnemonic: &str) -> Option<usize> {
-    if atomic_pair_compare_swap_writes_first_two_operands(mnemonic) {
+    if damsel_core::semantics_arm64::atomic_pair_compare_swap_writes_first_two_operands(mnemonic) {
         let first_register = register_operand_name(instruction.operands.first()?)?;
         let second_register = register_operand_name(instruction.operands.get(1)?)?;
         let first_width = pair_store_width(&first_register)?;
@@ -2798,7 +2738,7 @@ fn pair_memory_access_width(instruction: &DecodedInstruction, mnemonic: &str) ->
         return None;
     }
 
-    if load_pair_writes_two_destinations(mnemonic) {
+    if damsel_core::semantics_arm64::load_pair_writes_two_destinations(mnemonic) {
         let first_register = register_operand_name(instruction.operands.first()?)?;
         let second_register = register_operand_name(instruction.operands.get(1)?)?;
         let (first_width, first_signed) = pair_load_width(&first_register, mnemonic)?;
@@ -3238,28 +3178,7 @@ fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
 }
 
 fn instruction_writes_destination(mnemonic: &str) -> bool {
-    if store_exclusive_writes_status(mnemonic) {
-        return true;
-    }
-
-    !(mnemonic == "cmp"
-        || mnemonic == "cmn"
-        || mnemonic == "ccmp"
-        || mnemonic == "ccmn"
-        || mnemonic == "tst"
-        || is_conditional_branch_mnemonic(mnemonic)
-        || is_terminal_trap_mnemonic(mnemonic)
-        || mnemonic.starts_with("st")
-        || is_unconditional_transfer_mnemonic(mnemonic)
-        || is_call_mnemonic(mnemonic)
-        || is_return_mnemonic(mnemonic))
-}
-
-fn store_exclusive_writes_status(mnemonic: &str) -> bool {
-    matches!(
-        mnemonic,
-        "stxr" | "stxrb" | "stxrh" | "stlxr" | "stlxrb" | "stlxrh" | "stxp" | "stlxp"
-    )
+    damsel_core::semantics_arm64::instruction_writes_destination(mnemonic)
 }
 
 fn is_call_mnemonic(mnemonic: &str) -> bool {

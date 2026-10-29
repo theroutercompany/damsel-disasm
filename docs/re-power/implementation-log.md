@@ -180,10 +180,22 @@ exists; N-1 real-db fixture lands with the first schema bump).
 - Proof: damsel-core lib 6/6, x86_decode_smoke 1/1; workspace 36
   suites, 0 failures.
 
-Next 5A steps: operand-aware helpers (written-destination registers,
-value-flow dispatch) behind the same oracle; then the x86_64 decode
-mapper in `decode.rs` (Variable-length windows) and engine migration
-PRs (a)–(f). First step: 5A semantics producer behind differential
+### Unit 5A.4 — register-write family delegated — DONE
+
+- `destination_register`, `register_operand_name`,
+  `written_destination_registers`, `instruction_writes_destination`,
+  and the four write-shape tables (store-exclusive status, atomic RMW
+  second-operand, casp pair, ldp/ldnp/ldxp pair) ported verbatim to
+  `semantics::arm64` (public); engine delegates; legacy copies deleted
+  (including the two remaining pair-table call sites in
+  `pair_memory_access_width`). Unit tests: write-shape tables, single/
+  pair/atomic destination extraction.
+- Proof: damsel-core lib 7/7; workspace 36 suites, 0 failures.
+
+Next 5A steps: value-flow dispatch (the `synthesize_*_value` ladder)
+and jump-table recognizers behind the same oracle; then the x86_64
+decode mapper in `decode.rs` (variable-length windows) and engine
+migration PRs (d)–(f). First step: 5A semantics producer behind differential
 oracles (arm64), then `arch_x86` feature flip + x86 producer (spike-proven
 sufficient; syscall intrinsic table required).
 

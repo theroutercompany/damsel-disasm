@@ -101,6 +101,101 @@ pub mod arm64 {
         }
     }
 
+    /// Destination-register analysis (ported verbatim from the engine;
+    /// Wave 5 spec §5A.2 step c). Operands come from the decoded
+    /// instruction, so these live here in damsel-core where both the
+    /// engine and future producers share them.
+
+    use crate::model::{DecodedInstruction, Operand};
+
+    pub fn register_operand_name(operand: &Operand) -> Option<String> {
+        match operand {
+            Operand::Register(register) => Some(register.clone()),
+            Operand::QualifiedRegister { register, .. } => Some(register.clone()),
+            Operand::SystemRegister(register) => Some(register.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn destination_register(instruction: &DecodedInstruction) -> Option<String> {
+        register_operand_name(instruction.operands.first()?)
+    }
+
+    pub fn store_exclusive_writes_status(lower: &str) -> bool {
+        matches!(
+            lower,
+            "stxr" | "stxrb" | "stxrh" | "stlxr" | "stlxrb" | "stlxrh" | "stxp" | "stlxp"
+        )
+    }
+
+    pub fn atomic_read_modify_write_writes_second_operand(lower: &str) -> bool {
+        [
+            "swp", "ldadd", "ldclr", "ldeor", "ldset", "ldsmax", "ldsmin", "ldumax", "ldumin",
+        ]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+    }
+
+    pub fn atomic_pair_compare_swap_writes_first_two_operands(lower: &str) -> bool {
+        matches!(lower, "casp" | "caspa" | "caspl" | "caspal")
+    }
+
+    pub fn load_pair_writes_two_destinations(lower: &str) -> bool {
+        lower.starts_with("ldp")
+            || lower.starts_with("ldnp")
+            || matches!(lower, "ldxp" | "ldaxp")
+    }
+
+    /// True when the instruction writes its destination register (the
+    /// engine's `instruction_writes_destination`, verbatim).
+    pub fn instruction_writes_destination(lower: &str) -> bool {
+        if store_exclusive_writes_status(lower) {
+            return true;
+        }
+        !(lower == "cmp"
+            || lower == "cmn"
+            || lower == "ccmp"
+            || lower == "ccmn"
+            || lower == "tst"
+            || is_conditional_branch(lower)
+            || is_trap(lower)
+            || lower.starts_with("st")
+            || is_unconditional_transfer(lower)
+            || is_call(lower)
+            || is_return(lower))
+    }
+
+    /// Registers written by the instruction, in operand order (the
+    /// engine's `written_destination_registers`, verbatim).
+    pub fn written_destination_registers(
+        instruction: &DecodedInstruction,
+        lower: &str,
+    ) -> Vec<String> {
+        if !instruction_writes_destination(lower) {
+            return Vec::new();
+        }
+        if atomic_read_modify_write_writes_second_operand(lower) {
+            return instruction
+                .operands
+                .iter()
+                .skip(1)
+                .take(1)
+                .filter_map(register_operand_name)
+                .collect();
+        }
+        if atomic_pair_compare_swap_writes_first_two_operands(lower)
+            || load_pair_writes_two_destinations(lower)
+        {
+            return instruction
+                .operands
+                .iter()
+                .take(2)
+                .filter_map(register_operand_name)
+                .collect();
+        }
+        destination_register(instruction).into_iter().collect()
+    }
+
     /// Classify with the documented precedence.
     pub fn classify(lower: &str) -> ControlFlowClass {
         if is_return(lower) {
@@ -282,6 +377,68 @@ mod tests {
                 assert!(!is_conditional_branch(m), "{m}");
             }
         }
+    }
+
+    #[test]
+    fn register_write_analysis_matches_engine_tables() {
+        use crate::model::{DecodedInstruction, Operand};
+        use super::arm64;
+
+        // cmp/tst/st*/branches write nothing.
+        assert!(!arm64::instruction_writes_destination("cmp"));
+        assert!(!arm64::instruction_writes_destination("tst"));
+        assert!(!arm64::instruction_writes_destination("str"));
+        assert!(!arm64::instruction_writes_destination("stp"));
+        assert!(!arm64::instruction_writes_destination("bl"));
+        assert!(!arm64::instruction_writes_destination("b.eq"));
+        // store-exclusive writes its status register despite `st` prefix.
+        assert!(arm64::instruction_writes_destination("stxr"));
+        assert!(arm64::instruction_writes_destination("stxp"));
+        assert!(arm64::instruction_writes_destination("add"));
+        assert!(arm64::instruction_writes_destination("ldp"));
+
+        let insn = |mnemonic: &str, operands: Vec<Operand>| DecodedInstruction {
+            address: 0,
+            size: 4,
+            opcode: 0,
+            mnemonic: mnemonic.to_string(),
+            operands,
+            recovered_values: Vec::new(),
+            references: Vec::new(),
+            annotations: Vec::new(),
+        };
+        // Single destination: add x0, x1, x2 → [x0].
+        assert_eq!(
+            arm64::written_destination_registers(
+                &insn("add", vec![Operand::Register("x0".into()), Operand::Register("x1".into())]),
+                "add"
+            ),
+            vec!["x0".to_string()]
+        );
+        // Pair load writes two destinations.
+        assert_eq!(
+            arm64::written_destination_registers(
+                &insn("ldp", vec![
+                    Operand::Register("x0".into()),
+                    Operand::Register("x1".into()),
+                    Operand::Memory { base: "sp".into(), index: None, index_modifier: None, displacement: 0, writeback: None },
+                ]),
+                "ldp"
+            ),
+            vec!["x0".to_string(), "x1".to_string()]
+        );
+        // Atomic RMW writes the second operand.
+        assert_eq!(
+            arm64::written_destination_registers(
+                &insn("ldadd", vec![
+                    Operand::Register("x0".into()),
+                    Operand::Register("x1".into()),
+                    Operand::Memory { base: "x2".into(), index: None, index_modifier: None, displacement: 0, writeback: None },
+                ]),
+                "ldadd"
+            ),
+            vec!["x1".to_string()]
+        );
     }
 
     #[test]
