@@ -239,8 +239,31 @@ sufficient; syscall intrinsic table required).
 
 ## Lab notes
 
-- Linux lab: `hetzner-ubuntu` SSH alias (Tailscale) — verify access when
-  the ELF fixture lane (5C) needs it; not yet exercised.
+- Linux lab: `nixos-rex` (Tailscale, NixOS x86_64, 12 cores / 62 GB,
+  nix 2.34.9). The older `hetzner-ubuntu` alias is stale (DNS gone);
+  `nixos-rex` is the working builder. Remote shell is **fish** — wrap
+  commands in `bash -c`.
+
+### Lab evidence run 1 (2026-10-29) — first real-ELF proof — DONE
+
+- Branch shipped via `git bundle` + scp (no GitHub auth needed on the
+  box); built with the repo's own flake (`nix build .#default`) — the
+  full workspace compiles clean on NixOS out of the box.
+- **`damsel analyze` on real GNU coreutils `ls` (NixOS, 1.7 MB):**
+  2,242 facts · 1,798 function bounds · **78,142 xrefs** · 3,678
+  strings — dynsym-only (stripped symtab), zero typed failures.
+- **`damsel analyze` on real glibc `libc.so.6` (2.4 MB):** 10,187
+  facts · 3,953 bounds · 80,765 xrefs · 4,739 strings; allocator
+  internals readable (`_int_malloc`, `sysmalloc`, `__ptmalloc_init`)
+  with honest stop reasons (mix of `return` and `seed_boundary`).
+- Query surface on real targets: `functions --name malloc` (23
+  matches), `xrefs --to <main>` resolves real call sites.
+- Linux test parity: `nix develop -c cargo test` for damsel-core/
+  macho/elf/project — all suites green on NixOS (store contract,
+  loader matrix, ingest, mapper tests included).
+- Evidence status: ad-hoc run recorded here; a repeatable
+  `bin/elf-evidence-package.sh` (evidence matrix row 5.13) is the next
+  hardening step.
 - Local toolchain: rustup stable-aarch64 (1.96.0) at
   `~/.rustup/toolchains/stable-aarch64-apple-darwin/bin` (not on default
   PATH in this shell).
