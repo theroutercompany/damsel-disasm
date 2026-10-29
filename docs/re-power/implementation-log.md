@@ -394,8 +394,15 @@ sufficient; syscall intrinsic table required).
   decompiles with zero blanket unknowns; expectations updated.
 - Proof: workspace 49 suites, 0 failures.
 
-Next 6.x: D2 renaming, type seeds, real-binary delta run 3, Wave 5A
-value-flow dispatch port.
+### Lab evidence run 5 (2026-10-29) — delta run 3 — DONE
+
+- Real glibc `__GI___libc_malloc` now: **unknown_count 12 → 5 → 3**,
+  6 structured lines. Trajectory across the D-series: cmp/test (−7),
+  indexed memory (−1), remaining 3 = segment-ops/push-pop class.
+
+### Unit 6.15 — delta run 3 recorded — DONE
+
+Next 6.x: D2 renaming, type seeds, Wave 5A value-flow dispatch port.
 
 ## Lab notes
 
