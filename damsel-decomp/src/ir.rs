@@ -722,6 +722,45 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                         }
                     })
                 }
+                "cdq" | "cqo" | "cdqe" => {
+                    // Sign-extend eax→edx:eax (or rax→rdx:rax).
+                    let (src, dst) = if lower == "cdq" {
+                        ("eax", "edx")
+                    } else if lower == "cqo" {
+                        ("rax", "rdx")
+                    } else {
+                        ("eax", "rax")
+                    };
+                    Some(IrStatement::Assign {
+                        destination: dst.to_string(),
+                        expression: IrExpr::Value(IrValue::Register(src.to_string())),
+                    })
+                }
+                "leave" => {
+                    // leave = mov rsp, rbp; pop rbp
+                    Some(IrStatement::Assign {
+                        destination: "rsp".into(),
+                        expression: IrExpr::Value(IrValue::Register("rbp".into())),
+                    })
+                }
+                "movs" | "movsb" | "movsw" | "movsd" | "movsq" => {
+                    // String move: rdi = rsi (simplified; direction flag
+                    // and memory semantics in the string-ops slice).
+                    Some(IrStatement::Assign {
+                        destination: "rdi".into(),
+                        expression: IrExpr::Value(IrValue::Register("rsi".into())),
+                    })
+                }
+                "stos" | "stosb" | "stosw" | "stosd" | "stosq" => {
+                    // String store: [rdi] = rax (simplified).
+                    Some(IrStatement::Store {
+                        address: IrExpr::AddrOf {
+                            base: "rdi".into(),
+                            displacement: 0,
+                        },
+                        value: IrExpr::Value(IrValue::Register("rax".into())),
+                    })
+                }
                 "nop" | "nopl" | "endbr64" => {
                     // Explicit no-ops: consume a statement slot, no effect.
                     Some(IrStatement::Assign {

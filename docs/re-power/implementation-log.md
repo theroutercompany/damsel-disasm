@@ -586,6 +586,12 @@ sufficient; syscall intrinsic table required).
 - The xchg + imul + memory-dest arithmetic modeling closed the last
   gaps. Total unknown rate across all six: **8 / 451 lines (1.8%)**.
 
+### Unit 6.24 — cdq/leave/movs/stos — DONE
+
+- `cdq`/`cqo`/`cdqe` sign-extend pairs; `leave` = mov rsp,rbp;
+  `movs`/`stos` string ops simplified to their register effects.
+- Proof: workspace 51 suites, 0 failures.
+
 Next: cross-block phi-SSA, rmcp transport spike, synthesize dispatch
 migration, UI workbench integration.
 
