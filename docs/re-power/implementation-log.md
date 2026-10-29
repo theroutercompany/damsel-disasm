@@ -466,6 +466,15 @@ sufficient; syscall intrinsic table required).
   MCP server will serve these exact schemas.
 - Proof: workspace 51 suites, 0 failures.
 
+### Unit 7.5 — CFG-flattening detection — DONE
+
+- `detect_cfg_flattening`: dispatcher in-degree heuristic (>= 6
+  incoming branches inside one function's bounds = OLLVM `-fla`
+  output class). Feeds the recon surface; OLLVM wiki documents
+  exactly three passes (`-fla`/`-bcf`/`-sub`, Research Sources §1b).
+- Proof: recon 8/8 (flattened simulation detected; normal CFG not
+  flagged). Workspace 51 suites, 0 failures.
+
 Next: 5A value-flow dispatch port, cross-block phi-SSA, rmcp
 transport spike, then lab re-run for delta 4.
 

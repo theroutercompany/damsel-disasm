@@ -27,8 +27,9 @@ pub use diff::{
     diff_functions,
 };
 pub use recon::{
-    AntiAnalysisIndicator, PackerSignature, ReconReport, SectionEntropy, Verdict,
-    assess, detect_anti_analysis, detect_packers, shannon_entropy,
+    AntiAnalysisIndicator, FlatteningIndicator, PackerSignature, ReconReport, SectionEntropy,
+    Verdict, assess, detect_anti_analysis, detect_cfg_flattening, detect_packers,
+    shannon_entropy,
 };
 pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};
 pub use ssa::{

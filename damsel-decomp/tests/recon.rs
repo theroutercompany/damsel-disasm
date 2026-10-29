@@ -56,3 +56,26 @@ fn upx_and_low_symbols_yield_likely_packed() {
     assert_eq!(report.verdict, Verdict::LikelyPacked);
     assert!(report.stripped);
 }
+
+#[test]
+fn flattened_cfg_detected_by_dispatcher_indegree() {
+    use damsel_decomp::detect_cfg_flattening;
+    // Simulated flattened function: dispatcher at 0x100 with 8 state
+    // blocks branching back to it.
+    let bounds = vec![(0x100u64, 0x300u64)];
+    let targets: Vec<u64> = std::iter::repeat_n(0x100u64, 8).collect();
+    let found = detect_cfg_flattening(&bounds, &targets);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].dispatcher_address, 0x100);
+    assert!(found[0].state_blocks >= 6);
+    assert!(found[0].evidence.contains("8 incoming branches"));
+}
+
+#[test]
+fn normal_cfg_not_flagged() {
+    use damsel_decomp::detect_cfg_flattening;
+    let bounds = vec![(0x100u64, 0x300u64)];
+    let targets = vec![0x200u64, 0x100u64, 0x180u64, 0x220u64]; // spread out
+    let found = detect_cfg_flattening(&bounds, &targets);
+    assert!(found.is_empty(), "no dispatcher with >=6 in-degree");
+}

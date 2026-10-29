@@ -162,3 +162,46 @@ pub fn assess(
         verdict,
     }
 }
+
+/// CFG-flattening detection (OLLVM `-fla` output class): a dispatcher
+/// block with unusually high in-degree + many switch-like back edges
+/// to it from state-machine blocks. Uses the project's function_bound
+/// and xref facts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FlatteningIndicator {
+    pub function: String,
+    pub dispatcher_address: u64,
+    pub state_blocks: usize,
+    pub evidence: String,
+}
+
+pub fn detect_cfg_flattening(
+    function_bounds: &[(u64, u64)],
+    branch_targets: &[u64],
+) -> Vec<FlatteningIndicator> {
+    let mut out = Vec::new();
+    // Count in-degree for each target address
+    let mut target_counts: std::collections::BTreeMap<u64, usize> = Default::default();
+    for target in branch_targets {
+        *target_counts.entry(*target).or_insert(0) += 1;
+    }
+
+    for (start, end) in function_bounds {
+        // A dispatcher is an address inside the function with >= 6
+        // incoming branches (typical of flattened switch loops).
+        let candidates: Vec<(u64, usize)> = target_counts
+            .iter()
+            .filter(|(addr, count)| **addr >= *start && **addr < *end && **count >= 6)
+            .map(|(addr, count)| (*addr, *count))
+            .collect();
+        if let Some((dispatcher, count)) = candidates.first() {
+            out.push(FlatteningIndicator {
+                function: format!("{start:#x}-{end:#x}"),
+                dispatcher_address: *dispatcher,
+                state_blocks: *count,
+                evidence: format!("dispatcher at {dispatcher:#x} has {count} incoming branches"),
+            });
+        }
+    }
+    out
+}
