@@ -189,7 +189,9 @@ pub fn shared_object() -> Vec<u8> {
     let phoff = 0x40usize;
     let phnum = 2usize;
     let text_off = phoff + phnum * 56;
-    let dynsym_off = text_off + text.len();
+    let rodata_off = text_off + text.len();
+    let rodata = b"hello from damsel elf\0".to_vec();
+    let dynsym_off = rodata_off + rodata.len();
     let dynsym_len = 24 * 3;
     let dynstr_off = dynsym_off + dynsym_len;
     let dynamic_off = dynstr_off + dynstr.len();
@@ -207,15 +209,17 @@ pub fn shared_object() -> Vec<u8> {
     dt(0, 0, &mut dynamic); // DT_NULL
     let shstrtab_off = dynamic_off + dynamic.len();
     let (shstrtab, names) =
-        strtab_of(&[".text", ".dynsym", ".dynstr", ".dynamic", ".shstrtab"]);
+        strtab_of(&[".text", ".rodata", ".dynsym", ".dynstr", ".dynamic", ".shstrtab"]);
     let shoff = shstrtab_off + shstrtab.len();
 
-    let mut file = ehdr(3, phoff as u64, phnum as u16, shoff as u64, 6, 5);
+    let mut file = ehdr(3, phoff as u64, phnum as u16, shoff as u64, 7, 6);
     debug_assert_eq!(file.len(), phoff);
     file.extend(phdr(1, 5, 0, shoff as u64)); // PT_LOAD R|X covering headers+data
     file.extend(phdr(2, 6, dynamic_off as u64, dynamic.len() as u64)); // PT_DYNAMIC RW
     file.resize(text_off, 0);
     file.extend_from_slice(&text);
+    file.resize(rodata_off, 0);
+    file.extend_from_slice(&rodata);
     file.resize(dynsym_off, 0);
     file.extend_from_slice(&[0u8; 24]);
     file.extend_from_slice(&sym_defined(offs[0], text_off as u64, 15, 1));
@@ -228,18 +232,19 @@ pub fn shared_object() -> Vec<u8> {
     file.extend_from_slice(&shstrtab);
     file.resize(shoff, 0);
     file.extend_from_slice(&[0u8; 64]);
-    file.extend_from_slice(&shdr(names[0], 1, 0x6, text_off as u64, text.len() as u64, 0, 0));
-    file.extend_from_slice(&shdr(names[1], 11, 0x2, dynsym_off as u64, dynsym_len as u64, 3, 24)); // .dynsym, link=.dynstr (idx 3)
-    file.extend_from_slice(&shdr(names[2], 3, 0x2, dynstr_off as u64, dynstr.len() as u64, 0, 0)); // .dynstr
+    file.extend_from_slice(&shdr(names[0], 1, 0x6, text_off as u64, text.len() as u64, 0, 0)); // .text
+    file.extend_from_slice(&shdr(names[1], 1, 0x2, rodata_off as u64, rodata.len() as u64, 0, 0)); // .rodata
+    file.extend_from_slice(&shdr(names[2], 11, 0x2, dynsym_off as u64, dynsym_len as u64, 4, 24)); // .dynsym, link=.dynstr (idx 4)
+    file.extend_from_slice(&shdr(names[3], 3, 0x2, dynstr_off as u64, dynstr.len() as u64, 0, 0)); // .dynstr
     file.extend_from_slice(&shdr(
-        names[3],
+        names[4],
         6,
         0x3,
         dynamic_off as u64,
         dynamic.len() as u64,
-        3, // link=.dynstr (idx 3)
+        4, // link=.dynstr (idx 4)
         16,
-    ));
-    file.extend_from_slice(&shdr(names[4], 3, 0, shstrtab_off as u64, shstrtab.len() as u64, 0, 0));
+    )); // .dynamic
+    file.extend_from_slice(&shdr(names[5], 3, 0, shstrtab_off as u64, shstrtab.len() as u64, 0, 0)); // .shstrtab
     file
 }

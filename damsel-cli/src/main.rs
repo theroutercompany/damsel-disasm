@@ -1432,10 +1432,16 @@ fn handle_search(
         .and_then(|n| n.to_str())
         .and_then(|n| n.strip_suffix(".damsel"))
         .map(|stem| project_dir.with_file_name(stem));
-    let image = target_path
+    let elf_image = target_path
         .as_deref()
         .filter(|p| p.is_file())
-        .and_then(|p| load(p.clone()).ok());
+        .and_then(|p| damsel_elf::load(p.clone()).ok());
+    let image = if elf_image.is_some() { None } else {
+        target_path
+            .as_deref()
+            .filter(|p| p.is_file())
+            .and_then(|p| load(p.clone()).ok())
+    };
     let strings_searchable = image.is_some();
     if let Some(image) = &image {
         for fact in &facts {
@@ -1548,17 +1554,28 @@ fn handle_strings(
         .and_then(|n| n.to_str())
         .and_then(|n| n.strip_suffix(".damsel"))
         .map(|stem| project_dir.with_file_name(stem));
-    let image = target_path
+    let elf_image = target_path
         .as_deref()
         .filter(|p| p.is_file())
-        .and_then(|p| load(p.clone()).ok());
+        .and_then(|p| damsel_elf::load(p.clone()).ok());
+    let image = if elf_image.is_some() { None } else {
+        target_path
+            .as_deref()
+            .filter(|p| p.is_file())
+            .and_then(|p| load(p.clone()).ok())
+    };
 
     let mut display: Vec<(u64, &str, usize, Option<&str>, Option<String>)> = rows
         .into_iter()
         .filter_map(|(address, encoding, len, class)| {
-            let value = image.as_ref().and_then(|img| {
-                img.read_c_string_at_address(address, len.saturating_add(1))
-            });
+            let value = image
+                .as_ref()
+                .and_then(|img| img.read_c_string_at_address(address, len.saturating_add(1)))
+                .or_else(|| {
+                    elf_image
+                        .as_ref()
+                        .and_then(|img| damsel_elf::read_elf_c_string(img, address, len + 1))
+                });
             if let Some(min) = min_len {
                 let chars = value.as_deref().map(|v| v.chars().count()).unwrap_or(len);
                 if chars < min {
@@ -1832,6 +1849,13 @@ fn handle_analyze_elf(
         analyzer_version(),
     )
     .map_err(|e| CliRunError::command("engine_error", e.to_string()))?;
+    let strings_outcome = damsel_elf::harvest_elf_strings(
+        &mut store,
+        &image,
+        outcome.source_id,
+        analyzer_version(),
+    )
+    .map_err(|e| CliRunError::command("strings_error", e.to_string()))?;
     let source_count = store.sources().map_err(map_store_error)?.len();
     drop(store);
     if output_settings.format == output::OutputFormat::Json {
@@ -1844,6 +1868,7 @@ fn handle_analyze_elf(
             "facts": outcome.fact_count,
             "xrefs": engine.xref_count,
             "function_bounds": engine.bounds,
+            "strings": strings_outcome.strings,
         });
         println!("{}", project_json(value));
     } else {
@@ -1860,6 +1885,7 @@ fn handle_analyze_elf(
         println!("  objects     = {}", outcome.object_count);
         println!("  facts       = {}", outcome.fact_count);
         println!("  xrefs       = {} ({} function bounds)", engine.xref_count, engine.bounds);
+        println!("  strings     = {}", strings_outcome.strings);
     }
     Ok(())
 }

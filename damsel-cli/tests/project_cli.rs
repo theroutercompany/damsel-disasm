@@ -287,6 +287,18 @@ fn analyze_elf_end_to_end_functions_and_search() {
     assert_eq!(body["count"], 1);
     assert_eq!(body["xrefs"][0]["kind"], "call");
 
+    // Strings parity: the fixture's .rodata message is harvested and
+    // readable through the same command surface.
+    let out = damsel()
+        .arg("strings").arg(&target)
+        .arg("--format").arg("json")
+        .output().unwrap();
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["command"], "strings");
+    assert!(body["count"].as_u64().unwrap() >= 1);
+    let value = body["strings"][0]["value"].as_str().unwrap();
+    assert!(value.contains("hello from damsel elf"));
+
     let out = damsel()
         .arg("search").arg(&target).arg("exported")
         .arg("--format").arg("json")
