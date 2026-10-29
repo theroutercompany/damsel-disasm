@@ -11,12 +11,14 @@ mod ir;
 mod render;
 mod ssa;
 mod stack_frame;
+mod structure;
 mod summary;
 
 pub use ir::{
     IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement,
     IrTerminator, IrValue, lift_arm64, lift_x86_64,
 };
+pub use structure::{Diamond, ResolvedCondition, find_diamonds, resolve_condition};
 pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
 pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};
 pub use ssa::{PhiCandidate, SsaReport, build_ssa};

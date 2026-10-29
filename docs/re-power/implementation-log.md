@@ -319,9 +319,22 @@ sufficient; syscall intrinsic table required).
   condition resolution (top unknowns from the glibc run eliminated).
 - Proof: d5_x86_lift 3/3. Workspace 48 suites, 0 failures.
 
-Next 6.x: D4 structuring (jcc conditions from flag assignments,
-if/else from CondBranch chains), D2 slice 2 (renaming + scale), type
-seeds.
+### Unit 6.7 — D4 structuring v1 — DONE
+
+- `structure.rs`: condition resolution from synthetic `flags`
+  assignments (Sub → relational incl. unsigned variants; And → mask
+  zero/nonzero; missing flags stay `Unresolved` — never invented);
+  diamond detection (cond + two arms reconverging on one merge); the
+  renderer emits structured `if (a != b) { … } else { … }` for
+  diamonds with arm provenance preserved and gotos dropped inside the
+  diamond.
+- Proof: d4_structure 5/5 (relational/mask/unresolved resolution,
+  diamond detection, structured render without gotos). Workspace 49
+  suites, 0 failures.
+
+Next 6.x: loops (back-edge detection + while form), D2 slice 2
+(renaming + scale), type seeds, arm64 condition resolution (ccmp),
+then re-run the lab malloc decompile for a before/after delta.
 
 ## Lab notes
 

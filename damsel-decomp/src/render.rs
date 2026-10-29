@@ -28,6 +28,15 @@ pub struct Pseudocode {
 }
 
 pub fn render_pseudocode(function: &IrFunction, name: Option<&str>) -> Pseudocode {
+    let diamonds = crate::structure::find_diamonds(function);
+    render_pseudocode_impl(function, name, &diamonds)
+}
+
+fn render_pseudocode_impl(
+    function: &IrFunction,
+    name: Option<&str>,
+    diamonds: &[crate::structure::Diamond],
+) -> Pseudocode {
     let mut lines = vec![PseudocodeLine {
         indent: 0,
         text: format!("fn {}() {{", name.unwrap_or(&function.function_id_placeholder())),
@@ -35,7 +44,74 @@ pub fn render_pseudocode(function: &IrFunction, name: Option<&str>) -> Pseudocod
         warnings: Vec::new(),
     }];
 
+    let mut rendered_blocks: std::collections::BTreeSet<usize> = Default::default();
+    // Diamond arms render inside their cond block; skip standalone.
+    for diamond in diamonds {
+        rendered_blocks.insert(diamond.then_block);
+        rendered_blocks.insert(diamond.else_block);
+    }
+
     for block in &function.blocks {
+        // Diamond cond block: structured if/else with arm bodies.
+        if let Some(diamond) = diamonds.iter().find(|d| d.cond_block == block.id) {
+            let condition_text = crate::structure::render_condition_text(&diamond.condition);
+            lines.push(PseudocodeLine {
+                indent: 1,
+                text: format!("if ({condition_text}) {{"),
+                source_addresses: vec![block.start_address],
+                warnings: Vec::new(),
+            });
+            for arm_id in [diamond.then_block, diamond.else_block] {
+                let is_else = arm_id == diamond.else_block;
+                if is_else {
+                    lines.push(PseudocodeLine {
+                        indent: 1,
+                        text: "} else {".to_string(),
+                        source_addresses: vec![block.start_address],
+                        warnings: Vec::new(),
+                    });
+                }
+                if let Some(arm) = function.blocks.iter().find(|b| b.id == arm_id) {
+                    for statement in &arm.statements {
+                        let (text, warnings) = render_statement(statement);
+                        let mut source = vec![arm.start_address];
+                        match statement {
+                            IrStatement::Call { site, .. } | IrStatement::Unknown { site, .. } => {
+                                source.push(*site)
+                            }
+                            _ => {}
+                        }
+                        lines.push(PseudocodeLine {
+                            indent: 2,
+                            text,
+                            source_addresses: source,
+                            warnings,
+                        });
+                    }
+                }
+            }
+            lines.push(PseudocodeLine {
+                indent: 1,
+                text: "}".to_string(),
+                source_addresses: vec![block.start_address],
+                warnings: Vec::new(),
+            });
+            // The cond block's own statements rendered below continue
+            // through the normal path; skip re-rendering its goto line.
+            for statement in &block.statements {
+                let (text, warnings) = render_statement(statement);
+                lines.push(PseudocodeLine {
+                    indent: 1,
+                    text,
+                    source_addresses: vec![block.start_address],
+                    warnings,
+                });
+            }
+            continue;
+        }
+        if rendered_blocks.contains(&block.id) {
+            continue;
+        }
         for statement in &block.statements {
             let (text, warnings) = render_statement(statement);
             let mut source = vec![block.start_address];
