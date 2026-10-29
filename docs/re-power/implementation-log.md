@@ -660,8 +660,15 @@ sufficient; syscall intrinsic table required).
   bad_request / internal_error) reduce handler boilerplate.
 - Proof: workspace 51 suites, 0 failures.
 
+### Unit 7.13 — summary Markdown export — DONE
+
+- `damsel summary --markdown`: function report with bound, seeds, call
+  sites table (with unresolved flags), imports, strings, problems.
+  Ready for handoff/reporting workflows.
+- Proof: workspace 51 suites, 0 failures; `_main` renders full report.
+
 Next: rmcp transport spike, Workbench pane integration, lab
-re-verification, then merge.
+re-verification, then merge to main.
 
 ## Lab notes
 

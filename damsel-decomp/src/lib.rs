@@ -38,5 +38,5 @@ pub use ssa::{
     x86_64_abi_roles,
 };
 pub use summary::{
-    CallSite, FunctionSummaryReport, SummaryError, summarize_function, summarize_named,
+    CallSite, FunctionSummaryReport, SummaryError, render_summary_markdown, summarize_function, summarize_named,
 };

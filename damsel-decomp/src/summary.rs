@@ -178,3 +178,49 @@ pub fn summarize_named<S: ProjectStore + TypedStore>(
         _ => Err(SummaryError::AmbiguousName(selector.to_string())),
     }
 }
+
+/// Render a D0 summary as Markdown (evidence profile).
+pub fn render_summary_markdown(report: &FunctionSummaryReport) -> String {
+    let mut out = String::new();
+    let name = report.name.as_deref().unwrap_or("—");
+    out.push_str(&format!("# Function: {name}\n\n"));
+    out.push_str(&format!("**ID:** `{}`\n\n", report.function));
+    if let Some(bound) = &report.bound {
+        out.push_str(&format!("**Bound:** `{bound}`\n\n"));
+    }
+    if !report.seeds.is_empty() {
+        out.push_str(&format!("**Seeds:** {}\n\n", report.seeds.join(", ")));
+    }
+    if !report.calls.is_empty() {
+        out.push_str("## Call Sites\n\n| From | Kind | Target | Unresolved |\n|---|---|---|---|\n");
+        for call in &report.calls {
+            let flag = if call.unresolved { "⚠️" } else { "" };
+            out.push_str(&format!(
+                "| `{}` | {} | `{}` | {} |\n",
+                call.from, call.kind, call.target, flag
+            ));
+        }
+        out.push('\n');
+    }
+    if !report.imports.is_empty() {
+        out.push_str("## Imports\n\n");
+        for import in &report.imports {
+            out.push_str(&format!("- `{import}`\n"));
+        }
+        out.push('\n');
+    }
+    if !report.strings.is_empty() {
+        out.push_str("## Strings Referenced\n\n");
+        for string in &report.strings {
+            out.push_str(&format!("- `{string}`\n"));
+        }
+        out.push('\n');
+    }
+    if !report.problems.is_empty() {
+        out.push_str("## Problems\n\n");
+        for problem in &report.problems {
+            out.push_str(&format!("- ⚠️ `{problem}`\n"));
+        }
+    }
+    out
+}

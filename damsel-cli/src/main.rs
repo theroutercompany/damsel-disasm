@@ -576,6 +576,8 @@ enum Command {
         project: PathBuf,
         #[arg(long, help = "Function name or 0x address")]
         function: String,
+        #[arg(long, help = "Output Markdown report")]
+        markdown: bool,
     },
     #[command(about = "Search functions, symbols, imports, sections, and strings")]
     Search {
@@ -1207,8 +1209,8 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Search { project, query, kind, limit } => {
             handle_search(project, &query, kind, limit, &output_settings)?;
         }
-        Command::Summary { project, function } => {
-            handle_summary(project, &function, &output_settings)?;
+        Command::Summary { project, function, markdown } => {
+            handle_summary(project, &function, markdown, &output_settings)?;
         }
         Command::Decompile { project, function } => {
             handle_decompile(project, &function, &output_settings)?;
@@ -1826,6 +1828,7 @@ fn handle_decompile_elf(
 fn handle_summary(
     project: PathBuf,
     selector: &str,
+    markdown: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{Create, ProjectStore, TypedStore, open_store};
@@ -1841,6 +1844,10 @@ fn handle_summary(
     let report = damsel_decomp::summarize_named(&store, source.source_id, selector)
         .map_err(|e| CliRunError::command("function_not_found", e.to_string()))?;
 
+    if markdown {
+        print!("{}", damsel_decomp::render_summary_markdown(&report));
+        return Ok(());
+    }
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({
             "command": "summary",
