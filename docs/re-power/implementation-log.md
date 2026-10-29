@@ -1,0 +1,64 @@
+# RE Power Implementation Log
+
+Status: Active work log for the accepted RE Power program
+([roadmap](roadmaps/re-power-roadmap.md), decision log D-1…D-5). Not an
+implementation claim by itself — every "done" below cites its proof.
+
+Verification rule: a unit is done only when its evidence-matrix rows pass
+(`cargo test`, benches, or packaged evidence) on the current tree.
+
+## Wave 4 — Analysis Kernel
+
+### Unit 4.1 — `damsel-project` crate scaffold + SQLite store — DONE (branch `re-power/wave-4-kernel`)
+
+Scope delivered:
+
+- `damsel-project` crate: `ProjectId`, `SCHEMA_VERSION` (1),
+  `AnalysisProjectMeta`, `AnalysisSourceKind` (macho_image /
+  shared_cache_projected_image / elf_object-reserved / external_symbol_map),
+  `ObjectId` (`kind:key`, parse/display), `Confidence` (7-value blueprint
+  vocabulary), `FactProvenance`, `FactKind`, `AnalysisFact`,
+  `AddressSpaceId` + reserved names (image_vmaddr, cache_vmaddr, elf_vaddr,
+  file_offset).
+- SQLite store (D-3): bundled rusqlite 0.41.1, WAL, `foreign_keys=ON`,
+  `PRAGMA user_version` migrations (v1), sources/objects/facts/events
+  schema, single-writer at the type level (`&mut` mutations), typed
+  `StoreError` taxonomy (`UnsupportedSchema`, `SourceNotFound`,
+  `ProjectNotFound`, `AlreadyExists`), explicit `Create::New/Existing`
+  open semantics (no silent overwrites).
+- Canonical export (`snapshot.rs`): BTree-ordered JSON, no timestamps,
+  events excluded by design; the determinism artifact per D-3.
+
+Proof: `cargo test -p damsel-project` — 6/6 pass (round trip; WAL/FK/
+user_version pragmas; canonical fact ordering; idempotent upsert;
+byte-deterministic export across independent DBs with shuffled insertion
+order; typed refusals incl. future-schema). Full workspace: 33 suites, 0
+failures. Evidence rows: 4.1 ✓, 4.3 ✓, 4.4 partial (typed upgrade path
+exists; N-1 real-db fixture lands with the first schema bump).
+
+### Next units (queue order)
+
+- 4.2 ingest mapping: `BinaryImage` → sources/objects/facts (sections,
+  symbols, imports/exports, ObjC) with byte-map seed ranges.
+- 4.3 `damsel analyze` CLI (project create + ingest; `--format json`
+  events) + `project show/export` commands.
+- 4.4 function seed collector (ranks 1–5 exact sources) + recovery
+  worker v1; `functions` command; `bin/function-recovery-audit.sh` gate.
+- 4.5 xref harvesting from `DisassemblyAnalysis` promotion; `xrefs`
+  command; round-trip fixtures.
+- 4.6 strings pass + `strings` command; search index + `search`.
+- 4.7 budgets on `stripped-30mb` fixture (corpus bench rows 4.10).
+
+## Wave 5 — ELF + x86_64 (parallelizable from 5A)
+
+Not started. First step: 5A semantics producer behind differential
+oracles (arm64), then `arch_x86` feature flip + x86 producer (spike-proven
+sufficient; syscall intrinsic table required).
+
+## Lab notes
+
+- Linux lab: `hetzner-ubuntu` SSH alias (Tailscale) — verify access when
+  the ELF fixture lane (5C) needs it; not yet exercised.
+- Local toolchain: rustup stable-aarch64 (1.96.0) at
+  `~/.rustup/toolchains/stable-aarch64-apple-darwin/bin` (not on default
+  PATH in this shell).
