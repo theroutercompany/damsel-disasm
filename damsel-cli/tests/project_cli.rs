@@ -402,6 +402,22 @@ fn decompile_elf_function_via_x86_lift() {
 }
 
 #[test]
+fn recon_reports_entropy_and_verdict() {
+    let out = damsel()
+        .arg("recon")
+        .arg(repo_root().join("fixtures/bin/arm64-symbolized"))
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success());
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["command"], "recon");
+    let report = &body["report"];
+    assert!(report["symbol_count"].as_u64().unwrap() > 0);
+    assert!(!report["section_entropies"].as_array().unwrap().is_empty());
+    assert_eq!(report["verdict"], "Clean");
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");

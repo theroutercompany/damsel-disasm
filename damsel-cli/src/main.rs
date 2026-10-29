@@ -539,6 +539,8 @@ enum Command {
         #[arg(long, help = "Maximum rows to print")]
         limit: Option<usize>,
     },
+    #[command(about = "First-touch triage: stripped-ness, entropy, packers, anti-analysis (Wave 7)")]
+    Recon { path: PathBuf },
     #[command(about = "Decompile a function to provenance-carrying pseudocode (Wave 6 D5)")]
     Decompile {
         project: PathBuf,
@@ -1187,6 +1189,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Decompile { project, function } => {
             handle_decompile(project, &function, &output_settings)?;
         }
+        Command::Recon { path } => {
+            handle_recon(path, &output_settings)?;
+        }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
@@ -1368,6 +1373,80 @@ fn handle_analyze(
         println!("  xrefs       = {} ({} function windows)", xref_outcome.xref_count, xref_outcome.function_windows);
         println!("  bounds      = {} ({} rank-6, {} problems)", recovery_outcome.bounds, recovery_outcome.rank6_seeded, recovery_outcome.problems);
         println!("  strings     = {}", strings_outcome.strings);
+    }
+    Ok(())
+}
+
+fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Result<(), CliRunError> {
+    use damsel_decomp::{Verdict, assess, shannon_entropy};
+
+    let is_elf = std::fs::read(&path)
+        .map(|bytes| bytes.len() >= 4 && bytes[0..4] == *b"\x7fELF")
+        .unwrap_or(false);
+
+    let (symbol_count, sections, imports, strings) = if is_elf {
+        let image = damsel_elf::load(&path)
+            .map_err(|e| CliRunError::command("unsupported_input", e.to_string()))?;
+        let sections: Vec<(String, Vec<u8>)> = image
+            .sections
+            .iter()
+            .filter_map(|s| {
+                image
+                    .read_at_vaddr(s.address, s.size.min(4096) as usize)
+                    .map(|b| (s.name.clone(), b.to_vec()))
+            })
+            .collect();
+        let imports: Vec<String> = image
+            .symbols
+            .iter()
+            .filter(|s| s.is_import)
+            .map(|s| s.name.clone())
+            .collect();
+        let strings: Vec<String> = Vec::new(); // string harvest needs a project
+        (image.symbols.len(), sections, imports, strings)
+    } else {
+        let image = load_image(path)?;
+        let sections: Vec<(String, Vec<u8>)> = image
+            .sections()
+            .iter()
+            .filter_map(|s| {
+                image
+                    .bytes_for_file_range(s.file_offset?, s.file_size.min(4096))
+                    .map(|b| (s.name.clone(), b.to_vec()))
+            })
+            .collect();
+        let imports: Vec<String> = image.imports().iter().map(|i| i.name.clone()).collect();
+        let strings: Vec<String> = Vec::new();
+        (image.symbols().len(), sections, imports, strings)
+    };
+
+    let report = assess(symbol_count, &sections, &imports, &strings);
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "recon",
+            "report": serde_json::to_value(&report).unwrap_or_default(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        let verdict = match report.verdict {
+            Verdict::Clean => "clean",
+            Verdict::LikelyPacked => "LIKELY PACKED",
+            Verdict::LikelyObfuscated => "LIKELY OBFUSCATED",
+            Verdict::NeedsManualReview => "needs manual review",
+        };
+        println!("recon: {verdict}");
+        println!("  symbols        {symbol_count}{}", if report.stripped { " (stripped)" } else { "" });
+        for se in &report.section_entropies {
+            let bar = "█".repeat((se.entropy * 8.0) as usize);
+            println!("  {:<16} {:.2} {}", se.section, se.entropy, bar);
+        }
+        for packer in &report.packer_signatures {
+            println!("  packer: {} ({})", packer.name, packer.evidence);
+        }
+        for indicator in &report.anti_analysis_indicators {
+            println!("  indicator: {} — {}", indicator.name, indicator.evidence);
+        }
     }
     Ok(())
 }

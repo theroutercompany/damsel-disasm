@@ -427,8 +427,18 @@ sufficient; syscall intrinsic table required).
   These seed the type system from ABI facts — no guessing.
 - Proof: d2_ssa 5/5. Workspace 49 suites, 0 failures.
 
-Next 6.x: Wave 5A value-flow dispatch port, cross-block phi-SSA,
-ObjC type encodings as additional seed source.
+### Wave 7 opener — Unit 7.1 — recon triage — DONE
+
+- `damsel-decomp::recon`: Shannon entropy (0..8, >7 = suspicious),
+  section entropy profiles, UPX packer magic, anti-debug ptrace/
+  sysctl imports, anti-VM strings. `damsel recon <target>` CLI
+  (text with entropy bars + JSON) for both Mach-O and ELF.
+- Proof: recon 6/6 (entropy extremes, UPX magic, clean/packed/
+  anti-debug verdicts), project_cli 12/12 (recon on real fixture).
+  Workspace 50 suites, 0 failures.
+
+Next: batch mode (--jsonl), MCP server via rmcp, diff mode, then
+5A value-flow dispatch port + cross-block phi-SSA.
 
 ## Lab notes
 
