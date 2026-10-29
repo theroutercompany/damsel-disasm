@@ -397,7 +397,8 @@ fn decompile_elf_function_via_x86_lift() {
     // .text at 0xE8 → helper at 0xF7; the call renders resolved.
     assert!(texts.iter().any(|t| t.contains("sub_f7(")), "got: {texts:?}");
     assert!(texts.iter().any(|t| *t == "return;"));
-    assert!(texts.iter().any(|t| t.contains("/* unknown: push */")));
+    // push/pop model as stack stores (6.16).
+    assert!(texts.iter().any(|t| t.contains("&sp")));
 }
 
 #[test]

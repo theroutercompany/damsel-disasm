@@ -582,6 +582,32 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                     });
                     target.map(|target| IrStatement::Call { target, site })
                 }
+                "push" | "pop" => {
+                    // Stack discipline: push = Store [&sp-8] = reg,
+                    // pop = Load reg [&sp]. v1 keeps sp adjustment
+                    // implicit (the frame analyzer reads explicit
+                    // sub/add sp); direction is the operand position.
+                    let register = instruction.operands.first().and_then(register_of);
+                    register.map(|register| {
+                        if lower == "push" {
+                            IrStatement::Store {
+                                address: IrExpr::AddrOf {
+                                    base: "sp".to_string(),
+                                    displacement: -8,
+                                },
+                                value: IrExpr::Value(IrValue::Register(register)),
+                            }
+                        } else {
+                            IrStatement::Load {
+                                destination: register,
+                                address: IrExpr::AddrOf {
+                                    base: "sp".to_string(),
+                                    displacement: 0,
+                                },
+                            }
+                        }
+                    })
+                }
                 _ => None,
             }
         };

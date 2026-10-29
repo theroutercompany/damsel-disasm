@@ -92,3 +92,24 @@ fn indexed_memory_lifts_with_scale() {
         "got: {statements:?}");
     assert_eq!(function.unknown_count, 0, "indexed memory is modeled");
 }
+
+#[test]
+fn push_pop_model_as_stack_stores() {
+    // push rbp; pop rbp → Store [&sp-8] = rbp; Load rbp [&sp].
+    let code: Vec<u8> = vec![0x55, 0x5D];
+    let instructions = damsel_core::decode_x86_64(&code, 0x4000, None).unwrap();
+    let function = lift_x86_64(&instructions);
+    use damsel_decomp::{IrExpr, IrStatement};
+    let statements: Vec<&IrStatement> = function
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .collect();
+    assert!(statements.iter().any(|s| matches!(s,
+        IrStatement::Store { address: IrExpr::AddrOf { base, displacement: -8, .. }, value }
+            if base == "sp")), "push modeled, got {statements:?}");
+    assert!(statements.iter().any(|s| matches!(s,
+        IrStatement::Load { destination, address: IrExpr::AddrOf { base, displacement: 0, .. } }
+            if base == "sp" && destination == "rbp")), "pop modeled");
+    assert_eq!(function.unknown_count, 0, "push/pop no longer blanket-unknown");
+}
