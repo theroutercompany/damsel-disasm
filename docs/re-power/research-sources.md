@@ -67,6 +67,18 @@ keep their prior status):
 | UPX source (`p_lx_elf.cpp`) | raw.githubusercontent.com (devel) | **V✓**: ELF pack-header layout comment "checksum UPX! lsize version format" — the `UPX!` magic recon matches |
 | Workspace dependency freshness | crates.io API | All 9 workspace deps resolved: capstone pinned=current; object 0.39→**0.40** available (breaking-range; adopt at Wave 5B — its `VersionTable` API was verified on 0.40); reqwest 0.12→0.13, criterion 0.5→0.8 breaking-range available; axum/clap/insta/serde/tokio minor updates available. No emergencies |
 
+### Round 3 (2026-10-28, foundation de-risking)
+
+| Source | Method | Outcome |
+| --- | --- | --- |
+| **Empirical x86 backend spike** (scratch crate, compiled and run locally: capstone 0.14 `std+full+arch_x86` vs iced-x86 1.21, 12-instruction x86-64 window incl. `push rbp; mov rbp,rsp; lea [rip+…]; call rax; add; cmp; jne; ret; syscall`) | cargo build + run | **Answers Wave 5 Open Question 1**: capstone x86 detail is sufficient for the semantic producer — implicit regs exposed via `InsnDetail::regs_read/regs_write`, **including `rflags`** (`add`/`cmp` write it, `jcc` reads it, `lea [rip+…]` reads `rip`), plus prefix/modrm/sib encoding detail. **Caveat found**: implicit lists have gaps — `syscall` reports no register effects (real clobbers: `rcx`, `r11`, `rax`, all flags) → a small curated intrinsic table for syscall/trap-class ops is required. iced-x86's six-state per-bit rflags model (`rflags_read/written/modified/cleared/set/undefined`) correctly reports `syscall` as r=w=mod=511 — recommend iced as the **flags-metadata oracle** for Wave 6 x86 stages and as the differential test oracle for the capstone producer |
+| `object` ELF source (docs.rs source view) | docs.rs `src/object/read/elf/file.rs.html` | **Architectural gap found**: dynamic symbols parse from `SHT_DYNSYM` sections; source carries an explicit TODO — "get dynamic symbols from DT_SYMTAB if there are no sections". Section-header-stripped ELF is unsupported by `object`; `goblin` exposes raw DT entries (`Dynamic.dyns`) but not segment-only dynsym either → **Wave 5B must own the PT_DYNAMIC → DT_SYMTAB/DT_STRTAB/DT_GNU_HASH walker** with vaddr→file-offset mapping via `PT_LOAD` |
+| `rmcp` crate (official MCP Rust SDK) | crates.io + docs.rs | **V✓**: 3.8.0, updated 2026-10-26, repo `modelcontextprotocol/rust-sdk`; `Transport`, `IntoTransport`, `ServerHandler`, `RoleServer` surface — Wave 7 builds on rmcp rather than hand-rolling the protocol |
+| SQLite WAL documentation | sqlite.org/wal.html | **V✓ line-cited**: "readers do not block writers and a writer does not block readers. Reading and writing can proceed concurrently" + "there can only be one writer at a time" — exactly the D-3 single-writer/multi-reader design |
+| LLVM PointerAuth documentation | llvm.org/docs/PointerAuth.html | **V✓**: `llvm.ptrauth.sign/.auth/.strip/.resign` intrinsic grammar with key/discriminator args — Wave 6's `PtrAuth{op, signed, key, disc}` intrinsic class maps 1:1 to a verified source; also confirms arm64e + PAuth-ELF scope |
+| Capstone `X86InsnDetail` / `InsnDetail` API pages | docs.rs | **V✓**: fields `operands/prefix/modrm/sib/rex/disp/opcode/addr_size`; implicit-reg access confirmed at API level (spike proved it at runtime) |
+| Ghidra analysis help topic | raw.githubusercontent.com | 404 (help tree moved); function-start heuristic comparison stays V2 with ByteWeight as the grounded reference |
+
 ## 1. Competitor Product Surfaces
 
 | Source | Use | Status |
@@ -119,6 +131,7 @@ All rows below live-verified 2026-10-28 via docs.rs + crates.io API (§0).
 | `gimli` 0.34.0 | MIT OR Apache-2.0; `read::EhFrame::{entries, fde_for_address, cie_from_offset}`, `EhHdrTable` | **V✓**; `.eh_frame` seeding plan verified at API level |
 | `iced-x86` 1.21.0 | MIT; `Encoder`, `BlockEncoder`, `CodeAssembler` | **V✓**; Wave 8 x86 patch encoding verified — richer than planned (a real assembler API exists) |
 | `rusqlite` 0.41.1 | MIT; `bundled` feature | **V✓**; D-3 store choice verified |
+| `rmcp` 3.8.0 | official MCP Rust SDK (`modelcontextprotocol/rust-sdk`), active 2026-10 | **V✓**; Wave 7 MCP server foundation (§0 Round 3) |
 | `cpp_demangle` 0.5.1 | MIT OR Apache-2.0; updated 2025-11 | **V✓**; default Itanium demangler candidate |
 | `rustc-demangle` 0.1.28 | MIT OR Apache-2.0; updated 2026-10 (active) | **V✓**; Rust v0/legacy demangling |
 | `swift-demangler` 0.2.0 (2026-10-02) | exists, recent, structured output | **V✓ existence**; Wave 8 Swift-names candidate (quality unverified — evaluate in a spike) |

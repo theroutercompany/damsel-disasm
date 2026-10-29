@@ -196,6 +196,16 @@ damsel-elf/
   fall back to `goblin` where `object` is lossy. Single-file ELF objects
   only — executables, PIE binaries, and shared objects are all in scope
   (ADR-0003); fileset/archive containers are out of scope.
+- **Segment-only parsing path (research finding, Round 3):** both `object`
+  and `goblin` resolve dynamic symbols from `SHT_DYNSYM` sections — and
+  `object`'s own source carries a TODO for the no-sections case — so
+  hard-stripped binaries (section headers zeroed, a common proprietary
+  protection) would parse to nothing. `damsel-elf` therefore owns a
+  `DynamicInfo` walker: PT_DYNAMIC → `DT_SYMTAB`/`DT_STRTAB`/
+  `DT_GNU_HASH`/`DT_RELA*`, with vaddr→file-offset resolution via
+  `PT_LOAD`. The section path remains the fast path when headers exist;
+  the walker is the correctness floor and a fixture requirement
+  (`elf-nosections`, built by zeroing the section-header table).
 - `ElfImage` mirrors `BinaryImage`'s role: segments (PT_LOAD with flags),
   sections, symbols (+ versioned names), imports, relocations, dynamic
   entries, notes.
@@ -286,6 +296,7 @@ hash-manifested like the Mach-O lane; parse-only, never executed):
 | Fixture | Built with | Exercises |
 | --- | --- | --- |
 | `elf-hello-stripped` / `-symbolized` | gcc/clang, `-O2` | baseline, symbol vs stripped diff |
+| `elf-nosections` | `objcopy`/script zeroing the section-header table | segment-only dynamic parsing (the `object`-TODO gap; Round 3 finding) |
 | `elf-cpp-vtables` | g++ | RTTI, vtables, virtual calls, MI |
 | `elf-versioned` | custom linker script + `.symver` | versioned imports/exports |
 | `elf-ifunc` | glibc `ifunc` | IRELATIVE relocs, resolver problems |
@@ -352,8 +363,14 @@ waiting for 5A (the kernel seam is independent).
 
 ## 9. Open Questions
 
-1. Whether `dag`/operand-implicit info from Capstone x86 is sufficient for
-   `SemFlags::SetsFlags` without a second semantics table — spike first.
+1. ~~Whether implicit-operand/flag info from Capstone x86 is sufficient for
+   `SemFlags::SetsFlags` without a second semantics table~~ **Answered
+   empirically 2026-10-28** (Research Sources §0 Round 3 spike): sufficient
+   — `regs_read`/`regs_write` expose `rflags` and `rip` implicit effects;
+   the one gap is syscall/trap-class ops (capstone reports no effects for
+   `syscall`), which get a small curated intrinsic table. iced-x86's
+   per-bit rflags model serves as the differential oracle for the producer
+   tests and the flags-metadata source for Wave 6.
 2. `object` vs `goblin` split for ELF: start with `object`, add `goblin`
    only where a specific gap is proven.
 3. Where demanglers live: `damsel-core` name service vs a thin

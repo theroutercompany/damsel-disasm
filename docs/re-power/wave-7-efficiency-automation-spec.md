@@ -95,6 +95,10 @@ startup overhead ≤ 5 %.
 - Transport: local HTTP (axum) + MCP stdio and Streamable HTTP (per the
   2026-07-28 MCP specification; the legacy SSE transport is deprecated —
   verified 2026-10-28); loopback binding default;
+- Protocol implementation: build on **`rmcp` 3.8** — the official MCP Rust
+  SDK (`modelcontextprotocol/rust-sdk`, active as of 2026-10-26;
+  `Transport`/`ServerHandler`/`RoleServer` surface) — rather than
+  hand-rolling the protocol (Round 3 verification);
   session token requirement when bound by the Workbench helper (trust spec).
 - Objects expose the Wave 4 route/id vocabulary; every response carries
   ids, provenance, confidence, pages.

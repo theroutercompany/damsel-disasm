@@ -288,6 +288,10 @@ spans + provenance are.
    in D2 and document it.
 2. Whether x86_64 D3 ABI facts reuse SysV conventions from a shared
    `damsel-core::abi` module — likely yes; decide in the x86 D3 PR.
+   Flag-semantics source is settled by research (Round 3): iced-x86's
+   per-bit rflags model (`read/written/modified/cleared/set/undefined`)
+   is the oracle and candidate metadata source; capstone's implicit
+   `rflags` visibility is sufficient at the producer level.
 3. Pseudocode pane rendering technology in Workbench (SwiftUI `Text` with
    attributed runs vs a custom `NSTextView`) — measure at D5 start against
    the 16 ms interaction budget.
