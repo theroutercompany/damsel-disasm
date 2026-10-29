@@ -2707,9 +2707,7 @@ fn register_operand_name(operand: &Operand) -> Option<String> {
 }
 
 fn store_pair_writes_two_memory_slots(mnemonic: &str) -> bool {
-    mnemonic.starts_with("stp")
-        || mnemonic.starts_with("stnp")
-        || matches!(mnemonic, "stxp" | "stlxp")
+    damsel_core::semantics_arm64::is_store_pair(mnemonic)
 }
 
 fn pair_memory_second_slot_target(
@@ -2979,35 +2977,16 @@ fn memory_base_index_displacement(
 }
 
 fn is_prefetch_mnemonic(mnemonic: &str) -> bool {
-    matches!(mnemonic, "prfm" | "prfum")
+    damsel_core::semantics_arm64::is_prefetch(mnemonic)
 }
 
 fn is_atomic_compare_swap_mnemonic(mnemonic: &str) -> bool {
-    matches!(
-        mnemonic,
-        "cas"
-            | "casa"
-            | "casl"
-            | "casal"
-            | "casb"
-            | "casab"
-            | "caslb"
-            | "casalb"
-            | "cash"
-            | "casah"
-            | "caslh"
-            | "casalh"
-            | "casp"
-            | "caspa"
-            | "caspl"
-            | "caspal"
-    )
+    damsel_core::semantics_arm64::is_atomic_compare_swap(mnemonic)
 }
 
+#[allow(dead_code)]
 fn load_reads_destination_value(mnemonic: &str) -> bool {
-    mnemonic.starts_with("ldr")
-        || mnemonic.starts_with("ldur")
-        || mnemonic.starts_with("ldtr")
+    damsel_core::semantics_arm64::load_reads_destination(mnemonic)
         || mnemonic.starts_with("ldar")
         || mnemonic.starts_with("ldapr")
         || mnemonic.starts_with("ldapur")

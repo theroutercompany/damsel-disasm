@@ -231,6 +231,46 @@ pub mod arm64 {
         matches!(lower, "clz" | "cls" | "ctz")
     }
 
+    /// Prefetch mnemonics.
+    pub fn is_prefetch(lower: &str) -> bool {
+        matches!(lower, "prfm" | "prfum")
+    }
+
+    /// Atomic compare-and-swap mnemonics.
+    pub fn is_atomic_compare_swap(lower: &str) -> bool {
+        matches!(
+            lower,
+            "cas" | "casa" | "casl" | "casal" | "casb" | "casab" | "caslb" | "casalb"
+                | "cash" | "casah" | "caslh" | "casalh"
+        ) || is_atomic_pair_compare_swap(lower)
+    }
+
+    /// Pair compare-and-swap (casp family — writes two destinations).
+    pub fn is_atomic_pair_compare_swap(lower: &str) -> bool {
+        matches!(lower, "casp" | "caspa" | "caspl" | "caspal")
+    }
+
+    /// Store-pair mnemonics (write two memory slots).
+    pub fn is_store_pair(lower: &str) -> bool {
+        lower.starts_with("stp")
+            || lower.starts_with("stnp")
+            || matches!(lower, "stxp" | "stlxp")
+    }
+
+    /// Load mnemonics that read the destination register's current value
+    /// (for value-flow: ldr/ldur/ldtr/ldar family).
+    pub fn load_reads_destination(lower: &str) -> bool {
+        lower.starts_with("ldr")
+            || lower.starts_with("ldur")
+            || lower.starts_with("ldtr")
+            || lower.starts_with("ldar")
+    }
+
+    /// Load mnemonics that read a relative table offset (literal loads).
+    pub fn load_reads_relative_table(lower: &str) -> bool {
+        matches!(lower, "ldr" | "ldur") || lower.starts_with("ldr")
+    }
+
     /// Classify with the documented precedence.
     pub fn classify(lower: &str) -> ControlFlowClass {
         if is_return(lower) {

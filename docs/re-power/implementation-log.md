@@ -493,8 +493,18 @@ sufficient; syscall intrinsic table required).
   ladder needs for its migration to semantics queries.
 - Proof: damsel-core lib 8/8. Workspace 51 suites, 0 failures.
 
-Next: engine `synthesize_*` dispatch migration behind the oracle,
-cross-block phi-SSA, rmcp transport spike, lab delta run 4.
+### Unit 5A.7 — remaining pure-mnemonic table delegation — DONE
+
+- `is_prefetch`, `is_atomic_compare_swap` (+ pair casp family —
+  regression caught by the casp test), `is_store_pair`,
+  `load_reads_destination` ported to `semantics::arm64`; engine
+  delegates. Pure-mnemonic migration now covers all table-like
+  predicates; remaining engine migration is the operand-aware
+  `synthesize_*_value` ladder (paired with phi-SSA).
+- Proof: workspace 51 suites, 0 failures (casp test green after fix).
+
+Next: cross-block phi-SSA, rmcp transport spike, lab delta run 4,
+then the synthesize dispatch migration.
 
 ## Lab notes
 
