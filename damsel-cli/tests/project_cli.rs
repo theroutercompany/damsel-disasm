@@ -418,6 +418,35 @@ fn recon_reports_entropy_and_verdict() {
 }
 
 #[test]
+fn batch_processes_list_with_typed_failures() {
+    let dir = smoke_dir("batch");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    let missing = dir.join("does-not-exist");
+    let list = dir.join("batch.txt");
+    std::fs::write(&list, format!("{}\n{}", target.display(), missing.display())).unwrap();
+
+    let out = damsel()
+        .arg("batch")
+        .arg("--inputs").arg(&list)
+        .arg("--out").arg(dir.join("batch-results"))
+        .output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "one failure → exit 1");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("1 passed, 1 failed"));
+
+    let jsonl = std::fs::read_to_string(dir.join("batch-results/batch.jsonl")).unwrap();
+    let lines: Vec<&str> = jsonl.lines().collect();
+    assert_eq!(lines.len(), 2);
+    let ok: Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(ok["status"], "ok");
+    assert_eq!(ok["format"], "macho");
+    assert!(ok["facts"].as_u64().unwrap() > 0);
+    let err: Value = serde_json::from_str(lines[1]).unwrap();
+    assert_eq!(err["status"], "error");
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");

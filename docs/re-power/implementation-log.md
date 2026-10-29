@@ -437,8 +437,17 @@ sufficient; syscall intrinsic table required).
   anti-debug verdicts), project_cli 12/12 (recon on real fixture).
   Workspace 50 suites, 0 failures.
 
-Next: batch mode (--jsonl), MCP server via rmcp, diff mode, then
-5A value-flow dispatch port + cross-block phi-SSA.
+### Unit 7.2 — batch mode — DONE
+
+- `damsel batch --inputs <list> --out <dir> [--fail-fast]`: per-target
+  analyze → JSONL entries (input/status/format/facts or typed error);
+  exit 0 clean / 1 on failures. Works for both Mach-O and ELF
+  (format detection per target). Projects written under `<out>/`.
+- Proof: project_cli 13/13 (mixed pass/fail list, exit codes, JSONL
+  shape). Workspace 50 suites, 0 failures.
+
+Next: MCP server via rmcp, diff mode, then 5A value-flow dispatch
+port + cross-block phi-SSA.
 
 ## Lab notes
 

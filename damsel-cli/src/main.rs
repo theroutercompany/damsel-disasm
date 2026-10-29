@@ -541,6 +541,15 @@ enum Command {
     },
     #[command(about = "First-touch triage: stripped-ness, entropy, packers, anti-analysis (Wave 7)")]
     Recon { path: PathBuf },
+    #[command(about = "Batch-analyze a list of binaries, writing JSONL results (Wave 7)")]
+    Batch {
+        #[arg(long, help = "File with one binary path per line")]
+        inputs: PathBuf,
+        #[arg(long, help = "Output directory for per-target results")]
+        out: PathBuf,
+        #[arg(long, help = "Continue on per-target failures (default) or stop")]
+        fail_fast: bool,
+    },
     #[command(about = "Decompile a function to provenance-carrying pseudocode (Wave 6 D5)")]
     Decompile {
         project: PathBuf,
@@ -1192,6 +1201,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Recon { path } => {
             handle_recon(path, &output_settings)?;
         }
+        Command::Batch { inputs, out, fail_fast } => {
+            handle_batch(inputs, out, fail_fast, &output_settings)?;
+        }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
@@ -1375,6 +1387,115 @@ fn handle_analyze(
         println!("  strings     = {}", strings_outcome.strings);
     }
     Ok(())
+}
+
+fn handle_batch(
+    inputs: PathBuf,
+    out_dir: PathBuf,
+    fail_fast: bool,
+    _output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{AnalysisProjectMeta, Create, ProjectId, ProjectStore, TypedStore, open_store};
+
+    let list = std::fs::read_to_string(&inputs)
+        .map_err(|e| CliRunError::command("invalid_args", format!("{}: {e}", inputs.display())))?;
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| CliRunError::command("store_error", format!("{}: {e}", out_dir.display())))?;
+    let results_path = out_dir.join("batch.jsonl");
+    let mut results = std::fs::File::create(&results_path)
+        .map_err(|e| CliRunError::command("store_error", format!("{}: {e}", results_path.display())))?;
+
+    use std::io::Write;
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    for line in list.lines().filter(|l| !l.trim().is_empty()) {
+        let path = std::path::PathBuf::from(line.trim());
+        let entry = match run_batch_target(&path, &out_dir) {
+            Ok(entry) => {
+                passed += 1;
+                entry
+            }
+            Err(entry) => {
+                failed += 1;
+                if fail_fast {
+                    let _ = writeln!(results, "{}", serde_json::to_string(&entry).unwrap_or_default());
+                    return Err(CliRunError::command(
+                        "batch_failed",
+                        format!("{} failed (fail-fast)", path.display()),
+                    ));
+                }
+                entry
+            }
+        };
+        let _ = writeln!(results, "{}", serde_json::to_string(&entry).unwrap_or_default());
+    }
+
+    println!(
+        "batch: {passed} passed, {failed} failed -> {}",
+        results_path.display()
+    );
+    if failed > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn run_batch_target(path: &std::path::Path, out_dir: &std::path::Path) -> Result<serde_json::Value, serde_json::Value> {
+    let name = path
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "target".into());
+
+    let is_elf = std::fs::read(path)
+        .map(|bytes| bytes.len() >= 4 && bytes[0..4] == *b"\x7fELF")
+        .unwrap_or(false);
+
+    let project_dir = out_dir.join(format!("{name}.damsel"));
+    let _ = std::fs::remove_dir_all(&project_dir);
+    let meta = damsel_project::AnalysisProjectMeta {
+        project_id: damsel_project::ProjectId::new(format!("batch-{name}")),
+        name: name.clone(),
+        analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let db_path = project_dir.join("project.db");
+    let Ok(mut store) = damsel_project::open_store(&db_path, damsel_project::Create::New, &meta) else {
+        return Err(serde_json::json!({"input": line_of(path), "status": "error", "error": "store_create_failed"}));
+    };
+
+    let outcome = if is_elf {
+        match damsel_elf::load(path) {
+            Ok(image) => damsel_elf::ingest_elf_image(&mut store, &image, env!("CARGO_PKG_VERSION"))
+                .map(|o| (o.source_id, o.fact_count))
+                .map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        match damsel_macho::load(path) {
+            Ok(image) => damsel_macho::ingest_binary_image(&mut store, &image, env!("CARGO_PKG_VERSION"))
+                .map(|o| (o.source_id, o.fact_count))
+                .map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    };
+
+    match outcome {
+        Ok((source_id, fact_count)) => Ok(serde_json::json!({
+            "input": line_of(path),
+            "status": "ok",
+            "target": name,
+            "format": if is_elf { "elf" } else { "macho" },
+            "facts": fact_count,
+        })),
+        Err(error) => Err(serde_json::json!({
+            "input": line_of(path),
+            "status": "error",
+            "error": error,
+        })),
+    }
+}
+
+fn line_of(path: &std::path::Path) -> String {
+    path.display().to_string()
 }
 
 fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Result<(), CliRunError> {
