@@ -546,6 +546,8 @@ enum Command {
     Diff {
         left: PathBuf,
         right: PathBuf,
+        #[arg(long, help = "Output Markdown report instead of text/JSON")]
+        markdown: bool,
     },
     #[command(about = "Run as an MCP server exposing typed analysis tools (Wave 7)")]
     Serve {
@@ -1215,8 +1217,8 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Batch { inputs, out, fail_fast } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
-        Command::Diff { left, right } => {
-            handle_diff(left, right, &output_settings)?;
+        Command::Diff { left, right, markdown } => {
+            handle_diff(left, right, markdown, &output_settings)?;
         }
         Command::Serve { project } => {
             mcp::run_mcp(mcp::McpConfig { project })?;
@@ -1518,6 +1520,7 @@ fn line_of(path: &std::path::Path) -> String {
 fn handle_diff(
     left: PathBuf,
     right: PathBuf,
+    markdown: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{Create, ProjectStore, open_store};
@@ -1535,6 +1538,11 @@ fn handle_diff(
 
     let report = damsel_decomp::diff_functions(&left_store, &right_store, &left_name, &right_name)
         .map_err(|e| CliRunError::command("diff_error", e.to_string()))?;
+
+    if markdown {
+        print!("{}", damsel_decomp::render_diff_markdown(&report));
+        return Ok(());
+    }
 
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({

@@ -630,6 +630,14 @@ sufficient; syscall intrinsic table required).
 - Proof: d2_ssa 6/6 (diamond IR produces phi for x0 at merge block;
   single-def registers excluded). Workspace 51 suites, 0 failures.
 
+### Unit 7.9 — diff Markdown export — DONE
+
+- `damsel diff --markdown`: evidence-profile Markdown report (no raw
+  bytes, structured tables for matched/added/removed with strategy
+  evidence).
+- Proof: workspace 51 suites, 0 failures; smoke on symbolized-vs-objc
+  pair shows 2 matched / 27 added / 2 removed in table format.
+
 Next: rmcp transport spike, synthesize dispatch migration, Workbench
 pane integration, then lab re-verification.
 

@@ -123,3 +123,60 @@ pub fn diff_functions(
         removed,
     })
 }
+
+/// Render a diff report as Markdown (evidence profile: no raw bytes,
+/// structured findings only).
+pub fn render_diff_markdown(report: &DiffReport) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Diff: {} → {}\n\n",
+        report.left_name, report.right_name
+    ));
+    out.push_str(&format!(
+        "| Metric | Count |\n|---|---|\n| Matched | {} |\n| Added | {} |\n| Removed | {} |\n\n",
+        report.matched.len(),
+        report.added.len(),
+        report.removed.len()
+    ));
+    if !report.matched.is_empty() {
+        out.push_str("## Matched Functions\n\n");
+        out.push_str("| Name | Left | Right | Strategy |\n|---|---|---|---|\n");
+        for m in &report.matched {
+            let strategy = match m.strategy {
+                MatchStrategy::ExactSymbol => "symbol",
+                MatchStrategy::ExactAddress => "address",
+                MatchStrategy::Structural => "structural",
+            };
+            out.push_str(&format!(
+                "| {} | `{:#x}` | `{:#x}` | {} |\n",
+                m.name.as_deref().unwrap_or("—"),
+                m.left_address,
+                m.right_address,
+                strategy
+            ));
+        }
+        out.push('\n');
+    }
+    if !report.added.is_empty() {
+        out.push_str("## Added (present in right, absent in left)\n\n");
+        for f in &report.added {
+            out.push_str(&format!(
+                "- `{:#x}` {}\n",
+                f.address,
+                f.name.as_deref().unwrap_or("—")
+            ));
+        }
+        out.push('\n');
+    }
+    if !report.removed.is_empty() {
+        out.push_str("## Removed (present in left, absent in right)\n\n");
+        for f in &report.removed {
+            out.push_str(&format!(
+                "- `{:#x}` {}\n",
+                f.address,
+                f.name.as_deref().unwrap_or("—")
+            ));
+        }
+    }
+    out
+}
