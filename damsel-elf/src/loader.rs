@@ -194,8 +194,19 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
         .flatten()
         .map(|desc| desc.iter().map(|b| format!("{b:02x}")).collect());
 
+    // PT_LOAD mapping via raw program headers (single source with the
+    // segment-only path).
+    let raw_loads = crate::walker::parse_segments(bytes.as_slice(), header.e_phoff(endian), header.e_phnum(endian))
+        .unwrap_or_default();
+    let loads: Vec<(u64, u64, u64)> = raw_loads
+        .iter()
+        .filter(|s| s.p_type == object::elf::PT_LOAD)
+        .map(|s| (s.p_vaddr, s.p_filesz, s.p_offset))
+        .collect();
     Ok(ElfImage {
         label,
+        data: std::sync::Arc::from(bytes.into_boxed_slice()),
+        loads,
         architecture,
         is_position_independent,
         build_id,
@@ -251,8 +262,15 @@ fn build_segment_only(
         _ => None,
     });
 
+    let loads: Vec<(u64, u64, u64)> = raw
+        .iter()
+        .filter(|s| s.p_type == object::elf::PT_LOAD)
+        .map(|s| (s.p_vaddr, s.p_filesz, s.p_offset))
+        .collect();
     Ok(ElfImage {
         label,
+        data: std::sync::Arc::from(bytes.to_vec().into_boxed_slice()),
+        loads,
         architecture,
         is_position_independent,
         build_id: None, // PT_NOTE walking for build-id lands with the note unit

@@ -8,12 +8,14 @@
 //! Sources §0 Round 3: both `object` and `goblin` punt here) lands with
 //! the `elf-nosections` fixture unit.
 
+mod analysis;
 mod image;
 mod ingest;
 mod loader;
 mod walker;
 
 pub use image::{ElfDynamicEntry, ElfImage, ElfSection, ElfSegment, ElfSymbol};
+pub use analysis::{ElfAnalysisError, ElfXrefOutcome, harvest_elf_xrefs};
 pub use ingest::{ElfIngestError, ElfIngestOutcome, ingest_elf_image};
 pub use loader::{ElfError, Result, load, load_bytes};
 

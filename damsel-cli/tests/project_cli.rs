@@ -255,20 +255,37 @@ fn analyze_elf_end_to_end_functions_and_search() {
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["command"], "analyze");
     assert!(body["facts"].as_u64().unwrap() > 0);
-    assert_eq!(body["engine_passes"], "ingest_only (x86_64 engine passes pending)");
+    // Engine passes run: the blob's call exported_func<-main produces at
+    // least one call xref and bounds for both functions.
+    assert!(body["xrefs"].as_u64().unwrap() >= 1);
+    assert!(body["function_bounds"].as_u64().unwrap() >= 1);
 
-    // Wave 4 queries work unchanged on the ELF project.
+    // Wave 4 queries work unchanged on the ELF project — with bounds.
     let out = damsel()
         .arg("functions").arg(&target)
         .arg("--format").arg("json")
         .output().unwrap();
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(body["functions"]
+    let exported = body["functions"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|f| f["name"] == "exported_func"));
+        .find(|f| f["name"] == "exported_func")
+        .expect("exported_func listed");
+    assert!(exported["bound"].is_string(), "bounds present: {:?}", exported["bound"]);
+
+    // xrefs --to the helper resolves the call site. Shared-fixture
+    // layout: .text at 0xB0, helper (ret) at 0xBF, call at 0xB4.
+    let out = damsel()
+        .arg("xrefs").arg(&target)
+        .arg("--to").arg("0xbf")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    assert!(out.status.success());
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["xrefs"][0]["kind"], "call");
 
     let out = damsel()
         .arg("search").arg(&target).arg("exported")

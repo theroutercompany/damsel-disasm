@@ -1818,6 +1818,20 @@ fn handle_analyze_elf(
         .map_err(map_store_error)?;
     let outcome = damsel_elf::ingest_elf_image(&mut store, &image, analyzer_version())
         .map_err(|e| CliRunError::command("ingest_error", e.to_string()))?;
+    // Engine passes for ELF (xrefs + bounds via the x86_64 decoder).
+    let seed_addresses: Vec<u64> = damsel_project::function_summaries(&store)
+        .map_err(map_store_error)?
+        .iter()
+        .map(|f| f.address)
+        .collect();
+    let engine = damsel_elf::harvest_elf_xrefs(
+        &mut store,
+        &image,
+        outcome.source_id,
+        &seed_addresses,
+        analyzer_version(),
+    )
+    .map_err(|e| CliRunError::command("engine_error", e.to_string()))?;
     let source_count = store.sources().map_err(map_store_error)?.len();
     drop(store);
     if output_settings.format == output::OutputFormat::Json {
@@ -1828,7 +1842,8 @@ fn handle_analyze_elf(
             "sources": source_count,
             "objects": outcome.object_count,
             "facts": outcome.fact_count,
-            "engine_passes": "ingest_only (x86_64 engine passes pending)",
+            "xrefs": engine.xref_count,
+            "function_bounds": engine.bounds,
         });
         println!("{}", project_json(value));
     } else {
@@ -1844,7 +1859,7 @@ fn handle_analyze_elf(
         }
         println!("  objects     = {}", outcome.object_count);
         println!("  facts       = {}", outcome.fact_count);
-        println!("  engine      = ingest only (xrefs/recovery pending x86_64 decode mapper)");
+        println!("  xrefs       = {} ({} function bounds)", engine.xref_count, engine.bounds);
     }
     Ok(())
 }

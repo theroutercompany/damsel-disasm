@@ -3,10 +3,14 @@
 
 use damsel_core::Architecture;
 
-/// A loaded ELF64 image.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A loaded ELF64 image. Owns its bytes (mirroring `BinaryImage`) so
+/// analysis passes can decode windows and read strings.
+#[derive(Clone)]
 pub struct ElfImage {
     pub(crate) label: Option<String>,
+    pub(crate) data: std::sync::Arc<[u8]>,
+    /// PT_LOAD mapping for vaddr→file-offset reads.
+    pub(crate) loads: Vec<(u64, u64, u64)>, // (vaddr, filesz, offset)
     /// ELF class/machine identity summary.
     pub architecture: Architecture,
     /// `ET_EXEC` (static-position) or `ET_DYN` (PIE / shared object).
@@ -26,6 +30,25 @@ pub struct ElfImage {
 impl ElfImage {
     pub fn label(&self) -> Option<&str> {
         self.label.as_deref()
+    }
+
+    /// Raw file bytes (analysis use: decode windows, strings).
+    pub fn slice_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Translate a virtual address to a file offset via PT_LOAD.
+    pub fn vaddr_to_offset(&self, vaddr: u64) -> Option<u64> {
+        self.loads
+            .iter()
+            .find(|(base, size, _)| vaddr >= *base && vaddr < base + size)
+            .map(|(base, _, offset)| offset + (vaddr - base))
+    }
+
+    /// Read `len` bytes at a virtual address.
+    pub fn read_at_vaddr(&self, vaddr: u64, len: usize) -> Option<&[u8]> {
+        let offset = self.vaddr_to_offset(vaddr)? as usize;
+        self.data.get(offset..offset + len)
     }
 
     pub fn executable_sections(&self) -> Vec<&ElfSection> {
@@ -102,3 +125,35 @@ pub enum ElfDynamicEntry {
     Runpath(String),
     Flags(String),
 }
+
+impl std::fmt::Debug for ElfImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ElfImage")
+            .field("label", &self.label)
+            .field("architecture", &self.architecture)
+            .field("is_position_independent", &self.is_position_independent)
+            .field("build_id", &self.build_id)
+            .field("soname", &self.soname)
+            .field("segments", &self.segments.len())
+            .field("sections", &self.sections.len())
+            .field("symbols", &self.symbols.len())
+            .field("dynamic", &self.dynamic.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for ElfImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.label == other.label
+            && self.architecture == other.architecture
+            && self.is_position_independent == other.is_position_independent
+            && self.build_id == other.build_id
+            && self.soname == other.soname
+            && self.segments == other.segments
+            && self.sections == other.sections
+            && self.symbols == other.symbols
+            && self.dynamic == other.dynamic
+    }
+}
+
+impl Eq for ElfImage {}
