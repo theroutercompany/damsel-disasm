@@ -86,6 +86,47 @@ fn analyze_show_export_round_trip() {
 }
 
 #[test]
+fn functions_command_lists_seeded_functions() {
+    let dir = smoke_dir("functions");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    let out = damsel()
+        .arg("functions")
+        .arg(&target)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["command"], "functions");
+    let functions = body["functions"].as_array().unwrap();
+    assert!(functions.len() >= 4);
+    let main = functions
+        .iter()
+        .find(|f| f["name"] == "_main")
+        .expect("_main listed");
+    assert!(main["seeds"].as_array().unwrap().iter().any(|s| s == "symbol_table"));
+
+    // Name filter narrows deterministically.
+    let out = damsel()
+        .arg("functions")
+        .arg(&target)
+        .arg("--name")
+        .arg("main")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let functions = body["functions"].as_array().unwrap();
+    assert_eq!(functions.len(), 1);
+    assert_eq!(functions[0]["name"], "_main");
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");

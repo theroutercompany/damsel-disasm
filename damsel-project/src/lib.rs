@@ -15,6 +15,7 @@
 
 mod address;
 mod facts;
+mod functions;
 mod object;
 mod project;
 mod snapshot;
@@ -24,6 +25,7 @@ mod store;
 pub use address::AddressSpaceId;
 pub use address::names;
 pub use facts::{AnalysisFact, Confidence, FactKind, FactProvenance};
+pub use functions::{FunctionSummary, function_summaries};
 pub use object::ObjectId;
 pub use project::{AnalysisProjectMeta, ProjectId, SCHEMA_VERSION};
 pub use snapshot::canonical_export;

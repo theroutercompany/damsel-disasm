@@ -531,6 +531,14 @@ enum Command {
         #[command(subcommand)]
         command: ProjectCommand,
     },
+    #[command(about = "List functions discovered in an analyzed project")]
+    Functions {
+        project: PathBuf,
+        #[arg(long, help = "Filter by name substring")]
+        name: Option<String>,
+        #[arg(long, help = "Maximum rows to print")]
+        limit: Option<usize>,
+    },
     Cache {
         #[command(subcommand)]
         command: CacheCommand,
@@ -1116,6 +1124,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             handle_analyze(path, refresh, &output_settings)?;
         }
         Command::Project { command } => handle_project_command(command, &output_settings)?,
+        Command::Functions { project, name, limit } => {
+            handle_functions(project, name, limit, &output_settings)?;
+        }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
@@ -1249,6 +1260,54 @@ fn handle_analyze(
         println!("  sources     = {source_count}");
         println!("  objects     = {}", outcome.object_count);
         println!("  facts       = {}", outcome.fact_count);
+    }
+    Ok(())
+}
+
+fn handle_functions(
+    project: PathBuf,
+    name_filter: Option<String>,
+    limit: Option<usize>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, function_summaries, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+        .map_err(map_store_error)?;
+    let mut summaries = function_summaries(&store).map_err(map_store_error)?;
+    if let Some(pattern) = &name_filter {
+        summaries.retain(|f| {
+            f.name
+                .as_deref()
+                .is_some_and(|n| n.contains(pattern.as_str()))
+        });
+    }
+    let total = summaries.len();
+    let truncated = limit.is_some_and(|l| summaries.len() > l);
+    if let Some(limit) = limit {
+        summaries.truncate(limit);
+    }
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "functions",
+            "count": total,
+            "truncated": truncated,
+            "functions": summaries.iter().map(|f| serde_json::json!({
+                "address": format!("{:#x}", f.address),
+                "name": f.name,
+                "seeds": f.seeds,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("functions: {total}");
+        for f in &summaries {
+            let name = f.name.as_deref().unwrap_or("");
+            println!("  {:#010x}  {:<32} [{}]", f.address, name, f.seeds.join(","));
+        }
     }
     Ok(())
 }

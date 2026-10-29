@@ -62,11 +62,22 @@ exists; N-1 real-db fixture lands with the first schema bump).
   refresh rebuild; unknown-project typed error). Workspace: 35 suites,
   0 failures.
 
+### Unit 4.4a — function summaries query + `functions` command — DONE (read side)
+
+- `damsel_project::function_summaries`: groups `function:<addr>` objects
+  with their seed facts; deterministic best-name selection (smallest
+  symbol_table payload); sorted by address. CLI `functions <project>
+  [--name PAT] [--limit N]` (text/JSON, `count`/`truncated` contract).
+  Seed fusion already observable: `_main` =
+  entry_point+function_starts+symbol_table.
+- Proof: analysis_ingest 4/4 (grouping/sorting/multi-seed), project_cli
+  4/4 (JSON listing + name filter). Workspace 36 suites, 0 failures.
+- Recovery worker (bounds/blocks/conflicts, rank-6..8 seeds) is Unit 4.4b.
+
 ### Next units (queue order)
 
 - 4.3 `damsel analyze` CLI — DONE (see above)
-- 4.4 function seed collector (ranks 1–5 exact sources) + recovery
-  worker v1; `functions` command; `bin/function-recovery-audit.sh` gate.
+- 4.4b recovery worker v1 (bounds/blocks from CFG walk) + audit gate.
 - 4.5 xref harvesting from `DisassemblyAnalysis` promotion; `xrefs`
   command; round-trip fixtures.
 - 4.6 strings pass + `strings` command; search index + `search`.

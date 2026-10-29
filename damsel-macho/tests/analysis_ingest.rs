@@ -87,6 +87,24 @@ fn objc_fixture_ingests_imp_seeds() {
 }
 
 #[test]
+fn function_summaries_group_seeds_by_address() {
+    let dir = tempfile::tempdir().unwrap();
+    ingest_fixture("arm64-symbolized", dir.path());
+    let store = open_store(&dir.path().join("project.db"), Create::Existing, &meta()).unwrap();
+    let summaries = damsel_project::function_summaries(&store).unwrap();
+    assert!(summaries.len() >= 4);
+    // Sorted by address.
+    assert!(summaries.windows(2).all(|w| w[0].address < w[1].address));
+    let main = summaries
+        .iter()
+        .find(|f| f.name.as_deref() == Some("_main"))
+        .expect("_main seeded");
+    assert!(main.seeds.iter().any(|s| s == "symbol_table"));
+    assert!(main.seeds.iter().any(|s| s == "function_starts"));
+    assert!(main.seeds.iter().any(|s| s == "entry_point"));
+}
+
+#[test]
 fn ingest_is_export_deterministic() {
     let a = tempfile::tempdir().unwrap();
     let b = tempfile::tempdir().unwrap();
