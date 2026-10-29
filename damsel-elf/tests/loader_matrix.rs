@@ -136,6 +136,40 @@ fn nosections_loads_via_segment_only_walker() {
 }
 
 #[test]
+fn versioned_symbols_resolve_on_both_paths() {
+    // Section-ful path.
+    let image = load_bytes(Some("versioned".into()), synth::shared_object()).unwrap();
+    let exported = image
+        .symbols
+        .iter()
+        .find(|s| s.name == "exported_func")
+        .expect("exported");
+    assert_eq!(exported.version.as_deref(), Some("FAKE_1.0"));
+    let import = image
+        .symbols
+        .iter()
+        .find(|s| s.name == "malloc")
+        .expect("import");
+    assert_eq!(import.version.as_deref(), Some("GLIBC_2.2.5"));
+
+    // Segment-only walker path (same bytes, section headers zeroed).
+    let stripped = load_bytes(Some("versioned-stripped".into()), synth::elf_nosections())
+        .unwrap();
+    let exported = stripped
+        .symbols
+        .iter()
+        .find(|s| s.name == "exported_func")
+        .expect("exported via walker");
+    assert_eq!(exported.version.as_deref(), Some("FAKE_1.0"));
+    let import = stripped
+        .symbols
+        .iter()
+        .find(|s| s.name == "malloc")
+        .expect("import via walker");
+    assert_eq!(import.version.as_deref(), Some("GLIBC_2.2.5"));
+}
+
+#[test]
 fn truncated_and_malformed_inputs_fail_typed() {
     let full = synth::static_exec();
     for cut in [4usize, 16, 40, 64, 100] {

@@ -222,6 +222,7 @@ pub fn walk_dynamic(bytes: &[u8], segments: &[RawSegment]) -> Option<SegmentOnly
         get(object::elf::DT_SYMTAB as u64),
         dynamic_symbol_count(bytes, segments, &entries),
     ) {
+        let versions = resolve_versions(bytes, segments, &entries, strtab, count);
         if let Some(symtab_off) = vaddr_to_offset(segments, symtab_addr) {
             for index in 0..count {
                 let base = symtab_off as usize + index * 24;
@@ -260,7 +261,7 @@ pub fn walk_dynamic(bytes: &[u8], segments: &[RawSegment]) -> Option<SegmentOnly
                     is_text: defined,
                     dynamic: true,
                     is_import: !defined,
-                    version: None,
+                    version: versions.get(index).cloned().flatten(),
                 });
             }
         }
@@ -270,4 +271,87 @@ pub fn walk_dynamic(bytes: &[u8], segments: &[RawSegment]) -> Option<SegmentOnly
         symbols,
         entries: out_entries,
     })
+}
+
+/// Resolve per-symbol version names from DT_VERSYM + DT_VERNEED
+/// (`Elf64_Verneed`/`Elf64_Vernaux` walk; verdef handled on the
+/// section-ful path by `object`'s VersionTable).
+fn resolve_versions(
+    bytes: &[u8],
+    segments: &[RawSegment],
+    entries: &[RawDynamic],
+    strtab: &[u8],
+    symbol_count: usize,
+) -> Vec<Option<String>> {
+    let mut out = vec![None; symbol_count];
+    let get = |tag: u64| entries.iter().find(|e| e.tag == tag).map(|e| e.value);
+
+    // Version-index → name map from DT_VERNEED.
+    let mut by_index: std::collections::BTreeMap<u16, String> = Default::default();
+    if let Some(verneed_addr) = get(object::elf::DT_VERNEED as u64) {
+        if let Some(base) = vaddr_to_offset(segments, verneed_addr) {
+            let read_u16 = |off: usize| -> Option<u16> {
+                let off = off as usize;
+                if off + 2 > bytes.len() {
+                    return None;
+                }
+                Some(u16::from_le_bytes([bytes[off], bytes[off + 1]]))
+            };
+            let read_u32 = |off: usize| -> Option<u32> {
+                let off = off as usize;
+                if off + 4 > bytes.len() {
+                    return None;
+                }
+                Some(u32::from_le_bytes([
+                    bytes[off],
+                    bytes[off + 1],
+                    bytes[off + 2],
+                    bytes[off + 3],
+                ]))
+            };
+            // Walk the Verneed chain, then each Vernaux chain.
+            let mut need_off = base as usize;
+            for _ in 0..64 {
+                let Some(next) = read_u32(need_off + 12) else { break };
+                let Some(aux_offset) = read_u32(need_off + 8) else { break };
+                let mut aux_off = need_off + aux_offset as usize;
+                for _ in 0..256 {
+                    let Some(aux_next) = read_u32(aux_off + 12) else { break };
+                    let (Some(other), Some(name_off)) =
+                        (read_u16(aux_off + 6), read_u32(aux_off + 8))
+                    else {
+                        break;
+                    };
+                    if let Some(name) = string_at(strtab, u64::from(name_off)) {
+                        by_index.insert(other, name);
+                    }
+                    if aux_next == 0 {
+                        break;
+                    }
+                    aux_off += aux_next as usize;
+                }
+                if next == 0 {
+                    break;
+                }
+                need_off += next as usize;
+            }
+        }
+    }
+
+    // DT_VERSYM array: one u16 per dynamic symbol (mask the hidden bit).
+    if let Some(versym_addr) = get(object::elf::DT_VERSYM as u64) {
+        if let Some(base) = vaddr_to_offset(segments, versym_addr) {
+            for (index, slot) in out.iter_mut().enumerate() {
+                let off = base as usize + index * 2;
+                if off + 2 > bytes.len() {
+                    break;
+                }
+                let value = u16::from_le_bytes([bytes[off], bytes[off + 1]]) & 0x7fff;
+                if value > 1 {
+                    *slot = by_index.get(&value).cloned();
+                }
+            }
+        }
+    }
+    out
 }

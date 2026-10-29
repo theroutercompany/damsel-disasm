@@ -130,10 +130,19 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
     }
 
     // Symbols: dynamic first (linkage truth), then static symtab.
-    // `.gnu.version` resolution lands with the versioned-symbols unit.
+    // `.gnu.version` names resolve via object's VersionTable when the
+    // version sections exist.
+    let version_table = file
+        .elf_section_table()
+        .versions(endian, file.data())
+        .ok()
+        .flatten();
     let mut symbols = Vec::new();
     for (table, dynamic) in [(file.dynamic_symbols(), true), (file.symbols(), false)] {
-        for symbol in table {
+        // ObjectSymbol iterators skip the null symbol at table index 0;
+        // version indices are table-relative, so shift by one.
+        for (symbol_position, symbol) in table.enumerate() {
+            let symbol_index = symbol_position + usize::from(dynamic);
             let Ok(name_bytes) = symbol.name_bytes() else { continue };
             let name = String::from_utf8_lossy(name_bytes).into_owned();
             if name.is_empty() {
@@ -150,6 +159,18 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
                     && address < s.address().saturating_add(s.size())
                     && flags & u64::from(object::elf::SHF_EXECINSTR) != 0
             });
+            let version = if dynamic {
+                version_table.as_ref().and_then(|table| {
+                    let index = table.version_index(endian, object::SymbolIndex(symbol_index));
+                    table
+                        .version(index)
+                        .ok()
+                        .flatten()
+                        .and_then(|v| std::str::from_utf8(v.name()).ok().map(str::to_string))
+                })
+            } else {
+                None
+            };
             symbols.push(ElfSymbol {
                 name,
                 address,
@@ -158,7 +179,7 @@ pub fn load_bytes(label: Option<String>, bytes: Vec<u8>) -> Result<ElfImage> {
                 is_text: defined && exec,
                 dynamic,
                 is_import: !defined,
-                version: None,
+                version,
             });
         }
     }
