@@ -487,7 +487,7 @@ pub fn decode_x86_64_with_limit(
     limit: DisassemblyLimit,
     options: DisassemblyOptions,
 ) -> Result<Vec<DecodedInstruction>, DecodeError> {
-    use capstone::arch::x86::{X86OpMem, X86Operand, X86OperandType};
+    use capstone::arch::x86::{X86Operand, X86OperandType};
 
     let cs = Capstone::new()
         .x86()

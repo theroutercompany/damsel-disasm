@@ -38,6 +38,8 @@ jobs:
           test -f bin/shared-cache-evidence-package.sh
           test -f bin/shared-cache-evidence-package-test.sh
           test -f bin/shared-cache-real-smoke.sh
+          test -f bin/elf-evidence-package.sh
+          test -f bin/function-recovery-audit.sh
           bash -n bin/release-validate.sh
           bash -n bin/disasm-external-compare.sh
           bash -n bin/disassembler-v2-alpha-validate.sh
@@ -49,6 +51,8 @@ jobs:
           bash -n bin/shared-cache-evidence-package.sh
           bash -n bin/shared-cache-evidence-package-test.sh
           bash -n bin/shared-cache-real-smoke.sh
+          bash -n bin/elf-evidence-package.sh
+          bash -n bin/function-recovery-audit.sh
           bin/disassembler-v2-alpha-validate-test.sh
           bin/shared-cache-evidence-audit-test.sh
           bin/shared-cache-evidence-package-test.sh

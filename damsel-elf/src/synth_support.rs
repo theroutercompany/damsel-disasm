@@ -238,7 +238,7 @@ pub fn shared_object() -> Vec<u8> {
     let dynamic_off = rela_off + rela.len();
     let mut dynamic: Vec<u8> = Vec::new();
     // dynamic entries gain DT_VERSYM/DT_VERNEED so the walker path resolves.
-    let mut dt = |tag: u64, val: u64, out: &mut Vec<u8>| {
+    let dt = |tag: u64, val: u64, out: &mut Vec<u8>| {
         out.extend(tag.to_le_bytes());
         out.extend(val.to_le_bytes());
     };

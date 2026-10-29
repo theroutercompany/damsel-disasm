@@ -206,6 +206,22 @@ fn build_id_resolves_on_both_paths() {
     assert_eq!(walker.build_id.as_deref(), Some("aabbccddee112233"));
 }
 
+/// Evidence-package helper (evidence row 5.13): writes the synthetic
+/// fixtures to `DAMSEL_SYNTH_OUT` when invoked by
+/// `bin/elf-evidence-package.sh`; a plain pass otherwise.
+#[test]
+fn elf_evidence_write_fixture() {
+    let Ok(out) = std::env::var("DAMSEL_SYNTH_OUT") else {
+        return;
+    };
+    std::fs::write(&out, synth::shared_object()).expect("write shared fixture");
+    std::fs::write(
+        std::path::Path::new(&out).with_extension("nosections"),
+        synth::elf_nosections(),
+    )
+    .expect("write nosections fixture");
+}
+
 #[test]
 fn truncated_and_malformed_inputs_fail_typed() {
     let full = synth::static_exec();

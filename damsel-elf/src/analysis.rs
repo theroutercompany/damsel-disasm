@@ -65,7 +65,7 @@ pub fn harvest_elf_xrefs(
             .filter(|next| *next > address && *next <= section_end)
             .unwrap_or(section_end);
 
-        let Some(offset) = image.vaddr_to_offset(address) else {
+        let Some(_offset) = image.vaddr_to_offset(address) else {
             continue;
         };
         let Some(bytes) = image.read_at_vaddr(address, (window_end - address) as usize) else {
