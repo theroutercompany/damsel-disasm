@@ -420,6 +420,9 @@ async fn run_async(config: UiConfig) -> Result<(), CliRunError> {
         .route("/api/projects/{project_id}/functions", get(project_functions))
         .route("/api/projects/{project_id}/xrefs", get(project_xrefs))
         .route("/api/projects/{project_id}/decompile/{function}", get(project_decompile))
+        .route("/api/projects/{project_id}/search", get(project_search))
+        .route("/api/projects/{project_id}/strings", get(project_strings))
+        .route("/api/projects/{project_id}/summary/{function}", get(project_summary))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(state);
 
@@ -469,6 +472,142 @@ async fn favicon() -> Response {
         .status(StatusCode::NO_CONTENT)
         .body(axum::body::Body::empty())
         .expect("empty favicon response")
+}
+
+async fn project_search(
+    State(_state): State<AppState>,
+    Path(project_id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let project_path = std::path::PathBuf::from(&project_id);
+    let db = project_path.join("project.db");
+    if !db.is_file() {
+        return not_found("project_not_found", &project_path.display().to_string());
+    }
+    let Some(q) = query.get("q") else {
+        return bad_request("invalid_args", "missing `q` parameter");
+    };
+    let meta = open_meta();
+    let Ok(store) = damsel_project::open_store(&db, damsel_project::Create::Existing, &meta) else {
+        return internal_error("store_error", "failed to open project");
+    };
+    let Ok(functions) = damsel_project::function_summaries(&store) else {
+        return internal_error("store_error", "failed to list functions");
+    };
+    let results: Vec<_> = functions
+        .into_iter()
+        .filter(|f| {
+            f.name
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase().contains(&q.to_lowercase()))
+        })
+        .take(query.get("limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(50))
+        .map(|f| json!({ "kind": "function", "name": f.name, "address": format!("{:#x}", f.address) }))
+        .collect();
+    Json(json!({ "results": results, "count": results.len() })).into_response()
+}
+
+async fn project_strings(
+    State(_state): State<AppState>,
+    Path(project_id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let project_path = std::path::PathBuf::from(&project_id);
+    let db = project_path.join("project.db");
+    if !db.is_file() {
+        return not_found("project_not_found", &project_path.display().to_string());
+    }
+    let meta = open_meta();
+    let Ok(store) = damsel_project::open_store(&db, damsel_project::Create::Existing, &meta) else {
+        return internal_error("store_error", "failed to open project");
+    };
+    let Ok(facts) = damsel_project::ProjectStore::facts(&store) else {
+        return internal_error("store_error", "failed to read facts");
+    };
+    let strings: Vec<_> = facts
+        .iter()
+        .filter(|f| f.kind.as_str() == "string")
+        .filter_map(|f| {
+            let object = f.object_id.as_ref()?;
+            let address = u64::from_str_radix(object.key().trim_start_matches("0x"), 16).ok()?;
+            Some(json!({
+                "address": format!("{address:#x}"),
+                "kind": f.payload.split('|').next().unwrap_or(""),
+                "object": object.as_str(),
+            }))
+        })
+        .take(query.get("limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(100))
+        .collect();
+    Json(json!({ "strings": strings, "count": strings.len() })).into_response()
+}
+
+async fn project_summary(
+    State(_state): State<AppState>,
+    Path((project_id, function)): Path<(String, String)>,
+) -> Response {
+    let project_path = std::path::PathBuf::from(&project_id);
+    let db = project_path.join("project.db");
+    if !db.is_file() {
+        return not_found("project_not_found", &project_path.display().to_string());
+    }
+    let meta = open_meta();
+    let Ok(store) = damsel_project::open_store(&db, damsel_project::Create::Existing, &meta) else {
+        return internal_error("store_error", "failed to open project");
+    };
+    let Ok(sources) = damsel_project::ProjectStore::sources(&store) else {
+        return internal_error("store_error", "failed to list sources");
+    };
+    let Some(source) = sources.first() else {
+        return not_found("project_not_found", "project has no sources");
+    };
+    match damsel_decomp::summarize_named(&store, source.source_id, &function) {
+        Ok(report) => Json(json!({ "summary": serde_json::to_value(&report).unwrap_or_default() })).into_response(),
+        Err(e) => not_found("function_not_found", &e.to_string()),
+    }
+}
+
+fn open_meta() -> damsel_project::AnalysisProjectMeta {
+    damsel_project::AnalysisProjectMeta {
+        project_id: damsel_project::ProjectId::new("ui"),
+        name: String::new(),
+        analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
+
+fn not_found(code: &str, message: &str) -> Response {
+    ApiError {
+        status: StatusCode::NOT_FOUND,
+        error: crate::output::ErrorResponse {
+            code: leak_code(code),
+            message: message.to_string(),
+            details: None,
+        },
+    }
+    .into_response()
+}
+
+fn bad_request(code: &str, message: &str) -> Response {
+    ApiError {
+        status: StatusCode::BAD_REQUEST,
+        error: crate::output::ErrorResponse {
+            code: leak_code(code),
+            message: message.to_string(),
+            details: None,
+        },
+    }
+    .into_response()
+}
+
+fn internal_error(code: &str, message: &str) -> Response {
+    ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        error: crate::output::ErrorResponse {
+            code: leak_code(code),
+            message: message.to_string(),
+            details: None,
+        },
+    }
+    .into_response()
 }
 
 async fn upload_image(
@@ -739,4 +878,8 @@ fn optional_u64_from_json(value: serde_json::Value) -> Result<Option<u64>, Strin
             "expected an unsigned integer or integer string, got {other}"
         )),
     }
+}
+
+fn leak_code(code: &str) -> &'static str {
+    Box::leak(code.to_string().into_boxed_str())
 }

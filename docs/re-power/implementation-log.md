@@ -651,8 +651,17 @@ sufficient; syscall intrinsic table required).
   signatures + anti-analysis indicators, with emoji indicators.
 - Proof: workspace 51 suites, 0 failures.
 
-Next: rmcp transport spike, synthesize dispatch migration, Workbench
-pane integration, lab re-verification.
+### Unit 7.12 — UI server full project API — DONE
+
+- `GET /api/projects/{id}/search?q=…`, `GET /api/projects/{id}/
+  strings`, `GET /api/projects/{id}/summary/{function}` added to the
+  UI server. Full API surface now: functions, xrefs, decompile,
+  search, strings, summary. Shared helper fns (not_found /
+  bad_request / internal_error) reduce handler boilerplate.
+- Proof: workspace 51 suites, 0 failures.
+
+Next: rmcp transport spike, Workbench pane integration, lab
+re-verification, then merge.
 
 ## Lab notes
 
