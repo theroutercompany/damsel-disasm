@@ -38,8 +38,8 @@ fn main_renders_with_calls_frame_and_honest_unknowns() {
     assert!(text.iter().any(|l| l.contains("sub_1000004f4(")));
     assert!(text.iter().any(|l| l.contains("sub_100000460(")));
 
-    // cset has no v1 semantics → visible unknown comment, not silence.
-    assert!(text.iter().any(|l| l.contains("/* unknown: cset */")));
+    // cset models as a conditional-set assignment (6.14).
+    assert!(text.iter().any(|l| l.contains("cond:")));
 
     // Every non-brace line carries source addresses (provenance rule).
     for (index, line) in pseudocode.lines.iter().enumerate() {
