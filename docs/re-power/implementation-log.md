@@ -104,12 +104,24 @@ exists; N-1 real-db fixture lands with the first schema bump).
   regression), project_cli 6/6 (values, name filter). Workspace 35
   suites, 0 failures.
 
+### Unit 4.6a — unified `search` command — DONE
+
+- `search <project> <query> [--kind function|symbol|import|section|string]
+  [--limit]`: ranked (exact → prefix → substring, then kind priority
+  function>symbol>import>section>string, then name), deterministic,
+  paged contract (`count`/`truncated`). String search requires the
+  target binary on disk — reported honestly via `strings_searchable`.
+- Proof: project_cli 7/7. Workspace 35 suites, 0 failures. Wave 4 CLI
+  surface complete: analyze, project show/export, functions, xrefs,
+  strings, search.
+
 ### Next units (queue order)
 
 - 4.3 `damsel analyze` CLI — DONE (see above)
 - 4.4b recovery worker v1 (bounds/blocks from CFG walk) + audit gate.
 - 4.5 xref harvesting — DONE (see above)
-- 4.6a search index + `search` command (strings/symbols/functions unified).
+- 4.4b recovery worker (bounds/blocks, ranks 6-8 seeds) + audit gate.
+- 4.7 budget fixtures (stripped-30mb) + bench wiring.
 - 4.7 budgets on `stripped-30mb` fixture (corpus bench rows 4.10).
 
 ## Wave 5 — ELF + x86_64 (parallelizable from 5A)

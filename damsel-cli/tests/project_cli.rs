@@ -203,6 +203,45 @@ fn strings_command_lists_values_and_filters() {
 }
 
 #[test]
+fn search_ranks_across_kinds_with_filters() {
+    let dir = smoke_dir("search");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    // Cross-kind search: `main` finds the function; ranking puts exact
+    // matches first.
+    let out = damsel()
+        .arg("search").arg(&target).arg("main")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["command"], "search");
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["results"][0]["kind"], "function");
+    assert_eq!(body["results"][0]["name"], "_main");
+
+    // Kind filter restricts; string search requires the target binary.
+    let out = damsel()
+        .arg("search").arg(&target).arg("hello")
+        .arg("--kind").arg("string")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["strings_searchable"], true);
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["results"][0]["name"], "hello from damsel");
+
+    // Miss returns zero deterministically.
+    let out = damsel()
+        .arg("search").arg(&target).arg("zzz-not-present")
+        .arg("--format").arg("json")
+        .output().unwrap();
+    let body: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["count"], 0);
+}
+
+#[test]
 fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let dir = smoke_dir("refresh");
     let target = dir.join("arm64-symbolized");

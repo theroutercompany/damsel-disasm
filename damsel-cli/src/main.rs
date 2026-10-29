@@ -539,6 +539,15 @@ enum Command {
         #[arg(long, help = "Maximum rows to print")]
         limit: Option<usize>,
     },
+    #[command(about = "Search functions, symbols, imports, sections, and strings")]
+    Search {
+        project: PathBuf,
+        query: String,
+        #[arg(long, help = "Restrict to one kind (function, symbol, import, section, string)")]
+        kind: Option<String>,
+        #[arg(long, help = "Maximum rows to print")]
+        limit: Option<usize>,
+    },
     #[command(about = "List strings harvested from an analyzed project")]
     Strings {
         project: PathBuf,
@@ -1157,6 +1166,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Strings { project, name, class, min_len, limit } => {
             handle_strings(project, name, class, min_len, limit, &output_settings)?;
         }
+        Command::Search { project, query, kind, limit } => {
+            handle_search(project, &query, kind, limit, &output_settings)?;
+        }
         Command::Cache { command } => handle_cache_command(command, &output_settings)?,
     }
 
@@ -1317,6 +1329,144 @@ fn handle_analyze(
         println!("  facts       = {}", outcome.fact_count);
         println!("  xrefs       = {} ({} function windows)", xref_outcome.xref_count, xref_outcome.function_windows);
         println!("  strings     = {}", strings_outcome.strings);
+    }
+    Ok(())
+}
+
+fn handle_search(
+    project: PathBuf,
+    query: &str,
+    kind_filter: Option<String>,
+    limit: Option<usize>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, function_summaries, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+        .map_err(map_store_error)?;
+    let facts = store.facts().map_err(map_store_error)?;
+
+    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+    struct Row {
+        rank: u8,        // 0 exact, 1 prefix, 2 substring
+        kind_priority: u8,
+        name: String,
+        kind: &'static str,
+        object: String,
+        address: Option<u64>,
+    }
+    let mut rows: Vec<Row> = Vec::new();
+    let mut push = |rank: u8, kind_priority: u8, kind: &'static str, name: &str, object: String, address: Option<u64>| {
+        if let Some(want) = &kind_filter {
+            if want != kind {
+                return;
+            }
+        }
+        let rank = if name == query {
+            0
+        } else if name.starts_with(query) {
+            rank.min(1)
+        } else if name.contains(query) {
+            2
+        } else {
+            return;
+        };
+        rows.push(Row {
+            rank,
+            kind_priority,
+            name: name.to_string(),
+            kind,
+            object,
+            address,
+        });
+    };
+
+    // Functions (kind priority 0) from seed summaries.
+    for f in function_summaries(&store).map_err(map_store_error)? {
+        if let Some(name) = &f.name {
+            push(u8::MAX, 0, "function", name, format!("function:{:#x}", f.address), Some(f.address));
+        }
+    }
+    // Symbols (1), imports (2), sections (3) from fact objects.
+    for fact in &facts {
+        let Some(object) = &fact.object_id else { continue };
+        match object.kind() {
+            "symbol" if fact.kind.as_str() == "symbol" => {
+                push(u8::MAX, 1, "symbol", object.key(), object.as_str().to_string(), None);
+            }
+            "import" if fact.kind.as_str() == "import" => {
+                push(u8::MAX, 2, "import", object.key(), object.as_str().to_string(), None);
+            }
+            "section" if fact.kind.as_str() == "byte_class" => {
+                push(u8::MAX, 3, "section", object.key(), object.as_str().to_string(), None);
+            }
+            _ => {}
+        }
+    }
+    // Strings (4): searchable by value when the target binary is present.
+    let target_path = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".damsel"))
+        .map(|stem| project_dir.with_file_name(stem));
+    let image = target_path
+        .as_deref()
+        .filter(|p| p.is_file())
+        .and_then(|p| load(p.clone()).ok());
+    let strings_searchable = image.is_some();
+    if let Some(image) = &image {
+        for fact in &facts {
+            if fact.kind.as_str() != "string" {
+                continue;
+            }
+            let Some(object) = &fact.object_id else { continue };
+            let Ok(address) =
+                u64::from_str_radix(object.key().trim_start_matches("0x"), 16)
+            else {
+                continue;
+            };
+            let (_, len_part) = fact.payload.split_once("|len=").unwrap_or(("utf8", "0"));
+            let len: usize = len_part.parse().unwrap_or(0);
+            if let Some(value) = image.read_c_string_at_address(address, len.saturating_add(1)) {
+                push(u8::MAX, 4, "string", &value, object.as_str().to_string(), Some(address));
+            }
+        }
+    }
+
+    rows.sort();
+    rows.dedup_by(|a, b| a.object == b.object && a.rank == b.rank);
+    let total = rows.len();
+    let truncated = limit.is_some_and(|l| rows.len() > l);
+    if let Some(limit) = limit {
+        rows.truncate(limit);
+    }
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "search",
+            "query": query,
+            "count": total,
+            "truncated": truncated,
+            "strings_searchable": strings_searchable,
+            "results": rows.iter().map(|r| serde_json::json!({
+                "kind": r.kind,
+                "name": r.name,
+                "id": r.object,
+                "address": r.address.map(|a| format!("{a:#x}")),
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("search `{query}`: {total}");
+        for r in &rows {
+            let address = r
+                .address
+                .map(|a| format!("{a:#010x}"))
+                .unwrap_or_else(|| "          ".to_string());
+            println!("  {address}  {:<8} {}", r.kind, r.name);
+        }
     }
     Ok(())
 }
