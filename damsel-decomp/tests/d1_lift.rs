@@ -58,6 +58,34 @@ fn lift_main_produces_blocks_call_and_return() {
 }
 
 #[test]
+fn subs_emits_flags_and_destination() {
+    // From the real `_main`: subs w8, w0, #0xb.
+    use damsel_core::{DecodedInstruction, Operand};
+    let instruction = DecodedInstruction {
+        address: 0,
+        size: 4,
+        opcode: 0,
+        mnemonic: "subs".to_string(),
+        operands: vec![
+            Operand::Register("w8".to_string()),
+            Operand::Register("w0".to_string()),
+            Operand::ImmediateUnsigned(0xb),
+        ],
+        recovered_values: Vec::new(),
+        references: Vec::new(),
+        annotations: Vec::new(),
+    };
+    let function = lift_arm64(&[instruction]);
+    let statements = &function.blocks[0].statements;
+    assert_eq!(statements.len(), 2, "flags + destination, got {statements:?}");
+    assert!(matches!(&statements[0],
+        IrStatement::Assign { destination, .. } if destination == "flags"));
+    assert!(matches!(&statements[1],
+        IrStatement::Assign { destination, .. } if destination == "w8"));
+    assert_eq!(function.unknown_count, 0);
+}
+
+#[test]
 fn unknown_statements_are_counted_not_hidden() {
     let instructions = disassemble_main();
     let function = lift_arm64(&instructions);

@@ -371,8 +371,16 @@ sufficient; syscall intrinsic table required).
   — rewritten to exact `sub_` runs.
 - Proof: d4_structure 9/9. Workspace 49 suites, 0 failures.
 
-Next 6.x: subs-flags emission, D2 renaming, type seeds, real-binary
-delta run 3, then Wave 5A value-flow dispatch port.
+### Unit 6.12 — subs/adds/ands flags emission — DONE
+
+- Register-destination flag-setters (subs/adds/ands) emit flags from
+  operands [1],[2] AND the destination write; compare-only forms keep
+  [0],[1]. `_main`'s `subs w8, w0, #0xb` now yields both statements
+  (was dest-only).
+- Proof: d1_lift 4/4. Workspace 49 suites, 0 failures.
+
+Next 6.x: D2 renaming, type seeds, real-binary delta run 3, Wave 5A
+value-flow dispatch port.
 
 ## Lab notes
 

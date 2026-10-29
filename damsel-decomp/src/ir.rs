@@ -153,9 +153,9 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
         // Flag-setting compares (arm64: cmp/cmn/tst) mirror the x86
         // cmp/test model — the shared substrate for condition resolution.
         let flag_op = match lower.as_str() {
-            "cmp" => Some(IrBinOp::Sub),
-            "cmn" => Some(IrBinOp::Add),
-            "tst" => Some(IrBinOp::And),
+            "cmp" | "subs" => Some(IrBinOp::Sub),
+            "cmn" | "adds" => Some(IrBinOp::Add),
+            "tst" | "ands" => Some(IrBinOp::And),
             _ => None,
         };
         let destination = instruction
@@ -164,16 +164,21 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
             .and_then(register_of)
             .map(|d| d.clone());
         if let Some(op) = flag_op {
+            // Register-destination variants (subs/adds/ands) compare
+            // operands [1],[2]; compare-only forms (cmp/cmn/tst) use
+            // [0],[1].
+            let has_destination = destination.is_some() && binary_op.is_some();
+            let (flag_lhs, flag_rhs) = if has_destination { (1, 2) } else { (0, 1) };
             statements.push(IrStatement::Assign {
                 destination: "flags".to_string(),
                 expression: IrExpr::BinOp {
                     op,
-                    lhs: Box::new(operand_expr(instruction.operands.first())),
-                    rhs: Box::new(operand_expr(instruction.operands.get(1))),
+                    lhs: Box::new(operand_expr(instruction.operands.get(flag_lhs))),
+                    rhs: Box::new(operand_expr(instruction.operands.get(flag_rhs))),
                 },
             });
-            // Subs-style variants also write their destination.
-            if let (Some(op), Some(dst)) = (binary_op, destination.clone()) {
+            if has_destination {
+                let dst = destination.clone().unwrap();
                 statements.push(IrStatement::Assign {
                     destination: dst,
                     expression: IrExpr::BinOp {
