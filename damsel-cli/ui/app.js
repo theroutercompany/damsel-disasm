@@ -1342,3 +1342,63 @@ renderDisasm();
 renderInspector();
 syncWorkbenchState();
 installEventHandlers();
+
+// --- Project Functions Panel (RE Power Wave 7) ---
+(function() {
+  const listEl = document.getElementById("function-list");
+  const filterEl = document.getElementById("function-filter");
+  const sectionEl = document.getElementById("project-functions-section");
+  if (!listEl || !filterEl || !sectionEl) return;
+
+  let allFunctions = [];
+
+  async function loadProjectFunctions(projectPath) {
+    if (!projectPath) return;
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectPath)}/functions?limit=500`);
+      if (!response.ok) return;
+      const data = await response.json();
+      allFunctions = data.functions || [];
+      render("");
+      sectionEl.style.display = "";
+    } catch (e) {
+      // Project not available — keep the panel hidden
+    }
+  }
+
+  function render(filter) {
+    const lower = filter.toLowerCase();
+    const items = allFunctions.filter(f =>
+      !filter || (f.name || "").toLowerCase().includes(lower)
+    );
+    listEl.innerHTML = items.length
+      ? items.map(f =>
+          `<div class="function-row" data-address="${f.address}" style="padding:2px 4px;cursor:pointer;border-bottom:1px solid #eee;">
+             <code>${f.address}</code> ${f.name || "<em>unnamed</em>"}
+           </div>`
+        ).join("")
+      : "<div class='hint'>No matching functions</div>";
+
+    // Click to disassemble at function address
+    listEl.querySelectorAll(".function-row").forEach(row => {
+      row.addEventListener("click", () => {
+        const address = row.dataset.address;
+        const kindRadio = document.querySelector('input[name="target-kind"][value="address"]');
+        if (kindRadio) {
+          kindRadio.checked = true;
+          kindRadio.dispatchEvent(new Event("change"));
+        }
+        const addrInput = document.getElementById("address-input");
+        if (addrInput) {
+          addrInput.value = address;
+          addrInput.dispatchEvent(new Event("input"));
+        }
+      });
+    });
+  }
+
+  filterEl.addEventListener("input", () => render(filterEl.value));
+
+  // Expose for the main app to call when a project is available
+  window.loadProjectFunctions = loadProjectFunctions;
+})();
