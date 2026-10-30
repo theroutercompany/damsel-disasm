@@ -11,3 +11,4 @@ pub use catalog::{
     render_markdown, scan_imports, scan_instructions, scan_strings,
 };
 pub mod swift;
+pub mod reuse;

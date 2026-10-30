@@ -865,3 +865,17 @@ floor set, Workbench integration.
   swift-sample fixture reports `swift: __swift5_entry (8 bytes)`.
 - 3 unit tests.
 - Proof: workspace 54 suites, 0 failures.
+
+### Unit 8.2a — Static-link reuse detection (fingerprint matching) — DONE
+
+- `damsel-recon-catalog::reuse`: function fingerprints (strings,
+  constants, call count, instruction count) matched against a corpus
+  of known library functions. Score 0.0–1.0 with evidence lines
+  ("strings: 1/1 matched", "constants: 2/2 matched", "size: 106/106").
+- Weighted scoring: strings 0.5 (strongest), constants 0.3,
+  structure 0.2. Neutral when both sides lack the signal; weak
+  negative when only one side has it.
+- Minimal glibc corpus (memcpy, strlen, malloc) as seed data.
+- 4 unit tests: exact string match, exact constant match, no match
+  below threshold, evidence inclusion.
+- Proof: workspace 54 suites, 0 failures.
