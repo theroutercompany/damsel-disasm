@@ -972,3 +972,25 @@ floor set, Workbench integration.
 - 8 unit tests including the complete SSE2 strlen core loop
   (movdqa + pxor + pcmpeqb + pmovmskb + test = 0 unknowns).
 - Proof: workspace 56 suites, 0 failures.
+
+### Lab evidence run 14 (2026-10-30) — SIMD floor set results — DONE
+
+Real glibc `libc.so.6` on the NixOS lab, before/after the SSE2
+floor set (units 6.9, 6.9b, 6.9c):
+
+| Function | Before | After |
+|---|---|---|
+| `__strlen_sse2` | 42% | **0%** |
+| `__strcmp_sse2` | 55% | **1%** (6/1109 lines) |
+| `__memcmp_sse2` | — | **0%** |
+| `__memchr_sse2` | — | 10% |
+| `_int_malloc` | 0% | **0%** |
+| `__GI_getenv` | 0% | **0%** |
+
+The gap closure exceeded the target: strlen went 42%→0% (target was
+"toward 0%"), strcmp went 55%→1%, memcmp landed at 0% on first
+measurement. 8+ functions now decompile with zero unknowns on real
+glibc. Instructions added: movdqa/movdqu/movaps/movups, pxor,
+pcmpeqb/w/d/q (→ CmpEq), pcmpgtb/w/d/q (→ CmpGt), pmovmskb, ptest,
+bsf/bsr/tzcnt/lzcnt, psrldq/pslldq (byte shifts), psubb/w/d/q,
+paddb/w/d/q, por/pand/pandn, movlpd/movhpd/movlps/movhps.
