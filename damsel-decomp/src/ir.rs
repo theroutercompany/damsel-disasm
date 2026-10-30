@@ -344,7 +344,27 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     damsel_core::Reference::Call { target } => Some(*target),
                     _ => None,
                 });
-                if let Some(target) = call_target {
+                // ObjC stub calls: the engine resolves stubs to
+                // _objc_msgSend$SELECTOR — capture the selector.
+                let import_name = instruction.references.iter().find_map(|r| match r {
+                    damsel_core::Reference::Stub { name: Some(name), .. }
+                        if name.contains("objc_msgSend") =>
+                    {
+                        Some(name.clone())
+                    }
+                    damsel_core::Reference::Import { name, .. }
+                        if name.contains("objc_msgSend") =>
+                    {
+                        Some(name.clone())
+                    }
+                    _ => None,
+                });
+                if let Some(name) = import_name {
+                    statements.push(IrStatement::Call {
+                        target: IrCallTarget::Unknown(format!("objc:{name}")),
+                        site,
+                    });
+                } else if let Some(target) = call_target {
                     statements.push(IrStatement::Call {
                         target: IrCallTarget::Function(target),
                         site,

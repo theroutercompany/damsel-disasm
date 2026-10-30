@@ -243,6 +243,9 @@ fn render_statement(statement: &IrStatement) -> (String, Vec<String>) {
             IrCallTarget::Function(address) => {
                 (format!("sub_{address:x}();"), Vec::new())
             }
+            IrCallTarget::Unknown(via) if via.starts_with("objc:") => {
+                (format!("{via}(x0, x1);"), Vec::new())
+            }
             IrCallTarget::Unknown(via) => (
                 format!("call_unknown({via});"),
                 vec!["unresolved target".to_string()],

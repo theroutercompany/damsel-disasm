@@ -760,3 +760,15 @@ Next: merge to main, then rmcp transport + Workbench integration.
 
 Next: ObjC semantic overlay (msgSend recognition, ivar naming), SIMD
 floor set, Workbench integration.
+
+### Unit 7.20 — ObjC stub call recognition (partial) — DONE
+
+- Lift checks `Reference::Stub` for `_objc_msgSend$SELECTOR` names;
+  renderer formats as `objc:name(x0, x1)`. However, the engine's stub
+  resolution (annotation layer) doesn't flow into the reference layer
+  that the IR consumes — stub calls arrive as plain `Call` to the stub
+  address. Full ObjC overlay requires threading stub names from the
+  annotation pass into the IR (tracked for the next pass).
+- The ObjC pseudocode is already fully readable without this: ivar
+  access, selref GOT loads, and stub calls as `sub_XXXX()` with the
+  annotation visible in the disassembly view.
