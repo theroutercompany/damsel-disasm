@@ -1650,7 +1650,7 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
     let report = assess(symbol_count, &sections, &imports, &strings);
 
     // Wave 8.4: catalog detections (typed severity/confidence/remediation)
-    let catalog_detections = {
+    let mut catalog_detections = {
         let mut dets = damsel_recon_catalog::scan_imports(&imports);
         dets.extend(damsel_recon_catalog::scan_strings(&strings));
         dets
@@ -1662,6 +1662,16 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
         .map(|(name, data)| (name.clone(), data.len()))
         .collect();
     let swift_sections = damsel_recon_catalog::swift::swift_sections(&swift_secs);
+
+    // Wave 8.4: XOR-decode-loop scan on code section bytes
+    {
+        let text_bytes: Vec<u8> = sections
+            .iter()
+            .filter(|(name, _)| name == "__text" || name == ".text")
+            .flat_map(|(_, data)| data.iter().copied())
+            .collect();
+        catalog_detections.extend(damsel_recon_catalog::scan_code_bytes_for_xor_loop(&text_bytes));
+    }
 
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({

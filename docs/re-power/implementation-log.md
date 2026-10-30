@@ -903,3 +903,21 @@ floor set, Workbench integration.
   - Witness thunks identified (is_thunk=true)
 - Ground truth calibrated against `xcrun swift-demangle`.
 - Proof: workspace 54 suites, 0 failures.
+
+### Unit 8.4d — Adversarial labeled fixtures + detection upgrades — DONE
+
+- 4 labeled adversarial fixtures in `fixtures/bin/adversarial/`:
+  anti-debug-arm64 (ptrace+sysctl), strcrypt-arm64 (XOR decode
+  loop), timing-arm64 (mach_absolute_time), swift-rich-arm64
+  (protocols, structs, enums — 8 swift5 sections).
+- New detections: ANTI_DEBUG_TIMING fires on
+  mach_absolute_time/clock_gettime imports; STRING_ENCRYPTION fires
+  on ldrb/eor/strb XOR-loop byte patterns in __text (raw-byte
+  heuristic, no project needed).
+- Swift demangler: protocol abbreviations (Hashable, Equatable,
+  RawRepresentable, Encodable, Decodable, CaseIterable) + Builtin
+  types. All-symbol rate 84% (140/167) on swift-rich; function rate
+  ~96%.
+- 7 integration tests in `adversarial_fixtures.rs`: each detection
+  fires on its fixture; clean binary produces zero false positives.
+- Proof: workspace 55 suites, 0 failures.

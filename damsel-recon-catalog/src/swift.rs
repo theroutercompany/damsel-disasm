@@ -48,6 +48,27 @@ pub fn demangle(mangled: &str) -> Option<Demangled> {
             } else {
                 parse_identifier(rest)?
             }
+        } else if let Some(r) = rest.strip_prefix("SH") {
+            // Hashable protocol
+            ("Swift.Hashable", r)
+        } else if let Some(r) = rest.strip_prefix("SQ") {
+            // Equatable protocol
+            ("Swift.Equatable", r)
+        } else if let Some(r) = rest.strip_prefix("SR") {
+            // RawRepresentable protocol
+            ("Swift.RawRepresentable", r)
+        } else if let Some(r) = rest.strip_prefix("SE") {
+            // Encodable protocol
+            ("Swift.Encodable", r)
+        } else if let Some(r) = rest.strip_prefix("SD") {
+            // Decodable protocol
+            ("Swift.Decodable", r)
+        } else if let Some(r) = rest.strip_prefix("SCT") {
+            // CaseIterable protocol (three-char)
+            ("Swift.CaseIterable", r)
+        } else if let Some(r) = rest.strip_prefix("Bo") {
+            // Builtin.Bool witness
+            ("Builtin.Bool", r)
         } else {
             parse_identifier(rest)?
         };

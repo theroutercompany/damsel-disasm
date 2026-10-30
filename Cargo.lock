@@ -486,6 +486,7 @@ dependencies = [
 name = "damsel-recon-catalog"
 version = "0.1.0"
 dependencies = [
+ "damsel-macho",
  "serde",
 ]
 

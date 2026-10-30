@@ -8,7 +8,7 @@ pub mod catalog;
 
 pub use catalog::{
     CatalogEntry, Confidence, Detection, InstructionWindow, Severity, catalog, lookup,
-    render_markdown, scan_imports, scan_instructions, scan_strings,
+    render_markdown, scan_code_bytes_for_xor_loop, scan_imports, scan_instructions, scan_strings,
 };
 pub mod swift;
 pub mod reuse;

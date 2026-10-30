@@ -166,6 +166,17 @@ pub fn scan_imports(imports: &[String]) -> Vec<Detection> {
                 confidence: Confidence::Medium,
             });
         }
+        // Timing-check APIs: high-resolution clocks used to detect
+        // single-stepping (elapsed time between two reads).
+        if lower.contains("mach_absolute_time") || lower.contains("clock_gettime") {
+            detections.push(Detection {
+                code: "ANTI_DEBUG_TIMING",
+                location: format!("import:{import}"),
+                evidence: format!("imports {import} (high-resolution clock)"),
+                severity: Severity::Info,
+                confidence: Confidence::Low,
+            });
+        }
     }
 
     detections
@@ -265,6 +276,59 @@ pub fn structural_detection(
     Detection { code, location, evidence, severity, confidence }
 }
 
+
+/// Scan arm64 code bytes for the XOR-decode-loop pattern:
+/// ldrb → eor → strb within a small window (byte-wise string
+/// decryption). This is a raw-byte heuristic — the IR-level detector
+/// (`detect_string_encryption`) provides richer evidence when a
+/// project exists.
+pub fn scan_code_bytes_for_xor_loop(code: &[u8]) -> Vec<Detection> {
+    let mut detections = Vec::new();
+    if code.len() < 12 {
+        return detections;
+    }
+
+    // arm64 32-bit little-endian instruction words.
+    let words: Vec<(usize, u32)> = code
+        .chunks_exact(4)
+        .enumerate()
+        .map(|(i, c)| (i * 4, u32::from_le_bytes([c[0], c[1], c[2], c[3]])))
+        .collect();
+
+    for window in words.windows(7) {
+        let has_ldrb = window.iter().any(|(_, w)| (w & 0xFFC00000) == 0x39400000);
+        let has_eor = window.iter().any(|(_, w)| (w & 0xFF200000) == 0x4A000000);
+        let has_strb = window.iter().any(|(_, w)| (w & 0xFFC00000) == 0x39000000);
+        let has_loop_back = window.iter().any(|(_, w)| {
+            // b (unconditional) with negative offset (loop back)
+            (w & 0xFC000000) == 0x14000000 && (w & 0x03FFFFFF) >= 0x03000000
+        });
+
+        if has_ldrb && has_eor && has_strb {
+            let addr = window[0].0;
+            // Only report once per pattern (skip adjacent duplicates)
+            let is_duplicate = detections.last().is_some_and(|d: &Detection| {
+                usize::from_str_radix(d.location.trim_start_matches("0x"), 16)
+                    .is_ok_and(|prev| addr <= prev + 24)
+            });
+            if !is_duplicate {
+                detections.push(Detection {
+                    code: "STRING_ENCRYPTION",
+                    location: format!("{addr:#x}"),
+                    evidence: format!(
+                        "ldrb/eor/strb XOR-decode loop at byte offset {addr:#x}{}",
+                        if has_loop_back { " (with back-edge)" } else { "" }
+                    ),
+                    severity: Severity::Medium,
+                    confidence: Confidence::Medium,
+                });
+            }
+        }
+    }
+
+    detections
+}
+
 // ---------------------------------------------------------------------------
 // Reporting
 // ---------------------------------------------------------------------------
@@ -355,6 +419,37 @@ mod tests {
         let md = render_markdown(&dets);
         assert!(md.contains("ANTI_DEBUG_PTRACE"));
         assert!(md.contains("remediation") || md.contains("Patch"));
+    }
+
+    #[test]
+    fn xor_loop_detected_in_arm64_bytes() {
+        // ldrb w8,[x9]; eor w8,w8,w10; strb w8,[x9]; nop; nop; b back
+        let code: Vec<u8> = []
+            .into_iter()
+            .chain(0x39400128u32.to_le_bytes()) // ldrb
+            .chain(0x4a0a0108u32.to_le_bytes()) // eor
+            .chain(0x39000128u32.to_le_bytes()) // strb
+            .chain(0xd503201fu32.to_le_bytes()) // nop
+            .chain(0xd503201fu32.to_le_bytes()) // nop
+            .chain(0xd503201fu32.to_le_bytes()) // nop
+            .chain(0x17fffff0u32.to_le_bytes()) // b (back)
+            .collect();
+        let dets = scan_code_bytes_for_xor_loop(&code);
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].code, "STRING_ENCRYPTION");
+        assert_eq!(dets[0].severity, Severity::Medium);
+    }
+
+    #[test]
+    fn no_xor_loop_in_plain_code() {
+        // Simple mov/ret sequence — no decode loop
+        let code: Vec<u8> = []
+            .into_iter()
+            .chain(0x52800000u32.to_le_bytes()) // mov w0, #0
+            .chain(0xd65f03c0u32.to_le_bytes()) // ret
+            .collect();
+        let dets = scan_code_bytes_for_xor_loop(&code);
+        assert!(dets.is_empty());
     }
 
     #[test]
