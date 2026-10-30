@@ -7,6 +7,20 @@ Rule (inherited from the repo): evidence over assertion. A wave is not done
 when code merges; it is done when every row for that wave passes in CI or is
 recorded in a verified evidence package.
 
+
+## Wave 8 — Proprietary-Target Depth
+
+| # | Claim | Verifiable via | Status |
+|---|---|---|---|
+| 8.1 | Anti-analysis catalog: 13 named detections with severity/confidence/remediation | `cargo test -p damsel-recon-catalog` | ✅ CI |
+| 8.2 | Catalog detections in recon output with remediation hints | `damsel recon <binary>` | ✅ CI |
+| .  | defense_added diff findings (version archaeology) | `cargo test -p damsel-decomp --test defense_diff` | ✅ CI |
+| 8.3 | Swift symbol demangler: Module.function for `_$s` names | `cargo test -p damsel-recon-catalog` (swift tests) | ✅ CI |
+| .  | Swift section inventory: `__swift5_*` detection | `cargo test -p damsel-recon-catalog` (section tests) | ✅ CI |
+| .  | All 10 fixture Swift functions demangle | `damsel functions fixtures/bin/swift-sample` | ✅ CI |
+| 8.4 | Fingerprint-based symbol reuse (strings/constants/structure) | `cargo test -p damsel-recon-catalog` (reuse tests) | ✅ CI |
+| .  | `identify` CLI command on project functions | `damsel identify <project>` | ✅ CI |
+
 ## Verification Status (2026-10-29)
 
 Rows marked ✅ have CI-verifiable evidence on the current tree. Rows
