@@ -994,3 +994,25 @@ glibc. Instructions added: movdqa/movdqu/movaps/movups, pxor,
 pcmpeqb/w/d/q (→ CmpEq), pcmpgtb/w/d/q (→ CmpGt), pmovmskb, ptest,
 bsf/bsr/tzcnt/lzcnt, psrldq/pslldq (byte shifts), psubb/w/d/q,
 paddb/w/d/q, por/pand/pandn, movlpd/movhpd/movlps/movhps.
+
+### Unit 4.11 + 8.2h — FDE function recovery + corpus identification (lab run 15) — DONE
+
+**FDE function recovery (`.eh_frame` parsing):**
+- New `damsel-elf::eh_frame` module: walks CIE/FDE records, extracts
+  (start, end) function extents. 6 unit tests including multi-FDE and
+  truncation handling.
+- Wired into `ingest_elf_image` as `eh_frame` provenance seeds.
+- Lab result on a stripped static binary (gcc -static, strip --strip-all):
+  **0 → 1,135 function bounds**, 26,237 xrefs recovered.
+- Bug found and fixed by lab diagnostic: FDE start check was inverted
+  (`.text` addresses are BELOW `.eh_frame`, not above).
+
+**Corpus identification end-to-end:**
+- `damsel corpus-export`: extracts fingerprints from symbolized
+  projects (3,952 entries from glibc libc.so.6).
+- `damsel identify --corpus <file>`: matches stripped functions
+  against the corpus.
+- Size-uniqueness boost: exact unique-size matches become confident.
+- Lab result on the stripped static binary: **24 confident
+  identifications** (unique sizes), 1,111 candidates with evidence.
+- Proof: workspace 56 suites, 0 failures.
