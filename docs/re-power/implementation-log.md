@@ -740,3 +740,23 @@ Next: merge to main, then rmcp transport + Workbench integration.
   verification commands. "Planned next" replaced with actual
   capability list. Standing repo rule enforced.
 - Proof: workspace 51 suites, 0 failures.
+
+### Lab evidence run 13 (2026-10-29) — arm64 + ObjC Mach-O survey — DONE
+
+- Mach-O fixtures on arm64 (Apple Silicon, host machine):
+  - `_main` (arm64-symbolized): **0/20** unknowns
+  - `_main` (objc-sample): **0/55** unknowns
+  - `+[Speaker speakerKind]`: **0/9** unknowns
+  - `-[Speaker title]`: **0/9** unknowns — ivar access at offset 0x10 visible
+  - `-[Speaker prefix]`: **0/31** unknowns
+  - `-[Greeter greeting]`: **0/38** unknowns — GOT-selref loads visible
+
+- **Every function tested decompiles with ZERO unknowns on arm64.**
+- ObjC method names need `--function=-[Class method]` syntax (the
+  leading `-` confuses clap's flag parser without `=`).
+- The ObjC runtime is visible in the pseudocode: ivar offsets, selref
+  loads through the GOT at fixed offsets, method calls with implicit
+  self/_cmd arguments.
+
+Next: ObjC semantic overlay (msgSend recognition, ivar naming), SIMD
+floor set, Workbench integration.
