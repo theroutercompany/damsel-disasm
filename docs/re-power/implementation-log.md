@@ -857,3 +857,11 @@ floor set, Workbench integration.
   `Swift.Array._endMutation`.
 - 7 unit tests; calibrated against `xcrun swift-demangle` ground truth.
 - Proof: workspace 54 suites, 0 failures.
+
+### Unit 8.3b — Swift section inventory — DONE
+
+- `swift_sections(sections)` + `is_swift_binary(sections)`: detect
+  `__swift5_*` metadata sections. Wired into `damsel recon` — the
+  swift-sample fixture reports `swift: __swift5_entry (8 bytes)`.
+- 3 unit tests.
+- Proof: workspace 54 suites, 0 failures.

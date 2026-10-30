@@ -165,3 +165,65 @@ mod tests {
         assert!(demangle_type("XX").is_none());
     }
 }
+
+/// A Swift metadata section found in a binary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwiftSection {
+    /// Section name without the `__swift5_` prefix (e.g. `typeref`).
+    pub kind: String,
+    /// Full section name (e.g. `__swift5_typeref`).
+    pub name: String,
+    /// Section size in bytes.
+    pub size: usize,
+}
+
+/// Scan section names for Swift metadata sections (`__swift5_*`).
+pub fn swift_sections(sections: &[(String, usize)]) -> Vec<SwiftSection> {
+    sections
+        .iter()
+        .filter(|(name, _)| name.starts_with("__swift5_"))
+        .map(|(name, size)| SwiftSection {
+            kind: name.trim_start_matches("__swift5_").to_string(),
+            name: name.clone(),
+            size: *size,
+        })
+        .collect()
+}
+
+/// True if the binary contains any Swift metadata sections.
+pub fn is_swift_binary(sections: &[(String, usize)]) -> bool {
+    sections.iter().any(|(name, _)| name.starts_with("__swift5_"))
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::*;
+
+    #[test]
+    fn detects_swift_sections() {
+        let sections = vec![
+            ("__text".to_string(), 4096),
+            ("__swift5_entry".to_string(), 8),
+            ("__swift5_typeref".to_string(), 256),
+            ("__cstring".to_string(), 512),
+        ];
+        let swift = swift_sections(&sections);
+        assert_eq!(swift.len(), 2);
+        assert_eq!(swift[0].kind, "entry");
+        assert_eq!(swift[1].kind, "typeref");
+        assert_eq!(swift[1].size, 256);
+    }
+
+    #[test]
+    fn no_swift_sections() {
+        let sections = vec![("__text".to_string(), 4096)];
+        assert!(swift_sections(&sections).is_empty());
+        assert!(!is_swift_binary(&sections));
+    }
+
+    #[test]
+    fn is_swift() {
+        let sections = vec![("__swift5_entry".to_string(), 8)];
+        assert!(is_swift_binary(&sections));
+    }
+}

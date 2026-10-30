@@ -1648,6 +1648,13 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
         dets
     };
 
+    // Wave 8.3: Swift section inventory
+    let swift_secs: Vec<(String, usize)> = sections
+        .iter()
+        .map(|(name, data)| (name.clone(), data.len()))
+        .collect();
+    let swift_sections = damsel_recon_catalog::swift::swift_sections(&swift_secs);
+
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({
             "command": "recon",
@@ -1682,6 +1689,9 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
             if let Some(entry) = damsel_recon_catalog::lookup(det.code) {
                 println!("    → {}", entry.remediation);
             }
+        }
+        for sec in &swift_sections {
+            println!("  swift: {} ({} bytes)", sec.name, sec.size);
         }
     }
     Ok(())
