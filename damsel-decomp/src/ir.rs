@@ -890,6 +890,33 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                         address: IrExpr::AddrOf { base: s, displacement: 0 },
                     })
                 }
+                "bsf" | "bsr" | "tzcnt" | "lzcnt" => {
+                    // Bit scan: dest = index of first/last set bit in
+                    // src. Model as reading the integer view of src.
+                    let dest = instruction.operands.first().and_then(register_of);
+                    let src = instruction.operands.get(1).and_then(|op| {
+                        register_of(op).or_else(|| memory_expr_from(op).map(|_| String::new()))
+                    });
+                    // For memory sources, load from the address.
+                    if let Some(d) = dest {
+                        if let Some(address) =
+                            instruction.operands.get(1).and_then(memory_expr_from)
+                        {
+                            Some(IrStatement::Load { destination: d, address })
+                        } else if let Some(s) =
+                            instruction.operands.get(1).and_then(register_of)
+                        {
+                            Some(IrStatement::Load {
+                                destination: d,
+                                address: IrExpr::AddrOf { base: s, displacement: 0 },
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
                 "ptest" => {
                     // Packed test: ZF = (dest AND src) == 0; CF = (dest
                     // AND NOT src) == 0. Model the AND (flag substrate).
