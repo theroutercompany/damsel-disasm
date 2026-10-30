@@ -546,6 +546,15 @@ enum Command {
         project: PathBuf,
         #[arg(long, help = "Minimum match score (0.0-1.0)")]
         threshold: Option<f64>,
+        #[arg(long, help = "Corpus file (JSON) to match against")]
+        corpus: Option<PathBuf>,
+    },
+    CorpusExport {
+        project: PathBuf,
+        #[arg(long, help = "Output corpus file (JSON)")]
+        out: PathBuf,
+        #[arg(long, help = "Library label for the corpus (e.g. glibc)")]
+        library: String,
     },
     #[command(about = "Diff two analyzed projects (function-level, Wave 7)")]
     Diff {
@@ -1234,8 +1243,11 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Recon { path } => {
             handle_recon(path, &output_settings)?;
         }
-        Command::Identify { project, threshold } => {
-            handle_identify(project, threshold, &output_settings)?;
+        Command::Identify { project, threshold, corpus } => {
+            handle_identify(project, threshold, corpus, &output_settings)?;
+        }
+        Command::CorpusExport { project, out, library } => {
+            handle_corpus_export(project, out, library, &output_settings)?;
         }
         Command::Batch { inputs, out, fail_fast } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
@@ -1718,6 +1730,7 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
 fn handle_identify(
     project: PathBuf,
     threshold: Option<f64>,
+    corpus_path: Option<PathBuf>,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{Create, ProjectStore, function_summaries, open_store};
@@ -1729,7 +1742,23 @@ fn handle_identify(
         .map_err(map_store_error)?;
 
     let summaries = function_summaries(&store).map_err(map_store_error)?;
-    let corpus = damsel_recon_catalog::reuse::glibc_minimal_corpus();
+    let corpus = if let Some(path) = &corpus_path {
+        // Load an exported corpus (JSON array of KnownFunction).
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            CliRunError::command(
+                "corpus_read_error",
+                format!("{}: {e}", path.display()),
+            )
+        })?;
+        serde_json::from_str(&text).map_err(|e| {
+            CliRunError::command(
+                "corpus_parse_error",
+                format!("{}: {e}", path.display()),
+            )
+        })?
+    } else {
+        damsel_recon_catalog::reuse::glibc_minimal_corpus()
+    };
 
     // Collect string facts from the project for fingerprinting.
     let string_facts: std::collections::BTreeMap<u64, Vec<String>> = store
@@ -1816,6 +1845,109 @@ fn handle_identify(
             }
         }
     }
+    Ok(())
+}
+
+fn handle_corpus_export(
+    project: PathBuf,
+    out: PathBuf,
+    library: String,
+    _output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, function_summaries, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+        .map_err(map_store_error)?;
+
+    let summaries = function_summaries(&store).map_err(map_store_error)?;
+
+    // Collect string facts per function (for fingerprint strings).
+    let string_facts: std::collections::BTreeMap<u64, Vec<String>> = store
+        .facts()
+        .map_err(map_store_error)?
+        .iter()
+        .filter_map(|fact| {
+            if fact.kind.as_str() != "string_in_function" {
+                return None;
+            }
+            let payload: serde_json::Value = serde_json::from_str(&fact.payload).ok()?;
+            let address = payload.get("function")?.as_str()?.parse::<u64>().ok()?;
+            let text = payload.get("text")?.as_str()?.to_string();
+            Some((address, vec![text]))
+        })
+        .fold(Default::default(), |mut acc: std::collections::BTreeMap<u64, Vec<String>>, (addr, texts)| {
+            acc.entry(addr).or_default().extend(texts);
+            acc
+        });
+
+    // Collect function bounds for instruction counts (approximate:
+    // (end - start) / 4 for arm64, / variable for x86 — use the bound
+    // size as a proxy).
+    let bounds: std::collections::BTreeMap<u64, (u64, u64)> = store
+        .facts()
+        .map_err(map_store_error)?
+        .iter()
+        .filter_map(|fact| {
+            if fact.kind.as_str() != "function_bound" {
+                return None;
+            }
+            let object = fact.object_id.as_ref()?;
+            let address = u64::from_str_radix(object.key().trim_start_matches("0x"), 16).ok()?;
+            // Payload format: "0xSTART-0xEND|stop=..."
+            let payload = &fact.payload;
+            let start = payload.split('-').next()?.trim_start_matches("0x");
+            let end = payload
+                .split('-')
+                .nth(1)?
+                .split('|')
+                .next()?
+                .trim_start_matches("0x");
+            let s = u64::from_str_radix(start, 16).ok()?;
+            let e = u64::from_str_radix(end, 16).ok()?;
+            Some((address, (s, e)))
+        })
+        .collect();
+
+    let mut corpus: Vec<damsel_recon_catalog::reuse::KnownFunction> = Vec::new();
+    for summary in &summaries {
+        // Only export named functions (they're the ground truth).
+        let Some(name) = &summary.name else { continue };
+        if name.starts_with("sub_") || name.is_empty() {
+            continue;
+        }
+
+        let strings = string_facts.get(&summary.address).cloned().unwrap_or_default();
+        let instruction_count = bounds
+            .get(&summary.address)
+            .map(|(s, e)| ((e - s) / 4) as usize) // arm64 = 4 bytes/insn
+            .unwrap_or(0);
+
+        corpus.push(damsel_recon_catalog::reuse::KnownFunction {
+            library: library.clone(),
+            name: name.clone(),
+            fingerprint: damsel_recon_catalog::reuse::FunctionFingerprint {
+                strings,
+                constants: vec![], // constants need decode-level extraction
+                call_count: 0,     // calls need decode-level extraction
+                instruction_count,
+            },
+        });
+    }
+
+    let json = serde_json::to_string_pretty(&corpus).map_err(|e| {
+        CliRunError::command("corpus_write_error", e.to_string())
+    })?;
+    std::fs::write(&out, json).map_err(|e| {
+        CliRunError::command("corpus_write_error", format!("{}: {e}", out.display()))
+    })?;
+    println!(
+        "corpus: exported {} functions from {} -> {}",
+        corpus.len(),
+        project.display(),
+        out.display()
+    );
     Ok(())
 }
 
