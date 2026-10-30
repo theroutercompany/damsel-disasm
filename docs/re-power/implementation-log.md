@@ -732,3 +732,11 @@ Next: merge to main, then rmcp transport + Workbench integration.
 - **General-purpose C functions decompile at near-zero unknown rate.**
   SIMD-optimized variants have high rates because vector instructions
   are honestly unknown — this is the correct behavior.
+
+### Unit 7.17 — README truth update — DONE
+
+- README rewritten to reflect implemented reality: all commands,
+  MCP server, quality table (real glibc results), support matrix,
+  verification commands. "Planned next" replaced with actual
+  capability list. Standing repo rule enforced.
+- Proof: workspace 51 suites, 0 failures.
