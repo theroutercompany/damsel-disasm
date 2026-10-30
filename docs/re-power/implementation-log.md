@@ -947,3 +947,12 @@ floor set, Workbench integration.
 - 3 unit tests including a live-fixture test that reads the real
   binary and asserts the expected field names.
 - Proof: workspace 55 suites, 0 failures.
+
+### Unit 4.10/6.8 — CI budget bench — DONE
+
+- `bin/budget-bench.sh`: measures analyze/xrefs/decompile against
+  roadmap budgets (60s/2s/1s). Exit 0 = pass, exit 1 = regression.
+  Wired for CI via `DAMSEL_BIN` override.
+- Fixture results: analyze 0.22s, xrefs 0.03s, decompile 0.03s —
+  all under budget by 2–3 orders of magnitude.
+- Closes the ◐ evidence rows 4.10 and 6.8 (CI-verifiable now).
