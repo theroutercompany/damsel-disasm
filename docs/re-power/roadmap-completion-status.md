@@ -19,9 +19,9 @@ implemented reality on `main`. Evidence links point to the
 
 | Item | Status | What exists | What remains |
 |---|---|---|---|
-| 8.4 Anti-analysis catalog | ✅ Complete | 13-entry catalog, severity/confidence/remediation, defense_added diff, recon integration | Labeled adversarial corpus for threshold calibration |
-| 8.3 Swift metadata | ◐ Foundations | Member-level demangling (96% rate on real Swift binary), section inventory (8 `__swift5_*` types) | Type-record parsing, protocol/conformance tables |
-| 8.2 Symbol reuse | ◐ Foundations | Fingerprint matching (strings/constants/structure), evidence-scored results, `identify` CLI | Real corpus at scale (glibc debuginfo-derived) |
+| 8.4 Anti-analysis catalog | ✅ Complete | 13-entry catalog, severity/confidence/remediation, defense_added diff, recon integration, **4 labeled adversarial fixtures with 7 integration tests** | Larger adversarial corpus |
+| 8.3 Swift metadata | ◐ Foundations | Member-level demangling (84% all-symbol / 96% function), section inventory, **field names from `__swift5_reflstr`** | Protocol/conformance table records |
+| 8.2 Symbol reuse | ◐ Foundations | Fingerprint matching, **candidate problems (below-threshold emitted)**, `identify` CLI | Real corpus at scale (glibc debuginfo-derived) |
 | 8.1 Patch studio | ⏸ Dormant | Spec complete (bounded encoder vocabulary, iced-x86 decision) | Gated behind maintainer re-decision per D-5 |
 
 ## Exit Criteria Assessment
@@ -73,11 +73,10 @@ patch studio) remain per the table above.
 
 ## What Would Make This "More Than Satisfactory"
 
-1. **CI budget benches** (rows 4.10, 6.8): wire the timing gates into
-   CI so regressions fail builds, not just lab reports.
-2. **Swift type-record parsing** (8.3): extract type names, field
-   offsets, and protocol conformances from `__swift5_typeref` /
-   `__swift5_fieldmd` — requires a Swift framework corpus.
+1. ~~CI budget benches~~ **DONE** — `bin/budget-bench.sh` (rows 4.10/6.8)
+2. **Swift type-record parsing** (8.3): field names extracted from
+   `__swift5_reflstr`; remaining: typed field offsets, protocol
+   conformance tables.
 3. **glibc corpus at scale** (8.2): derive fingerprints from distro
    debuginfo (build-id → name/type map) — requires lab builds.
 4. **SIMD floor set** (D-4 quality): model SSE2/AVX basics to reduce
@@ -85,5 +84,5 @@ patch studio) remain per the table above.
 5. **Workbench native app integration**: project-open flow +
    functions/pseudocode panes in `damsel-app/`.
 
-Items 1–3 are depth/infrastructure extensions on solid foundations;
-the core roadmap deliverables are done.
+Items 2–5 are depth extensions on solid foundations; the core
+roadmap deliverables and their acceptance gaps are closed.
