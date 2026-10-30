@@ -840,3 +840,20 @@ floor set, Workbench integration.
 - Proven on a live sysctl-importing test binary (compiled fresh,
   detected immediately).
 - Proof: workspace 54 suites, 0 failures.
+
+### Unit 8.3a — Swift symbol demangler — DONE
+
+- `damsel-recon-catalog::swift::demangle`: parses `_$s`-prefixed
+  mangled names to `Module.function` form. Handles:
+  - Length-prefixed modules: `_$s17DamselSwiftSample9publicAdd...`
+  - Swift stdlib shorthand: `_$ss5print_...` → `Swift.print`
+  - Array type context: `_$sSa12_endMutation...` → `Swift.Array._endMutation`
+  - Default-argument thunk detection (`FfA`)
+  - Rejects non-Swift and malformed inputs (None, never wrong output)
+- Wired into `damsel functions`: all 10 Swift functions in the
+  swift-sample fixture now display readable names:
+  `DamselSwiftSample.publicAdd`, `Swift._finalizeUninitializedArray`,
+  `Swift.print`, `Swift.DefaultStringInterpolation`,
+  `Swift.Array._endMutation`.
+- 7 unit tests; calibrated against `xcrun swift-demangle` ground truth.
+- Proof: workspace 54 suites, 0 failures.

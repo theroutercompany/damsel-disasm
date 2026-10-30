@@ -2427,11 +2427,19 @@ fn handle_functions(
         println!("functions: {total}");
         for f in &summaries {
             let name = f.name.as_deref().unwrap_or("");
+            // Swift demangling: `_$s...` names show the readable form.
+            let display_name = if name.starts_with("_$s") || name.starts_with("$s") {
+                damsel_recon_catalog::swift::demangle(name)
+                    .map(|d| d.display)
+                    .unwrap_or_else(|| name.to_string())
+            } else {
+                name.to_string()
+            };
             let bound = bound_by_address
                 .get(&f.address)
                 .map(|b| b.as_str())
                 .unwrap_or("-");
-            println!("  {:#010x}  {:<24} [{:<28}] {}", f.address, name, f.seeds.join(","), bound);
+            println!("  {:#010x}  {:<40} [{:<28}] {}", f.address, display_name, f.seeds.join(","), bound);
         }
     }
     Ok(())

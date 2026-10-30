@@ -10,3 +10,4 @@ pub use catalog::{
     CatalogEntry, Confidence, Detection, InstructionWindow, Severity, catalog, lookup,
     render_markdown, scan_imports, scan_instructions, scan_strings,
 };
+pub mod swift;
