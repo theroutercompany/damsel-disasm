@@ -1402,3 +1402,61 @@ installEventHandlers();
   // Expose for the main app to call when a project is available
   window.loadProjectFunctions = loadProjectFunctions;
 })();
+
+// --- Pseudocode Viewer (RE Power Wave 7) ---
+(function() {
+  const viewer = document.createElement("div");
+  viewer.id = "pseudocode-viewer";
+  viewer.style.cssText = "margin-top:1rem;padding:0.75rem;background:#1e1e1e;color:#d4d4d4;border-radius:6px;font-family:monospace;font-size:0.8em;white-space:pre-wrap;display:none;max-height:400px;overflow-y:auto;";
+
+  // Insert after the inspector
+  const inspector = document.querySelector("[data-component='inspector']") || document.querySelector(".inspector");
+  if (inspector) {
+    inspector.appendChild(viewer);
+  }
+
+  let currentProject = null;
+
+  async function showPseudocode(projectPath, functionName) {
+    if (!projectPath || !functionName) return;
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(projectPath)}/decompile/${encodeURIComponent(functionName)}`
+      );
+      if (!response.ok) {
+        viewer.textContent = `// ${functionName}: not found or decompile failed`;
+        viewer.style.display = "";
+        return;
+      }
+      const data = await response.json();
+      const lines = data.pseudocode?.lines || [];
+      const text = lines.map(l => {
+        const addr = (l.source_addresses || []).map(a => `/* ${a} */ `).join("");
+        return addr + l.text;
+      }).join("\n");
+      viewer.textContent = text || "// empty function";
+      viewer.style.display = "";
+    } catch (e) {
+      viewer.textContent = `// error: ${e.message}`;
+      viewer.style.display = "";
+    }
+  }
+
+  function hidePseudocode() {
+    viewer.style.display = "none";
+  }
+
+  // Hook into function-row clicks
+  document.addEventListener("click", (e) => {
+    const row = e.target.closest(".function-row");
+    if (row && currentProject) {
+      const name = row.textContent.trim().split(/\s+/).slice(1).join(" ");
+      showPseudocode(currentProject, name);
+    }
+  });
+
+  // Expose
+  window.showPseudocode = showPseudocode;
+  window.hidePseudocode = hidePseudocode;
+  window.setPseudocodeProject = (p) => { currentProject = p; };
+})();
