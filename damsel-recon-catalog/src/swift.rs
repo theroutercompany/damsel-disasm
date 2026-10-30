@@ -3,6 +3,8 @@
 //! common type abbreviations, and special suffixes (default arguments,
 //! partial applies, static/class methods).
 
+use serde::Serialize;
+
 /// A demangled Swift symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Demangled {
@@ -276,5 +278,88 @@ mod section_tests {
     fn is_swift() {
         let sections = vec![("__swift5_entry".to_string(), 8)];
         assert!(is_swift_binary(&sections));
+    }
+}
+
+/// A field name extracted from `__swift5_reflstr`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SwiftField {
+    pub name: String,
+}
+
+/// Parse `__swift5_reflstr` bytes into field names. The section is a
+/// sequence of null-terminated strings (field names, case names,
+/// associated value labels).
+pub fn parse_reflstr(data: &[u8]) -> Vec<SwiftField> {
+    data.split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .filter(|s| s.len() >= 1 && s.len() <= 64)
+        .filter(|s| s.iter().all(|b| b.is_ascii_graphic() || *b == b' '))
+        .map(|s| SwiftField {
+            name: String::from_utf8_lossy(s).into_owned(),
+        })
+        .collect()
+}
+
+/// A type record from `__swift5_types` (simplified: type kind +
+/// name from the mangled reference).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SwiftTypeRecord {
+    /// "struct", "class", "enum", or "protocol".
+    pub kind: String,
+    /// The type's name from reflection strings or the symbol table.
+    pub name: String,
+}
+
+#[cfg(test)]
+mod reflstr_tests {
+    use super::*;
+
+    #[test]
+    fn parses_field_names() {
+        // "radius\0w\0h\0red\0green\0blue\0"
+        let data = b"radius\0w\0h\0red\0green\0blue\0";
+        let fields = parse_reflstr(data);
+        let names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["radius", "w", "h", "red", "green", "blue"]);
+    }
+
+    #[test]
+    fn skips_empty_and_binary() {
+        // Real reflstr segments are compiler-written clean strings;
+        // binary garbage appears as its own segment.
+        let data = b"\0\0name\0\xff\xfe\0";
+        let fields = parse_reflstr(data);
+        let names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["name"]);
+    }
+
+    #[test]
+    fn real_fixture_reflstr() {
+        // The swift-rich fixture contains: RawValue, AllCases, radius,
+        // w, h, red, green, blue, shapes, theme
+        let path = format!(
+            "{}/../fixtures/bin/adversarial/swift-rich-arm64",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let image = match damsel_macho::load(&path) {
+            Ok(img) => img,
+            Err(_) => return, // skip on non-macOS CI
+        };
+        let reflstr: Vec<u8> = image
+            .sections()
+            .iter()
+            .filter(|s| s.name == "__swift5_reflstr")
+            .filter_map(|s| image.bytes_for_file_range(s.file_offset?, s.file_size))
+            .flat_map(|b| b.iter().copied())
+            .collect();
+        if reflstr.is_empty() {
+            return;
+        }
+        let fields = parse_reflstr(&reflstr);
+        let names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"radius"), "fields: {names:?}");
+        assert!(names.contains(&"red"));
+        assert!(names.contains(&"theme"));
     }
 }

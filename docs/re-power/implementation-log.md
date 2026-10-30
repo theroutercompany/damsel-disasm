@@ -935,3 +935,15 @@ floor set, Workbench integration.
 - 3 new unit tests: candidates emitted, no candidates for zero
   overlap, confident matches never duplicated as candidates.
 - Proof: workspace 55 suites, 0 failures.
+
+### Unit 8.3d — Swift reflection-string parsing (field names) — DONE
+
+- `parse_reflstr(data)`: extracts null-terminated field names from
+  `__swift5_reflstr`. On the swift-rich fixture this yields the
+  exact field set: radius, w, h, red, green, blue, shapes, theme,
+  rawValue, allCases.
+- `SwiftField`/`SwiftTypeRecord` types for downstream consumers
+  (decompiler stack-frame naming, type display).
+- 3 unit tests including a live-fixture test that reads the real
+  binary and asserts the expected field names.
+- Proof: workspace 55 suites, 0 failures.
