@@ -890,6 +890,81 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                         address: IrExpr::AddrOf { base: s, displacement: 0 },
                     })
                 }
+                "psrldq" | "pslldq" => {
+                    // Byte-wise 128-bit shift: dest = dest << / >> imm bytes.
+                    let op = if lower == "pslldq" { IrBinOp::Shl } else { IrBinOp::Shr };
+                    let dest = instruction.operands.first().and_then(register_of);
+                    let count = instruction.operands.get(1).and_then(|o| match o {
+                        Operand::ImmediateUnsigned(v) => Some(*v),
+                        Operand::ImmediateSigned(v) => Some(v.unsigned_abs()),
+                        _ => None,
+                    });
+                    (dest.zip(count)).map(|(d, c)| IrStatement::Assign {
+                        destination: d.clone(),
+                        expression: IrExpr::BinOp {
+                            op,
+                            lhs: Box::new(IrExpr::Value(IrValue::Register(d))),
+                            rhs: Box::new(IrExpr::Value(IrValue::Const(c))),
+                        },
+                    })
+                }
+                "psubb" | "psubw" | "psubd" | "psubq" | "paddb" | "paddw" | "paddd" | "paddq" => {
+                    // Packed integer add/sub: element-wise, modeled as
+                    // scalar add/sub on the vector register.
+                    let op = if lower.starts_with("padd") { IrBinOp::Add } else { IrBinOp::Sub };
+                    let dest = instruction.operands.first().and_then(register_of);
+                    let src_reg = instruction.operands.get(1).and_then(register_of);
+                    (dest.zip(src_reg)).map(|(d, sr)| IrStatement::Assign {
+                        destination: d.clone(),
+                        expression: IrExpr::BinOp {
+                            op,
+                            lhs: Box::new(IrExpr::Value(IrValue::Register(d))),
+                            rhs: Box::new(IrExpr::Value(IrValue::Register(sr))),
+                        },
+                    })
+                }
+                "por" | "pand" | "pandn" => {
+                    // Packed bitwise ops: element-wise, same as scalar.
+                    let op = match lower.as_str() {
+                        "por" => IrBinOp::Or,
+                        "pand" => IrBinOp::And,
+                        _ => IrBinOp::And, // pandn: AND-NOT, approximated
+                    };
+                    let dest = instruction.operands.first().and_then(register_of);
+                    let src = instruction.operands.get(1).and_then(register_of);
+                    (dest.zip(src)).map(|(d, sr)| IrStatement::Assign {
+                        destination: d.clone(),
+                        expression: IrExpr::BinOp {
+                            op,
+                            lhs: Box::new(IrExpr::Value(IrValue::Register(d))),
+                            rhs: Box::new(IrExpr::Value(IrValue::Register(sr))),
+                        },
+                    })
+                }
+                "movlpd" | "movhpd" | "movlps" | "movhps" => {
+                    // Partial vector load/store (low/high 64 bits).
+                    if let Some(dest_reg) = instruction.operands.first().and_then(register_of) {
+                        if let Some(address) =
+                            instruction.operands.get(1).and_then(memory_expr_from)
+                        {
+                            Some(IrStatement::Load {
+                                destination: dest_reg,
+                                address,
+                            })
+                        } else {
+                            None
+                        }
+                    } else if let Some(address) =
+                        instruction.operands.first().and_then(memory_expr_from)
+                    {
+                        let src = instruction.operands.get(1).and_then(register_of)
+                            .map(|r| IrExpr::Value(IrValue::Register(r)))
+                            .unwrap_or(IrExpr::Value(IrValue::Const(0)));
+                        Some(IrStatement::Store { address, value: src })
+                    } else {
+                        None
+                    }
+                }
                 "bsf" | "bsr" | "tzcnt" | "lzcnt" => {
                     // Bit scan: dest = index of first/last set bit in
                     // src. Model as reading the integer view of src.
