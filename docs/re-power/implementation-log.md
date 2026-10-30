@@ -829,3 +829,14 @@ floor set, Workbench integration.
   detections; 6 integration tests in `defense_diff.rs` prove
   add/remove/no-change/string-scanner paths.
 - Proof: workspace 54 suites, 0 failures.
+
+### Unit 8.4c — Catalog wired into recon CLI — DONE
+
+- `damsel recon <binary>` now emits catalog detections with
+  severity/confidence and remediation hints:
+  `catalog: ANTI_DEBUG_SYSCTL [medium/low] imports _sysctl — import:_sysctl`
+  `  → Hook sysctl return or patch the flag comparison`
+- JSON output includes `catalog_detections` array.
+- Proven on a live sysctl-importing test binary (compiled fresh,
+  detected immediately).
+- Proof: workspace 54 suites, 0 failures.

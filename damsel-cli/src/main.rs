@@ -1641,10 +1641,18 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
 
     let report = assess(symbol_count, &sections, &imports, &strings);
 
+    // Wave 8.4: catalog detections (typed severity/confidence/remediation)
+    let catalog_detections = {
+        let mut dets = damsel_recon_catalog::scan_imports(&imports);
+        dets.extend(damsel_recon_catalog::scan_strings(&strings));
+        dets
+    };
+
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({
             "command": "recon",
             "report": serde_json::to_value(&report).unwrap_or_default(),
+            "catalog_detections": serde_json::to_value(&catalog_detections).unwrap_or_default(),
         });
         println!("{}", project_json(value));
     } else {
@@ -1666,6 +1674,14 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
         }
         for indicator in &report.anti_analysis_indicators {
             println!("  indicator: {} — {}", indicator.name, indicator.evidence);
+        }
+        for det in &catalog_detections {
+            let sev = format!("{:?}", det.severity).to_lowercase();
+            let conf = format!("{:?}", det.confidence).to_lowercase();
+            println!("  catalog: {} [{}/{}] {} — {}", det.code, sev, conf, det.evidence, det.location);
+            if let Some(entry) = damsel_recon_catalog::lookup(det.code) {
+                println!("    → {}", entry.remediation);
+            }
         }
     }
     Ok(())

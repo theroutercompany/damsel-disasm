@@ -412,6 +412,7 @@ dependencies = [
  "damsel-elf",
  "damsel-macho",
  "damsel-project",
+ "damsel-recon-catalog",
  "insta",
  "predicates",
  "reqwest",

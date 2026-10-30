@@ -14,6 +14,7 @@ clap.workspace = true
 damsel-core = { path = "../damsel-core" }
 damsel-macho = { path = "../damsel-macho" }
 damsel-decomp = { path = "../damsel-decomp" }
+damsel-recon-catalog = { path = "../damsel-recon-catalog" }
 damsel-elf = { path = "../damsel-elf" }
 damsel-project = { path = "../damsel-project" }
 serde.workspace = true
