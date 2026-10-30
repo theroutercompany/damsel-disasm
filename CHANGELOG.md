@@ -10,6 +10,37 @@ GitHub prerelease conventions:
 ## [Unreleased]
 
 ### Added
+- Cross-platform analysis: ELF64 loading (Linux) alongside Mach-O (macOS).
+- x86_64 disassembly and analysis with a shared pipeline for both ISAs.
+- Project database (`damsel-project`): SQLite-backed analysis persistence
+  with byte-deterministic canonical exports.
+- Whole-image function recovery with provenance-ranked seeds and bounds.
+- Cross-reference index queryable from both directions (`xrefs --to/--from`).
+- String inventory with xref joins and classification heuristics.
+- Unified search across functions, symbols, imports, and strings.
+- Decompiler pipeline: D0 summaries, D1 IR (arm64+x86_64), D2 SSA,
+  D3 stack frames, D4 structuring (diamonds, loops), D5 pseudocode.
+- `damsel summary` and `damsel decompile` commands with Markdown export.
+- Binary recon triage: entropy profiles, packer signatures, anti-analysis
+  indicators, CFG-flattening detection, opaque-predicate detection.
+- Binary diffing with function-level matching (symbol + address strategies).
+- Batch analysis with JSONL output and per-target typed failures.
+- MCP server (`damsel serve`) with 7 typed tools for AI agents.
+- Web UI project functions panel and pseudocode viewer.
+- Evidence packaging (`bin/elf-evidence-package.sh`) with self-verification.
+- Function recovery audit gate (`bin/function-recovery-audit.sh`).
+- Versioned symbols (.gnu.version) on both section-ful and segment-only paths.
+- Dynamic relocations (PLT/GOT) as typed binding facts.
+- Segment-only PT_DYNAMIC walker for hard-stripped ELF binaries.
+- Build-id resolution on both parsing paths.
+- ARM64 semantics module shared between the engine and the decompiler.
+- ABI type seeds (arm64 AAPCS64 + x86_64 SysV argument/return roles).
+- Cross-block phi-SSA register merging.
+- Stack-frame recovery (frame size, saved registers, local slots).
+- Indexed-memory modeling (base + index * scale + displacement).
+- Segment-register TLS access (fs:/gs:).
+- Memory-destination arithmetic as read-modify-write.
+- xchg, imul, movzx/movsx, cdq, leave, movs, stos instruction modeling.
 - Private GitHub release hardening with nightly and beta lanes.
 - Release validation, packaging, checksum, and notes-generation helpers.
 - Disassembler validation harnesses for LLVM fixture comparison and local
