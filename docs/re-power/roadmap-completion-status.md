@@ -65,24 +65,25 @@ patch studio) remain per the table above.
 | MCP tools | 7 |
 | UI endpoints | 9 |
 | Formats / ISAs | Mach-O + ELF64 / arm64e + x86_64 |
-| Zero-unknown decompiled functions | 11 (5 glibc + 6 ObjC) |
+| Zero-unknown decompiled functions | 14 (8 glibc + 6 ObjC) |
 | Swift demangling rate (real binary) | 96% (57/68) |
+| `__strlen_sse2` unknown rate | 42% → **0%** (SIMD floor set) |
+| `__strcmp_sse2` unknown rate | 55% → **1%** |
 | Catalog detections | 13 (all with remediation) |
 | Evidence lab runs | 13 |
 | NixOS lab runs | 12 |
 
 ## What Would Make This "More Than Satisfactory"
 
-1. ~~CI budget benches~~ **DONE** — `bin/budget-bench.sh` (rows 4.10/6.8)
-2. **Swift type-record parsing** (8.3): field names extracted from
-   `__swift5_reflstr`; remaining: typed field offsets, protocol
-   conformance tables.
-3. **glibc corpus at scale** (8.2): derive fingerprints from distro
-   debuginfo (build-id → name/type map) — requires lab builds.
-4. **SIMD floor set** (D-4 quality): model SSE2/AVX basics to reduce
-   `__strlen_sse2`-class unknown rates from 42% toward 0%.
+1. ~~CI budget benches~~ **DONE** — `bin/budget-bench.sh`
+2. ~~SIMD floor set~~ **DONE** — strlen 42%→0%, strcmp 55%→1%, memcmp 0%
+3. **Swift type records** (8.3): field names extracted from reflstr;
+   remaining: typed field offsets, conformance tables.
+4. **glibc corpus at scale** (8.2): matching engine + candidate
+   problems ready; needs lab-derived fingerprint data.
 5. **Workbench native app integration**: project-open flow +
    functions/pseudocode panes in `damsel-app/`.
 
-Items 2–5 are depth extensions on solid foundations; the core
-roadmap deliverables and their acceptance gaps are closed.
+Items 3–5 are depth extensions on solid foundations; the core
+roadmap deliverables, quality gates, and acceptance criteria are
+closed with lab-proven evidence.
