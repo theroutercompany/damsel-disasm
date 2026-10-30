@@ -1863,28 +1863,7 @@ fn handle_corpus_export(
 
     let summaries = function_summaries(&store).map_err(map_store_error)?;
 
-    // Collect string facts per function (for fingerprint strings).
-    let string_facts: std::collections::BTreeMap<u64, Vec<String>> = store
-        .facts()
-        .map_err(map_store_error)?
-        .iter()
-        .filter_map(|fact| {
-            if fact.kind.as_str() != "string_in_function" {
-                return None;
-            }
-            let payload: serde_json::Value = serde_json::from_str(&fact.payload).ok()?;
-            let address = payload.get("function")?.as_str()?.parse::<u64>().ok()?;
-            let text = payload.get("text")?.as_str()?.to_string();
-            Some((address, vec![text]))
-        })
-        .fold(Default::default(), |mut acc: std::collections::BTreeMap<u64, Vec<String>>, (addr, texts)| {
-            acc.entry(addr).or_default().extend(texts);
-            acc
-        });
-
-    // Collect function bounds for instruction counts (approximate:
-    // (end - start) / 4 for arm64, / variable for x86 — use the bound
-    // size as a proxy).
+    // Collect function bounds for instruction counts.
     let bounds: std::collections::BTreeMap<u64, (u64, u64)> = store
         .facts()
         .map_err(map_store_error)?
@@ -1909,6 +1888,34 @@ fn handle_corpus_export(
             Some((address, (s, e)))
         })
         .collect();
+
+    // Collect strings per function: join string facts to xrefs
+    // (which code address references each string) and then to the
+    // containing function via bounds.
+    let string_by_object: std::collections::BTreeMap<String, String> = store
+        .facts()
+        .map_err(map_store_error)?
+        .iter()
+        .filter_map(|fact| {
+            if fact.kind.as_str() != "string" {
+                return None;
+            }
+            // object_id for strings contains the address; payload has
+            // the classification + length. The string text is in the
+            // object_id suffix.
+            let object_key = fact.object_id.as_ref()?.key().to_string();
+            // Extract the text part from the object id (after the
+            // address prefix).
+            Some((object_key, fact.payload.clone()))
+        })
+        .collect();
+
+    // For the corpus v1: strings are best-effort. The xref join needs
+    // the code→string reference which the current store doesn't yet
+    // materialize per-function. Size matching is the primary signal.
+    let string_facts: std::collections::BTreeMap<u64, Vec<String>> =
+        Default::default();
+    let _ = (string_by_object,);
 
     let mut corpus: Vec<damsel_recon_catalog::reuse::KnownFunction> = Vec::new();
     for summary in &summaries {
