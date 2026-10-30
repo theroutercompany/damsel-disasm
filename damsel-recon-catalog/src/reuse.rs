@@ -217,15 +217,37 @@ pub fn find_reuse_report(
     corpus: &[KnownFunction],
     threshold: f64,
 ) -> ReuseReport {
-    let floor = threshold * 0.5; // candidates need at least half the threshold
+    let floor = threshold * 0.5;
     let mut matches = Vec::new();
     let mut candidates = Vec::new();
 
+    // Size-uniqueness boost: if the stripped function's instruction
+    // count matches exactly one corpus entry, that's a strong signal —
+    // bump it to a confident match even at the base score.
+    let exact_size_count = corpus
+        .iter()
+        .filter(|k| {
+            k.fingerprint.instruction_count > 0
+                && k.fingerprint.instruction_count == stripped.instruction_count
+        })
+        .count();
+    let unique_size = exact_size_count == 1;
+
     for known in corpus {
-        let m = match_score(stripped, known);
+        let mut m = match_score(stripped, known);
+        let is_exact_size = stripped.instruction_count > 0
+            && stripped.instruction_count == known.fingerprint.instruction_count;
+
+        if unique_size && is_exact_size {
+            // Unique size match: boost to confident.
+            m.score = m.score.max(threshold.max(0.85));
+            m.evidence
+                .push("unique size match in corpus".to_string());
+        }
+
         if m.score >= threshold {
             matches.push(m);
-        } else if m.score >= floor && !m.evidence.is_empty() {
+        } else if m.score >= floor && (!m.evidence.is_empty() || is_exact_size) {
             candidates.push(Candidate {
                 library: m.library,
                 name: m.name,
