@@ -809,3 +809,23 @@ floor set, Workbench integration.
   (`--all` without `--out`) prints per-function JSON lines.
 - Proof: workspace 51 suites, 0 failures; 28 files generated from
   the objc fixture.
+
+### Unit 8.4a — Anti-analysis catalog crate — DONE
+
+- New crate `damsel-recon-catalog`: 13-entry static catalog
+  (ANTI_DEBUG_PTRACE/SYSCTL/EXCEPTION_PORTS/TIMING, ANTI_VM_STRING/
+  CPUID, PACKER_UPX, STRING_ENCRYPTION, CFG_FLATTENING,
+  OPAQUE_PREDICATE, JUNK_CODE, SYSCALL_STUB, DYLD_CACHE_ABUSE) with
+  typed `Detection` (code, location, evidence, severity, confidence),
+  remediation hints per entry, and scanners for imports, strings,
+  and decoded instruction mnemonics (syscall/rdtsc/cpuid).
+- 8 unit tests in the crate; Markdown report renderer.
+
+### Unit 8.4b — defense_added diff findings — DONE
+
+- `DiffReport` now carries `defense_added` / `defense_removed`
+  (version archaeology: did the vendor add checks between releases?).
+- `diff_defenses(left, right)` computes the delta from catalog
+  detections; 6 integration tests in `defense_diff.rs` prove
+  add/remove/no-change/string-scanner paths.
+- Proof: workspace 54 suites, 0 failures.

@@ -21,6 +21,22 @@ pub struct DiffReport {
     pub matched: Vec<MatchedFunction>,
     pub added: Vec<DiffFunction>,
     pub removed: Vec<DiffFunction>,
+    /// Defense indicators present in right but not left (version
+    /// archaeology: vendor added a check between versions).
+    pub defense_added: Vec<DefenseFinding>,
+    /// Defense indicators present in left but not right (removed).
+    pub defense_removed: Vec<DefenseFinding>,
+}
+
+/// A defense/anti-analysis indicator that appeared or disappeared
+/// between two versions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefenseFinding {
+    /// Catalog code (e.g. ANTI_DEBUG_PTRACE).
+    pub code: String,
+    /// Evidence location.
+    pub location: String,
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +137,8 @@ pub fn diff_functions(
         matched,
         added,
         removed,
+        defense_added: Vec::new(),
+        defense_removed: Vec::new(),
     })
 }
 
@@ -259,4 +277,31 @@ th { background: #f5f5f5; }
         .replace("#ADDED#", &report.added.len().to_string())
         .replace("#REMOVED#", &report.removed.len().to_string());
     out
+}
+
+/// Compute defense-indicator deltas between two detection sets
+/// (Wave 8.4: version archaeology — did the vendor add checks?).
+pub fn diff_defenses(
+    left: &[damsel_recon_catalog::Detection],
+    right: &[damsel_recon_catalog::Detection],
+) -> (Vec<DefenseFinding>, Vec<DefenseFinding>) {
+    let to_finding = |d: &damsel_recon_catalog::Detection| DefenseFinding {
+        code: d.code.to_string(),
+        location: d.location.clone(),
+        evidence: d.evidence.clone(),
+    };
+
+    let added: Vec<DefenseFinding> = right
+        .iter()
+        .filter(|r| !left.iter().any(|l| l.code == r.code))
+        .map(to_finding)
+        .collect();
+
+    let removed: Vec<DefenseFinding> = left
+        .iter()
+        .filter(|l| !right.iter().any(|r| r.code == l.code))
+        .map(to_finding)
+        .collect();
+
+    (added, removed)
 }

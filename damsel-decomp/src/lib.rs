@@ -23,8 +23,8 @@ pub use ir::{
 pub use structure::{Diamond, LoopBack, NaturalLoop, ResolvedCondition, find_diamonds, find_loops, find_natural_loops, resolve_condition};
 pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
 pub use diff::{
-    DiffError, DiffFunction, DiffReport, MatchedFunction, MatchStrategy,
-    diff_functions, render_diff_html, render_diff_markdown,
+    DefenseFinding, DiffError, DiffFunction, DiffReport, MatchedFunction, MatchStrategy,
+    diff_defenses, diff_functions, render_diff_html, render_diff_markdown,
 };
 pub use recon::{
     AntiAnalysisIndicator, FlatteningIndicator, PackerSignature, ReconReport, SectionEntropy,

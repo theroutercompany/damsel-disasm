@@ -437,6 +437,7 @@ dependencies = [
  "damsel-elf",
  "damsel-macho",
  "damsel-project",
+ "damsel-recon-catalog",
  "serde",
  "serde_json",
  "tempfile",
@@ -478,6 +479,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "damsel-recon-catalog"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

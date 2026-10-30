@@ -14,6 +14,8 @@ damsel-project = { path = "../damsel-project" }
 thiserror.workspace = true
 serde.workspace = true
 
+damsel-recon-catalog = { path = "../damsel-recon-catalog" }
+
 [dev-dependencies]
 serde_json.workspace = true
 damsel-macho = { path = "../damsel-macho" }
