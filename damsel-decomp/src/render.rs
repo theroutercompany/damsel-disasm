@@ -27,7 +27,18 @@ pub struct Pseudocode {
     pub lines: Vec<PseudocodeLine>,
 }
 
+thread_local! {
+    static OBJC_CONTEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn is_objc_context() -> bool {
+    OBJC_CONTEXT.with(|c| c.get())
+}
+
 pub fn render_pseudocode(function: &IrFunction, name: Option<&str>) -> Pseudocode {
+    // Detect ObjC method context from the function name
+    let is_objc = name.is_some_and(|n| n.starts_with('-') || n.starts_with('+'));
+    OBJC_CONTEXT.with(|c| c.set(is_objc));
     let diamonds = crate::structure::find_diamonds(function);
     render_pseudocode_with_loops(function, name, &diamonds)
 }
@@ -287,7 +298,9 @@ fn render_condition(condition: &crate::ir::IrCondition) -> String {
 fn render_expr(expression: &IrExpr) -> String {
     match expression {
         IrExpr::Value(IrValue::Const(value)) => format!("{value:#x}"),
-        IrExpr::Value(IrValue::Register(register)) => register.clone(),
+        IrExpr::Value(IrValue::Register(register)) => {
+            abi_register_name(register, is_objc_context())
+        }
         IrExpr::Value(IrValue::Unknown(what)) => format!("unknown({what})"),
         IrExpr::BinOp { op, lhs, rhs } => {
             let op = match op {
@@ -326,5 +339,47 @@ fn render_expr(expression: &IrExpr) -> String {
                 d => format!("&{base}[{scaled} + {d:#x}]"),
             }
         }
+    }
+}
+
+/// ABI-aware register display: well-known registers get human-readable
+/// names (self/_cmd in ObjC, arg0–arg5 in SysV/AAPCS64, retval, sp, fp).
+pub fn abi_register_name(register: &str, is_objc_method: bool) -> String {
+    // ObjC method conventions: x0=self, x1=_cmd (arm64)
+    if is_objc_method {
+        match register {
+            "x0" => return "self".to_string(),
+            "x1" => return "_cmd".to_string(),
+            _ => {}
+        }
+    }
+    match register {
+        // Shared: frame/stack
+        "sp" | "rsp" | "x31" => "sp".to_string(),
+        "fp" | "x29" | "rbp" => "fp".to_string(),
+        "lr" | "x30" => "lr".to_string(),
+
+        // arm64 AAPCS64 args
+        "x0" => "arg0".to_string(),
+        "x1" => "arg1".to_string(),
+        "x2" => "arg2".to_string(),
+        "x3" => "arg3".to_string(),
+        "x4" => "arg4".to_string(),
+        "x5" => "arg5".to_string(),
+        "x6" => "arg6".to_string(),
+        "x7" => "arg7".to_string(),
+
+        // x86_64 SysV args
+        "rdi" => "arg0".to_string(),
+        "rsi" => "arg1".to_string(),
+        "rdx" => "arg2".to_string(),
+        "rcx" => "arg3".to_string(),
+        "r8" => "arg4".to_string(),
+        "r9" => "arg5".to_string(),
+
+        // Return values
+        "rax" => "retval".to_string(),
+
+        _ => register.to_string(),
     }
 }

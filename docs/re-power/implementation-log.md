@@ -788,3 +788,15 @@ floor set, Workbench integration.
   formatting via msgSend$stringWithFormat:, epilogue — all with
   selector names visible.
 - Proof: workspace 51 suites, 0 failures.
+
+### Unit 7.22 — ABI-aware register naming — DONE
+
+- `abi_register_name()`: ObjC methods render `x0` as `self`, `x1` as
+  `_cmd`; SysV/x86_64 args render as `arg0`–`arg5`; return as
+  `retval`; `sp`/`fp`/`lr` as-is. Applied to expression operands in
+  the renderer (sources get semantic names; destinations keep physical
+  register names for clarity about what's being written).
+- `-[Speaker title]` now shows the ivar access directly: `*(&sp[0x8])
+  = self;` → `x0 = *(&x8[0x10]); return;` — clearly reading the ivar
+  from self.
+- Proof: workspace 51 suites, 0 failures.
