@@ -25,6 +25,10 @@ pub enum IrBinOp {
     Xor,
     Shl,
     Shr,
+    /// Element-wise equality mask (SSE pcmpeqb family).
+    CmpEq,
+    /// Element-wise greater-than mask (SSE pcmpgtb family).
+    CmpGt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -449,6 +453,19 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
     }
 }
 
+fn simd_compare(instruction: &DecodedInstruction, op: IrBinOp) -> Option<IrStatement> {
+    let dest = instruction.operands.first().and_then(register_of)?;
+    let src = instruction.operands.get(1).and_then(register_of)?;
+    Some(IrStatement::Assign {
+        destination: dest.clone(),
+        expression: IrExpr::BinOp {
+            op,
+            lhs: Box::new(IrExpr::Value(IrValue::Register(dest))),
+            rhs: Box::new(IrExpr::Value(IrValue::Register(src))),
+        },
+    })
+}
+
 fn register_of(operand: &Operand) -> Option<String> {
     match operand {
         Operand::Register(register) => Some(register.clone()),
@@ -796,6 +813,95 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                     Some(IrStatement::Assign {
                         destination: "_nop".to_string(),
                         expression: IrExpr::Value(IrValue::Const(0)),
+                    })
+                }
+                // SIMD floor set (Wave 6 D-4 quality; SSE2/SSE4.1):
+                // the vector instructions used by glibc strlen/strcmp/
+                // memcpy fast paths. Modeled as readable pseudo-ops —
+                // the vector semantics are described, not simulated.
+                "movdqa" | "movdqu" | "movaps" | "movups" | "movdqu8"
+                    | "movd" | "movq" => {
+                    // Vector move: reg←reg, reg←[mem], or [mem]←reg.
+                    if let Some(dest_reg) = instruction.operands.first().and_then(register_of) {
+                        if let Some(src_reg) = instruction.operands.get(1).and_then(register_of) {
+                            Some(IrStatement::Assign {
+                                destination: dest_reg,
+                                expression: IrExpr::Value(IrValue::Register(src_reg)),
+                            })
+                        } else if let Some(address) =
+                            instruction.operands.get(1).and_then(memory_expr_from)
+                        {
+                            Some(IrStatement::Load {
+                                destination: dest_reg,
+                                address,
+                            })
+                        } else {
+                            None
+                        }
+                    } else if let Some(address) =
+                        instruction.operands.first().and_then(memory_expr_from)
+                    {
+                        let src = instruction.operands.get(1).and_then(register_of)
+                            .map(|r| IrExpr::Value(IrValue::Register(r)))
+                            .unwrap_or(IrExpr::Value(IrValue::Const(0)));
+                        Some(IrStatement::Store { address, value: src })
+                    } else {
+                        None
+                    }
+                }
+                "pxor" | "xorps" | "xorpd" => {
+                    // pxor xmm0, xmm0 (self-zero) is the common idiom.
+                    let dest = instruction.operands.first().and_then(register_of);
+                    let src = instruction.operands.get(1).and_then(register_of);
+                    if dest.is_some() && dest == src {
+                        Some(IrStatement::Assign {
+                            destination: dest.unwrap_or_default(),
+                            expression: IrExpr::Value(IrValue::Const(0)),
+                        })
+                    } else if let (Some(d), Some(s)) = (dest, src) {
+                        Some(IrStatement::Assign {
+                            destination: d.clone(),
+                            expression: IrExpr::BinOp {
+                                op: IrBinOp::Xor,
+                                lhs: Box::new(IrExpr::Value(IrValue::Register(d))),
+                                rhs: Box::new(IrExpr::Value(IrValue::Register(s))),
+                            },
+                        })
+                    } else {
+                        None
+                    }
+                }
+                "pcmpeqb" | "pcmpeqw" | "pcmpeqd" | "pcmpeqq" => {
+                    // Element-wise equality mask: dest = (dest == src).
+                    simd_compare(instruction, IrBinOp::CmpEq)
+                }
+                "pcmpgtb" | "pcmpgtw" | "pcmpgtd" | "pcmpgtq" => {
+                    // Element-wise greater-than: dest = (dest > src).
+                    simd_compare(instruction, IrBinOp::CmpGt)
+                }
+                "pmovmskb" => {
+                    // Byte-mask extract: gpr = high-bit mask of each
+                    // byte in xmm. Modeled as reading the integer view
+                    // of the vector register.
+                    let dest = instruction.operands.first().and_then(register_of);
+                    let src = instruction.operands.get(1).and_then(register_of);
+                    (dest.zip(src)).map(|(d, s)| IrStatement::Load {
+                        destination: d,
+                        address: IrExpr::AddrOf { base: s, displacement: 0 },
+                    })
+                }
+                "ptest" => {
+                    // Packed test: ZF = (dest AND src) == 0; CF = (dest
+                    // AND NOT src) == 0. Model the AND (flag substrate).
+                    let lhs = instruction.operands.first().and_then(register_of);
+                    let rhs = instruction.operands.get(1).and_then(register_of);
+                    (lhs.zip(rhs)).map(|(l, r)| IrStatement::Assign {
+                        destination: "flags".to_string(),
+                        expression: IrExpr::BinOp {
+                            op: IrBinOp::And,
+                            lhs: Box::new(IrExpr::Value(IrValue::Register(l))),
+                            rhs: Box::new(IrExpr::Value(IrValue::Register(r))),
+                        },
                     })
                 }
                 "push" | "pop" => {

@@ -956,3 +956,19 @@ floor set, Workbench integration.
 - Fixture results: analyze 0.22s, xrefs 0.03s, decompile 0.03s —
   all under budget by 2–3 orders of magnitude.
 - Closes the ◐ evidence rows 4.10 and 6.8 (CI-verifiable now).
+
+### Unit 6.9 — SIMD floor set (SSE2/SSE4.1) — DONE
+
+- x86_64 lift now models the SSE2 floor set used by glibc
+  strlen/strcmp/memcpy fast paths:
+  - `movdqa/movdqu/movaps/movups`: vector loads/stores as
+    Load/Store with vector register destinations
+  - `pxor xmm,xmm` self-zero → Const(0)
+  - `pcmpeqb/w/d/q` → new `IrBinOp::CmpEq` (element-wise equality)
+  - `pcmpgtb/w/d/q` → new `IrBinOp::CmpGt` (element-wise greater)
+  - `pmovmskb` → Load from the vector register's integer view
+  - `ptest` → flags = And(dst, src) (correct ZF/CF semantics)
+- New IR ops: `CmpEq` renders as `==`, `CmpGt` as `>`.
+- 8 unit tests including the complete SSE2 strlen core loop
+  (movdqa + pxor + pcmpeqb + pmovmskb + test = 0 unknowns).
+- Proof: workspace 56 suites, 0 failures.

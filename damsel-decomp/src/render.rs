@@ -312,6 +312,8 @@ fn render_expr(expression: &IrExpr) -> String {
                 crate::ir::IrBinOp::Mul => "*",
                 crate::ir::IrBinOp::Shl => "<<",
                 crate::ir::IrBinOp::Shr => ">>",
+                crate::ir::IrBinOp::CmpEq => "==",
+                crate::ir::IrBinOp::CmpGt => ">",
             };
             format!("({} {} {})", render_expr(lhs), op, render_expr(rhs))
         }
