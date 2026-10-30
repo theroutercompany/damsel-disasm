@@ -1703,7 +1703,7 @@ fn handle_decompile(
         range: None,
         limit: damsel_core::DisassemblyLimit::Unlimited,
         options: damsel_core::DisassemblyOptions {
-            include_annotations: false,
+            include_annotations: true,
             include_value_flow: false,
         },
     };

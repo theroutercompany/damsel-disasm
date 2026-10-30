@@ -772,3 +772,19 @@ floor set, Workbench integration.
 - The ObjC pseudocode is already fully readable without this: ivar
   access, selref GOT loads, and stub calls as `sub_XXXX()` with the
   annotation visible in the disassembly view.
+
+### Unit 7.21 — ObjC msgSend selector names in pseudocode — DONE
+
+- Threaded stub names from the engine's TargetSymbol annotations
+  through the IR to the pseudocode renderer. ObjC calls now render as
+  `objc:_objc_msgSend$title(x0, x1)` and
+  `objc:_objc_msgSend$stringWithFormat:(x0, x1)` instead of
+  `sub_100001380()`.
+- Fix: the decompile handler was passing `include_annotations: false`
+  — stub names in annotations were lost. Now `true` for the Mach-O
+  path.
+- **Full readable ObjC pseudocode**: `-[Speaker prefix]` shows the
+  complete method — ivar load, msgSend$title call, string
+  formatting via msgSend$stringWithFormat:, epilogue — all with
+  selector names visible.
+- Proof: workspace 51 suites, 0 failures.

@@ -344,21 +344,31 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     damsel_core::Reference::Call { target } => Some(*target),
                     _ => None,
                 });
-                // ObjC stub calls: the engine resolves stubs to
-                // _objc_msgSend$SELECTOR — capture the selector.
-                let import_name = instruction.references.iter().find_map(|r| match r {
-                    damsel_core::Reference::Stub { name: Some(name), .. }
-                        if name.contains("objc_msgSend") =>
-                    {
-                        Some(name.clone())
+                // ObjC stub calls: the engine resolves stub targets to
+                // names like _objc_msgSend$SELECTOR in TargetSymbol
+                // annotations on the calling instruction. Also check the
+                // Stub/Import references for the same.
+                let objc_name = instruction.annotations.iter().find_map(|a| {
+                    match a {
+                        damsel_core::Annotation::TargetSymbol { address, name }
+                            if name.contains("objc_msgSend")
+                                && call_target.is_some_and(|t| t == *address) =>
+                        {
+                            Some(name.clone())
+                        }
+                        _ => None,
                     }
-                    damsel_core::Reference::Import { name, .. }
-                        if name.contains("objc_msgSend") =>
-                    {
-                        Some(name.clone())
-                    }
-                    _ => None,
                 });
+                let import_name = objc_name
+                    .or_else(|| {
+                        instruction.references.iter().find_map(|r| match r {
+                            damsel_core::Reference::Stub { name: Some(name), .. }
+                                if name.contains("objc_msgSend") => Some(name.clone()),
+                            damsel_core::Reference::Import { name, .. }
+                                if name.contains("objc_msgSend") => Some(name.clone()),
+                            _ => None,
+                        })
+                    });
                 if let Some(name) = import_name {
                     statements.push(IrStatement::Call {
                         target: IrCallTarget::Unknown(format!("objc:{name}")),
