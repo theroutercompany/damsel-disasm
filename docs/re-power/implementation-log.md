@@ -921,3 +921,17 @@ floor set, Workbench integration.
 - 7 integration tests in `adversarial_fixtures.rs`: each detection
   fires on its fixture; clean binary produces zero false positives.
 - Proof: workspace 55 suites, 0 failures.
+
+### Unit 8.2c — Candidate problems (below-threshold matches) — DONE
+
+- `find_reuse_report()` returns both confident matches and candidate
+  problems. Candidates have ≥ 50% of the threshold score and carry
+  evidence — displayed as `? glibc::malloc score=0.55 < 0.70
+  (candidate)` instead of being silently dropped.
+- Scoring rebalanced: absent-signal neutral weight reduced so
+  structural disagreement actually demotes a match below threshold
+  (string-only match with wrong size = 0.66 → candidate, not match).
+- `damsel identify` CLI shows both matches (→) and candidates (?).
+- 3 new unit tests: candidates emitted, no candidates for zero
+  overlap, confident matches never duplicated as candidates.
+- Proof: workspace 55 suites, 0 failures.

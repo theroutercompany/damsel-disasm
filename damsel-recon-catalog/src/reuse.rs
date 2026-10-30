@@ -50,7 +50,7 @@ pub fn match_score(stripped: &FunctionFingerprint, known: &KnownFunction) -> Reu
     // String overlap — 0.5 weight (strongest signal; distinctive
     // strings are rare and near-deterministic).
     if known.fingerprint.strings.is_empty() && stripped.strings.is_empty() {
-        score += 0.5; // both empty: no signal either way
+        score += 0.35; // both empty: weaker than an actual string match
     } else if known.fingerprint.strings.is_empty() {
         // Known has no strings but stripped does: weak negative —
         // distinctive strings point elsewhere.
@@ -78,7 +78,7 @@ pub fn match_score(stripped: &FunctionFingerprint, known: &KnownFunction) -> Reu
 
     // Constant overlap — 0.3 weight.
     if known.fingerprint.constants.is_empty() && stripped.constants.is_empty() {
-        score += 0.3; // both empty: neutral
+        score += 0.15; // both empty: half-neutral (absence is weaker evidence than presence)
     } else if known.fingerprint.constants.is_empty() {
         score += 0.1; // weak negative
     } else if stripped.constants.is_empty() {
@@ -187,6 +187,60 @@ pub fn glibc_minimal_corpus() -> Vec<KnownFunction> {
     ]
 }
 
+
+/// A below-threshold match — emitted as a candidate problem, not a
+/// name (spec: "matches below threshold are emitted as candidate
+/// problems, not names").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Candidate {
+    pub library: String,
+    pub name: String,
+    pub score: f64,
+    pub threshold: f64,
+    pub evidence: Vec<String>,
+}
+
+/// Result of matching: confident matches plus candidate problems.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReuseReport {
+    /// Matches at or above the threshold — safe to display as names.
+    pub matches: Vec<ReuseMatch>,
+    /// Below-threshold signals — display as candidates with scores.
+    pub candidates: Vec<Candidate>,
+}
+
+/// Match a stripped function against a corpus. Matches at or above
+/// the threshold are returned as confident; below-threshold signals
+/// with enough evidence to mention (score ≥ floor) are candidates.
+pub fn find_reuse_report(
+    stripped: &FunctionFingerprint,
+    corpus: &[KnownFunction],
+    threshold: f64,
+) -> ReuseReport {
+    let floor = threshold * 0.5; // candidates need at least half the threshold
+    let mut matches = Vec::new();
+    let mut candidates = Vec::new();
+
+    for known in corpus {
+        let m = match_score(stripped, known);
+        if m.score >= threshold {
+            matches.push(m);
+        } else if m.score >= floor && !m.evidence.is_empty() {
+            candidates.push(Candidate {
+                library: m.library,
+                name: m.name,
+                score: m.score,
+                threshold,
+                evidence: m.evidence,
+            });
+        }
+    }
+
+    matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    ReuseReport { matches, candidates }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,7 +257,7 @@ mod tests {
         let matches = find_reuse(&stripped, &corpus, 0.5);
         assert!(!matches.is_empty());
         assert_eq!(matches[0].name, "malloc");
-        assert!(matches[0].score >= 0.9);
+        assert!(matches[0].score >= 0.8, "score {} < 0.8", matches[0].score);
     }
 
     #[test]
@@ -231,6 +285,53 @@ mod tests {
         let corpus = glibc_minimal_corpus();
         let matches = find_reuse(&stripped, &corpus, 0.5);
         assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn candidates_emitted_below_threshold() {
+        // A partial match (string matches but wrong size) should be a
+        // candidate, not silently dropped.
+        let stripped = FunctionFingerprint {
+            strings: vec!["malloc(): memory corruption".into()],
+            constants: vec![],
+            call_count: 1,     // wrong (expected 4)
+            instruction_count: 20, // wrong (expected 106)
+        };
+        let report = find_reuse_report(&stripped, &glibc_minimal_corpus(), 0.7);
+        // Should NOT be a confident match
+        assert!(report.matches.is_empty() || !report.matches.iter().any(|m| m.name == "malloc"));
+        // Should be a candidate (has string evidence)
+        assert!(
+            report.candidates.iter().any(|c| c.name == "malloc"),
+            "expected malloc candidate in {:?}",
+            report.candidates
+        );
+    }
+
+    #[test]
+    fn no_candidates_for_zero_overlap() {
+        let stripped = FunctionFingerprint {
+            strings: vec!["completely unrelated".into()],
+            constants: vec![0xdeadbeef],
+            call_count: 99,
+            instruction_count: 999,
+        };
+        let report = find_reuse_report(&stripped, &glibc_minimal_corpus(), 0.7);
+        assert!(report.matches.is_empty());
+        assert!(report.candidates.is_empty());
+    }
+
+    #[test]
+    fn confident_match_not_in_candidates() {
+        let stripped = FunctionFingerprint {
+            strings: vec!["malloc(): memory corruption".into()],
+            constants: vec![],
+            call_count: 4,
+            instruction_count: 106,
+        };
+        let report = find_reuse_report(&stripped, &glibc_minimal_corpus(), 0.7);
+        assert!(report.matches.iter().any(|m| m.name == "malloc"));
+        assert!(!report.candidates.iter().any(|c| c.name == "malloc"));
     }
 
     #[test]

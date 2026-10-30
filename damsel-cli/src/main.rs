@@ -1751,7 +1751,7 @@ fn handle_identify(
             acc
         });
 
-    let mut results: Vec<(u64, Option<String>, Vec<damsel_recon_catalog::reuse::ReuseMatch>)> =
+    let mut results: Vec<(u64, Option<String>, damsel_recon_catalog::reuse::ReuseReport)> =
         Vec::new();
     for summary in &summaries {
         // Only identify functions without names (stripped) or with
@@ -1771,10 +1771,10 @@ fn handle_identify(
             call_count: 0,
             instruction_count: 0,
         };
-        let matches =
-            damsel_recon_catalog::reuse::find_reuse(&fingerprint, &corpus, threshold);
-        if !matches.is_empty() {
-            results.push((summary.address, summary.name.clone(), matches));
+        let report =
+            damsel_recon_catalog::reuse::find_reuse_report(&fingerprint, &corpus, threshold);
+        if !report.matches.is_empty() || !report.candidates.is_empty() {
+            results.push((summary.address, summary.name.clone(), report));
         }
     }
 
@@ -1783,24 +1783,35 @@ fn handle_identify(
             "command": "identify",
             "corpus": "glibc-minimal",
             "threshold": threshold,
-            "identified": results.iter().map(|(addr, name, matches)| serde_json::json!({
+            "identified": results.iter().map(|(addr, name, report)| serde_json::json!({
                 "address": format!("{addr:#x}"),
                 "original_name": name,
-                "matches": matches,
+                "matches": report.matches,
+                "candidates": report.candidates,
             })).collect::<Vec<_>>(),
         });
         println!("{}", project_json(value));
     } else {
         println!("identify: {results_len} function(s) matched (corpus: glibc-minimal, threshold: {threshold})", results_len = results.len());
-        for (addr, name, matches) in &results {
+        for (addr, name, report) in &results {
             println!("  {addr:#010x}  {}", name.as_deref().unwrap_or("(stripped)"));
-            for m in matches {
+            for m in &report.matches {
                 println!(
                     "    → {}::{}  score={:.2}  [{}]",
                     m.library,
                     m.name,
                     m.score,
                     m.evidence.join("; ")
+                );
+            }
+            for c in &report.candidates {
+                println!(
+                    "    ? {}::{}  score={:.2} < {:.2} (candidate)  [{}]",
+                    c.library,
+                    c.name,
+                    c.score,
+                    c.threshold,
+                    c.evidence.join("; ")
                 );
             }
         }
