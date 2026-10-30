@@ -716,3 +716,19 @@ Next: merge to main, then rmcp transport + Workbench integration.
 - Local toolchain: rustup stable-aarch64 (1.96.0) at
   `~/.rustup/toolchains/stable-aarch64-apple-darwin/bin` (not on default
   PATH in this shell).
+
+### Lab evidence run 12 (2026-10-29) — broad glibc survey — DONE
+
+- 16 diverse glibc functions surveyed across allocator, string,
+  memory, I/O, signal, environment:
+  - **Zero-unknown**: `_int_malloc` (106), `__assert` (7), `_dl_start`
+    (6), `__GI_getenv` (53), `__GI_memcpy` (12) — **5 functions**
+  - Near-zero: `__GI_strlen` (1/14), `__GI_memset` (2/29),
+    `__GI_strcmp` (2/21), `__GI___libc_write` (1/20),
+    `__GI___libc_malloc` (1/44)
+  - SIMD-heavy (expected): `__strlen_sse2` (8/19, 42%),
+    `__strcmp_sse2` (607/1109, 55%) — SSE2/AVX vector instruction
+    classes are outside the v1 floor set by design
+- **General-purpose C functions decompile at near-zero unknown rate.**
+  SIMD-optimized variants have high rates because vector instructions
+  are honestly unknown — this is the correct behavior.
