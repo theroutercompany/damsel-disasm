@@ -35,9 +35,13 @@ damsel decompile <project> --function _main        # Pseudocode with provenance
 
 ### Triage & Automation
 ```sh
-damsel recon <binary>             # Entropy, packers, anti-analysis indicators
+damsel recon <binary>             # Entropy, packers, anti-analysis catalog
+                                  #   with severity/confidence/remediation
+damsel identify <project>         # Symbol reuse: fingerprint matching on
+                                  #   stripped functions (glibc corpus)
 damsel batch --inputs list.txt --out results/  # Corpus sweep (JSONL)
 damsel diff <left> <right>        # Function-level binary comparison
+                                  #   (includes defense_added findings)
 damsel diff <left> <right> --markdown  # Markdown report
 damsel diff <left> <right> --html      # Self-contained HTML report
 damsel serve                      # MCP server over stdio (7 tools)
@@ -82,6 +86,40 @@ Function recovery on real binaries: `ls` (1,798 functions, 78,142 xrefs),
 ## MCP Server
 
 `damsel serve` implements the Model Context Protocol over stdio with 7 tools:
+
+## Proprietary-Target Depth (Wave 8)
+
+**Anti-analysis catalog** — 13 named detections with severity, confidence,
+and remediation hints:
+
+```sh
+damsel recon /path/to/binary
+  catalog: ANTI_DEBUG_SYSCTL [medium/low] imports _sysctl — import:_sysctl
+    → Hook sysctl return or patch the flag comparison
+  swift: __swift5_typeref (1.2 KB)
+```
+
+**Swift demangling** — `_$s`-mangled symbols display as readable names:
+
+```sh
+damsel functions fixtures/bin/swift-sample
+  0x100000840  DamselSwiftSample.publicAdd
+  0x1000008b0  Swift.print
+```
+
+**Defense diffing** — newly added anti-analysis checks between versions:
+
+```sh
+damsel diff v1.damsel v2.damsel --json | jq .defense_added
+```
+
+**Symbol reuse** — fingerprint matching on stripped functions:
+
+```sh
+damsel identify <project> --threshold 0.7
+  0x100001000  (stripped)
+    → glibc::malloc  score=0.85  [strings: 1/1 matched; size: 106/106]
+```
 `damsel_analyze`, `damsel_functions`, `damsel_xrefs`, `damsel_search`,
 `damsel_decompile`, `damsel_recon`, `damsel_diff`. Tools return the same
 typed JSON as the CLI.
