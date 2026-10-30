@@ -74,7 +74,10 @@ pub fn parse_eh_frame(data: &[u8], section_vaddr: u64) -> Vec<FdeEntry> {
                 let start = (field_vaddr as i64 + pcrel as i64) as u64;
                 let end = start + range as u64;
 
-                if range > 0 && start >= section_vaddr {
+                // Accept any nonzero-extent function; FDEs describe
+                // .text functions which live at lower addresses than
+                // .eh_frame itself.
+                if range > 0 && start > 0 {
                     entries.push(FdeEntry { start, end });
                 }
             }
@@ -183,5 +186,31 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].start, 0x1100);
         assert_eq!(entries[1].start, 0x1200);
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    #[test]
+    fn static_binary_fde_recovery() {
+        // If a local static test binary exists, verify FDE parsing works
+        // on real compiler output. Skipped when the fixture is absent.
+        let path = "/tmp/lab/test_static";
+        if !std::path::Path::new(path).exists() {
+            return; // skip on machines without the lab fixture
+        }
+        let image = crate::load(path).expect("load");
+        let eh = image.sections.iter().find(|s| s.name == ".eh_frame");
+        let Some(section) = eh else {
+            panic!("no .eh_frame section in sections list ({})", image.sections.len());
+        };
+        let bytes = image
+            .read_at_vaddr(section.address, section.size as usize)
+            .unwrap_or_else(|| panic!("read_at_vaddr failed for {:#x}", section.address));
+        let fdes = parse_eh_frame(bytes, section.address);
+        assert!(!fdes.is_empty(), "0 FDEs from {} bytes", bytes.len());
+        assert!(fdes.len() > 100, "expected >100 FDEs, got {}", fdes.len());
     }
 }
