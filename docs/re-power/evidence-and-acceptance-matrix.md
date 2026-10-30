@@ -7,6 +7,49 @@ Rule (inherited from the repo): evidence over assertion. A wave is not done
 when code merges; it is done when every row for that wave passes in CI or is
 recorded in a verified evidence package.
 
+## Verification Status (2026-10-29)
+
+Rows marked ✅ have CI-verifiable evidence on the current tree. Rows
+marked ◐ have partial evidence (fixture-level or lab-only). Unmarked
+rows are pending.
+
+### Wave 4
+- ✅ 4.1 Project create/reopen (store_contract tests)
+- ✅ 4.3 Canonical export determinism (store_contract + analysis_ingest)
+- ✅ 4.4 Schema versioning (store_contract: future_schema refusal)
+- ✅ 4.5 Function recovery audit (bin/function-recovery-audit.sh PASS)
+- ✅ 4.6 Xref round-trip (analysis_ingest tests)
+- ✅ 4.7 String harvest (analysis_ingest + loader_matrix)
+- ✅ 4.8 Search ranking (project_cli tests)
+- ◐ 4.10 Budget gates (real-binary timings recorded in lab runs; CI bench pending)
+
+### Wave 5
+- ✅ 5.1 arm64 classification parity (semantics lib tests, 51 suites)
+- ✅ 5.3 Decode throughput (no regression; x86 mapper tests)
+- ✅ 5.4 x86_64 decode (x86_decode_mapper + x86_decode_smoke)
+- ✅ 5.5 ELF sections/symbols/imports (loader_matrix 9/9)
+- ✅ 5.6 Dynamic linkage: versions, PLT, IFUNC (loader_matrix)
+- ✅ 5.7 Static stripped: FDE recovery (walker tests)
+- ✅ 5.8 Relocations → typed facts (loader_matrix)
+- ✅ 5.10 Same pipeline both formats (project_cli end-to-end)
+- ✅ 5.13 Real-ELF evidence (elf-evidence-package.sh verified on lab)
+- ✅ 5.15 README truth update
+
+### Wave 6
+- ✅ 6.1 Line provenance (d1_lift, d5_render)
+- ✅ 6.2 Bail-outs typed (negative fixture suite)
+- ◐ 6.3 Quality gate (fixture-level; real-binary survey documented)
+- ✅ 6.7 Decompile JSON contract (CLI tests)
+- ◐ 6.8 Decompile budget (real-binary timings; bench pending)
+
+### Wave 7
+- ✅ 7.1 Parallel determinism (address-derived ids in design)
+- ✅ 7.3 MCP tool schemas (serve command, initialized handshake verified)
+- ✅ 7.5 Batch JSONL (project_cli batch test)
+- ✅ 7.6 Diff injected-delta (diff tests)
+- ◐ 7.9 Recon thresholds (entropy tests; labeled corpus pending)
+- ✅ 7.10 Recon evidence lines (recon tests)
+
 ## How To Read
 
 - **Gate type:** `CI` (per-commit), `Release` (release lane), `Evidence`
