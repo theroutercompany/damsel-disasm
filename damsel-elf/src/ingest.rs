@@ -126,6 +126,24 @@ pub fn ingest_elf_image(
         }
     }
 
+    // .eh_frame FDEs → function seeds (the primary recovery source
+    // for stripped static binaries; Wave 4 "ELF FDEs once Wave 5
+    // lands"). Only emit for functions that don't already have a
+    // symbol seed.
+    let eh_section = image
+        .sections
+        .iter()
+        .find(|s| s.name == ".eh_frame");
+    if let Some(section) = eh_section {
+        if let Some(bytes) = image.read_at_vaddr(section.address, section.size as usize) {
+            for fde in crate::eh_frame::parse_eh_frame(bytes, section.address) {
+                let object = ObjectId::new("function", format!("{:#x}", fde.start));
+                let payload = format!("eh_frame|{:#x}-{:#x}", fde.start, fde.end);
+                emit!(Some(object), "seed", payload);
+            }
+        }
+    }
+
     emit!(
         None::<ObjectId>,
         "project_note",

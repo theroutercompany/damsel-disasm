@@ -9,6 +9,7 @@
 //! the `elf-nosections` fixture unit.
 
 mod analysis;
+mod eh_frame;
 mod image;
 mod ingest;
 mod loader;
@@ -19,6 +20,7 @@ pub use image::{ElfDynamicEntry, ElfImage, ElfSection, ElfSegment, ElfSymbol};
 pub use analysis::{ElfAnalysisError, ElfXrefOutcome, harvest_elf_xrefs};
 pub use ingest::{ElfIngestError, ElfIngestOutcome, ingest_elf_image};
 pub use strings::{ElfStringsError, ElfStringsOutcome, harvest_elf_strings, read_elf_c_string};
+pub use eh_frame::{FdeEntry, parse_eh_frame};
 pub use loader::{ElfError, Result, load, load_bytes};
 
 /// Synthetic ELF fixture builders (deterministic in-process bytes).
