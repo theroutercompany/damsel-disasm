@@ -52,15 +52,45 @@ pub fn demangle(mangled: &str) -> Option<Demangled> {
             parse_identifier(rest)?
         };
 
-    // Parse the function name (length-prefixed identifier).
-    let (name, after_name) = parse_identifier(after_module)?;
+    // Parse the first identifier (type name or function name).
+    let (first, after_first) = parse_identifier(after_module)?;
+
+    // Check for a type marker (V=struct, C=class, O=enum) followed by
+    // a member name: `RectV8describe...` = Rect.describe()
+    let (name, display, after_name) = if let Some(stripped) = after_first
+        .strip_prefix('V')
+        .or_else(|| after_first.strip_prefix('C'))
+        .or_else(|| after_first.strip_prefix('O'))
+    {
+        if let Some((member, rest)) = parse_identifier(stripped) {
+            (
+                member,
+                format!("{module}.{first}.{member}"),
+                rest,
+            )
+        } else {
+            (first, format!("{module}.{first}"), after_first)
+        }
+    } else {
+        (first, format!("{module}.{first}"), after_first)
+    };
 
     // Check for special suffixes in the type section.
     let type_section = after_name;
-    let is_thunk = type_section.contains("FfA") || type_section.contains("TJ");
+    let is_thunk = type_section.contains("FfA")
+        || type_section.contains("TW")
+        || type_section.contains("TJ");
 
-    // Try to extract a basic signature if present.
-    let display = format!("{module}.{name}");
+    // Extend display with common accessor suffixes.
+    let display = if type_section.ends_with("vg") {
+        format!("{display}.getter")
+    } else if type_section.ends_with("vs") {
+        format!("{display}.setter")
+    } else if type_section.ends_with("fC") {
+        format!("{display}(init)")
+    } else {
+        display
+    };
 
     Some(Demangled {
         display,

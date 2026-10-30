@@ -888,3 +888,18 @@ floor set, Workbench integration.
 - Reads string facts from the project store; runs the reuse matcher
   on every unnamed function; default threshold 0.7.
 - Proof: workspace 54 suites, 0 failures.
+
+### Unit 8.3c — Swift member-level demangling — DONE
+
+- Improved demangler handles Type.member patterns: `RectV8describe`
+  → `swift_rich.Rect.describe`, property accessors (`vg`→getter,
+  `vs`→setter), constructors (`fC`→init), witness thunks (TW).
+- Proven on a fresh real Swift binary (compiled with protocols,
+  structs, classes, enums, generics — 8 `__swift5_*` sections):
+  - 68 functions recovered
+  - `swift_rich.Rect.area.getter`, `swift_rich.Circle.describe`,
+    `swift_rich.Color.rawValue.getter`, `swift_rich.Color.allCases`
+    all display correctly
+  - Witness thunks identified (is_thunk=true)
+- Ground truth calibrated against `xcrun swift-demangle`.
+- Proof: workspace 54 suites, 0 failures.
