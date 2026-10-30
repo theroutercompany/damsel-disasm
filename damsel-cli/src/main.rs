@@ -542,6 +542,11 @@ enum Command {
     },
     #[command(about = "First-touch triage: stripped-ness, entropy, packers, anti-analysis (Wave 7)")]
     Recon { path: PathBuf },
+    Identify {
+        project: PathBuf,
+        #[arg(long, help = "Minimum match score (0.0-1.0)")]
+        threshold: Option<f64>,
+    },
     #[command(about = "Diff two analyzed projects (function-level, Wave 7)")]
     Diff {
         left: PathBuf,
@@ -1229,6 +1234,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Recon { path } => {
             handle_recon(path, &output_settings)?;
         }
+        Command::Identify { project, threshold } => {
+            handle_identify(project, threshold, &output_settings)?;
+        }
         Command::Batch { inputs, out, fail_fast } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
@@ -1692,6 +1700,99 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
         }
         for sec in &swift_sections {
             println!("  swift: {} ({} bytes)", sec.name, sec.size);
+        }
+    }
+    Ok(())
+}
+
+fn handle_identify(
+    project: PathBuf,
+    threshold: Option<f64>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, function_summaries, open_store};
+
+    let threshold = threshold.unwrap_or(0.7);
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+        .map_err(map_store_error)?;
+
+    let summaries = function_summaries(&store).map_err(map_store_error)?;
+    let corpus = damsel_recon_catalog::reuse::glibc_minimal_corpus();
+
+    // Collect string facts from the project for fingerprinting.
+    let string_facts: std::collections::BTreeMap<u64, Vec<String>> = store
+        .facts()
+        .map_err(map_store_error)?
+        .iter()
+        .filter_map(|fact| {
+            if fact.kind.as_str() != "string_in_function" {
+                return None;
+            }
+            let payload: serde_json::Value =
+                serde_json::from_str(&fact.payload).ok()?;
+            let address = payload.get("function")?.as_str()?.parse::<u64>().ok()?;
+            let text = payload.get("text")?.as_str()?.to_string();
+            Some((address, vec![text]))
+        })
+        .fold(Default::default(), |mut acc: std::collections::BTreeMap<u64, Vec<String>>, (addr, texts)| {
+            acc.entry(addr).or_default().extend(texts);
+            acc
+        });
+
+    let mut results: Vec<(u64, Option<String>, Vec<damsel_recon_catalog::reuse::ReuseMatch>)> =
+        Vec::new();
+    for summary in &summaries {
+        // Only identify functions without names (stripped) or with
+        // generic sub_ names.
+        let is_unnamed = summary.name.as_deref().is_none_or(|n| {
+            n.is_empty() || n.starts_with("sub_") || n.starts_with("func_")
+        });
+        if !is_unnamed {
+            continue;
+        }
+
+        // Build a fingerprint from available facts.
+        let strings = string_facts.get(&summary.address).cloned().unwrap_or_default();
+        let fingerprint = damsel_recon_catalog::reuse::FunctionFingerprint {
+            strings,
+            constants: vec![],
+            call_count: 0,
+            instruction_count: 0,
+        };
+        let matches =
+            damsel_recon_catalog::reuse::find_reuse(&fingerprint, &corpus, threshold);
+        if !matches.is_empty() {
+            results.push((summary.address, summary.name.clone(), matches));
+        }
+    }
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "identify",
+            "corpus": "glibc-minimal",
+            "threshold": threshold,
+            "identified": results.iter().map(|(addr, name, matches)| serde_json::json!({
+                "address": format!("{addr:#x}"),
+                "original_name": name,
+                "matches": matches,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("identify: {results_len} function(s) matched (corpus: glibc-minimal, threshold: {threshold})", results_len = results.len());
+        for (addr, name, matches) in &results {
+            println!("  {addr:#010x}  {}", name.as_deref().unwrap_or("(stripped)"));
+            for m in matches {
+                println!(
+                    "    → {}::{}  score={:.2}  [{}]",
+                    m.library,
+                    m.name,
+                    m.score,
+                    m.evidence.join("; ")
+                );
+            }
         }
     }
     Ok(())

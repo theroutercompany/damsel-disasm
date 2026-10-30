@@ -879,3 +879,12 @@ floor set, Workbench integration.
 - 4 unit tests: exact string match, exact constant match, no match
   below threshold, evidence inclusion.
 - Proof: workspace 54 suites, 0 failures.
+
+### Unit 8.2b — identify CLI command — DONE
+
+- `damsel identify <project> [--threshold <0.0-1.0>]`: fingerprint
+  matching on stripped/unamed functions against the known corpus.
+  Output shows matches with score and evidence lines.
+- Reads string facts from the project store; runs the reuse matcher
+  on every unnamed function; default threshold 0.7.
+- Proof: workspace 54 suites, 0 failures.
