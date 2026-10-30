@@ -800,3 +800,12 @@ floor set, Workbench integration.
   = self;` → `x0 = *(&x8[0x10]); return;` — clearly reading the ivar
   from self.
 - Proof: workspace 51 suites, 0 failures.
+
+### Unit 7.23 — decompile --all (batch pseudocode) — DONE
+
+- `damsel decompile <project> --all --out <dir>`: decompiles every
+  named function in a project, writing one `.pseudo` file per
+  function. 28 functions from objc-sample in ~1s. JSONL mode
+  (`--all` without `--out`) prints per-function JSON lines.
+- Proof: workspace 51 suites, 0 failures; 28 files generated from
+  the objc fixture.

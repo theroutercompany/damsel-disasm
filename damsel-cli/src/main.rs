@@ -569,7 +569,11 @@ enum Command {
     Decompile {
         project: PathBuf,
         #[arg(long, help = "Function name or 0x address")]
-        function: String,
+        function: Option<String>,
+        #[arg(long, help = "Decompile all functions (batch mode)")]
+        all: bool,
+        #[arg(long, help = "Output directory for --all (one .pseudo file per function)")]
+        out: Option<PathBuf>,
     },
     #[command(about = "D0 function summary: calls, imports, strings, problems (Wave 6)")]
     Summary {
@@ -1212,8 +1216,15 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Summary { project, function, markdown } => {
             handle_summary(project, &function, markdown, &output_settings)?;
         }
-        Command::Decompile { project, function } => {
-            handle_decompile(project, &function, &output_settings)?;
+        Command::Decompile { project, function, all, out } => {
+            if all {
+                handle_decompile_all(project, out, &output_settings)?;
+            } else {
+                let function = function.ok_or_else(|| {
+                    CliRunError::invalid_args("decompile requires --function or --all")
+                })?;
+                handle_decompile(project, &function, &output_settings)?;
+            }
         }
         Command::Recon { path } => {
             handle_recon(path, &output_settings)?;
@@ -1734,6 +1745,95 @@ fn handle_decompile(
             println!("{:>10}  {}", if addresses.is_empty() { String::new() } else { addresses }, line.text);
         }
     }
+    Ok(())
+}
+
+fn handle_decompile_all(
+    project: PathBuf,
+    out_dir: Option<PathBuf>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, ProjectStore, TypedStore, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
+        .map_err(map_store_error)?;
+
+    let summaries = damsel_project::function_summaries(&store)
+        .map_err(map_store_error)?;
+
+    let Some(out) = out_dir else {
+        // Print all to stdout (JSONL)
+        for summary in &summaries {
+            if let Some(name) = &summary.name {
+                let target_path = project_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(|n| n.strip_suffix(".damsel"))
+                    .map(|stem| project_dir.with_file_name(stem));
+                if let Some(target) = target_path.filter(|p| p.is_file()) {
+                    let image = load_image(target)?;
+                    let request = damsel_core::DisassemblyRequestV2 {
+                        target: damsel_core::DisassemblyTarget::Symbol(name.clone()),
+                        range: None,
+                        limit: damsel_core::DisassemblyLimit::Unlimited,
+                        options: damsel_core::DisassemblyOptions {
+                            include_annotations: true,
+                            include_value_flow: false,
+                        },
+                    };
+                    if let Ok(result) = disassemble_v2(&image, &request) {
+                        let function = damsel_decomp::lift_arm64(&result.instructions);
+                        let pseudocode = damsel_decomp::render_pseudocode(&function, Some(name));
+                        let value = serde_json::json!({
+                            "function": name,
+                            "address": format!("{:#x}", summary.address),
+                            "unknown_count": function.unknown_count,
+                            "line_count": pseudocode.lines.len(),
+                            "lines": pseudocode.lines.iter().map(|l| &l.text).collect::<Vec<_>>(),
+                        });
+                        println!("{}", project_json(value));
+                    }
+                }
+            }
+        }
+        return Ok(());
+    };
+
+    // Write one .pseudo file per function
+    std::fs::create_dir_all(&out)
+        .map_err(|e| CliRunError::command("store_error", format!("{}: {e}", out.display())))?;
+    let mut count = 0;
+    for summary in &summaries {
+        let Some(name) = &summary.name else { continue };
+        let target_path = project_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".damsel"))
+            .map(|stem| project_dir.with_file_name(stem));
+        let Some(target) = target_path.filter(|p| p.is_file()) else { continue };
+        let image = load_image(target)?;
+        let request = damsel_core::DisassemblyRequestV2 {
+            target: damsel_core::DisassemblyTarget::Symbol(name.clone()),
+            range: None,
+            limit: damsel_core::DisassemblyLimit::Unlimited,
+            options: damsel_core::DisassemblyOptions {
+                include_annotations: true,
+                include_value_flow: false,
+            },
+        };
+        let Ok(result) = disassemble_v2(&image, &request) else { continue };
+        let function = damsel_decomp::lift_arm64(&result.instructions);
+        let pseudocode = damsel_decomp::render_pseudocode(&function, Some(name));
+        let safe_name = name.replace(char::from(47), "_");
+        let file_path = out.join(format!("{safe_name}.pseudo"));
+        let text: Vec<&str> = pseudocode.lines.iter().map(|l| l.text.as_str()).collect();
+        std::fs::write(&file_path, text.join("\n"))
+            .map_err(|e| CliRunError::command("store_error", format!("{}: {e}", file_path.display())))?;
+        count += 1;
+    }
+    println!("decompiled {count} functions -> {}", out.display());
     Ok(())
 }
 
