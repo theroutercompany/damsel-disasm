@@ -1016,3 +1016,20 @@ paddb/w/d/q, por/pand/pandn, movlpd/movhpd/movlps/movhps.
 - Lab result on the stripped static binary: **24 confident
   identifications** (unique sizes), 1,111 candidates with evidence.
 - Proof: workspace 56 suites, 0 failures.
+
+### Unit 8.2j — Decode-level corpus fingerprints (lab run 16) — DONE
+
+- `fingerprint_from_instructions()`: extracts distinctive constants
+  (≥ 0x100, not page-aligned, > 1 bit set), call counts, and
+  instruction counts from decoded instructions.
+- `corpus-export` and `identify` now decode functions via the x86_64
+  decoder for fingerprints (constants + calls + sizes, not just sizes).
+- Lab result on the stripped static binary:
+  - Size-only fingerprints: 24 confident IDs
+  - Decode-level fingerprints: **345 confident IDs** (14× improvement)
+  - 30% of 1,135 stripped functions recover names
+  - Top matches: gconv transform functions, __libc_message_impl,
+    _dl_tunable_set_tcache_count — all plausible static-glibc content
+- Corpus quality: 3,952 entries, 1,323 with constants, 1,987 with
+  call counts.
+- Proof: workspace 56 suites, 0 failures.
