@@ -1795,6 +1795,12 @@ fn handle_identify(
         })
         .collect();
 
+    // Join strings to functions via xrefs (strongest signal).
+    let string_map = elf_image
+        .as_ref()
+        .map(|img| strings_per_function(&store, img))
+        .unwrap_or_default();
+
     let mut results: Vec<(u64, Option<String>, damsel_recon_catalog::reuse::ReuseReport)> =
         Vec::new();
     for summary in &summaries {
@@ -1807,8 +1813,8 @@ fn handle_identify(
             continue;
         }
 
-        // Decode-based fingerprint: constants, calls, instruction count.
-        let fingerprint = bounds
+        // Decode-based fingerprint + string references.
+        let mut fingerprint = bounds
             .get(&summary.address)
             .and_then(|(s, e)| {
                 elf_image.as_ref().and_then(|img| {
@@ -1823,6 +1829,8 @@ fn handle_identify(
                 call_count: 0,
                 instruction_count: 0,
             });
+        fingerprint.strings =
+            string_map.get(&summary.address).cloned().unwrap_or_default();
         let report =
             damsel_recon_catalog::reuse::find_reuse_report(&fingerprint, &corpus, threshold);
         if !report.matches.is_empty() || !report.candidates.is_empty() {
