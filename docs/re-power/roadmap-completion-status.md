@@ -79,10 +79,10 @@ patch studio) remain per the table above.
 2. ~~SIMD floor set~~ **DONE** — strlen 42%→0%, strcmp 55%→1%, memcmp 0%
 3. **Swift type records** (8.3): field names extracted from reflstr;
    remaining: typed field offsets, conformance tables.
-4. ~~glibc corpus at scale~~ **DONE (foundations)** — corpus-export
-   (3,952 glibc entries), identify with candidates, 24 confident IDs
-   on a stripped static binary; string/constant signals will raise
-   recall.
+4. ~~glibc corpus at scale~~ **DONE (functional)** — corpus-export
+   (3,952 entries with constants + calls), identify with
+   decode-level fingerprints: **345 confident IDs (30% recovery)**
+   on a stripped static binary.
 6. **FDE function recovery**: stripped static binaries recover 1,135
    function bounds from `.eh_frame` (was 0).
 5. **Workbench native app integration**: project-open flow +
