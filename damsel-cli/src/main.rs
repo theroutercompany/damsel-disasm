@@ -1760,25 +1760,40 @@ fn handle_identify(
         damsel_recon_catalog::reuse::glibc_minimal_corpus()
     };
 
-    // Collect string facts from the project for fingerprinting.
-    let string_facts: std::collections::BTreeMap<u64, Vec<String>> = store
+    // Load the source image for decode-level fingerprinting.
+    let target_path = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".damsel"))
+        .map(|stem| project_dir.with_file_name(stem));
+    let elf_image = target_path
+        .filter(|p| p.is_file())
+        .and_then(|p| damsel_elf::load(&p).ok());
+
+    // Read function bounds (start, end) for decode-based fingerprinting.
+    let bounds: std::collections::BTreeMap<u64, (u64, u64)> = store
         .facts()
         .map_err(map_store_error)?
         .iter()
         .filter_map(|fact| {
-            if fact.kind.as_str() != "string_in_function" {
+            if fact.kind.as_str() != "function_bound" {
                 return None;
             }
-            let payload: serde_json::Value =
-                serde_json::from_str(&fact.payload).ok()?;
-            let address = payload.get("function")?.as_str()?.parse::<u64>().ok()?;
-            let text = payload.get("text")?.as_str()?.to_string();
-            Some((address, vec![text]))
+            let object = fact.object_id.as_ref()?;
+            let address = u64::from_str_radix(object.key().trim_start_matches("0x"), 16).ok()?;
+            let payload = &fact.payload;
+            let start = payload.split('-').next()?.trim_start_matches("0x");
+            let end = payload
+                .split('-')
+                .nth(1)?
+                .split('|')
+                .next()?
+                .trim_start_matches("0x");
+            let s = u64::from_str_radix(start, 16).ok()?;
+            let e = u64::from_str_radix(end, 16).ok()?;
+            Some((address, (s, e)))
         })
-        .fold(Default::default(), |mut acc: std::collections::BTreeMap<u64, Vec<String>>, (addr, texts)| {
-            acc.entry(addr).or_default().extend(texts);
-            acc
-        });
+        .collect();
 
     let mut results: Vec<(u64, Option<String>, damsel_recon_catalog::reuse::ReuseReport)> =
         Vec::new();
@@ -1792,14 +1807,22 @@ fn handle_identify(
             continue;
         }
 
-        // Build a fingerprint from available facts.
-        let strings = string_facts.get(&summary.address).cloned().unwrap_or_default();
-        let fingerprint = damsel_recon_catalog::reuse::FunctionFingerprint {
-            strings,
-            constants: vec![],
-            call_count: 0,
-            instruction_count: 0,
-        };
+        // Decode-based fingerprint: constants, calls, instruction count.
+        let fingerprint = bounds
+            .get(&summary.address)
+            .and_then(|(s, e)| {
+                elf_image.as_ref().and_then(|img| {
+                    decode_for_fingerprint(img, *s, *e).map(|insts| {
+                        damsel_recon_catalog::reuse::fingerprint_from_instructions(&insts)
+                    })
+                })
+            })
+            .unwrap_or(damsel_recon_catalog::reuse::FunctionFingerprint {
+                strings: vec![],
+                constants: vec![],
+                call_count: 0,
+                instruction_count: 0,
+            });
         let report =
             damsel_recon_catalog::reuse::find_reuse_report(&fingerprint, &corpus, threshold);
         if !report.matches.is_empty() || !report.candidates.is_empty() {
