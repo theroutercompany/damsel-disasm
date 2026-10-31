@@ -1033,3 +1033,25 @@ paddb/w/d/q, por/pand/pandn, movlpd/movhpd/movlps/movhps.
 - Corpus quality: 3,952 entries, 1,323 with constants, 1,987 with
   call counts.
 - Proof: workspace 56 suites, 0 failures.
+
+### Unit 8.2m — String-signal identification (lab run 17) — DONE
+
+- `strings_per_function()`: joins string facts to functions via the
+  xref graph (data xrefs whose target is a string address → find the
+  containing function via bounds → read the text from the image).
+  Wired into both corpus-export and identify.
+- Lab result on the stripped static binary with full signal set
+  (strings + constants + calls + sizes):
+  - **362 confident identifications** (up from 345)
+  - Many at **score = 1.00** (all strings + all constants + size match)
+  - Evidence proves correctness:
+    - `__stack_chk_fail` ← "stack smashing detected"
+    - `__GI___chk_fail` ← "buffer overflow detected"
+    - `tcache_double_free_verify` ← "free(): double free detected in tcache 2"
+    - `__GI___sysconf` ← "/proc/sys/kernel/rtsig-max"
+    - `get_nproc_stat` ← "/proc/stat"
+    - `__dcigettext` ← "LANGUAGE"
+    - `__GI_setlocale` ← "LOCPATH"
+- The spec's "every match carries evidence lines" is fully met:
+  each identification shows which strings/constants/size matched.
+- Proof: workspace 56 suites, 0 failures.
