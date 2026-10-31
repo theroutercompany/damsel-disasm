@@ -348,3 +348,69 @@ mod tests {
         assert!(m.evidence.iter().any(|e| e.contains("strings")));
     }
 }
+
+/// Extract a fingerprint from decoded instruction data. Takes
+/// (mnemonic, [constants]) pairs — the CLI decodes functions and
+/// forwards the raw signals.
+pub fn fingerprint_from_instructions(
+    instructions: &[(String, Vec<u64>)],
+) -> FunctionFingerprint {
+    let mut constants = Vec::new();
+    let mut call_count = 0usize;
+
+    for (mnemonic, immediates) in instructions {
+        let lower = mnemonic.to_ascii_lowercase();
+        if lower == "call" || lower == "bl" {
+            call_count += 1;
+        }
+        for value in immediates {
+            // Filter: distinctive constants only (≥ 0x100, not
+            // page-aligned noise, not common small values).
+            if *value >= 0x100 && *value != 0x1000 && value.count_ones() > 1 {
+                constants.push(*value);
+            }
+        }
+    }
+
+    constants.sort();
+    constants.dedup();
+
+    FunctionFingerprint {
+        strings: vec![],
+        constants,
+        call_count,
+        instruction_count: instructions.len(),
+    }
+}
+
+#[cfg(test)]
+mod instruction_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_constants_and_calls() {
+        let instructions = vec![
+            ("mov".to_string(), vec![0x7f7f7f7f7f7f7f7f]),
+            ("call".to_string(), vec![]),
+            ("cmp".to_string(), vec![0x1000]), // filtered (page-aligned)
+            ("mov".to_string(), vec![0x100]), // too small
+            ("mov".to_string(), vec![0xdeadbeef]),
+            ("call".to_string(), vec![]),
+            ("nop".to_string(), vec![]),
+        ];
+        let fp = fingerprint_from_instructions(&instructions);
+        assert_eq!(fp.constants, vec![0xdeadbeef, 0x7f7f7f7f7f7f7f7f]); // sorted
+        assert_eq!(fp.call_count, 2);
+        assert_eq!(fp.instruction_count, 7);
+    }
+
+    #[test]
+    fn dedups_constants() {
+        let instructions = vec![
+            ("mov".to_string(), vec![0x123456]),
+            ("mov".to_string(), vec![0x123456]),
+        ];
+        let fp = fingerprint_from_instructions(&instructions);
+        assert_eq!(fp.constants, vec![0x123456]);
+    }
+}

@@ -1848,6 +1848,41 @@ fn handle_identify(
     Ok(())
 }
 
+
+/// Decode a function range and extract (mnemonic, [immediates]) pairs
+/// for fingerprinting.
+fn decode_for_fingerprint(
+    image: &damsel_elf::ElfImage,
+    start: u64,
+    end: u64,
+) -> Option<Vec<(String, Vec<u64>)>> {
+    let bytes = image.read_at_vaddr(start, (end - start) as usize)?;
+    let instructions = damsel_core::decode_x86_64_with_limit(
+        bytes,
+        start,
+        damsel_core::DisassemblyLimit::Unlimited,
+        damsel_core::DisassemblyOptions::default(),
+    )
+    .ok()?;
+    Some(
+        instructions
+            .iter()
+            .map(|inst| {
+                let immediates: Vec<u64> = inst
+                    .operands
+                    .iter()
+                    .filter_map(|op| match op {
+                        damsel_core::Operand::ImmediateUnsigned(v) => Some(*v),
+                        damsel_core::Operand::ImmediateSigned(v) => Some(v.unsigned_abs()),
+                        _ => None,
+                    })
+                    .collect();
+                (inst.mnemonic.to_string(), immediates)
+            })
+            .collect(),
+    )
+}
+
 fn handle_corpus_export(
     project: PathBuf,
     out: PathBuf,
@@ -1862,6 +1897,16 @@ fn handle_corpus_export(
         .map_err(map_store_error)?;
 
     let summaries = function_summaries(&store).map_err(map_store_error)?;
+
+    // Load the source image for decode-level fingerprinting.
+    let target_path = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".damsel"))
+        .map(|stem| project_dir.with_file_name(stem));
+    let elf_image = target_path
+        .filter(|p| p.is_file())
+        .and_then(|p| damsel_elf::load(&p).ok());
 
     // Collect string facts per function (for fingerprint strings).
     let string_facts: std::collections::BTreeMap<u64, Vec<String>> = store
@@ -1918,19 +1963,26 @@ fn handle_corpus_export(
             continue;
         }
 
-        let strings = string_facts.get(&summary.address).cloned().unwrap_or_default();
-        let instruction_count = bounds
+        let (constants, call_count, instruction_count) = bounds
             .get(&summary.address)
-            .map(|(s, e)| ((e - s) / 4) as usize) // arm64 = 4 bytes/insn
-            .unwrap_or(0);
+            .and_then(|(s, e)| {
+                elf_image.as_ref().and_then(|img| {
+                    decode_for_fingerprint(img, *s, *e).map(|insts| {
+                        let fp =
+                            damsel_recon_catalog::reuse::fingerprint_from_instructions(&insts);
+                        (fp.constants, fp.call_count, fp.instruction_count)
+                    })
+                })
+            })
+            .unwrap_or((vec![], 0, 0));
 
         corpus.push(damsel_recon_catalog::reuse::KnownFunction {
             library: library.clone(),
             name: name.clone(),
             fingerprint: damsel_recon_catalog::reuse::FunctionFingerprint {
-                strings,
-                constants: vec![], // constants need decode-level extraction
-                call_count: 0,     // calls need decode-level extraction
+                strings: vec![],
+                constants,
+                call_count,
                 instruction_count,
             },
         });
