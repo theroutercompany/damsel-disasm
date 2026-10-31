@@ -1906,6 +1906,121 @@ fn decode_for_fingerprint(
     )
 }
 
+
+/// Join string facts to functions: for each xref whose target is a
+/// string address, find the containing function and read the string
+/// text from the image. Returns function_address → [string texts].
+fn strings_per_function(
+    store: &damsel_project::StoreHandle,
+    image: &damsel_elf::ElfImage,
+) -> std::collections::BTreeMap<u64, Vec<String>> {
+    use damsel_project::ProjectStore;
+
+    let facts = match store.facts() {
+        Ok(facts) => facts,
+        Err(_) => return Default::default(),
+    };
+
+    // String addresses (object key) → length.
+    let mut string_addrs: std::collections::BTreeMap<u64, usize> = Default::default();
+    // Xref: instruction address → data target address.
+    let mut data_xrefs: Vec<(u64, u64)> = Vec::new();
+    // Function bounds: address → (start, end).
+    let mut fn_bounds: Vec<(u64, u64, u64)> = Vec::new(); // (fn_addr, start, end)
+
+    for fact in &facts {
+        let key = fact.object_id.as_ref().map(|o| o.key().to_string());
+        match fact.kind.as_str() {
+            "string" => {
+                if let Some(key) = &key {
+                    if let Ok(addr) = u64::from_str_radix(key.trim_start_matches("0x"), 16) {
+                        let len = fact
+                            .payload
+                            .split("len=")
+                            .nth(1)
+                            .and_then(|l| l.parse::<usize>().ok())
+                            .unwrap_or(0);
+                        string_addrs.insert(addr, len);
+                    }
+                }
+            }
+            "xref" => {
+                // payload: "data|to=data:0x..." or "call|to=function:0x..."
+                if fact.payload.starts_with("data|to=data:") {
+                    let source = key
+                        .as_deref()
+                        .and_then(|k| u64::from_str_radix(k.trim_start_matches("0x"), 16).ok());
+                    let target = fact
+                        .payload
+                        .strip_prefix("data|to=data:")
+                        .and_then(|t| u64::from_str_radix(t.trim_start_matches("0x"), 16).ok());
+                    if let (Some(src), Some(dst)) = (source, target) {
+                        data_xrefs.push((src, dst));
+                    }
+                }
+            }
+            "function_bound" => {
+                let fn_addr = key
+                    .as_deref()
+                    .and_then(|k| u64::from_str_radix(k.trim_start_matches("0x"), 16).ok());
+                let start = fact
+                    .payload
+                    .split('-')
+                    .next()
+                    .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
+                let end = fact
+                    .payload
+                    .split('-')
+                    .nth(1)
+                    .and_then(|e| {
+                        e.split('|').next().and_then(|e| {
+                            u64::from_str_radix(e.trim_start_matches("0x"), 16).ok()
+                        })
+                    });
+                if let (Some(f), Some(s), Some(e)) = (fn_addr, start, end) {
+                    fn_bounds.push((f, s, e));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn_bounds.sort_by_key(|(_, start, _)| *start);
+
+    let mut result: std::collections::BTreeMap<u64, Vec<String>> = Default::default();
+    for (src_addr, dst_addr) in &data_xrefs {
+        // Is the target a string?
+        let Some(&len) = string_addrs.get(dst_addr) else {
+            continue;
+        };
+        if len == 0 || len > 256 {
+            continue;
+        }
+        // Which function contains the referencing instruction?
+        let containing = fn_bounds
+            .iter()
+            .find(|(_, start, end)| src_addr >= start && src_addr < end);
+        let Some((fn_addr, _, _)) = containing else {
+            continue;
+        };
+        // Read the string text from the image.
+        if let Some(bytes) = image.read_at_vaddr(*dst_addr, len) {
+            let text = String::from_utf8_lossy(bytes);
+            let text = text.trim_end_matches('\0').to_string();
+            if text.len() >= 4 && text.chars().all(|c| c.is_ascii_graphic() || c == ' ') {
+                result.entry(*fn_addr).or_default().push(text);
+            }
+        }
+    }
+
+    // Dedup each function's strings.
+    for strings in result.values_mut() {
+        strings.sort();
+        strings.dedup();
+    }
+    result
+}
+
 fn handle_corpus_export(
     project: PathBuf,
     out: PathBuf,
@@ -1931,24 +2046,11 @@ fn handle_corpus_export(
         .filter(|p| p.is_file())
         .and_then(|p| damsel_elf::load(&p).ok());
 
-    // Collect string facts per function (for fingerprint strings).
-    let string_facts: std::collections::BTreeMap<u64, Vec<String>> = store
-        .facts()
-        .map_err(map_store_error)?
-        .iter()
-        .filter_map(|fact| {
-            if fact.kind.as_str() != "string_in_function" {
-                return None;
-            }
-            let payload: serde_json::Value = serde_json::from_str(&fact.payload).ok()?;
-            let address = payload.get("function")?.as_str()?.parse::<u64>().ok()?;
-            let text = payload.get("text")?.as_str()?.to_string();
-            Some((address, vec![text]))
-        })
-        .fold(Default::default(), |mut acc: std::collections::BTreeMap<u64, Vec<String>>, (addr, texts)| {
-            acc.entry(addr).or_default().extend(texts);
-            acc
-        });
+    // Join strings to functions via xrefs (strongest fingerprint signal).
+    let string_map = elf_image
+        .as_ref()
+        .map(|img| strings_per_function(&store, img))
+        .unwrap_or_default();
 
     // Collect function bounds for instruction counts (approximate:
     // (end - start) / 4 for arm64, / variable for x86 — use the bound
@@ -1999,11 +2101,13 @@ fn handle_corpus_export(
             })
             .unwrap_or((vec![], 0, 0));
 
+        let strings = string_map.get(&summary.address).cloned().unwrap_or_default();
+
         corpus.push(damsel_recon_catalog::reuse::KnownFunction {
             library: library.clone(),
             name: name.clone(),
             fingerprint: damsel_recon_catalog::reuse::FunctionFingerprint {
-                strings: vec![],
+                strings,
                 constants,
                 call_count,
                 instruction_count,
