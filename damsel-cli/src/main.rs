@@ -1742,56 +1742,49 @@ fn handle_identify(
         .map_err(map_store_error)?;
 
     let summaries = function_summaries(&store).map_err(map_store_error)?;
-    let (corpus, corpus_label) = if let Some(path) = &corpus_path {
+    let corpus = if let Some(path) = &corpus_path {
+        // Load an exported corpus (JSON array of KnownFunction).
         let text = std::fs::read_to_string(path).map_err(|e| {
             CliRunError::command(
                 "corpus_read_error",
                 format!("{}: {e}", path.display()),
             )
         })?;
-        let corpus: Vec<damsel_recon_catalog::reuse::KnownFunction> =
-            serde_json::from_str(&text).map_err(|e| {
-                CliRunError::command(
-                    "corpus_parse_error",
-                    format!("{}: {e}", path.display()),
-                )
-            })?;
-        let label = corpus.first().map(|c| c.library.clone()).unwrap_or_else(|| "unknown".into());
-        let count = corpus.len();
-        (corpus, format!("{label} ({count} entries)"))
+        serde_json::from_str(&text).map_err(|e| {
+            CliRunError::command(
+                "corpus_parse_error",
+                format!("{}: {e}", path.display()),
+            )
+        })?
     } else {
-        (damsel_recon_catalog::reuse::glibc_minimal_corpus(), "glibc-minimal".to_string())
+        damsel_recon_catalog::reuse::glibc_minimal_corpus()
     };
 
-    // Read function bounds for size fingerprints.
-    let bounds: std::collections::BTreeMap<u64, usize> = store
+    // Collect string facts from the project for fingerprinting.
+    let string_facts: std::collections::BTreeMap<u64, Vec<String>> = store
         .facts()
         .map_err(map_store_error)?
         .iter()
         .filter_map(|fact| {
-            if fact.kind.as_str() != "function_bound" {
+            if fact.kind.as_str() != "string_in_function" {
                 return None;
             }
-            let object = fact.object_id.as_ref()?;
-            let address = u64::from_str_radix(object.key().trim_start_matches("0x"), 16).ok()?;
-            let payload = &fact.payload;
-            let start = payload.split('-').next()?.trim_start_matches("0x");
-            let end = payload
-                .split('-')
-                .nth(1)?
-                .split('|')
-                .next()?
-                .trim_start_matches("0x");
-            let s = u64::from_str_radix(start, 16).ok()?;
-            let e = u64::from_str_radix(end, 16).ok()?;
-            Some((address, ((e - s) / 4) as usize))
+            let payload: serde_json::Value =
+                serde_json::from_str(&fact.payload).ok()?;
+            let address = payload.get("function")?.as_str()?.parse::<u64>().ok()?;
+            let text = payload.get("text")?.as_str()?.to_string();
+            Some((address, vec![text]))
         })
-        .collect();
+        .fold(Default::default(), |mut acc: std::collections::BTreeMap<u64, Vec<String>>, (addr, texts)| {
+            acc.entry(addr).or_default().extend(texts);
+            acc
+        });
 
     let mut results: Vec<(u64, Option<String>, damsel_recon_catalog::reuse::ReuseReport)> =
         Vec::new();
     for summary in &summaries {
-        // Only identify functions without names.
+        // Only identify functions without names (stripped) or with
+        // generic sub_ names.
         let is_unnamed = summary.name.as_deref().is_none_or(|n| {
             n.is_empty() || n.starts_with("sub_") || n.starts_with("func_")
         });
@@ -1799,12 +1792,13 @@ fn handle_identify(
             continue;
         }
 
-        let instruction_count = bounds.get(&summary.address).copied().unwrap_or(0);
+        // Build a fingerprint from available facts.
+        let strings = string_facts.get(&summary.address).cloned().unwrap_or_default();
         let fingerprint = damsel_recon_catalog::reuse::FunctionFingerprint {
-            strings: vec![],
+            strings,
             constants: vec![],
             call_count: 0,
-            instruction_count,
+            instruction_count: 0,
         };
         let report =
             damsel_recon_catalog::reuse::find_reuse_report(&fingerprint, &corpus, threshold);
@@ -1816,7 +1810,7 @@ fn handle_identify(
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({
             "command": "identify",
-            "corpus": corpus_label,
+            "corpus": "glibc-minimal",
             "threshold": threshold,
             "identified": results.iter().map(|(addr, name, report)| serde_json::json!({
                 "address": format!("{addr:#x}"),
@@ -1827,7 +1821,7 @@ fn handle_identify(
         });
         println!("{}", project_json(value));
     } else {
-        println!("identify: {} function(s) matched (corpus: {corpus_label}, threshold: {threshold})", results.len());
+        println!("identify: {results_len} function(s) matched (corpus: glibc-minimal, threshold: {threshold})", results_len = results.len());
         for (addr, name, report) in &results {
             println!("  {addr:#010x}  {}", name.as_deref().unwrap_or("(stripped)"));
             for m in &report.matches {
@@ -1854,6 +1848,41 @@ fn handle_identify(
     Ok(())
 }
 
+
+/// Decode a function range and extract (mnemonic, [immediates]) pairs
+/// for fingerprinting.
+fn decode_for_fingerprint(
+    image: &damsel_elf::ElfImage,
+    start: u64,
+    end: u64,
+) -> Option<Vec<(String, Vec<u64>)>> {
+    let bytes = image.read_at_vaddr(start, (end - start) as usize)?;
+    let instructions = damsel_core::decode_x86_64_with_limit(
+        bytes,
+        start,
+        damsel_core::DisassemblyLimit::Unlimited,
+        damsel_core::DisassemblyOptions::default(),
+    )
+    .ok()?;
+    Some(
+        instructions
+            .iter()
+            .map(|inst| {
+                let immediates: Vec<u64> = inst
+                    .operands
+                    .iter()
+                    .filter_map(|op| match op {
+                        damsel_core::Operand::ImmediateUnsigned(v) => Some(*v),
+                        damsel_core::Operand::ImmediateSigned(v) => Some(v.unsigned_abs()),
+                        _ => None,
+                    })
+                    .collect();
+                (inst.mnemonic.to_string(), immediates)
+            })
+            .collect(),
+    )
+}
+
 fn handle_corpus_export(
     project: PathBuf,
     out: PathBuf,
@@ -1869,7 +1898,38 @@ fn handle_corpus_export(
 
     let summaries = function_summaries(&store).map_err(map_store_error)?;
 
-    // Collect function bounds for instruction counts.
+    // Load the source image for decode-level fingerprinting.
+    let target_path = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".damsel"))
+        .map(|stem| project_dir.with_file_name(stem));
+    let elf_image = target_path
+        .filter(|p| p.is_file())
+        .and_then(|p| damsel_elf::load(&p).ok());
+
+    // Collect string facts per function (for fingerprint strings).
+    let string_facts: std::collections::BTreeMap<u64, Vec<String>> = store
+        .facts()
+        .map_err(map_store_error)?
+        .iter()
+        .filter_map(|fact| {
+            if fact.kind.as_str() != "string_in_function" {
+                return None;
+            }
+            let payload: serde_json::Value = serde_json::from_str(&fact.payload).ok()?;
+            let address = payload.get("function")?.as_str()?.parse::<u64>().ok()?;
+            let text = payload.get("text")?.as_str()?.to_string();
+            Some((address, vec![text]))
+        })
+        .fold(Default::default(), |mut acc: std::collections::BTreeMap<u64, Vec<String>>, (addr, texts)| {
+            acc.entry(addr).or_default().extend(texts);
+            acc
+        });
+
+    // Collect function bounds for instruction counts (approximate:
+    // (end - start) / 4 for arm64, / variable for x86 — use the bound
+    // size as a proxy).
     let bounds: std::collections::BTreeMap<u64, (u64, u64)> = store
         .facts()
         .map_err(map_store_error)?
@@ -1895,34 +1955,6 @@ fn handle_corpus_export(
         })
         .collect();
 
-    // Collect strings per function: join string facts to xrefs
-    // (which code address references each string) and then to the
-    // containing function via bounds.
-    let string_by_object: std::collections::BTreeMap<String, String> = store
-        .facts()
-        .map_err(map_store_error)?
-        .iter()
-        .filter_map(|fact| {
-            if fact.kind.as_str() != "string" {
-                return None;
-            }
-            // object_id for strings contains the address; payload has
-            // the classification + length. The string text is in the
-            // object_id suffix.
-            let object_key = fact.object_id.as_ref()?.key().to_string();
-            // Extract the text part from the object id (after the
-            // address prefix).
-            Some((object_key, fact.payload.clone()))
-        })
-        .collect();
-
-    // For the corpus v1: strings are best-effort. The xref join needs
-    // the code→string reference which the current store doesn't yet
-    // materialize per-function. Size matching is the primary signal.
-    let string_facts: std::collections::BTreeMap<u64, Vec<String>> =
-        Default::default();
-    let _ = (string_by_object,);
-
     let mut corpus: Vec<damsel_recon_catalog::reuse::KnownFunction> = Vec::new();
     for summary in &summaries {
         // Only export named functions (they're the ground truth).
@@ -1931,19 +1963,26 @@ fn handle_corpus_export(
             continue;
         }
 
-        let strings = string_facts.get(&summary.address).cloned().unwrap_or_default();
-        let instruction_count = bounds
+        let (constants, call_count, instruction_count) = bounds
             .get(&summary.address)
-            .map(|(s, e)| ((e - s) / 4) as usize) // arm64 = 4 bytes/insn
-            .unwrap_or(0);
+            .and_then(|(s, e)| {
+                elf_image.as_ref().and_then(|img| {
+                    decode_for_fingerprint(img, *s, *e).map(|insts| {
+                        let fp =
+                            damsel_recon_catalog::reuse::fingerprint_from_instructions(&insts);
+                        (fp.constants, fp.call_count, fp.instruction_count)
+                    })
+                })
+            })
+            .unwrap_or((vec![], 0, 0));
 
         corpus.push(damsel_recon_catalog::reuse::KnownFunction {
             library: library.clone(),
             name: name.clone(),
             fingerprint: damsel_recon_catalog::reuse::FunctionFingerprint {
-                strings,
-                constants: vec![], // constants need decode-level extraction
-                call_count: 0,     // calls need decode-level extraction
+                strings: vec![],
+                constants,
+                call_count,
                 instruction_count,
             },
         });
