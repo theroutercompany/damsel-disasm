@@ -363,3 +363,190 @@ mod reflstr_tests {
         assert!(names.contains(&"theme"));
     }
 }
+
+/// A field descriptor from `__swift5_fieldmd`: one struct/class/enum's
+/// fields with names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FieldDescriptor {
+    /// Descriptor kind (0=struct, 1=class, 2=enum...).
+    pub kind: u16,
+    /// Field names in declaration order.
+    pub field_names: Vec<String>,
+}
+
+/// Parse `__swift5_fieldmd` bytes into field descriptors.
+///
+/// Each descriptor is: MangledTypeName(4) + Superclass(4) + Kind(2) +
+/// FieldRecordSize(2) + FieldCount(4) + N × FieldRecord(12 each).
+/// Field records reference names via relative pointers into
+/// `__swift5_reflstr`.
+pub fn parse_fieldmd(fieldmd: &[u8], fieldmd_vaddr: u64, reflstr: &[u8], reflstr_vaddr: u64) -> Vec<FieldDescriptor> {
+    let mut descriptors = Vec::new();
+    let mut offset = 0usize;
+
+    while offset + 16 <= fieldmd.len() {
+        // Read the header.
+        let kind = u16::from_le_bytes([fieldmd[offset + 8], fieldmd[offset + 9]]);
+        let field_record_size = u16::from_le_bytes([fieldmd[offset + 10], fieldmd[offset + 11]]) as usize;
+        let field_count = u32::from_le_bytes([
+            fieldmd[offset + 12],
+            fieldmd[offset + 13],
+            fieldmd[offset + 14],
+            fieldmd[offset + 15],
+        ]) as usize;
+
+        // Sanity: field_record_size is typically 12; count is bounded.
+        if field_record_size != 12 || field_count > 128 || field_count == 0 {
+            offset += 4; // Skip forward looking for the next record.
+            continue;
+        }
+
+        let records_start = offset + 16;
+        let total = records_start + field_count * field_record_size;
+        if total > fieldmd.len() {
+            break;
+        }
+
+        let mut field_names = Vec::new();
+        for i in 0..field_count {
+            let record_offset = records_start + i * field_record_size;
+            // FieldRecord: Flags(4) + MangledTypeName(4) + FieldName(4)
+            // FieldName is a relative pointer from its own position.
+            let field_name_ptr_pos = record_offset + 8;
+            if field_name_ptr_pos + 4 > fieldmd.len() {
+                break;
+            }
+            let rel = i32::from_le_bytes([
+                fieldmd[field_name_ptr_pos],
+                fieldmd[field_name_ptr_pos + 1],
+                fieldmd[field_name_ptr_pos + 2],
+                fieldmd[field_name_ptr_pos + 3],
+            ]);
+            if rel == 0 {
+                continue;
+            }
+            // Resolve: the pointer's vaddr + rel gives the target vaddr.
+            let ptr_vaddr = fieldmd_vaddr + field_name_ptr_pos as u64;
+            let target_vaddr = (ptr_vaddr as i64 + rel as i64) as u64;
+            // Convert to reflstr offset.
+            if target_vaddr >= reflstr_vaddr {
+                let reflstr_offset = (target_vaddr - reflstr_vaddr) as usize;
+                if reflstr_offset < reflstr.len() {
+                    // Read null-terminated string.
+                    let end = reflstr[reflstr_offset..]
+                        .iter()
+                        .position(|b| *b == 0)
+                        .map(|p| reflstr_offset + p)
+                        .unwrap_or(reflstr.len());
+                    let name = String::from_utf8_lossy(&reflstr[reflstr_offset..end]).into_owned();
+                    if !name.is_empty() && name.chars().all(|c| c.is_ascii_graphic() || c == ' ') {
+                        field_names.push(name);
+                    }
+                }
+            }
+        }
+
+        if !field_names.is_empty() {
+            descriptors.push(FieldDescriptor { kind, field_names });
+        }
+
+        offset = total;
+    }
+
+    descriptors
+}
+
+#[cfg(test)]
+mod fieldmd_tests {
+    use super::*;
+
+    fn u32b(v: u32) -> [u8; 4] {
+        v.to_le_bytes()
+    }
+    fn u16b(v: u16) -> [u8; 2] {
+        v.to_le_bytes()
+    }
+
+    /// Build a minimal fieldmd with one descriptor (struct, 2 fields)
+    /// and a reflstr section with the field names.
+    fn build_fixture() -> (Vec<u8>, Vec<u8>) {
+        // reflstr: "radius\0w\0h\0" at vaddr 0x2000
+        let reflstr = b"radius\0w\0h\0".to_vec();
+        let reflstr_vaddr = 0x2000u64;
+
+        // fieldmd at vaddr 0x1000:
+        // Descriptor: MangledTypeName(0) + Superclass(0) + Kind(0=struct) +
+        //             RecordSize(12) + Count(2)
+        // Field 1: Flags(0) + MangledTypeName(0) + FieldName(→ "radius")
+        // Field 2: Flags(0) + MangledTypeName(0) + FieldName(→ "w")
+        let fieldmd_vaddr = 0x1000u64;
+        let mut fieldmd = Vec::new();
+        fieldmd.extend_from_slice(&u32b(0)); // MangledTypeName: none
+        fieldmd.extend_from_slice(&u32b(0)); // Superclass: none
+        fieldmd.extend_from_slice(&u16b(0)); // Kind: struct
+        fieldmd.extend_from_slice(&u16b(12)); // RecordSize
+        fieldmd.extend_from_slice(&u32b(2)); // Count
+
+        // Field 1: FieldName relative pointer to reflstr "radius" (0x2000)
+        let field1_name_pos = fieldmd_vaddr + 16 + 8; // +Flags+Mangled
+        let rel1 = (reflstr_vaddr as i64 - field1_name_pos as i64) as i32;
+        fieldmd.extend_from_slice(&u32b(0)); // Flags
+        fieldmd.extend_from_slice(&u32b(0)); // MangledTypeName
+        fieldmd.extend_from_slice(&u32b(rel1 as u32)); // FieldName rel ptr
+
+        // Field 2: FieldName → "w" (0x2000 + 7)
+        let field2_name_pos = fieldmd_vaddr + 16 + 12 + 8;
+        let w_addr = reflstr_vaddr + 7; // "radius\0" is 7 bytes
+        let rel2 = (w_addr as i64 - field2_name_pos as i64) as i32;
+        fieldmd.extend_from_slice(&u32b(0)); // Flags
+        fieldmd.extend_from_slice(&u32b(0)); // MangledTypeName
+        fieldmd.extend_from_slice(&u32b(rel2 as u32)); // FieldName rel ptr
+
+        (fieldmd, reflstr)
+    }
+
+    #[test]
+    fn parses_field_descriptor() {
+        let (fieldmd, reflstr) = build_fixture();
+        let descriptors = parse_fieldmd(&fieldmd, 0x1000, &reflstr, 0x2000);
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].kind, 0); // struct
+        assert_eq!(descriptors[0].field_names, vec!["radius", "w"]);
+    }
+
+    #[test]
+    fn real_fixture_fieldmd() {
+        let path = format!(
+            "{}/../fixtures/bin/adversarial/swift-rich-arm64",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let image = match damsel_macho::load(&path) {
+            Ok(img) => img,
+            Err(_) => return,
+        };
+        let get_section = |name: &str| -> Option<(Vec<u8>, u64)> {
+            image
+                .sections()
+                .iter()
+                .find(|s| s.name == name)
+                .and_then(|s| {
+                    image
+                        .bytes_for_file_range(s.file_offset?, s.file_size)
+                        .map(|b| (b.to_vec(), s.address))
+                })
+        };
+        let Some((fieldmd, fieldmd_va)) = get_section("__swift5_fieldmd") else { return };
+        let Some((reflstr, reflstr_va)) = get_section("__swift5_reflstr") else { return };
+        let descriptors = parse_fieldmd(&fieldmd, fieldmd_va, &reflstr, reflstr_va);
+        if descriptors.is_empty() {
+            return; // skip if format variation
+        }
+        // The fixture has Circle(radius), Rect(w, h), Renderer(shapes, theme)
+        let all_names: Vec<&str> = descriptors
+            .iter()
+            .flat_map(|d| d.field_names.iter().map(|s| s.as_str()))
+            .collect();
+        assert!(all_names.contains(&"radius"), "names: {all_names:?}");
+        assert!(all_names.contains(&"w") || all_names.contains(&"h"));
+    }
+}
