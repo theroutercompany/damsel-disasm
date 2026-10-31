@@ -972,14 +972,13 @@ function renderAnalysisTargetUses(label, rows) {
 
   return `
     <div class="analysis-list">
-      <div class="item-eyebrow">${escapeHtml(label)}</div>
+      <div class="item-eyebrow">${escapeHtml(label)} (${rows.length})</div>
       ${rows
         .map(
           (entry) => `
             <div class="analysis-row">
-              <span class="detail-key">at</span>
               ${renderJumpButton(entry.instruction_address)}
-              <span class="detail-key">target</span>
+              <span class="detail-key">→</span>
               ${renderJumpButton(entry.target_address)}
             </div>
           `,

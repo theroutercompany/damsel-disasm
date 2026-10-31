@@ -184,7 +184,7 @@ h2 {
 
 .workspace-frame {
   display: grid;
-  grid-template-columns: minmax(17rem, 20rem) minmax(0, 1.35fr) minmax(18rem, 22rem);
+  grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr) minmax(24rem, 28rem);
   min-height: calc(100vh - 32px);
 }
 
@@ -515,18 +515,32 @@ code,
 }
 
 .analysis-row {
-  display: grid;
-  grid-template-columns: minmax(4.5rem, auto) minmax(7rem, auto) auto minmax(7rem, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px 10px;
   min-height: 32px;
   padding-bottom: 8px;
   border-bottom: 1px solid hsla(0, 4%, 23%, 0.8);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
 }
 
 .analysis-row:last-child {
   border-bottom: none;
   padding-bottom: 0;
+}
+
+.analysis-row .detail-key {
+  color: var(--text-muted, #888);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.analysis-row .jump-button,
+.analysis-row a {
+  white-space: nowrap;
 }
 
 .data-item {
