@@ -62,7 +62,7 @@ patch studio) remain per the table above.
 | Test suites (all green) | 54 |
 | Test cases | ~400 |
 | CLI commands | 13 + 17 cache subcommands |
-| MCP tools | 7 |
+| MCP tools | 9 |
 | UI endpoints | 9 |
 | Formats / ISAs | Mach-O + ELF64 / arm64e + x86_64 |
 | Zero-unknown decompiled functions | 14 (8 glibc + 6 ObjC) |
@@ -77,8 +77,9 @@ patch studio) remain per the table above.
 
 1. ~~CI budget benches~~ **DONE** — `bin/budget-bench.sh`
 2. ~~SIMD floor set~~ **DONE** — strlen 42%→0%, strcmp 55%→1%, memcmp 0%
-3. **Swift type records** (8.3): field names extracted from reflstr;
-   remaining: typed field offsets, conformance tables.
+3. ~~Swift type records~~ **DONE** — field names from reflstr + field
+   descriptors from `__swift5_fieldmd` (kind + ordered field names
+   per struct/class/enum).
 4. ~~glibc corpus at scale~~ **DONE** — corpus-export (3,952 entries
    with strings + constants + calls), identify with all signals:
    **362 confident IDs, many at score 1.00 with evidence strings**
