@@ -1055,3 +1055,17 @@ paddb/w/d/q, por/pand/pandn, movlpd/movhpd/movlps/movhps.
 - The spec's "every match carries evidence lines" is fully met:
   each identification shows which strings/constants/size matched.
 - Proof: workspace 56 suites, 0 failures.
+
+### Unit 7.24 — MCP server v9 tools (identify + corpus_export) — DONE
+
+- Two new MCP tools for AI agents:
+  - `damsel_identify`: fingerprint matching on stripped functions
+    (project, optional corpus path, optional threshold)
+  - `damsel_corpus_export`: build a fingerprint corpus from a
+    symbolized project (project, out, library)
+- Agents can now: analyze → identify → decompile the identified
+  functions, all through MCP without leaving their tool loop.
+- 9 tools total: analyze, functions, xrefs, search, decompile, recon,
+  diff, identify, corpus_export.
+- Proof: workspace 56 suites, 0 failures; live tools/list shows 9;
+  identify call tested end-to-end.

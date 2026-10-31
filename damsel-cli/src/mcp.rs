@@ -117,6 +117,24 @@ fn handle_list_tools() -> Value {
                         "right": { "type": "string" }
                     },
                     "required": ["left", "right"]
+                })),
+                tool("damsel_identify", "Identify stripped functions by fingerprint matching against a known-library corpus (strings, constants, structure)", json!({
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Path to the analyzed project" },
+                        "corpus": { "type": "string", "description": "Path to a corpus JSON file (from damsel corpus-export)" },
+                        "threshold": { "type": "number", "description": "Minimum match score 0.0-1.0 (default 0.7)" }
+                    },
+                    "required": ["project"]
+                })),
+                tool("damsel_corpus_export", "Export a fingerprint corpus from a symbolized project for reuse identification", json!({
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Path to the symbolized project" },
+                        "out": { "type": "string", "description": "Output corpus JSON path" },
+                        "library": { "type": "string", "description": "Library label (e.g. glibc)" }
+                    },
+                    "required": ["project", "out", "library"]
                 }))
             ]
         }
@@ -154,6 +172,30 @@ fn handle_call_tool(params: &Value, _config: &McpConfig) -> Value {
         "damsel_decompile" => run_cli(&["decompile", get_str(&arguments, "project"), "--function", get_str(&arguments, "function")]),
         "damsel_recon" => run_cli(&["recon", get_str(&arguments, "path")]),
         "damsel_diff" => run_cli(&["diff", get_str(&arguments, "left"), get_str(&arguments, "right")]),
+        "damsel_identify" => {
+            let mut args = vec!["identify".to_string(), get_str(&arguments, "project").to_string()];
+            if let Some(corpus) = arguments.get("corpus").and_then(|v| v.as_str()) {
+                args.push("--corpus".to_string());
+                args.push(corpus.to_string());
+            }
+            if let Some(threshold) = arguments.get("threshold").and_then(|v| v.as_f64()) {
+                args.push("--threshold".to_string());
+                args.push(threshold.to_string());
+            }
+            let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            run_cli(&refs)
+        }
+        "damsel_corpus_export" => {
+            let args = [
+                "corpus-export",
+                get_str(&arguments, "project"),
+                "--out",
+                get_str(&arguments, "out"),
+                "--library",
+                get_str(&arguments, "library"),
+            ];
+            run_cli(&args)
+        }
         _ => Err(format!("unknown tool: {name}")),
     };
 
