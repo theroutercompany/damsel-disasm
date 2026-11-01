@@ -10,6 +10,14 @@ GitHub prerelease conventions:
 ## [Unreleased]
 
 ### Added
+- Shared-cache project ingest: `damsel analyze <cache> --image <selector>`
+  registers a projected dyld shared-cache image as a
+  `shared_cache_projected_image` source in the `cache_vmaddr` space and
+  writes a `target.json` descriptor, so `decompile`, string values, and
+  other byte-reading commands re-project the exact image without
+  extraction.
+- MCP `damsel_analyze` accepts an optional `image` selector for
+  shared-cache targets.
 - Cross-platform analysis: ELF64 loading (Linux) alongside Mach-O (macOS).
 - x86_64 disassembly and analysis with a shared pipeline for both ISAs.
 - Project database (`damsel-project`): SQLite-backed analysis persistence
@@ -67,6 +75,11 @@ GitHub prerelease conventions:
 - Portable self-tests for the real-cache evidence packaging and audit gates.
 
 ### Changed
+- Analysis writes are batched into one SQLite transaction per run instead
+  of one autocommit per fact (real macOS Foundation ingest: 16.3s → 1.4s).
+- Xref and recovery passes decode merged ≤256 KiB windows and reuse a
+  prebuilt annotation index instead of rebuilding symbol/stub/binding
+  lookups per function window (real Foundation analyze: >15 min → 21s).
 - Release/operator documentation was added at the repo root.
 - Real shared-cache smoke validation now samples multiple projected images per
   unique cache UUID instead of only the first image.

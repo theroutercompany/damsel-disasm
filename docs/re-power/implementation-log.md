@@ -1069,3 +1069,76 @@ paddb/w/d/q, por/pand/pandn, movlpd/movhpd/movlps/movhps.
   diff, identify, corpus_export.
 - Proof: workspace 56 suites, 0 failures; live tools/list shows 9;
   identify call tested end-to-end.
+
+## Cache Project Ingest (plan feature 1, slice 1) — DONE
+
+### Unit C1 — `analyze --image` + project target descriptors — DONE
+
+Scope delivered:
+
+- `damsel analyze <cache> --image <selector>` (`--refresh` supported):
+  resolves the image through the shared-cache session (`install name`,
+  `uuid:index`, or unique basename), projects it on demand, and runs the
+  full ingest → xref → recovery → strings pipeline against the projected
+  `BinaryImage`. Cache-vmaddr-relative addresses are preserved end to end.
+- Source provenance: the project registers a
+  `shared_cache_projected_image` source in the `cache_vmaddr` space;
+  `content_hash` carries `dyld_cache:<uuid>#<image_index>`; the
+  `project_note` payload carries cache UUID, install name, member, and
+  image base.
+- `damsel-project::target` (`target.json` beside `project.db`) records how
+  to re-materialize the image. Descriptors are environment state and are
+  excluded from canonical exports (paths are machine-specific; the
+  determinism contract is unchanged).
+- `damsel decompile`, `damsel decompile --all`, `damsel search`, and
+  `damsel strings` resolve cache projects through the descriptor instead
+  of the legacy adjacent-file convention; Mach-O file and ELF projects
+  keep their existing paths.
+- `damsel analyze <cache>` without `--image` now fails with an actionable
+  `unsupported_input` message instead of a Mach-O parse error (real
+  `dyld_v1` cache roots).
+- MCP: `damsel_analyze` accepts `image`.
+
+Proof: `cargo test -p damsel-project` (target descriptor round trip),
+`cargo test -p damsel-macho --test analysis_ingest` (cache provenance:
+source kind, cache space, UUID content identity, project note),
+`cargo test -p damsel-cli --test project_cli analyze_shared_cache`
+(analyze → project show → functions → decompile → duplicate refusal →
+`--refresh`), plus the full `damsel-cli` integration suite. Manual runs on
+the synthetic `valid-single-arm64.cache` fixture: 29 functions, 128 xrefs,
+18 strings, decompile of `-[Speaker init]` at `0x18020001c` with no
+extraction step.
+
+### Unit C2 — analysis scale: batched writes + prebuilt annotation index — DONE
+
+Found while validating C1 against the host macOS 27 cache
+(`/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e`,
+4115 images): a real Foundation image (121,895 symbols, 70,711 function
+seeds) took >15 minutes and would not finish.
+
+Three fixes:
+
+1. **One write transaction per analysis** (`SqliteStore::begin_batch` /
+   `commit_batch` / `rollback_batch`, used by `analyze` for Mach-O, ELF,
+   and cache images). WAL autocommit fsyncs once per fact; large images
+   emit >10^5 facts. Ingest on Foundation: 16.3s → 1.4s.
+2. **Chunked decode windows** (xrefs + recovery): consecutive seed windows
+   are merged into ≤256 KiB decode chunks, preserving coverage and bound
+   semantics while collapsing 70k capstone instances into a few hundred.
+   Xref pass: >7 min → 61 ms. Recovery: 560s → 0.68s.
+3. **Prebuilt `AnnotationIndex`**: symbol/import/stub/helper/binding
+   lookup tables are built once per image instead of once per window, and
+   the per-instruction linear scans over stubs/helpers/bindings are gone.
+   Recovery on Foundation: 341s → 0.68s after (2)+(3).
+
+Net: real macOS 27 `Foundation` analyze is **20.7s** end to end
+(18s of that is extracting the projected image from the cache):
+70,711 functions, 194k facts, 44,253 bounds, decompile resolves through
+`target.json`. This also fixes the same stall for any large standalone
+binary, not just cache images.
+
+Proof: `damsel-macho --lib prebuilt_annotation_index_matches_default_disassembly`
+(indexed output is byte-identical to the default path),
+`damsel-project --test store_contract batch_transaction_commits_and_rolls_back`,
+full `cargo test --workspace` (56 suites, 0 failures), and the real-cache
+timings above.
