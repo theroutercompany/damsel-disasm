@@ -15,11 +15,13 @@ pub use analysis::{
     ingest_binary_image, ingest_binary_image_with_options, ingest_projected_cache_image,
     ingest_projected_cache_image_with_options, recover_functions,
 };
-pub use codesign::{CodesignInfo, Entitlement, read_codesign, read_codesign_path};
 pub use cache_index::{
     CacheIndexStats, IndexedSymbol, SymbolIndexStats, build_index, build_symbol_index,
-    index_path_for, query_symbol_at, query_symbols_named, symbols_present, try_load_fresh,
+    index_path_for, projection_digest, projection_dir_for, query_symbol_at, query_symbols_named,
+    read_projection as read_projection_cache_for_test, symbols_present, try_load_fresh,
+    write_projection,
 };
+pub use codesign::{CodesignInfo, Entitlement, read_codesign, read_codesign_path};
 pub use damsel_core::{
     CacheImageId, CacheImageRecord, CacheLookupResult, SharedCache, SharedCacheHeader,
     SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,
