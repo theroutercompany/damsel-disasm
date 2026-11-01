@@ -52,7 +52,7 @@ struct ApiError {
 }
 
 async fn project_functions(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Path(project_id): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {

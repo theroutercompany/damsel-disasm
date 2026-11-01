@@ -193,7 +193,7 @@ fn rename_statement(
     statement: &crate::ir::IrStatement,
     versions: &mut std::collections::BTreeMap<String, usize>,
 ) -> crate::ir::IrStatement {
-    use crate::ir::{IrExpr, IrStatement, IrValue};
+    use crate::ir::IrStatement;
     match statement {
         IrStatement::Assign { destination, expression } => {
             let version = versions.entry(destination.clone()).or_insert(0);

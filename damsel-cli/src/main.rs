@@ -1865,10 +1865,6 @@ fn handle_batch(
     fail_fast: bool,
     _output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
-    use damsel_project::{
-        AnalysisProjectMeta, Create, ProjectId, ProjectStore, TypedStore, open_store,
-    };
-
     let list = std::fs::read_to_string(&inputs)
         .map_err(|e| CliRunError::command("invalid_args", format!("{}: {e}", inputs.display())))?;
     std::fs::create_dir_all(&out_dir)
@@ -1970,7 +1966,7 @@ fn run_batch_target(
     };
 
     match outcome {
-        Ok((source_id, fact_count)) => Ok(serde_json::json!({
+        Ok((_source_id, fact_count)) => Ok(serde_json::json!({
             "input": line_of(path),
             "status": "ok",
             "target": name,
@@ -2060,7 +2056,7 @@ fn handle_recon(
     path: PathBuf,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
-    use damsel_decomp::{Verdict, assess, shannon_entropy};
+    use damsel_decomp::{Verdict, assess};
 
     let is_elf = std::fs::read(&path)
         .map(|bytes| bytes.len() >= 4 && bytes[0..4] == *b"\x7fELF")
@@ -2677,9 +2673,9 @@ fn handle_decompile(
 fn handle_decompile_all(
     project: PathBuf,
     out_dir: Option<PathBuf>,
-    output_settings: &output::OutputSettings,
+    _output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
-    use damsel_project::{Create, ProjectStore, TypedStore, open_store};
+    use damsel_project::{Create, open_store};
 
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
@@ -2861,7 +2857,7 @@ fn handle_summary(
     markdown: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
-    use damsel_project::{Create, ProjectStore, TypedStore, open_store};
+    use damsel_project::{Create, ProjectStore, open_store};
 
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
