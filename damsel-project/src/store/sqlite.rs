@@ -90,6 +90,28 @@ impl SqliteStore {
         Ok((mode, fk, version))
     }
 
+    /// Begin one write transaction. Analysis passes batch their fact
+    /// writes so a large image commits with a single fsync instead of one
+    /// per fact. Pair with [`Self::commit_batch`] or
+    /// [`Self::rollback_batch`]; single-writer discipline means the caller
+    /// already owns exclusivity.
+    pub fn begin_batch(&mut self) -> Result<(), StoreError> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        Ok(())
+    }
+
+    /// Commit the batch opened by [`Self::begin_batch`].
+    pub fn commit_batch(&mut self) -> Result<(), StoreError> {
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    /// Roll back the batch opened by [`Self::begin_batch`].
+    pub fn rollback_batch(&mut self) -> Result<(), StoreError> {
+        self.conn.execute_batch("ROLLBACK")?;
+        Ok(())
+    }
+
     fn intern_object(
         &mut self,
         source_id: i64,

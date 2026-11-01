@@ -185,3 +185,42 @@ fn future_schema_version_is_refused_with_typed_error() {
         Err(damsel_project::StoreError::UnsupportedSchema { found, .. }) if found == SCHEMA_VERSION + 1
     ));
 }
+
+#[test]
+fn batch_transaction_commits_and_rolls_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("p.damsel").join("project.db");
+
+    {
+        let mut store = open_store(&db, Create::New, &meta()).unwrap();
+        store.begin_batch().unwrap();
+        let source_id = store
+            .add_source(sample_source(AnalysisSourceKind::MachOImage))
+            .unwrap();
+        for fact in sample_facts(source_id) {
+            store.put_fact(fact).unwrap();
+        }
+        store.commit_batch().unwrap();
+    }
+
+    // Committed batch is durable.
+    {
+        let store = open_store(&db, Create::Existing, &meta()).unwrap();
+        assert_eq!(store.sources().unwrap().len(), 1);
+        assert!(!store.facts().unwrap().is_empty());
+    }
+
+    // Rolled-back batch leaves no partial analysis behind.
+    {
+        let mut store = open_store(&db, Create::Existing, &meta()).unwrap();
+        store.begin_batch().unwrap();
+        store
+            .add_source(sample_source(AnalysisSourceKind::SharedCacheProjectedImage))
+            .unwrap();
+        store.rollback_batch().unwrap();
+    }
+    {
+        let store = open_store(&db, Create::Existing, &meta()).unwrap();
+        assert_eq!(store.sources().unwrap().len(), 1);
+    }
+}
