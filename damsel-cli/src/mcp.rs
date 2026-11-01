@@ -15,10 +15,118 @@ pub(crate) struct McpConfig {
     pub(crate) project: Option<PathBuf>,
 }
 
+/// Server-side caches for the agent loop: repeated reads reuse open
+/// stores, and image materialization (fatal for shared-cache projects —
+/// projecting an image dominates its analysis cost) happens once per
+/// project instead of once per call.
+pub(crate) struct McpState {
+    stores: std::collections::HashMap<PathBuf, damsel_project::StoreHandle>,
+    images: std::collections::HashMap<PathBuf, damsel_core::BinaryImage>,
+    sessions: std::collections::HashMap<PathBuf, damsel_macho::SharedCacheSession>,
+}
+
+impl McpState {
+    pub(crate) fn new() -> Self {
+        Self {
+            stores: std::collections::HashMap::new(),
+            images: std::collections::HashMap::new(),
+            sessions: std::collections::HashMap::new(),
+        }
+    }
+
+    fn project_dir(&self, project: &str) -> Result<PathBuf, String> {
+        crate::resolve_project_dir(std::path::Path::new(project)).map_err(|e| e.to_string())
+    }
+
+    /// Run `f` against the (cached) store for a project.
+    fn with_store<R>(
+        &mut self,
+        project: &str,
+        f: impl FnOnce(&damsel_project::StoreHandle) -> Result<R, String>,
+    ) -> Result<R, String> {
+        let dir = self.project_dir(project)?;
+        if !self.stores.contains_key(&dir) {
+            let meta = damsel_project::AnalysisProjectMeta {
+                project_id: damsel_project::ProjectId::new("mcp"),
+                name: String::new(),
+                analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            };
+            let store = damsel_project::open_store(
+                &dir.join("project.db"),
+                damsel_project::Create::Existing,
+                &meta,
+            )
+            .map_err(|e| e.to_string())?;
+            self.stores.insert(dir.clone(), store);
+        }
+        f(self.stores.get(&dir).expect("just inserted"))
+    }
+
+    /// Run `f` against a mutably-borrowed (cached) store, for annotations.
+    fn with_store_mut<R>(
+        &mut self,
+        project: &str,
+        f: impl FnOnce(&mut damsel_project::StoreHandle) -> Result<R, String>,
+    ) -> Result<R, String> {
+        let dir = self.project_dir(project)?;
+        if !self.stores.contains_key(&dir) {
+            let meta = damsel_project::AnalysisProjectMeta {
+                project_id: damsel_project::ProjectId::new("mcp"),
+                name: String::new(),
+                analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            };
+            let store = damsel_project::open_store(
+                &dir.join("project.db"),
+                damsel_project::Create::Existing,
+                &meta,
+            )
+            .map_err(|e| e.to_string())?;
+            self.stores.insert(dir.clone(), store);
+        }
+        f(self.stores.get_mut(&dir).expect("just inserted"))
+    }
+
+    /// The analyzed image for a project, materialized once and cached.
+    /// Shared-cache sessions are cached per cache root, so projecting a
+    /// second image from the same cache skips the subcache reads.
+    fn image_for(&mut self, project: &str) -> Result<damsel_core::BinaryImage, String> {
+        let dir = self.project_dir(project)?;
+        if let Some(image) = self.images.get(&dir) {
+            return Ok(image.clone());
+        }
+        let image = match crate::project_image_source(&dir).map_err(|e| e.to_string())? {
+            Some(crate::ProjectImageSource::SharedCache { cache, selector }) => {
+                let session = match self.sessions.entry(cache.clone()) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let session = damsel_macho::inspect_shared_cache(&cache)
+                            .map_err(|e| e.to_string())?;
+                        entry.insert(session)
+                    }
+                };
+                session
+                    .project_image(&selector)
+                    .map_err(|e| e.to_string())?
+                    .image
+            }
+            _ => crate::load_project_image(&dir).map_err(|e| e.to_string())?,
+        };
+        self.images.insert(dir, image.clone());
+        Ok(image)
+    }
+}
+
+impl Default for McpState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub(crate) fn run_mcp(config: McpConfig) -> Result<(), crate::CliRunError> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut writer = stdout.lock();
+    let mut state = McpState::new();
 
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
@@ -34,7 +142,7 @@ pub(crate) fn run_mcp(config: McpConfig) -> Result<(), crate::CliRunError> {
             "initialize" => handle_initialize(),
             "notifications/initialized" => None,
             "tools/list" => Some(handle_list_tools()),
-            "tools/call" => Some(handle_call_tool(&params, &config)),
+            "tools/call" => Some(handle_call_tool(&params, &config, &mut state)),
             _ => Some(json!({
                 "jsonrpc": "2.0",
                 "error": { "code": -32601, "message": format!("method not found: {method}") }
@@ -197,7 +305,7 @@ fn tool(name: &str, description: &str, schema: Value) -> Value {
     json!({ "name": name, "description": description, "inputSchema": schema })
 }
 
-fn handle_call_tool(params: &Value, _config: &McpConfig) -> Value {
+fn handle_call_tool(params: &Value, _config: &McpConfig, state: &mut McpState) -> Value {
     let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
@@ -211,19 +319,14 @@ fn handle_call_tool(params: &Value, _config: &McpConfig) -> Value {
         }
         // In-process tools: typed reads and mutations over the project
         // store, no subprocess per call (plan feature 19, slice 1).
-        "damsel_functions" => in_process_functions(&arguments),
-        "damsel_xrefs" => in_process_xrefs(&arguments),
-        "damsel_search" => in_process_search(&arguments),
-        "damsel_strings" => in_process_strings(&arguments),
-        "damsel_summary" => in_process_summary(&arguments),
-        "damsel_annotate" => in_process_annotate(&arguments),
-        "damsel_annotate_undo" => in_process_annotate_undo(&arguments),
-        "damsel_decompile" => run_cli(&[
-            "decompile",
-            get_str(&arguments, "project"),
-            "--function",
-            get_str(&arguments, "function"),
-        ]),
+        "damsel_functions" => in_process_functions(state, &arguments),
+        "damsel_xrefs" => in_process_xrefs(state, &arguments),
+        "damsel_search" => in_process_search(state, &arguments),
+        "damsel_strings" => in_process_strings(state, &arguments),
+        "damsel_summary" => in_process_summary(state, &arguments),
+        "damsel_annotate" => in_process_annotate(state, &arguments),
+        "damsel_annotate_undo" => in_process_annotate_undo(state, &arguments),
+        "damsel_decompile" => in_process_decompile(state, &arguments),
         "damsel_recon" => run_cli(&["recon", get_str(&arguments, "path")]),
         "damsel_diff" => run_cli(&[
             "diff",
@@ -268,9 +371,9 @@ fn handle_call_tool(params: &Value, _config: &McpConfig) -> Value {
                 "content": [{ "type": "text", "text": output }],
                 "isError": false
             });
-            if let Ok(parsed) = serde_json::from_str::<Value>(
-                result["content"][0]["text"].as_str().unwrap_or(""),
-            ) {
+            if let Ok(parsed) =
+                serde_json::from_str::<Value>(result["content"][0]["text"].as_str().unwrap_or(""))
+            {
                 result["structuredContent"] = parsed;
             }
             json!({ "jsonrpc": "2.0", "result": result })
@@ -285,26 +388,16 @@ fn handle_call_tool(params: &Value, _config: &McpConfig) -> Value {
     }
 }
 
-fn open_project(project: &str) -> Result<damsel_project::StoreHandle, String> {
-    let dir = crate::resolve_project_dir(std::path::Path::new(project))
-        .map_err(|e| e.to_string())?;
-    let meta = damsel_project::AnalysisProjectMeta {
-        project_id: damsel_project::ProjectId::new("mcp"),
-        name: String::new(),
-        analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
-    };
-    damsel_project::open_store(
-        &dir.join("project.db"),
-        damsel_project::Create::Existing,
-        &meta,
-    )
-    .map_err(|e| e.to_string())
-}
-
-fn in_process_functions(arguments: &Value) -> Result<String, String> {
+fn in_process_functions(state: &mut McpState, arguments: &Value) -> Result<String, String> {
     use damsel_project::ProjectStore;
-    let store = open_project(get_str(arguments, "project"))?;
-    let facts = store.facts().map_err(|e| e.to_string())?;
+    let name_filter = arguments.get("name").and_then(|v| v.as_str());
+    let limit = arguments
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|l| l as usize);
+    let facts = state.with_store(get_str(arguments, "project"), |store| {
+        store.facts().map_err(|e| e.to_string())
+    })?;
     let mut bounds = std::collections::BTreeMap::new();
     for fact in &facts {
         if fact.kind.as_str() == "function_bound" {
@@ -313,10 +406,11 @@ fn in_process_functions(arguments: &Value) -> Result<String, String> {
             }
         }
     }
-    let name_filter = arguments.get("name").and_then(|v| v.as_str());
-    let limit = arguments.get("limit").and_then(|v| v.as_u64()).map(|l| l as usize);
-    let mut rows: Vec<Value> = damsel_project::function_summaries(&store)
-        .map_err(|e| e.to_string())?
+    let mut rows: Vec<Value> = state
+        .with_store(get_str(arguments, "project"), |store| {
+            damsel_project::function_summaries(store).map_err(|e| e.to_string())
+        })?
+        .into_iter()
         .into_iter()
         .filter(|summary| {
             name_filter.is_none_or(|needle| {
@@ -349,19 +443,26 @@ fn in_process_functions(arguments: &Value) -> Result<String, String> {
     .to_string())
 }
 
-fn in_process_xrefs(arguments: &Value) -> Result<String, String> {
+fn in_process_xrefs(state: &mut McpState, arguments: &Value) -> Result<String, String> {
     use damsel_project::ProjectStore;
-    let store = open_project(get_str(arguments, "project"))?;
     let to_filter = arguments.get("to").and_then(|v| v.as_str());
     let from_filter = arguments.get("from").and_then(|v| v.as_str());
     let kind_filter = arguments.get("kind").and_then(|v| v.as_str());
-    let limit = arguments.get("limit").and_then(|v| v.as_u64()).map(|l| l as usize);
+    let limit = arguments
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|l| l as usize);
     let mut rows: Vec<Value> = Vec::new();
-    for fact in store.facts().map_err(|e| e.to_string())? {
+    let facts = state.with_store(get_str(arguments, "project"), |store| {
+        store.facts().map_err(|e| e.to_string())
+    })?;
+    for fact in &facts {
         if fact.kind.as_str() != "xref" {
             continue;
         }
-        let Some(object) = &fact.object_id else { continue };
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
         let from = object.as_str();
         let Some((kind, to)) = fact.payload.split_once("|to=") else {
             continue;
@@ -396,20 +497,22 @@ fn in_process_xrefs(arguments: &Value) -> Result<String, String> {
     .to_string())
 }
 
-fn in_process_search(arguments: &Value) -> Result<String, String> {
+fn in_process_search(state: &mut McpState, arguments: &Value) -> Result<String, String> {
     use damsel_project::ProjectStore;
     let query = get_str(arguments, "query");
     if query.is_empty() {
         return Err("query is required".to_string());
     }
-    let store = open_project(get_str(arguments, "project"))?;
     let kind_filter = arguments.get("kind").and_then(|v| v.as_str());
     let limit = arguments
         .get("limit")
         .and_then(|v| v.as_u64())
         .map_or(50, |l| l as usize);
     let mut rows: Vec<Value> = Vec::new();
-    for summary in damsel_project::function_summaries(&store).map_err(|e| e.to_string())? {
+    let summaries = state.with_store(get_str(arguments, "project"), |store| {
+        damsel_project::function_summaries(store).map_err(|e| e.to_string())
+    })?;
+    for summary in &summaries {
         if let Some(name) = &summary.name {
             if name.contains(query) && kind_filter.is_none_or(|k| k == "function") {
                 rows.push(json!({
@@ -420,8 +523,13 @@ fn in_process_search(arguments: &Value) -> Result<String, String> {
             }
         }
     }
-    for fact in store.facts().map_err(|e| e.to_string())? {
-        let Some(object) = &fact.object_id else { continue };
+    let facts = state.with_store(get_str(arguments, "project"), |store| {
+        store.facts().map_err(|e| e.to_string())
+    })?;
+    for fact in &facts {
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
         let (kind, name) = match (object.kind(), fact.kind.as_str()) {
             ("symbol", "symbol") => ("symbol", object.key().to_string()),
             ("import", "import") => ("import", object.key().to_string()),
@@ -447,12 +555,16 @@ fn in_process_search(arguments: &Value) -> Result<String, String> {
     .to_string())
 }
 
-fn in_process_strings(arguments: &Value) -> Result<String, String> {
+fn in_process_strings(state: &mut McpState, arguments: &Value) -> Result<String, String> {
     use damsel_project::ProjectStore;
-    let store = open_project(get_str(arguments, "project"))?;
     let class_filter = arguments.get("class").and_then(|v| v.as_str());
-    let limit = arguments.get("limit").and_then(|v| v.as_u64()).map(|l| l as usize);
-    let facts = store.facts().map_err(|e| e.to_string())?;
+    let limit = arguments
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|l| l as usize);
+    let facts = state.with_store(get_str(arguments, "project"), |store| {
+        store.facts().map_err(|e| e.to_string())
+    })?;
     let mut classes = std::collections::BTreeMap::new();
     for fact in &facts {
         if fact.kind.as_str() == "string_class" {
@@ -466,7 +578,9 @@ fn in_process_strings(arguments: &Value) -> Result<String, String> {
         if fact.kind.as_str() != "string" {
             continue;
         }
-        let Some(object) = &fact.object_id else { continue };
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
         let (encoding, len_part) = fact.payload.split_once("|len=").unwrap_or(("utf8", "0"));
         let class = classes.get(object.as_str()).cloned();
         if let Some(want) = class_filter {
@@ -497,31 +611,34 @@ fn in_process_strings(arguments: &Value) -> Result<String, String> {
     .to_string())
 }
 
-fn in_process_summary(arguments: &Value) -> Result<String, String> {
-    use damsel_project::ProjectStore;
-    let store = open_project(get_str(arguments, "project"))?;
-    let sources = store.sources().map_err(|e| e.to_string())?;
-    let source = sources
-        .first()
-        .ok_or_else(|| "project has no sources".to_string())?;
-    let report =
-        damsel_decomp::summarize_named(&store, source.source_id, get_str(arguments, "function"))
-            .map_err(|e| e.to_string())?;
+fn in_process_summary(state: &mut McpState, arguments: &Value) -> Result<String, String> {
+    let report = state.with_store(get_str(arguments, "project"), |store| {
+        use damsel_project::ProjectStore;
+        let source = store
+            .sources()
+            .map_err(|e| e.to_string())?
+            .first()
+            .ok_or_else(|| "project has no sources".to_string())?
+            .source_id;
+        damsel_decomp::summarize_named(store, source, get_str(arguments, "function"))
+            .map_err(|e| e.to_string())
+    })?;
     Ok(json!({ "command": "summary", "summary": report }).to_string())
 }
 
-fn in_process_annotate(arguments: &Value) -> Result<String, String> {
+fn in_process_annotate(state: &mut McpState, arguments: &Value) -> Result<String, String> {
     use damsel_project::{AnnotationKind, ObjectId};
     let target = get_str(arguments, "function");
     if target.is_empty() {
         return Err("function is required".to_string());
     }
-    let mut store = open_project(get_str(arguments, "project"))?;
+    let summaries = state.with_store(get_str(arguments, "project"), |store| {
+        damsel_project::function_summaries(store).map_err(|e| e.to_string())
+    })?;
     let object = if let Some(hex) = target.strip_prefix("0x") {
         let address = u64::from_str_radix(hex, 16).map_err(|_| format!("bad address: {target}"))?;
         ObjectId::new("function", format!("{address:#x}"))
     } else {
-        let summaries = damsel_project::function_summaries(&store).map_err(|e| e.to_string())?;
         let matches: Vec<_> = summaries
             .iter()
             .filter(|summary| summary.name.as_deref() == Some(target))
@@ -533,7 +650,7 @@ fn in_process_annotate(arguments: &Value) -> Result<String, String> {
                 return Err(format!(
                     "ambiguous_function: `{target}` matches {} functions; pass 0xADDR",
                     many.len()
-                ))
+                ));
             }
         }
     };
@@ -547,9 +664,10 @@ fn in_process_annotate(arguments: &Value) -> Result<String, String> {
         let Some(value) = arguments.get(key).and_then(|v| v.as_str()) else {
             continue;
         };
-        let outcome =
-            damsel_project::put_annotation(&mut store, &object, kind, value, &actor)
-                .map_err(|e| e.to_string())?;
+        let outcome = state.with_store_mut(get_str(arguments, "project"), |store| {
+            damsel_project::put_annotation(store, &object, kind, value, &actor)
+                .map_err(|e| e.to_string())
+        })?;
         stored.push(json!({
             "kind": kind.as_str(),
             "value": value,
@@ -569,11 +687,11 @@ fn in_process_annotate(arguments: &Value) -> Result<String, String> {
     .to_string())
 }
 
-fn in_process_annotate_undo(arguments: &Value) -> Result<String, String> {
-    let mut store = open_project(get_str(arguments, "project"))?;
+fn in_process_annotate_undo(state: &mut McpState, arguments: &Value) -> Result<String, String> {
     let actor = std::env::var("DAMSEL_ACTOR").unwrap_or_else(|_| "mcp".to_string());
-    let undone = damsel_project::undo_last_annotation(&mut store, &actor)
-        .map_err(|e| e.to_string())?;
+    let undone = state.with_store_mut(get_str(arguments, "project"), |store| {
+        damsel_project::undo_last_annotation(store, &actor).map_err(|e| e.to_string())
+    })?;
     Ok(json!({
         "command": "annotate",
         "action": "undo",
@@ -584,6 +702,54 @@ fn in_process_annotate_undo(arguments: &Value) -> Result<String, String> {
             "value": record.value,
             "actor": record.actor,
         })),
+    })
+    .to_string())
+}
+
+fn in_process_decompile(state: &mut McpState, arguments: &Value) -> Result<String, String> {
+    let project = get_str(arguments, "project");
+    let function = get_str(arguments, "function");
+    // ELF projects keep the CLI's dedicated x86_64 path (subprocess, still
+    // structuredContent) until the lift shares this core.
+    let dir = state.project_dir(project)?;
+    if let Some(crate::ProjectImageSource::File(target)) =
+        crate::project_image_source(&dir).map_err(|e| e.to_string())?
+    {
+        if crate::is_elf_file(&target) {
+            return run_cli(&["decompile", project, "--function", function]);
+        }
+    }
+    let image = state.image_for(project)?;
+    // Resolve project names (renames included) to addresses; the engine
+    // resolves symbols against the image, not the annotation layer.
+    let selector = if function.starts_with("0x") {
+        function.to_string()
+    } else {
+        state.with_store(project, |store| {
+            let summaries = damsel_project::function_summaries(store).map_err(|e| e.to_string())?;
+            let matches: Vec<_> = summaries
+                .iter()
+                .filter(|summary| summary.name.as_deref() == Some(function))
+                .collect();
+            match matches.as_slice() {
+                [one] => Ok(format!("{:#x}", one.address)),
+                [] => Err(format!(
+                    "function_not_found: no function named `{function}`"
+                )),
+                many => Err(format!(
+                    "ambiguous_function: `{function}` matches {} functions; pass 0xADDR",
+                    many.len()
+                )),
+            }
+        })?
+    };
+    let decompiled =
+        crate::decompile_project_function(&image, &selector).map_err(|e| e.to_string())?;
+    Ok(json!({
+        "command": "decompile",
+        "pseudocode": serde_json::to_value(&decompiled.pseudocode).unwrap_or_default(),
+        "frame": decompiled.frame,
+        "unknown_count": decompiled.unknown_count,
     })
     .to_string())
 }

@@ -1201,3 +1201,23 @@ session: tools/list (13 tools, schemas), and the agent loop analyze →
 functions (structuredContent) → annotate rename → functions-by-new-name →
 summary-by-renamed-name → xrefs → annotate_undo → seed name returns.
 Full workspace suite green.
+
+### Unit M2 — MCP server-side caches + in-process decompile — DONE
+
+Scope delivered:
+
+- `McpState`: per-session caches for opened stores, materialized project
+  images, and shared-cache sessions (per cache root). Repeated agent reads
+  reuse the open store; image materialization happens once per project.
+- `damsel_decompile` executes in-process against the cached image
+  (extracted `decompile_project_function` core shared with the CLI), and
+  resolves project names — renames included — to addresses before
+  lifting, so agents decompile by the names they just assigned. ELF
+  projects keep the CLI subprocess path.
+- Evidence on the host macOS 27 cache project (debug build, live stdio
+  session): first `damsel_decompile` 20.3s (session + projection), second
+  0.99s (cached session, image clone) — ~20x per call after warm-up.
+
+Proof: `cargo test -p damsel-cli --test mcp_tools` (agent loop now
+includes two in-process decompiles by renamed name); full workspace suite
+green.

@@ -1421,7 +1421,7 @@ fn resolve_project_dir(arg: &Path) -> Result<PathBuf, CliRunError> {
 
 /// Where a project's analyzed bytes can be re-materialized from.
 #[derive(Debug, Clone)]
-enum ProjectImageSource {
+pub(crate) enum ProjectImageSource {
     /// A file on disk (legacy adjacent-file convention or an explicit
     /// `target.json` descriptor).
     File(PathBuf),
@@ -1439,7 +1439,9 @@ fn legacy_project_target_path(project_dir: &Path) -> Option<PathBuf> {
 
 /// Resolve the image source for a project: descriptor first, then the
 /// legacy adjacent-file convention.
-fn project_image_source(project_dir: &Path) -> Result<Option<ProjectImageSource>, CliRunError> {
+pub(crate) fn project_image_source(
+    project_dir: &Path,
+) -> Result<Option<ProjectImageSource>, CliRunError> {
     match damsel_project::read_project_target(project_dir) {
         Ok(Some(damsel_project::ProjectTarget::SharedCacheProjectedImage {
             cache_path,
@@ -2639,6 +2641,52 @@ fn handle_corpus_export(
     Ok(())
 }
 
+/// Lifted result shared by the CLI renderer and the MCP in-process tool.
+pub(crate) struct DecompiledFunction {
+    pub pseudocode: damsel_decomp::Pseudocode,
+    pub frame: serde_json::Value,
+    pub unknown_count: usize,
+}
+
+/// Decompile one function from an already-materialized image (the CLI
+/// loads the image fresh; the MCP server keeps it cached across calls).
+pub(crate) fn decompile_project_function(
+    image: &BinaryImage,
+    selector: &str,
+) -> Result<DecompiledFunction, CliRunError> {
+    let request = damsel_core::DisassemblyRequestV2 {
+        target: if let Some(hex) = selector.strip_prefix("0x") {
+            damsel_core::DisassemblyTarget::Address(
+                u64::from_str_radix(hex, 16)
+                    .map_err(|_| CliRunError::invalid_args("bad address"))?,
+            )
+        } else {
+            damsel_core::DisassemblyTarget::Symbol(selector.to_string())
+        },
+        range: None,
+        limit: damsel_core::DisassemblyLimit::Unlimited,
+        options: damsel_core::DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: false,
+        },
+    };
+    let result = disassemble_v2(image, &request).map_err(map_macho_error)?;
+    if result.instructions.is_empty() {
+        return Err(CliRunError::command(
+            "function_not_found",
+            selector.to_string(),
+        ));
+    }
+    let function = damsel_decomp::lift_arm64(&result.instructions);
+    let pseudocode = damsel_decomp::render_pseudocode(&function, Some(selector));
+    Ok(DecompiledFunction {
+        frame: serde_json::to_value(damsel_decomp::analyze_stack_frame(&function))
+            .unwrap_or_default(),
+        unknown_count: function.unknown_count,
+        pseudocode,
+    })
+}
+
 fn handle_decompile(
     project: PathBuf,
     selector: &str,
@@ -2657,38 +2705,19 @@ fn handle_decompile(
     }
 
     let image = load_project_image(&project_dir)?;
-    let request = damsel_core::DisassemblyRequestV2 {
-        target: if let Some(hex) = selector.strip_prefix("0x") {
-            damsel_core::DisassemblyTarget::Address(
-                u64::from_str_radix(hex, 16)
-                    .map_err(|_| CliRunError::invalid_args("bad address"))?,
-            )
-        } else {
-            damsel_core::DisassemblyTarget::Symbol(selector.to_string())
-        },
-        range: None,
-        limit: damsel_core::DisassemblyLimit::Unlimited,
-        options: damsel_core::DisassemblyOptions {
-            include_annotations: true,
-            include_value_flow: false,
-        },
-    };
-    let result = disassemble_v2(&image, &request).map_err(map_macho_error)?;
-    if result.instructions.is_empty() {
-        return Err(CliRunError::command(
-            "function_not_found",
-            selector.to_string(),
-        ));
-    }
-    let function = damsel_decomp::lift_arm64(&result.instructions);
-    let pseudocode = damsel_decomp::render_pseudocode(&function, Some(selector));
+    let decompiled = decompile_project_function(&image, selector)?;
+    let DecompiledFunction {
+        pseudocode,
+        frame,
+        unknown_count,
+    } = decompiled;
 
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({
             "command": "decompile",
             "pseudocode": serde_json::to_value(&pseudocode).unwrap_or_default(),
-            "frame": serde_json::to_value(damsel_decomp::analyze_stack_frame(&function)).unwrap_or_default(),
-            "unknown_count": function.unknown_count,
+            "frame": frame,
+            "unknown_count": unknown_count,
         });
         println!("{}", project_json(value));
     } else {

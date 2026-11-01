@@ -113,10 +113,7 @@ fn mcp_lists_twelve_tools_with_output_schemas() {
             entry["name"]
         );
     }
-    let names: Vec<&str> = tools
-        .iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
+    let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     for expected in [
         "damsel_analyze",
         "damsel_functions",
@@ -166,7 +163,10 @@ fn mcp_agent_loop_functions_annotate_undo_in_process() {
     let structured = functions["result"]["structuredContent"].clone();
     assert_eq!(structured["command"], "functions");
     assert_eq!(structured["count"], 1);
-    let address = structured["functions"][0]["address"].as_str().unwrap().to_string();
+    let address = structured["functions"][0]["address"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Agent rename writes through the in-process mutation path.
     session.call_tool(
@@ -186,7 +186,10 @@ fn mcp_agent_loop_functions_annotate_undo_in_process() {
         structured["count"], 1,
         "renamed function visible through in-process functions: {structured:#?}"
     );
-    assert_eq!(structured["functions"][0]["address"].as_str(), Some(address.as_str()));
+    assert_eq!(
+        structured["functions"][0]["address"].as_str(),
+        Some(address.as_str())
+    );
 
     // Summary resolves renamed functions (facts only).
     let summary = session.call_tool(
@@ -200,6 +203,30 @@ fn mcp_agent_loop_functions_annotate_undo_in_process() {
         !summary["result"]["isError"].as_bool().unwrap_or(true),
         "summary failed: {summary:#?}"
     );
+
+    // Decompile runs in-process against the cached image (two calls:
+    // materialization + cache hit) and returns typed pseudocode.
+    for _ in 0..2 {
+        let decompiled = session.call_tool(
+            "damsel_decompile",
+            serde_json::json!({
+                "project": project.display().to_string(),
+                "function": "entrypoint",
+            }),
+        );
+        assert!(
+            !decompiled["result"]["isError"].as_bool().unwrap_or(true),
+            "decompile failed: {decompiled:#?}"
+        );
+        let structured = decompiled["result"]["structuredContent"].clone();
+        assert_eq!(structured["command"], "decompile");
+        assert!(
+            structured["pseudocode"]["lines"]
+                .as_array()
+                .is_some_and(|l| !l.is_empty()),
+            "expected pseudocode lines"
+        );
+    }
 
     // Xrefs for the function return typed rows.
     let xrefs = session.call_tool(

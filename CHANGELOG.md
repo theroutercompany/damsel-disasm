@@ -10,6 +10,10 @@ GitHub prerelease conventions:
 ## [Unreleased]
 
 ### Added
+- MCP server-side caches (stores, project images, shared-cache sessions)
+  and in-process `damsel_decompile` that resolves project names — renames
+  included — to addresses; repeated agent decompiles on a cache project
+  drop from one projection each (~20s) to a cached lift.
 - User annotations: `damsel annotate` adds renames/comments/tags as
   `user_asserted` facts with a full audit trail (`--list`, `--undo`,
   `DAMSEL_ACTOR` attribution). Renames immediately override function names
