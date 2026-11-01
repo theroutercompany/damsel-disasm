@@ -21,6 +21,7 @@ mod project;
 mod snapshot;
 mod source;
 mod store;
+mod target;
 
 pub use address::AddressSpaceId;
 pub use address::names;
@@ -31,6 +32,9 @@ pub use project::{AnalysisProjectMeta, ProjectId, SCHEMA_VERSION};
 pub use snapshot::canonical_export;
 pub use source::AnalysisSourceKind;
 pub use store::{
-    Create, ProjectStore, SourceRecord, StoreError, StoreHandle, TypedStore,
-    open_store,
+    Create, ProjectStore, SourceRecord, StoreError, StoreHandle, TypedStore, open_store,
+};
+pub use target::{
+    ProjectTarget, ProjectTargetError, TARGET_FILE, read as read_project_target,
+    write as write_project_target,
 };
