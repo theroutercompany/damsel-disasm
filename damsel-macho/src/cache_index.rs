@@ -23,6 +23,9 @@ use rusqlite::{Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 
 const SCHEMA_VERSION: i64 = 1;
+/// Meta marker: symbol rows were built against this inventory. Any
+/// inventory rebuild drops the symbol table with it.
+const SYMBOLS_PRESENT: &str = "symbols_present";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CacheIndexStats {
@@ -30,6 +33,29 @@ pub struct CacheIndexStats {
     pub mappings: usize,
     pub members: usize,
     pub index_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolIndexStats {
+    pub symbols: usize,
+    pub images_indexed: usize,
+    pub index_path: PathBuf,
+}
+
+/// One symbol row served from the index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedSymbol {
+    pub cache_vmaddr: u64,
+    pub name: String,
+    pub image_index: u32,
+    pub source: String,
+}
+
+impl IndexedSymbol {
+    /// `true` when the row's address is the queried address exactly.
+    pub fn is_exact(&self, address: u64) -> bool {
+        self.cache_vmaddr == address
+    }
 }
 
 /// Preferred index location: beside the cache. Read-only cache volumes
@@ -161,6 +187,21 @@ fn open_index(path: &Path, create: bool) -> Result<Connection, MachoError> {
     Ok(conn)
 }
 
+fn ensure_symbol_tables(conn: &Connection) -> Result<(), MachoError> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS symbols (
+             cache_vmaddr INTEGER NOT NULL,
+             name         TEXT    NOT NULL,
+             image_index  INTEGER NOT NULL,
+             source       TEXT    NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS symbols_by_name ON symbols(name);
+         CREATE INDEX IF NOT EXISTS symbols_by_addr ON symbols(cache_vmaddr);",
+    )
+    .map_err(sql_error)?;
+    Ok(())
+}
+
 fn sql_error(error: rusqlite::Error) -> MachoError {
     MachoError::MalformedSharedCache(format!("cache index error: {error}"))
 }
@@ -259,6 +300,14 @@ pub fn build_index(cache: &SharedCache, cache_path: &Path) -> Result<CacheIndexS
         )
         .map_err(sql_error)?;
     }
+    // Inventory rebuild invalidates any symbol rows built against it.
+    tx.execute("DROP TABLE IF EXISTS symbols", [])
+        .map_err(sql_error)?;
+    tx.execute(
+        "DELETE FROM meta WHERE key = ?1",
+        rusqlite::params![SYMBOLS_PRESENT],
+    )
+    .map_err(sql_error)?;
 
     tx.commit().map_err(sql_error)?;
     Ok(CacheIndexStats {
@@ -387,4 +436,141 @@ pub fn try_load_fresh(cache_path: &Path) -> Option<SharedCache> {
         mappings,
         images,
     ))
+}
+
+/// Build the symbol table over every image in the cache (unit I3).
+///
+/// Symbols come from each image's exports (and local symbols when the
+/// cache carries them): one row per (address, name, image). Callers pass
+/// `symbol_rows_for` so the extraction stays in `shared_cache` where the
+/// member-byte cache lives; rows are inserted in a single transaction and
+/// the `symbols_present` marker flips only on success.
+pub fn build_symbol_index(
+    cache_path: &Path,
+    symbol_rows_for: impl Fn(u32) -> Result<Vec<(String, u64, String)>, MachoError>,
+    image_count: u32,
+) -> Result<SymbolIndexStats, MachoError> {
+    let index_path = index_path_for(cache_path);
+    let mut conn = open_index(&index_path, true)?;
+    ensure_symbol_tables(&conn)?;
+    let tx = conn.transaction().map_err(sql_error)?;
+    tx.execute("DELETE FROM symbols", []).map_err(sql_error)?;
+
+    let mut symbols = 0usize;
+    let mut images_indexed = 0usize;
+    for image_index in 0..image_count {
+        let rows = symbol_rows_for(image_index)?;
+        if !rows.is_empty() {
+            images_indexed += 1;
+        }
+        for (name, cache_vmaddr, source) in rows {
+            tx.execute(
+                "INSERT INTO symbols (cache_vmaddr, name, image_index, source)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![cache_vmaddr as i64, name, image_index as i64, source],
+            )
+            .map_err(sql_error)?;
+            symbols += 1;
+        }
+    }
+    tx.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, '1')
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![SYMBOLS_PRESENT],
+    )
+    .map_err(sql_error)?;
+    tx.commit().map_err(sql_error)?;
+    // A 20M-row insert leaves a huge WAL; checkpoint so the index file
+    // stands alone.
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(sql_error)?;
+    Ok(SymbolIndexStats {
+        symbols,
+        images_indexed,
+        index_path,
+    })
+}
+
+/// True when the index file exists and carries symbol rows for its
+/// inventory. Freshness of the inventory itself is `try_load_fresh`'s
+/// job; pair the two before serving index queries.
+pub fn symbols_present(index_path: &Path) -> bool {
+    if !index_path.is_file() {
+        return false;
+    }
+    let Ok(conn) = Connection::open(index_path) else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT value FROM meta WHERE key = ?1",
+        rusqlite::params![SYMBOLS_PRESENT],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .is_some()
+}
+
+fn row_to_symbol(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedSymbol> {
+    Ok(IndexedSymbol {
+        cache_vmaddr: row.get::<_, i64>(0)? as u64,
+        name: row.get(1)?,
+        image_index: row.get::<_, i64>(2)? as u32,
+        source: row.get(3)?,
+    })
+}
+
+/// Address → symbol: the exact row when present, else the nearest symbol
+/// at or below the address (`None` when the address precedes every row).
+pub fn query_symbol_at(
+    index_path: &Path,
+    address: u64,
+) -> Result<Option<IndexedSymbol>, MachoError> {
+    let conn = Connection::open(index_path)
+        .map_err(|error| MachoError::MalformedSharedCache(format!("cache index open: {error}")))?;
+    let exact: Option<IndexedSymbol> = conn
+        .query_row(
+            "SELECT cache_vmaddr, name, image_index, source FROM symbols
+             WHERE cache_vmaddr = ?1 LIMIT 1",
+            rusqlite::params![address as i64],
+            row_to_symbol,
+        )
+        .optional()
+        .map_err(sql_error)?;
+    if exact.is_some() {
+        return Ok(exact);
+    }
+    conn.query_row(
+        "SELECT cache_vmaddr, name, image_index, source FROM symbols
+         WHERE cache_vmaddr <= ?1 ORDER BY cache_vmaddr DESC LIMIT 1",
+        rusqlite::params![address as i64],
+        row_to_symbol,
+    )
+    .optional()
+    .map_err(sql_error)
+}
+
+/// Name → addresses: every image exporting `name`, ascending by address.
+pub fn query_symbols_named(
+    index_path: &Path,
+    name: &str,
+    limit: Option<usize>,
+) -> Result<Vec<IndexedSymbol>, MachoError> {
+    let conn = Connection::open(index_path)
+        .map_err(|error| MachoError::MalformedSharedCache(format!("cache index open: {error}")))?;
+    let mut statement = conn
+        .prepare(
+            "SELECT cache_vmaddr, name, image_index, source FROM symbols
+             WHERE name = ?1 ORDER BY cache_vmaddr, image_index",
+        )
+        .map_err(sql_error)?;
+    let cap = limit.unwrap_or(usize::MAX);
+    let rows = statement
+        .query_map(rusqlite::params![name], row_to_symbol)
+        .map_err(sql_error)?
+        .take(cap)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error)?;
+    Ok(rows)
 }

@@ -1303,3 +1303,34 @@ session still round-trips.
 
 Proof: workspace 58 suites green; env-gated real-cache suite passes with
 and without `DAMSEL_REAL_DYLD_SHARED_CACHE_ROOT`.
+
+### Unit I3 — persisted whole-cache symbol index (a2s / s2a) — DONE
+
+Scope delivered:
+
+- `damsel cache index <cache> --symbols`: one symbol table over the whole
+  cache — every image's exports **and** local symbols (`object`'s dyld
+  cache symbol support), 20,004,097 rows across 4,031 of 4,115 images on
+  the host macOS 27 cache, in a single transaction with a WAL checkpoint
+  so the `.didx` stands alone. Any inventory rebuild drops the symbol
+  rows with it (staleness contract from I1).
+- `damsel cache a2s <cache> <addr>`: exact symbol or nearest at-or-below,
+  with owning image and source (export/local). 0.03-0.06s warm.
+- `damsel cache s2a <cache> <name>`: every image providing the name
+  (e.g. `_objc_msgSend` → 73 hits incl. the libobjcMsgSend stub images).
+  0.03s warm.
+- Both commands refuse with a typed `symbols_not_indexed` (naming the
+  build command) unless a fresh inventory + symbol rows exist; synthetic
+  fixtures keep the I1 refusal.
+
+Evidence (host macOS 27 cache, release build): index build 5m46s
+one-time (4,115 images; extraction is serial — parallelizing it is the
+follow-up); `a2s 0x180bc4634` → `exact: __NSInitializePlatform` in 0.035s,
+cross-validated against the Foundation project's function list; `s2a
+_objc_msgSend` → 73 hits in 0.030s. Index size 3.9 GB ≈ the cache itself
+(20M rows, name + address indexes); a names-dictionary compaction is a
+follow-up. ipsw's equivalent cold lookup is ~30s per run, unpersisted.
+
+Proof: `cargo test -p damsel-macho --test cache_index
+symbol_index_serves_and_invalidates` (exact/nearest/name queries, below-
+every-row refusal, inventory-rebuild invalidation) + workspace 58 suites.
