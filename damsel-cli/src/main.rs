@@ -459,6 +459,15 @@ enum Command {
     Slices {
         path: PathBuf,
     },
+    #[command(
+        about = "Swift semantic surface: symbols, protocols, types, conformances, fields",
+        long_about = "Swift semantic surface.\n\nDemangles Swift symbols and reconstructs the reflection metadata: protocols (__swift5_protocols/__swift5_protos), type descriptors (__swift5_types), protocol conformances (__swift5_proto) with names resolved through descriptor joins, and field descriptors (__swift5_fieldmd + __swift5_reflstr)."
+    )]
+    Swift {
+        path: PathBuf,
+        #[arg(long, help = "Filter symbols/protocols/types by name substring")]
+        name: Option<String>,
+    },
     Objc {
         path: PathBuf,
         #[arg(long, value_enum, default_value_t = ObjcDetailArg::All)]
@@ -1187,6 +1196,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Slices { path } => {
             let image = load_image(path)?;
             output::print_slices(&image, &output_settings);
+        }
+        Command::Swift { path, name } => {
+            handle_swift(path, name.as_deref(), &output_settings)?;
         }
         Command::Objc {
             path,
@@ -3166,6 +3178,157 @@ fn handle_annotate(
                 object.as_str()
             );
         }
+    }
+    Ok(())
+}
+
+fn handle_swift(
+    path: PathBuf,
+    name_filter: Option<&str>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_recon_catalog::swift::{self, SwiftSectionBytes};
+
+    let image = load_image(path)?;
+    let section = |segment: &str, name: &str| -> Option<(Vec<u8>, u64)> {
+        let found = image
+            .sections()
+            .iter()
+            .find(|s| s.segment_name == segment && s.name == name)?;
+        let bytes = image
+            .bytes_for_file_range(found.file_offset?, found.file_size)?
+            .to_vec();
+        Some((bytes, found.address))
+    };
+
+    let section_inventory: Vec<(String, usize)> = image
+        .sections()
+        .iter()
+        .map(|s| (s.name.clone(), s.file_size as usize))
+        .collect();
+    let swift_section_list = swift::swift_sections(&section_inventory);
+    let is_swift = swift::is_swift_binary(&section_inventory);
+
+    // Descriptor + string resolution spans several const sections.
+    let resolution: Vec<SwiftSectionBytes> = [
+        ("__TEXT", "__constg_swiftt"),
+        ("__TEXT", "__const"),
+        ("__TEXT", "__cstring"),
+        ("__TEXT", "__swift5_reflstr"),
+        ("__TEXT", "__swift5_typeref"),
+        ("__TEXT", "__swift5_fieldmd"),
+    ]
+    .iter()
+    .filter_map(|(segment, name)| {
+        section(segment, name).map(|(bytes, vaddr)| SwiftSectionBytes { vaddr, bytes })
+    })
+    .collect();
+
+    let protocols = section("__TEXT", "__swift5_protocols")
+        .or_else(|| section("__TEXT", "__swift5_protos"))
+        .map(|(bytes, vaddr)| swift::parse_protocols(&bytes, vaddr, &resolution))
+        .unwrap_or_default();
+    let types = section("__TEXT", "__swift5_types")
+        .map(|(bytes, vaddr)| swift::parse_types(&bytes, vaddr, &resolution))
+        .unwrap_or_default();
+    let conformances = section("__TEXT", "__swift5_proto")
+        .map(|(bytes, vaddr)| {
+            swift::parse_conformances(&bytes, vaddr, &resolution, &protocols, &types)
+        })
+        .unwrap_or_default();
+    let field_descriptors = section("__TEXT", "__swift5_fieldmd")
+        .and_then(|(fieldmd, fieldmd_vaddr)| {
+            section("__TEXT", "__swift5_reflstr").map(|(reflstr, reflstr_vaddr)| {
+                swift::parse_fieldmd(&fieldmd, fieldmd_vaddr, &reflstr, reflstr_vaddr)
+            })
+        })
+        .unwrap_or_default();
+
+    let mut demangled: Vec<(String, String)> = image
+        .symbols()
+        .iter()
+        .filter(|symbol| symbol.name.starts_with("_$s") || symbol.name.starts_with("$s"))
+        .filter_map(|symbol| {
+            swift::demangle(&symbol.name).map(|parsed| (symbol.name.clone(), parsed.display))
+        })
+        .collect();
+    demangled.sort();
+    demangled.dedup();
+    let matches_filter = |value: Option<&str>| {
+        name_filter.is_none_or(|needle| value.is_some_and(|text| text.contains(needle)))
+    };
+    let demangled: Vec<_> = demangled
+        .into_iter()
+        .filter(|(_, name)| matches_filter(Some(name)))
+        .collect();
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "swift",
+            "is_swift": is_swift,
+            "sections": swift_section_list,
+            "demangled_symbol_count": demangled.len(),
+            "symbols": demangled.iter().map(|(mangled, name)| serde_json::json!({
+                "mangled": mangled,
+                "name": name,
+            })).collect::<Vec<_>>(),
+            "protocols": protocols.iter().filter(|p| matches_filter(p.name.as_deref())).collect::<Vec<_>>(),
+            "types": types.iter().filter(|t| matches_filter(t.name.as_deref())).collect::<Vec<_>>(),
+            "conformances": conformances.iter().filter(|c| {
+                matches_filter(c.protocol_name.as_deref()) || matches_filter(c.type_name.as_deref())
+            }).collect::<Vec<_>>(),
+            "field_descriptors": field_descriptors,
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+
+    println!(
+        "swift: {is_swift} ({} reflection sections)",
+        swift_section_list.len()
+    );
+    println!("symbols: {} demangled", demangled.len());
+    for (mangled, name) in demangled.iter().take(20) {
+        println!("  {name}  [{mangled}]");
+    }
+    println!("protocols: {}", protocols.len());
+    for protocol in &protocols {
+        println!(
+            "  {} @ {:#x}",
+            protocol.name.as_deref().unwrap_or("?"),
+            protocol.descriptor_vaddr
+        );
+    }
+    println!("types: {}", types.len());
+    for descriptor in &types {
+        println!(
+            "  {:<8} {} @ {:#x}",
+            descriptor.kind,
+            descriptor.name.as_deref().unwrap_or("?"),
+            descriptor.descriptor_vaddr
+        );
+    }
+    println!("conformances: {}", conformances.len());
+    for conformance in &conformances {
+        println!(
+            "  {}: {} ({}){}",
+            conformance.type_name.as_deref().unwrap_or("?"),
+            conformance.protocol_name.as_deref().unwrap_or("(indirect)"),
+            conformance.type_kind,
+            if conformance.retroactive {
+                " [retroactive]"
+            } else {
+                ""
+            }
+        );
+    }
+    println!("field descriptors: {}", field_descriptors.len());
+    for descriptor in &field_descriptors {
+        println!(
+            "  kind={} fields=[{}]",
+            descriptor.kind,
+            descriptor.field_names.join(", ")
+        );
     }
     Ok(())
 }
