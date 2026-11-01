@@ -14,7 +14,7 @@ use damsel_core::{
 };
 use damsel_macho::{
     SharedCacheSession, analyze_disassembly_with_image, disassemble_v2, ingest_binary_image,
-    inspect_shared_cache, load,
+    ingest_projected_cache_image, inspect_shared_cache, load,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -520,10 +520,16 @@ enum Command {
     },
     #[command(
         about = "Analyze a binary into a persistent project database (RE Power Wave 4)",
-        long_about = "Analyze a binary into a persistent project database.\n\nCreates `<target>.damsel/` next to the target with a SQLite store, ingests sections/symbols/imports/ObjC as seed facts, and prints a summary. Existing projects require `--refresh` to rebuild."
+        long_about = "Analyze a binary into a persistent project database.\n\nCreates `<target>.damsel/` next to the target with a SQLite store, ingests sections/symbols/imports/ObjC as seed facts, and prints a summary. Existing projects require `--refresh` to rebuild.\n\nWith `--image <selector>`, `path` is a dyld shared cache root and the selected projected image is analyzed instead (`<cache>.<image>.damsel/`)."
     )]
     Analyze {
         path: PathBuf,
+        #[arg(
+            long,
+            value_name = "SELECTOR",
+            help = "Analyze an image projected from a dyld shared cache (path is the cache root)"
+        )]
+        image: Option<String>,
         #[arg(long, help = "Delete and rebuild an existing project directory")]
         refresh: bool,
     },
@@ -540,8 +546,12 @@ enum Command {
         #[arg(long, help = "Maximum rows to print")]
         limit: Option<usize>,
     },
-    #[command(about = "First-touch triage: stripped-ness, entropy, packers, anti-analysis (Wave 7)")]
-    Recon { path: PathBuf },
+    #[command(
+        about = "First-touch triage: stripped-ness, entropy, packers, anti-analysis (Wave 7)"
+    )]
+    Recon {
+        path: PathBuf,
+    },
     Identify {
         project: PathBuf,
         #[arg(long, help = "Minimum match score (0.0-1.0)")]
@@ -567,7 +577,10 @@ enum Command {
     },
     #[command(about = "Run as an MCP server exposing typed analysis tools (Wave 7)")]
     Serve {
-        #[arg(long, help = "Default project path for tools that accept relative targets")]
+        #[arg(
+            long,
+            help = "Default project path for tools that accept relative targets"
+        )]
         project: Option<PathBuf>,
     },
     #[command(about = "Batch-analyze a list of binaries, writing JSONL results (Wave 7)")]
@@ -586,7 +599,10 @@ enum Command {
         function: Option<String>,
         #[arg(long, help = "Decompile all functions (batch mode)")]
         all: bool,
-        #[arg(long, help = "Output directory for --all (one .pseudo file per function)")]
+        #[arg(
+            long,
+            help = "Output directory for --all (one .pseudo file per function)"
+        )]
         out: Option<PathBuf>,
     },
     #[command(about = "D0 function summary: calls, imports, strings, problems (Wave 6)")]
@@ -601,7 +617,10 @@ enum Command {
     Search {
         project: PathBuf,
         query: String,
-        #[arg(long, help = "Restrict to one kind (function, symbol, import, section, string)")]
+        #[arg(
+            long,
+            help = "Restrict to one kind (function, symbol, import, section, string)"
+        )]
         kind: Option<String>,
         #[arg(long, help = "Maximum rows to print")]
         limit: Option<usize>,
@@ -609,7 +628,10 @@ enum Command {
     #[command(about = "List strings harvested from an analyzed project")]
     Strings {
         project: PathBuf,
-        #[arg(long, help = "Filter by value substring (requires the target binary on disk)")]
+        #[arg(
+            long,
+            help = "Filter by value substring (requires the target binary on disk)"
+        )]
         name: Option<String>,
         #[arg(long, help = "Filter by class (url, path, format, selector_like)")]
         class: Option<String>,
@@ -1211,26 +1233,60 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
                 open_browser: !no_open,
             })?;
         }
-        Command::Analyze { path, refresh } => {
-            handle_analyze(path, refresh, &output_settings)?;
+        Command::Analyze {
+            path,
+            image,
+            refresh,
+        } => {
+            handle_analyze(path, refresh, image.as_deref(), &output_settings)?;
         }
         Command::Project { command } => handle_project_command(command, &output_settings)?,
-        Command::Functions { project, name, limit } => {
+        Command::Functions {
+            project,
+            name,
+            limit,
+        } => {
             handle_functions(project, name, limit, &output_settings)?;
         }
-        Command::Xrefs { project, to, from, kind, limit } => {
+        Command::Xrefs {
+            project,
+            to,
+            from,
+            kind,
+            limit,
+        } => {
             handle_xrefs(project, to, from, kind, limit, &output_settings)?;
         }
-        Command::Strings { project, name, class, min_len, limit } => {
+        Command::Strings {
+            project,
+            name,
+            class,
+            min_len,
+            limit,
+        } => {
             handle_strings(project, name, class, min_len, limit, &output_settings)?;
         }
-        Command::Search { project, query, kind, limit } => {
+        Command::Search {
+            project,
+            query,
+            kind,
+            limit,
+        } => {
             handle_search(project, &query, kind, limit, &output_settings)?;
         }
-        Command::Summary { project, function, markdown } => {
+        Command::Summary {
+            project,
+            function,
+            markdown,
+        } => {
             handle_summary(project, &function, markdown, &output_settings)?;
         }
-        Command::Decompile { project, function, all, out } => {
+        Command::Decompile {
+            project,
+            function,
+            all,
+            out,
+        } => {
             if all {
                 handle_decompile_all(project, out, &output_settings)?;
             } else {
@@ -1243,16 +1299,33 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Recon { path } => {
             handle_recon(path, &output_settings)?;
         }
-        Command::Identify { project, threshold, corpus } => {
+        Command::Identify {
+            project,
+            threshold,
+            corpus,
+        } => {
             handle_identify(project, threshold, corpus, &output_settings)?;
         }
-        Command::CorpusExport { project, out, library } => {
+        Command::CorpusExport {
+            project,
+            out,
+            library,
+        } => {
             handle_corpus_export(project, out, library, &output_settings)?;
         }
-        Command::Batch { inputs, out, fail_fast } => {
+        Command::Batch {
+            inputs,
+            out,
+            fail_fast,
+        } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
-        Command::Diff { left, right, markdown, html } => {
+        Command::Diff {
+            left,
+            right,
+            markdown,
+            html,
+        } => {
             handle_diff(left, right, markdown, html, &output_settings)?;
         }
         Command::Serve { project } => {
@@ -1278,7 +1351,13 @@ fn fresh_project_id() -> String {
 }
 
 fn project_dir_for(target: &Path) -> PathBuf {
-    let file_name = format!("{}.damsel", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+    let file_name = format!(
+        "{}.damsel",
+        target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    );
     target.with_file_name(file_name)
 }
 
@@ -1297,16 +1376,100 @@ fn resolve_project_dir(arg: &Path) -> Result<PathBuf, CliRunError> {
     ))
 }
 
+/// Where a project's analyzed bytes can be re-materialized from.
+#[derive(Debug, Clone)]
+enum ProjectImageSource {
+    /// A file on disk (legacy adjacent-file convention or an explicit
+    /// `target.json` descriptor).
+    File(PathBuf),
+    /// An image projected from a dyld shared cache.
+    SharedCache { cache: PathBuf, selector: String },
+}
+
+fn legacy_project_target_path(project_dir: &Path) -> Option<PathBuf> {
+    project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".damsel"))
+        .map(|stem| project_dir.with_file_name(stem))
+}
+
+/// Resolve the image source for a project: descriptor first, then the
+/// legacy adjacent-file convention.
+fn project_image_source(project_dir: &Path) -> Result<Option<ProjectImageSource>, CliRunError> {
+    match damsel_project::read_project_target(project_dir) {
+        Ok(Some(damsel_project::ProjectTarget::SharedCacheProjectedImage {
+            cache_path,
+            image_selector,
+            ..
+        })) => {
+            return Ok(Some(ProjectImageSource::SharedCache {
+                cache: PathBuf::from(cache_path),
+                selector: image_selector,
+            }));
+        }
+        Ok(Some(damsel_project::ProjectTarget::MachOImage { path })) => {
+            return Ok(Some(ProjectImageSource::File(PathBuf::from(path))));
+        }
+        Ok(None) => {}
+        Err(error) => {
+            return Err(CliRunError::command(
+                "target_read_error",
+                format!("{}: {error}", project_dir.display()),
+            ));
+        }
+    }
+    Ok(legacy_project_target_path(project_dir)
+        .filter(|path| path.is_file())
+        .map(ProjectImageSource::File))
+}
+
+/// Load the exact image a project was analyzed from.
+fn load_project_image(project_dir: &Path) -> Result<BinaryImage, CliRunError> {
+    match project_image_source(project_dir)? {
+        Some(ProjectImageSource::File(path)) => load_image(path),
+        Some(ProjectImageSource::SharedCache { cache, selector }) => {
+            let session = inspect_shared_cache(&cache).map_err(map_cache_error)?;
+            session
+                .project_image(&selector)
+                .map(|projected| projected.image)
+                .map_err(map_cache_error)
+        }
+        None => Err(CliRunError::command(
+            "project_not_found",
+            "project has no resolvable target; re-run `damsel analyze`",
+        )),
+    }
+}
+
+fn is_elf_file(path: &Path) -> bool {
+    std::fs::read(path)
+        .map(|bytes| bytes.len() >= 4 && bytes[0..4] == *b"\x7fELF")
+        .unwrap_or(false)
+}
+
+fn looks_like_shared_cache(path: &Path) -> bool {
+    std::fs::read(path)
+        .map(|bytes| bytes.starts_with(b"dyld_v1"))
+        .unwrap_or(false)
+}
+
 fn map_store_error(error: damsel_project::StoreError) -> CliRunError {
     match error {
         damsel_project::StoreError::AlreadyExists(path) => CliRunError::command(
             "project_exists",
             format!(
                 "project already exists at `{}`; pass --refresh to rebuild",
-                path.parent().map(|p| p.display().to_string()).unwrap_or_default()
+                path.parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
             ),
         ),
-        damsel_project::StoreError::UnsupportedSchema { path, found, supported } => CliRunError {
+        damsel_project::StoreError::UnsupportedSchema {
+            path,
+            found,
+            supported,
+        } => CliRunError {
             code: "stale_schema",
             message: format!(
                 "project at `{}` has schema version {found}; this damsel supports {supported}",
@@ -1336,10 +1499,22 @@ fn project_json(value: serde_json::Value) -> String {
 fn handle_analyze(
     path: PathBuf,
     refresh: bool,
+    image_selector: Option<&str>,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
-    use damsel_project::{AnalysisProjectMeta, ProjectId, ProjectStore, open_store};
     use damsel_macho::{harvest_strings, harvest_xrefs, recover_functions};
+    use damsel_project::{AnalysisProjectMeta, ProjectId, ProjectStore, open_store};
+
+    if let Some(selector) = image_selector {
+        return handle_analyze_cache_image(path, selector, refresh, output_settings);
+    }
+
+    if looks_like_shared_cache(&path) {
+        return Err(CliRunError::command(
+            "unsupported_input",
+            "input is a dyld shared cache root; pass `--image <selector>` to analyze one projected image",
+        ));
+    }
 
     // Format branch (Wave 5B.2): ELF ingests seeds only — engine passes
     // (xrefs/recovery/strings) wait on the x86_64 decode mapper.
@@ -1362,10 +1537,12 @@ fn handle_analyze(
         ));
     }
     if refresh && project_dir.exists() {
-        std::fs::remove_dir_all(&project_dir).map_err(|e| CliRunError::command(
-            "store_error",
-            format!("failed to remove {}: {e}", project_dir.display()),
-        ))?;
+        std::fs::remove_dir_all(&project_dir).map_err(|e| {
+            CliRunError::command(
+                "store_error",
+                format!("failed to remove {}: {e}", project_dir.display()),
+            )
+        })?;
     }
     let name = path
         .file_stem()
@@ -1377,39 +1554,50 @@ fn handle_analyze(
         analyzer_version: analyzer_version().to_string(),
     };
     let db_path = project_dir.join("project.db");
-    let mut store = open_store(&db_path, damsel_project::Create::New, &meta)
-        .map_err(map_store_error)?;
-    let outcome = ingest_binary_image(&mut store, &image, analyzer_version())
-        .map_err(map_ingest_error)?;
-    // Xref pass over seeded function windows (Wave 4 §4 pass 4–5).
-    let function_addresses: Vec<u64> = damsel_project::function_summaries(&store)
-        .map_err(map_store_error)?
-        .iter()
-        .map(|f| f.address)
-        .collect();
-    let xref_outcome = harvest_xrefs(
-        &mut store,
-        &image,
-        outcome.source_id,
-        &function_addresses,
-        analyzer_version(),
-    )
-    .map_err(|e| CliRunError::command("xref_error", e.to_string()))?;
-    let recovery_outcome = recover_functions(
-        &mut store,
-        &image,
-        outcome.source_id,
-        &function_addresses,
-        analyzer_version(),
-    )
-    .map_err(|e| CliRunError::command("recovery_error", e.to_string()))?;
-    let strings_outcome = harvest_strings(
-        &mut store,
-        &image,
-        outcome.source_id,
-        analyzer_version(),
-    )
-    .map_err(|e| CliRunError::command("strings_error", e.to_string()))?;
+    let mut store =
+        open_store(&db_path, damsel_project::Create::New, &meta).map_err(map_store_error)?;
+    // One transaction per analysis (see the cache handler for rationale).
+    store.begin_batch().map_err(map_store_error)?;
+    let analysis = (|| {
+        let outcome = ingest_binary_image(&mut store, &image, analyzer_version())
+            .map_err(map_ingest_error)?;
+        // Xref pass over seeded function windows (Wave 4 §4 pass 4–5).
+        let function_addresses: Vec<u64> = damsel_project::function_summaries(&store)
+            .map_err(map_store_error)?
+            .iter()
+            .map(|f| f.address)
+            .collect();
+        let xref_outcome = harvest_xrefs(
+            &mut store,
+            &image,
+            outcome.source_id,
+            &function_addresses,
+            analyzer_version(),
+        )
+        .map_err(|e| CliRunError::command("xref_error", e.to_string()))?;
+        let recovery_outcome = recover_functions(
+            &mut store,
+            &image,
+            outcome.source_id,
+            &function_addresses,
+            analyzer_version(),
+        )
+        .map_err(|e| CliRunError::command("recovery_error", e.to_string()))?;
+        let strings_outcome =
+            harvest_strings(&mut store, &image, outcome.source_id, analyzer_version())
+                .map_err(|e| CliRunError::command("strings_error", e.to_string()))?;
+        Ok::<_, CliRunError>((outcome, xref_outcome, recovery_outcome, strings_outcome))
+    })();
+    let (outcome, xref_outcome, recovery_outcome, strings_outcome) = match analysis {
+        Ok(values) => {
+            store.commit_batch().map_err(map_store_error)?;
+            values
+        }
+        Err(error) => {
+            let _ = store.rollback_batch();
+            return Err(error);
+        }
+    };
     let source_count = store.sources().map_err(map_store_error)?.len();
     let store_meta = store.meta().map_err(map_store_error)?;
     drop(store);
@@ -1436,11 +1624,239 @@ fn handle_analyze(
         println!("  sources     = {source_count}");
         println!("  objects     = {}", outcome.object_count);
         println!("  facts       = {}", outcome.fact_count);
-        println!("  xrefs       = {} ({} function windows)", xref_outcome.xref_count, xref_outcome.function_windows);
-        println!("  bounds      = {} ({} rank-6, {} problems)", recovery_outcome.bounds, recovery_outcome.rank6_seeded, recovery_outcome.problems);
+        println!(
+            "  xrefs       = {} ({} function windows)",
+            xref_outcome.xref_count, xref_outcome.function_windows
+        );
+        println!(
+            "  bounds      = {} ({} rank-6, {} problems)",
+            recovery_outcome.bounds, recovery_outcome.rank6_seeded, recovery_outcome.problems
+        );
         println!("  strings     = {}", strings_outcome.strings);
     }
     Ok(())
+}
+
+/// Analyze one image projected from a dyld shared cache (Wave 1 cache ingest
+/// mapping): the project is anchored in the cache vmaddr space and carries
+/// a `target.json` so later commands can re-project the same image.
+fn handle_analyze_cache_image(
+    cache_path: PathBuf,
+    selector: &str,
+    refresh: bool,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_macho::{harvest_strings, harvest_xrefs, inspect_shared_cache, recover_functions};
+    use damsel_project::{
+        AnalysisProjectMeta, Create, ProjectId, ProjectStore, ProjectTarget, open_store,
+        write_project_target,
+    };
+
+    let session = inspect_shared_cache(&cache_path).map_err(map_cache_error)?;
+    let projected = session.project_image(selector).map_err(map_cache_error)?;
+    let provenance = &projected.provenance;
+
+    let cache_file_name = cache_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "dyld_shared_cache".to_string());
+    let image_component = sanitize_project_component(&provenance.basename);
+    let project_dir = cache_project_dir(&cache_path, &cache_file_name, &image_component);
+
+    if project_dir.exists() && !refresh {
+        return Err(CliRunError::command(
+            "project_exists",
+            format!(
+                "project already exists at `{}`; pass --refresh to rebuild",
+                project_dir.display()
+            ),
+        ));
+    }
+    if refresh && project_dir.exists() {
+        std::fs::remove_dir_all(&project_dir).map_err(|e| {
+            CliRunError::command(
+                "store_error",
+                format!("failed to remove {}: {e}", project_dir.display()),
+            )
+        })?;
+    }
+
+    let meta = AnalysisProjectMeta {
+        project_id: ProjectId::new(fresh_project_id()),
+        name: format!("{cache_file_name}.{}", provenance.basename),
+        analyzer_version: analyzer_version().to_string(),
+    };
+    let db_path = project_dir.join("project.db");
+    let mut store = open_store(&db_path, Create::New, &meta).map_err(map_store_error)?;
+    // One transaction for the whole analysis: WAL commits once instead of
+    // once per fact. Large cache images emit >10^5 facts, and autocommit
+    // fsync-per-fact turns a seconds-long ingest into minutes.
+    store.begin_batch().map_err(map_store_error)?;
+    let analysis = (|| {
+        let outcome = ingest_projected_cache_image(&mut store, &projected, analyzer_version())
+            .map_err(map_ingest_error)?;
+        let function_addresses: Vec<u64> = damsel_project::function_summaries(&store)
+            .map_err(map_store_error)?
+            .iter()
+            .map(|f| f.address)
+            .collect();
+        let xref_outcome = harvest_xrefs(
+            &mut store,
+            &projected.image,
+            outcome.source_id,
+            &function_addresses,
+            analyzer_version(),
+        )
+        .map_err(|e| CliRunError::command("xref_error", e.to_string()))?;
+        let recovery_outcome = recover_functions(
+            &mut store,
+            &projected.image,
+            outcome.source_id,
+            &function_addresses,
+            analyzer_version(),
+        )
+        .map_err(|e| CliRunError::command("recovery_error", e.to_string()))?;
+        let strings_outcome = harvest_strings(
+            &mut store,
+            &projected.image,
+            outcome.source_id,
+            analyzer_version(),
+        )
+        .map_err(|e| CliRunError::command("strings_error", e.to_string()))?;
+        Ok::<_, CliRunError>((outcome, xref_outcome, recovery_outcome, strings_outcome))
+    })();
+    let (outcome, xref_outcome, recovery_outcome, strings_outcome) = match analysis {
+        Ok(values) => {
+            store.commit_batch().map_err(map_store_error)?;
+            values
+        }
+        Err(error) => {
+            let _ = store.rollback_batch();
+            return Err(error);
+        }
+    };
+
+    let source_count = store.sources().map_err(map_store_error)?.len();
+    let store_meta = store.meta().map_err(map_store_error)?;
+    drop(store);
+
+    // Descriptor last: a failed analysis leaves no promise of a usable target.
+    let descriptor_cache_path =
+        std::fs::canonicalize(&cache_path).unwrap_or_else(|_| cache_path.clone());
+    write_project_target(
+        &project_dir,
+        &ProjectTarget::shared_cache_image(
+            descriptor_cache_path.display().to_string(),
+            selector,
+            provenance.install_name.clone(),
+            provenance.cache_uuid.clone(),
+            provenance.image_id.image_index(),
+        ),
+    )
+    .map_err(|e| CliRunError::command("target_write_error", e.to_string()))?;
+
+    let image_json = serde_json::json!({
+        "install_name": provenance.install_name,
+        "basename": provenance.basename,
+        "cache_uuid": provenance.cache_uuid,
+        "image_index": provenance.image_id.image_index(),
+        "member": provenance.member_name,
+        "image_base": format!("{:#x}", provenance.image_base_vmaddr),
+    });
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "analyze",
+            "project": store_meta,
+            "project_path": project_dir.display().to_string(),
+            "source_kind": "shared_cache_projected_image",
+            "image": image_json,
+            "sources": source_count,
+            "objects": outcome.object_count,
+            "facts": outcome.fact_count,
+            "function_windows": xref_outcome.function_windows,
+            "xrefs": xref_outcome.xref_count,
+            "function_bounds": recovery_outcome.bounds,
+            "rank6_seeded": recovery_outcome.rank6_seeded,
+            "recovery_problems": recovery_outcome.problems,
+            "strings": strings_outcome.strings,
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!("analyzed -> {}", project_dir.display());
+        println!("  project_id  = {}", store_meta.project_id);
+        println!("  source      = shared_cache_projected_image");
+        println!(
+            "  image       = {} (cache {} #{}, member {})",
+            provenance.install_name,
+            provenance.cache_uuid,
+            provenance.image_id.image_index(),
+            provenance.member_name
+        );
+        println!("  sources     = {source_count}");
+        println!("  objects     = {}", outcome.object_count);
+        println!("  facts       = {}", outcome.fact_count);
+        println!(
+            "  xrefs       = {} ({} function windows)",
+            xref_outcome.xref_count, xref_outcome.function_windows
+        );
+        println!(
+            "  bounds      = {} ({} rank-6, {} problems)",
+            recovery_outcome.bounds, recovery_outcome.rank6_seeded, recovery_outcome.problems
+        );
+        println!("  strings     = {}", strings_outcome.strings);
+    }
+    Ok(())
+}
+
+fn sanitize_project_component(value: &str) -> String {
+    let cleaned: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "image".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// Cache projects default to the cache's directory. System caches live on
+/// read-only volumes, so fall back to a per-user projects root
+/// (`DAMSEL_PROJECTS_DIR`, else `~/Library/Application Support/damsel/projects`).
+fn cache_project_dir(cache_path: &Path, cache_file_name: &str, image_component: &str) -> PathBuf {
+    let dir_name = format!("{cache_file_name}.{image_component}.damsel");
+    let writable_parent = cache_path.parent().filter(|parent| dir_is_writable(parent));
+    match writable_parent {
+        Some(parent) => parent.join(dir_name),
+        None => projects_root().join(dir_name),
+    }
+}
+
+fn projects_root() -> PathBuf {
+    if let Some(dir) = std::env::var_os("DAMSEL_PROJECTS_DIR") {
+        return PathBuf::from(dir);
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join("Library/Application Support/damsel/projects");
+    }
+    std::env::temp_dir().join("damsel-projects")
+}
+
+fn dir_is_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".damsel-write-probe-{}", std::process::id()));
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn handle_batch(
@@ -1449,15 +1865,18 @@ fn handle_batch(
     fail_fast: bool,
     _output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
-    use damsel_project::{AnalysisProjectMeta, Create, ProjectId, ProjectStore, TypedStore, open_store};
+    use damsel_project::{
+        AnalysisProjectMeta, Create, ProjectId, ProjectStore, TypedStore, open_store,
+    };
 
     let list = std::fs::read_to_string(&inputs)
         .map_err(|e| CliRunError::command("invalid_args", format!("{}: {e}", inputs.display())))?;
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| CliRunError::command("store_error", format!("{}: {e}", out_dir.display())))?;
     let results_path = out_dir.join("batch.jsonl");
-    let mut results = std::fs::File::create(&results_path)
-        .map_err(|e| CliRunError::command("store_error", format!("{}: {e}", results_path.display())))?;
+    let mut results = std::fs::File::create(&results_path).map_err(|e| {
+        CliRunError::command("store_error", format!("{}: {e}", results_path.display()))
+    })?;
 
     use std::io::Write;
     let mut passed = 0usize;
@@ -1472,7 +1891,11 @@ fn handle_batch(
             Err(entry) => {
                 failed += 1;
                 if fail_fast {
-                    let _ = writeln!(results, "{}", serde_json::to_string(&entry).unwrap_or_default());
+                    let _ = writeln!(
+                        results,
+                        "{}",
+                        serde_json::to_string(&entry).unwrap_or_default()
+                    );
                     return Err(CliRunError::command(
                         "batch_failed",
                         format!("{} failed (fail-fast)", path.display()),
@@ -1481,7 +1904,11 @@ fn handle_batch(
                 entry
             }
         };
-        let _ = writeln!(results, "{}", serde_json::to_string(&entry).unwrap_or_default());
+        let _ = writeln!(
+            results,
+            "{}",
+            serde_json::to_string(&entry).unwrap_or_default()
+        );
     }
 
     println!(
@@ -1494,7 +1921,10 @@ fn handle_batch(
     Ok(())
 }
 
-fn run_batch_target(path: &std::path::Path, out_dir: &std::path::Path) -> Result<serde_json::Value, serde_json::Value> {
+fn run_batch_target(
+    path: &std::path::Path,
+    out_dir: &std::path::Path,
+) -> Result<serde_json::Value, serde_json::Value> {
     let name = path
         .file_stem()
         .map(|n| n.to_string_lossy().into_owned())
@@ -1512,22 +1942,29 @@ fn run_batch_target(path: &std::path::Path, out_dir: &std::path::Path) -> Result
         analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
     };
     let db_path = project_dir.join("project.db");
-    let Ok(mut store) = damsel_project::open_store(&db_path, damsel_project::Create::New, &meta) else {
-        return Err(serde_json::json!({"input": line_of(path), "status": "error", "error": "store_create_failed"}));
+    let Ok(mut store) = damsel_project::open_store(&db_path, damsel_project::Create::New, &meta)
+    else {
+        return Err(
+            serde_json::json!({"input": line_of(path), "status": "error", "error": "store_create_failed"}),
+        );
     };
 
     let outcome = if is_elf {
         match damsel_elf::load(path) {
-            Ok(image) => damsel_elf::ingest_elf_image(&mut store, &image, env!("CARGO_PKG_VERSION"))
-                .map(|o| (o.source_id, o.fact_count))
-                .map_err(|e| e.to_string()),
+            Ok(image) => {
+                damsel_elf::ingest_elf_image(&mut store, &image, env!("CARGO_PKG_VERSION"))
+                    .map(|o| (o.source_id, o.fact_count))
+                    .map_err(|e| e.to_string())
+            }
             Err(e) => Err(e.to_string()),
         }
     } else {
         match damsel_macho::load(path) {
-            Ok(image) => damsel_macho::ingest_binary_image(&mut store, &image, env!("CARGO_PKG_VERSION"))
-                .map(|o| (o.source_id, o.fact_count))
-                .map_err(|e| e.to_string()),
+            Ok(image) => {
+                damsel_macho::ingest_binary_image(&mut store, &image, env!("CARGO_PKG_VERSION"))
+                    .map(|o| (o.source_id, o.fact_count))
+                    .map_err(|e| e.to_string())
+            }
             Err(e) => Err(e.to_string()),
         }
     };
@@ -1600,7 +2037,10 @@ fn handle_diff(
                 damsel_decomp::MatchStrategy::ExactAddress => "address",
                 damsel_decomp::MatchStrategy::Structural => "structural",
             };
-            println!("  = {name:<32} {:#010x} -> {:#010x} ({strategy})", m.left_address, m.right_address);
+            println!(
+                "  = {name:<32} {:#010x} -> {:#010x} ({strategy})",
+                m.left_address, m.right_address
+            );
         }
         println!("  added:   {}", report.added.len());
         for f in &report.added {
@@ -1616,7 +2056,10 @@ fn handle_diff(
     Ok(())
 }
 
-fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Result<(), CliRunError> {
+fn handle_recon(
+    path: PathBuf,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
     use damsel_decomp::{Verdict, assess, shannon_entropy};
 
     let is_elf = std::fs::read(&path)
@@ -1682,7 +2125,9 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
             .filter(|(name, _)| name == "__text" || name == ".text")
             .flat_map(|(_, data)| data.iter().copied())
             .collect();
-        catalog_detections.extend(damsel_recon_catalog::scan_code_bytes_for_xor_loop(&text_bytes));
+        catalog_detections.extend(damsel_recon_catalog::scan_code_bytes_for_xor_loop(
+            &text_bytes,
+        ));
     }
 
     if output_settings.format == output::OutputFormat::Json {
@@ -1700,8 +2145,13 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
             Verdict::NeedsManualReview => "needs manual review",
         };
         println!("recon: {verdict}");
-        println!("  symbols        {symbol_count}{}", if report.stripped { " (stripped)" } else { "" });
-        println!("  note           for CFG-flattening and opaque-predicate detection, run `damsel analyze` + `damsel decompile`");
+        println!(
+            "  symbols        {symbol_count}{}",
+            if report.stripped { " (stripped)" } else { "" }
+        );
+        println!(
+            "  note           for CFG-flattening and opaque-predicate detection, run `damsel analyze` + `damsel decompile`"
+        );
         for se in &report.section_entropies {
             let bar = "█".repeat((se.entropy * 8.0) as usize);
             println!("  {:<16} {:.2} {}", se.section, se.entropy, bar);
@@ -1715,7 +2165,10 @@ fn handle_recon(path: PathBuf, output_settings: &output::OutputSettings) -> Resu
         for det in &catalog_detections {
             let sev = format!("{:?}", det.severity).to_lowercase();
             let conf = format!("{:?}", det.confidence).to_lowercase();
-            println!("  catalog: {} [{}/{}] {} — {}", det.code, sev, conf, det.evidence, det.location);
+            println!(
+                "  catalog: {} [{}/{}] {} — {}",
+                det.code, sev, conf, det.evidence, det.location
+            );
             if let Some(entry) = damsel_recon_catalog::lookup(det.code) {
                 println!("    → {}", entry.remediation);
             }
@@ -1738,23 +2191,21 @@ fn handle_identify(
     let threshold = threshold.unwrap_or(0.7);
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
-    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-        .map_err(map_store_error)?;
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
 
     let summaries = function_summaries(&store).map_err(map_store_error)?;
     let corpus = if let Some(path) = &corpus_path {
         // Load an exported corpus (JSON array of KnownFunction).
         let text = std::fs::read_to_string(path).map_err(|e| {
-            CliRunError::command(
-                "corpus_read_error",
-                format!("{}: {e}", path.display()),
-            )
+            CliRunError::command("corpus_read_error", format!("{}: {e}", path.display()))
         })?;
         serde_json::from_str(&text).map_err(|e| {
-            CliRunError::command(
-                "corpus_parse_error",
-                format!("{}: {e}", path.display()),
-            )
+            CliRunError::command("corpus_parse_error", format!("{}: {e}", path.display()))
         })?
     } else {
         damsel_recon_catalog::reuse::glibc_minimal_corpus()
@@ -1801,14 +2252,18 @@ fn handle_identify(
         .map(|img| strings_per_function(&store, img))
         .unwrap_or_default();
 
-    let mut results: Vec<(u64, Option<String>, damsel_recon_catalog::reuse::ReuseReport)> =
-        Vec::new();
+    let mut results: Vec<(
+        u64,
+        Option<String>,
+        damsel_recon_catalog::reuse::ReuseReport,
+    )> = Vec::new();
     for summary in &summaries {
         // Only identify functions without names (stripped) or with
         // generic sub_ names.
-        let is_unnamed = summary.name.as_deref().is_none_or(|n| {
-            n.is_empty() || n.starts_with("sub_") || n.starts_with("func_")
-        });
+        let is_unnamed = summary
+            .name
+            .as_deref()
+            .is_none_or(|n| n.is_empty() || n.starts_with("sub_") || n.starts_with("func_"));
         if !is_unnamed {
             continue;
         }
@@ -1829,8 +2284,10 @@ fn handle_identify(
                 call_count: 0,
                 instruction_count: 0,
             });
-        fingerprint.strings =
-            string_map.get(&summary.address).cloned().unwrap_or_default();
+        fingerprint.strings = string_map
+            .get(&summary.address)
+            .cloned()
+            .unwrap_or_default();
         let report =
             damsel_recon_catalog::reuse::find_reuse_report(&fingerprint, &corpus, threshold);
         if !report.matches.is_empty() || !report.candidates.is_empty() {
@@ -1852,9 +2309,15 @@ fn handle_identify(
         });
         println!("{}", project_json(value));
     } else {
-        println!("identify: {results_len} function(s) matched (corpus: glibc-minimal, threshold: {threshold})", results_len = results.len());
+        println!(
+            "identify: {results_len} function(s) matched (corpus: glibc-minimal, threshold: {threshold})",
+            results_len = results.len()
+        );
         for (addr, name, report) in &results {
-            println!("  {addr:#010x}  {}", name.as_deref().unwrap_or("(stripped)"));
+            println!(
+                "  {addr:#010x}  {}",
+                name.as_deref().unwrap_or("(stripped)")
+            );
             for m in &report.matches {
                 println!(
                     "    → {}::{}  score={:.2}  [{}]",
@@ -1878,7 +2341,6 @@ fn handle_identify(
     }
     Ok(())
 }
-
 
 /// Decode a function range and extract (mnemonic, [immediates]) pairs
 /// for fingerprinting.
@@ -1913,7 +2375,6 @@ fn decode_for_fingerprint(
             .collect(),
     )
 }
-
 
 /// Join string facts to functions: for each xref whose target is a
 /// string address, find the containing function and read the string
@@ -1976,15 +2437,11 @@ fn strings_per_function(
                     .split('-')
                     .next()
                     .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
-                let end = fact
-                    .payload
-                    .split('-')
-                    .nth(1)
-                    .and_then(|e| {
-                        e.split('|').next().and_then(|e| {
-                            u64::from_str_radix(e.trim_start_matches("0x"), 16).ok()
-                        })
-                    });
+                let end = fact.payload.split('-').nth(1).and_then(|e| {
+                    e.split('|')
+                        .next()
+                        .and_then(|e| u64::from_str_radix(e.trim_start_matches("0x"), 16).ok())
+                });
                 if let (Some(f), Some(s), Some(e)) = (fn_addr, start, end) {
                     fn_bounds.push((f, s, e));
                 }
@@ -2039,8 +2496,12 @@ fn handle_corpus_export(
 
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
-    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-        .map_err(map_store_error)?;
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
 
     let summaries = function_summaries(&store).map_err(map_store_error)?;
 
@@ -2101,15 +2562,17 @@ fn handle_corpus_export(
             .and_then(|(s, e)| {
                 elf_image.as_ref().and_then(|img| {
                     decode_for_fingerprint(img, *s, *e).map(|insts| {
-                        let fp =
-                            damsel_recon_catalog::reuse::fingerprint_from_instructions(&insts);
+                        let fp = damsel_recon_catalog::reuse::fingerprint_from_instructions(&insts);
                         (fp.constants, fp.call_count, fp.instruction_count)
                     })
                 })
             })
             .unwrap_or((vec![], 0, 0));
 
-        let strings = string_map.get(&summary.address).cloned().unwrap_or_default();
+        let strings = string_map
+            .get(&summary.address)
+            .cloned()
+            .unwrap_or_default();
 
         corpus.push(damsel_recon_catalog::reuse::KnownFunction {
             library: library.clone(),
@@ -2123,9 +2586,8 @@ fn handle_corpus_export(
         });
     }
 
-    let json = serde_json::to_string_pretty(&corpus).map_err(|e| {
-        CliRunError::command("corpus_write_error", e.to_string())
-    })?;
+    let json = serde_json::to_string_pretty(&corpus)
+        .map_err(|e| CliRunError::command("corpus_write_error", e.to_string()))?;
     std::fs::write(&out, json).map_err(|e| {
         CliRunError::command("corpus_write_error", format!("{}: {e}", out.display()))
     })?;
@@ -2145,30 +2607,17 @@ fn handle_decompile(
 ) -> Result<(), CliRunError> {
     // v1 lift path: Mach-O arm64 via the engine's symbol/addr windows.
     // Full project-fact-driven lifting (both formats) follows with D2/D4.
-    let target_path = resolve_project_dir(&project)
-        .ok()
-        .and_then(|dir| {
-            dir.file_name()
-                .and_then(|n| n.to_str())
-                .and_then(|n| n.strip_suffix(".damsel"))
-                .map(|stem| dir.with_file_name(stem))
-        });
-    let Some(target) = target_path.filter(|p| p.is_file()) else {
-        return Err(CliRunError::command(
-            "project_not_found",
-            "decompile requires the target binary next to the project",
-        ));
-    };
+    let project_dir = resolve_project_dir(&project)?;
     // ELF path (Wave 6.5): decode via the x86_64 mapper inside the
-    // function's recovered bound; Mach-O keeps the engine path.
-    let is_elf = std::fs::read(&target)
-        .map(|bytes| bytes.len() >= 4 && bytes[0..4] == *b"\x7fELF")
-        .unwrap_or(false);
-    if is_elf {
-        return handle_decompile_elf(project, selector, output_settings);
+    // function's recovered bound; Mach-O keeps the engine path. ELF
+    // projects never carry a cache descriptor.
+    if let Some(ProjectImageSource::File(target)) = project_image_source(&project_dir)? {
+        if is_elf_file(&target) {
+            return handle_decompile_elf(project, selector, output_settings);
+        }
     }
 
-    let image = load_image(target)?;
+    let image = load_project_image(&project_dir)?;
     let request = damsel_core::DisassemblyRequestV2 {
         target: if let Some(hex) = selector.strip_prefix("0x") {
             damsel_core::DisassemblyTarget::Address(
@@ -2185,10 +2634,12 @@ fn handle_decompile(
             include_value_flow: false,
         },
     };
-    let result = disassemble_v2(&image, &request)
-        .map_err(map_macho_error)?;
+    let result = disassemble_v2(&image, &request).map_err(map_macho_error)?;
     if result.instructions.is_empty() {
-        return Err(CliRunError::command("function_not_found", selector.to_string()));
+        return Err(CliRunError::command(
+            "function_not_found",
+            selector.to_string(),
+        ));
     }
     let function = damsel_decomp::lift_arm64(&result.instructions);
     let pseudocode = damsel_decomp::render_pseudocode(&function, Some(selector));
@@ -2209,7 +2660,15 @@ fn handle_decompile(
                 .map(|a| format!("{a:#x}"))
                 .collect::<Vec<_>>()
                 .join(",");
-            println!("{:>10}  {}", if addresses.is_empty() { String::new() } else { addresses }, line.text);
+            println!(
+                "{:>10}  {}",
+                if addresses.is_empty() {
+                    String::new()
+                } else {
+                    addresses
+                },
+                line.text
+            );
         }
     }
     Ok(())
@@ -2224,44 +2683,42 @@ fn handle_decompile_all(
 
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
-    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-        .map_err(map_store_error)?;
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
 
-    let summaries = damsel_project::function_summaries(&store)
-        .map_err(map_store_error)?;
+    let summaries = damsel_project::function_summaries(&store).map_err(map_store_error)?;
+    // Materialize the analyzed image once (cache projections are not free).
+    let image = load_project_image(&project_dir).ok();
 
     let Some(out) = out_dir else {
         // Print all to stdout (JSONL)
+        let Some(image) = &image else { return Ok(()) };
         for summary in &summaries {
             if let Some(name) = &summary.name {
-                let target_path = project_dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .and_then(|n| n.strip_suffix(".damsel"))
-                    .map(|stem| project_dir.with_file_name(stem));
-                if let Some(target) = target_path.filter(|p| p.is_file()) {
-                    let image = load_image(target)?;
-                    let request = damsel_core::DisassemblyRequestV2 {
-                        target: damsel_core::DisassemblyTarget::Symbol(name.clone()),
-                        range: None,
-                        limit: damsel_core::DisassemblyLimit::Unlimited,
-                        options: damsel_core::DisassemblyOptions {
-                            include_annotations: true,
-                            include_value_flow: false,
-                        },
-                    };
-                    if let Ok(result) = disassemble_v2(&image, &request) {
-                        let function = damsel_decomp::lift_arm64(&result.instructions);
-                        let pseudocode = damsel_decomp::render_pseudocode(&function, Some(name));
-                        let value = serde_json::json!({
-                            "function": name,
-                            "address": format!("{:#x}", summary.address),
-                            "unknown_count": function.unknown_count,
-                            "line_count": pseudocode.lines.len(),
-                            "lines": pseudocode.lines.iter().map(|l| &l.text).collect::<Vec<_>>(),
-                        });
-                        println!("{}", project_json(value));
-                    }
+                let request = damsel_core::DisassemblyRequestV2 {
+                    target: damsel_core::DisassemblyTarget::Symbol(name.clone()),
+                    range: None,
+                    limit: damsel_core::DisassemblyLimit::Unlimited,
+                    options: damsel_core::DisassemblyOptions {
+                        include_annotations: true,
+                        include_value_flow: false,
+                    },
+                };
+                if let Ok(result) = disassemble_v2(image, &request) {
+                    let function = damsel_decomp::lift_arm64(&result.instructions);
+                    let pseudocode = damsel_decomp::render_pseudocode(&function, Some(name));
+                    let value = serde_json::json!({
+                        "function": name,
+                        "address": format!("{:#x}", summary.address),
+                        "unknown_count": function.unknown_count,
+                        "line_count": pseudocode.lines.len(),
+                        "lines": pseudocode.lines.iter().map(|l| &l.text).collect::<Vec<_>>(),
+                    });
+                    println!("{}", project_json(value));
                 }
             }
         }
@@ -2271,16 +2728,16 @@ fn handle_decompile_all(
     // Write one .pseudo file per function
     std::fs::create_dir_all(&out)
         .map_err(|e| CliRunError::command("store_error", format!("{}: {e}", out.display())))?;
+    let Some(image) = &image else {
+        println!(
+            "decompiled 0 functions -> {} (no resolvable target)",
+            out.display()
+        );
+        return Ok(());
+    };
     let mut count = 0;
     for summary in &summaries {
         let Some(name) = &summary.name else { continue };
-        let target_path = project_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .and_then(|n| n.strip_suffix(".damsel"))
-            .map(|stem| project_dir.with_file_name(stem));
-        let Some(target) = target_path.filter(|p| p.is_file()) else { continue };
-        let image = load_image(target)?;
         let request = damsel_core::DisassemblyRequestV2 {
             target: damsel_core::DisassemblyTarget::Symbol(name.clone()),
             range: None,
@@ -2290,14 +2747,17 @@ fn handle_decompile_all(
                 include_value_flow: false,
             },
         };
-        let Ok(result) = disassemble_v2(&image, &request) else { continue };
+        let Ok(result) = disassemble_v2(image, &request) else {
+            continue;
+        };
         let function = damsel_decomp::lift_arm64(&result.instructions);
         let pseudocode = damsel_decomp::render_pseudocode(&function, Some(name));
         let safe_name = name.replace(char::from(47), "_");
         let file_path = out.join(format!("{safe_name}.pseudo"));
         let text: Vec<&str> = pseudocode.lines.iter().map(|l| l.text.as_str()).collect();
-        std::fs::write(&file_path, text.join("\n"))
-            .map_err(|e| CliRunError::command("store_error", format!("{}: {e}", file_path.display())))?;
+        std::fs::write(&file_path, text.join("\n")).map_err(|e| {
+            CliRunError::command("store_error", format!("{}: {e}", file_path.display()))
+        })?;
         count += 1;
     }
     println!("decompiled {count} functions -> {}", out.display());
@@ -2327,8 +2787,12 @@ fn handle_decompile_elf(
         .map_err(|e| CliRunError::command("unsupported_input", e.to_string()))?;
 
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
-    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-        .map_err(map_store_error)?;
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
     let source = store
         .sources()
         .map_err(map_store_error)?
@@ -2340,13 +2804,12 @@ fn handle_decompile_elf(
     let summaries = damsel_project::function_summaries(&store).map_err(map_store_error)?;
     let summary = summaries
         .iter()
-        .find(|f| {
-            f.name.as_deref() == Some(selector)
-                || format!("{:#x}", f.address) == selector
-        })
+        .find(|f| f.name.as_deref() == Some(selector) || format!("{:#x}", f.address) == selector)
         .ok_or_else(|| CliRunError::command("function_not_found", selector.to_string()))?;
 
-    let facts = store.facts_for_source(source.source_id).map_err(map_store_error)?;
+    let facts = store
+        .facts_for_source(source.source_id)
+        .map_err(map_store_error)?;
     let bound = facts
         .iter()
         .find(|f| {
@@ -2402,11 +2865,18 @@ fn handle_summary(
 
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
-    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-        .map_err(map_store_error)?;
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
     let sources = store.sources().map_err(map_store_error)?;
     let Some(source) = sources.first() else {
-        return Err(CliRunError::command("project_not_found", "project has no sources"));
+        return Err(CliRunError::command(
+            "project_not_found",
+            "project has no sources",
+        ));
     };
     let report = damsel_decomp::summarize_named(&store, source.source_id, selector)
         .map_err(|e| CliRunError::command("function_not_found", e.to_string()))?;
@@ -2422,7 +2892,11 @@ fn handle_summary(
         });
         println!("{}", project_json(value));
     } else {
-        println!("{} ({})", report.function, report.name.as_deref().unwrap_or(""));
+        println!(
+            "{} ({})",
+            report.function,
+            report.name.as_deref().unwrap_or("")
+        );
         if let Some(bound) = &report.bound {
             println!("  bound   {bound}");
         }
@@ -2455,13 +2929,17 @@ fn handle_search(
 
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
-    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-        .map_err(map_store_error)?;
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
     let facts = store.facts().map_err(map_store_error)?;
 
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     struct Row {
-        rank: u8,        // 0 exact, 1 prefix, 2 substring
+        rank: u8, // 0 exact, 1 prefix, 2 substring
         kind_priority: u8,
         name: String,
         kind: &'static str,
@@ -2469,7 +2947,12 @@ fn handle_search(
         address: Option<u64>,
     }
     let mut rows: Vec<Row> = Vec::new();
-    let mut push = |rank: u8, kind_priority: u8, kind: &'static str, name: &str, object: String, address: Option<u64>| {
+    let mut push = |rank: u8,
+                    kind_priority: u8,
+                    kind: &'static str,
+                    name: &str,
+                    object: String,
+                    address: Option<u64>| {
         if let Some(want) = &kind_filter {
             if want != kind {
                 return;
@@ -2497,57 +2980,80 @@ fn handle_search(
     // Functions (kind priority 0) from seed summaries.
     for f in function_summaries(&store).map_err(map_store_error)? {
         if let Some(name) = &f.name {
-            push(u8::MAX, 0, "function", name, format!("function:{:#x}", f.address), Some(f.address));
+            push(
+                u8::MAX,
+                0,
+                "function",
+                name,
+                format!("function:{:#x}", f.address),
+                Some(f.address),
+            );
         }
     }
     // Symbols (1), imports (2), sections (3) from fact objects.
     for fact in &facts {
-        let Some(object) = &fact.object_id else { continue };
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
         match object.kind() {
             "symbol" if fact.kind.as_str() == "symbol" => {
-                push(u8::MAX, 1, "symbol", object.key(), object.as_str().to_string(), None);
+                push(
+                    u8::MAX,
+                    1,
+                    "symbol",
+                    object.key(),
+                    object.as_str().to_string(),
+                    None,
+                );
             }
             "import" if fact.kind.as_str() == "import" => {
-                push(u8::MAX, 2, "import", object.key(), object.as_str().to_string(), None);
+                push(
+                    u8::MAX,
+                    2,
+                    "import",
+                    object.key(),
+                    object.as_str().to_string(),
+                    None,
+                );
             }
             "section" if fact.kind.as_str() == "byte_class" => {
-                push(u8::MAX, 3, "section", object.key(), object.as_str().to_string(), None);
+                push(
+                    u8::MAX,
+                    3,
+                    "section",
+                    object.key(),
+                    object.as_str().to_string(),
+                    None,
+                );
             }
             _ => {}
         }
     }
-    // Strings (4): searchable by value when the target binary is present.
-    let target_path = project_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .and_then(|n| n.strip_suffix(".damsel"))
-        .map(|stem| project_dir.with_file_name(stem));
-    let elf_image = target_path
-        .as_deref()
-        .filter(|p| p.is_file())
-        .and_then(|p| damsel_elf::load(p.clone()).ok());
-    let image = if elf_image.is_some() { None } else {
-        target_path
-            .as_deref()
-            .filter(|p| p.is_file())
-            .and_then(|p| load(p.clone()).ok())
-    };
+    // Strings (4): searchable by value when the target image is resolvable.
+    let image = load_project_image(&project_dir).ok();
     let strings_searchable = image.is_some();
     if let Some(image) = &image {
         for fact in &facts {
             if fact.kind.as_str() != "string" {
                 continue;
             }
-            let Some(object) = &fact.object_id else { continue };
-            let Ok(address) =
-                u64::from_str_radix(object.key().trim_start_matches("0x"), 16)
-            else {
+            let Some(object) = &fact.object_id else {
+                continue;
+            };
+            let Ok(address) = u64::from_str_radix(object.key().trim_start_matches("0x"), 16) else {
                 continue;
             };
             let (_, len_part) = fact.payload.split_once("|len=").unwrap_or(("utf8", "0"));
             let len: usize = len_part.parse().unwrap_or(0);
             if let Some(value) = image.read_c_string_at_address(address, len.saturating_add(1)) {
-                push(u8::MAX, 4, "string", &value, object.as_str().to_string(), Some(address));
+                push(
+                    u8::MAX,
+                    4,
+                    "string",
+                    &value,
+                    object.as_str().to_string(),
+                    Some(address),
+                );
             }
         }
     }
@@ -2600,8 +3106,12 @@ fn handle_strings(
 
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
-    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-        .map_err(map_store_error)?;
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
     let facts = store.facts().map_err(map_store_error)?;
 
     // String facts: object `string:<addr>`, payload `utf8|len=N`.
@@ -2619,10 +3129,10 @@ fn handle_strings(
         if fact.kind.as_str() != "string" {
             continue;
         }
-        let Some(object) = &fact.object_id else { continue };
-        let Ok(address) =
-            u64::from_str_radix(object.key().trim_start_matches("0x"), 16)
-        else {
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
+        let Ok(address) = u64::from_str_radix(object.key().trim_start_matches("0x"), 16) else {
             continue;
         };
         let (encoding, len_part) = fact.payload.split_once("|len=").unwrap_or(("utf8", "0"));
@@ -2637,22 +3147,19 @@ fn handle_strings(
     }
     rows.sort();
 
-    // Value display requires the target binary (bytes stay out of the
-    // project by privacy design). Resolve it best-effort.
-    let target_path = project_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .and_then(|n| n.strip_suffix(".damsel"))
-        .map(|stem| project_dir.with_file_name(stem));
-    let elf_image = target_path
-        .as_deref()
-        .filter(|p| p.is_file())
-        .and_then(|p| damsel_elf::load(p.clone()).ok());
-    let image = if elf_image.is_some() { None } else {
-        target_path
-            .as_deref()
-            .filter(|p| p.is_file())
-            .and_then(|p| load(p.clone()).ok())
+    // Value display requires the target image (bytes stay out of the
+    // project by privacy design). Resolve it best-effort: ELF objects keep
+    // their dedicated reader; Mach-O files and cache projections share the
+    // project image loader.
+    let source = project_image_source(&project_dir)?;
+    let elf_image = match &source {
+        Some(ProjectImageSource::File(path)) => damsel_elf::load(path).ok(),
+        _ => None,
+    };
+    let image = if elf_image.is_some() {
+        None
+    } else {
+        load_project_image(&project_dir).ok()
     };
 
     let mut display: Vec<(u64, &str, usize, Option<&str>, Option<String>)> = rows
@@ -2732,8 +3239,12 @@ fn handle_xrefs(
     }
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
-    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-        .map_err(map_store_error)?;
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
 
     let names: std::collections::BTreeMap<u64, String> = function_summaries(&store)
         .map_err(map_store_error)?
@@ -2747,12 +3258,13 @@ fn handle_xrefs(
         if fact.kind.as_str() != "xref" {
             continue;
         }
-        let Some(object) = &fact.object_id else { continue };
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
         if object.kind() != "instruction" {
             continue;
         }
-        let Some(from_addr) =
-            u64::from_str_radix(object.key().trim_start_matches("0x"), 16).ok()
+        let Some(from_addr) = u64::from_str_radix(object.key().trim_start_matches("0x"), 16).ok()
         else {
             continue;
         };
@@ -2767,7 +3279,9 @@ fn handle_xrefs(
         if let Some(want_addr) = to {
             // Match any target object whose address component equals the
             // requested address (function/data/stub objects).
-            let Some((_, key)) = target.split_once(':') else { continue };
+            let Some((_, key)) = target.split_once(':') else {
+                continue;
+            };
             let Ok(target_addr) = u64::from_str_radix(key.trim_start_matches("0x"), 16) else {
                 continue;
             };
@@ -2830,8 +3344,12 @@ fn handle_functions(
 
     let project_dir = resolve_project_dir(&project)?;
     let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
-    let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-        .map_err(map_store_error)?;
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
     let mut summaries = function_summaries(&store).map_err(map_store_error)?;
     if let Some(pattern) = &name_filter {
         summaries.retain(|f| {
@@ -2890,7 +3408,13 @@ fn handle_functions(
                 .get(&f.address)
                 .map(|b| b.as_str())
                 .unwrap_or("-");
-            println!("  {:#010x}  {:<40} [{:<28}] {}", f.address, display_name, f.seeds.join(","), bound);
+            println!(
+                "  {:#010x}  {:<40} [{:<28}] {}",
+                f.address,
+                display_name,
+                f.seeds.join(","),
+                bound
+            );
         }
     }
     Ok(())
@@ -2929,8 +3453,12 @@ fn handle_analyze_elf(
         name,
         analyzer_version: analyzer_version().to_string(),
     };
-    let mut store = open_store(&project_dir.join("project.db"), damsel_project::Create::New, &meta)
-        .map_err(map_store_error)?;
+    let mut store = open_store(
+        &project_dir.join("project.db"),
+        damsel_project::Create::New,
+        &meta,
+    )
+    .map_err(map_store_error)?;
     let outcome = damsel_elf::ingest_elf_image(&mut store, &image, analyzer_version())
         .map_err(|e| CliRunError::command("ingest_error", e.to_string()))?;
     // Engine passes for ELF (xrefs + bounds via the x86_64 decoder).
@@ -2947,13 +3475,9 @@ fn handle_analyze_elf(
         analyzer_version(),
     )
     .map_err(|e| CliRunError::command("engine_error", e.to_string()))?;
-    let strings_outcome = damsel_elf::harvest_elf_strings(
-        &mut store,
-        &image,
-        outcome.source_id,
-        analyzer_version(),
-    )
-    .map_err(|e| CliRunError::command("strings_error", e.to_string()))?;
+    let strings_outcome =
+        damsel_elf::harvest_elf_strings(&mut store, &image, outcome.source_id, analyzer_version())
+            .map_err(|e| CliRunError::command("strings_error", e.to_string()))?;
     let source_count = store.sources().map_err(map_store_error)?.len();
     drop(store);
     if output_settings.format == output::OutputFormat::Json {
@@ -2975,14 +3499,21 @@ fn handle_analyze_elf(
         println!(
             "  arch        = {} (ELF, {})",
             image.architecture,
-            if image.is_position_independent { "PIE" } else { "static" }
+            if image.is_position_independent {
+                "PIE"
+            } else {
+                "static"
+            }
         );
         if let Some(soname) = &image.soname {
             println!("  soname      = {soname}");
         }
         println!("  objects     = {}", outcome.object_count);
         println!("  facts       = {}", outcome.fact_count);
-        println!("  xrefs       = {} ({} function bounds)", engine.xref_count, engine.bounds);
+        println!(
+            "  xrefs       = {} ({} function bounds)",
+            engine.xref_count, engine.bounds
+        );
         println!("  strings     = {}", strings_outcome.strings);
     }
     Ok(())
@@ -2999,8 +3530,12 @@ fn handle_project_command(
         ProjectCommand::Show { project } => {
             let project_dir = resolve_project_dir(&project)?;
             let meta_for_open = AnalysisProjectMetaShim::meta_for_open(&version);
-            let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-                .map_err(map_store_error)?;
+            let store = open_store(
+                &project_dir.join("project.db"),
+                Create::Existing,
+                &meta_for_open,
+            )
+            .map_err(map_store_error)?;
             let meta = store.meta().map_err(map_store_error)?;
             let sources = store.sources().map_err(map_store_error)?;
             let facts = store.facts().map_err(map_store_error)?;
@@ -3026,7 +3561,11 @@ fn handle_project_command(
                         source.source_id,
                         source.kind,
                         source.label.as_deref().unwrap_or(""),
-                        source.address_spaces.iter().map(|a| a.as_str()).collect::<Vec<_>>()
+                        source
+                            .address_spaces
+                            .iter()
+                            .map(|a| a.as_str())
+                            .collect::<Vec<_>>()
                     );
                 }
                 println!("  facts    = {}", facts.len());
@@ -3035,23 +3574,32 @@ fn handle_project_command(
         ProjectCommand::Export { project, out } => {
             let project_dir = resolve_project_dir(&project)?;
             let meta_for_open = AnalysisProjectMetaShim::meta_for_open(&version);
-            let store = open_store(&project_dir.join("project.db"), Create::Existing, &meta_for_open)
-                .map_err(map_store_error)?;
+            let store = open_store(
+                &project_dir.join("project.db"),
+                Create::Existing,
+                &meta_for_open,
+            )
+            .map_err(map_store_error)?;
             let bytes = store.export_canonical().map_err(map_store_error)?;
             match out {
                 Some(path) => {
-                    std::fs::write(&path, &bytes).map_err(|e| CliRunError::command(
-                        "store_error",
-                        format!("failed to write {}: {e}", path.display()),
-                    ))?;
+                    std::fs::write(&path, &bytes).map_err(|e| {
+                        CliRunError::command(
+                            "store_error",
+                            format!("failed to write {}: {e}", path.display()),
+                        )
+                    })?;
                     if output_settings.format == output::OutputFormat::Text {
                         println!("wrote {} bytes to {}", bytes.len(), path.display());
                     } else {
-                        println!("{}", project_json(serde_json::json!({
-                            "command": "project_export",
-                            "path": path.display().to_string(),
-                            "bytes": bytes.len(),
-                        })));
+                        println!(
+                            "{}",
+                            project_json(serde_json::json!({
+                                "command": "project_export",
+                                "path": path.display().to_string(),
+                                "bytes": bytes.len(),
+                            }))
+                        );
                     }
                 }
                 None => {
