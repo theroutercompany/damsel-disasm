@@ -5,6 +5,7 @@
 //! (version archaeology: `defense_added` findings).
 
 pub mod catalog;
+pub mod objc_headers;
 
 pub use catalog::{
     CatalogEntry, Confidence, Detection, InstructionWindow, Severity, catalog, lookup,

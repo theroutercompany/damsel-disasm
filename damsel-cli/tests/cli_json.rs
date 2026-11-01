@@ -3792,3 +3792,29 @@ fn swift_surface_json_contract() {
     let types = value["types"].as_array().expect("types");
     assert!(types.iter().all(|entry| entry["name"] == "Renderer"));
 }
+
+/// ObjC header reconstruction (plan feature 4, slice 2): the class-dump
+/// successor, provenance-carrying.
+#[test]
+fn objc_headers_contract() {
+    let path = repo_root()
+        .join("fixtures/bin/objc-sample")
+        .display()
+        .to_string();
+    let stdout = run_json_ok(&["--format", "json", "headers", &path]);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("headers json");
+    assert_eq!(value["command"], "headers");
+    assert!(value["classes"].as_u64().unwrap_or(0) >= 2);
+    assert!(value["protocols"].as_u64().unwrap_or(0) >= 3);
+
+    let header = value["header"].as_str().expect("header text");
+    assert!(header.contains("@interface Greeter : Speaker <Excitement, GreetingProviding>"));
+    assert!(header.contains("@protocol GreetingProviding"));
+    assert!(header.contains("- (void)setName:(id)arg0;"));
+    assert!(header.contains("@property (nonatomic, copy) id name;"));
+    assert!(header.contains("@property (nonatomic) long long emphasis;"));
+    // Opaque struct encodings carry the raw string, never a guess.
+    assert!(header.contains("void * /* {_NSZone=} */"));
+    // Provenance addresses ride along.
+    assert!(header.contains("// imp 0x"));
+}

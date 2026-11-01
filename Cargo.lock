@@ -515,6 +515,7 @@ dependencies = [
 name = "damsel-recon-catalog"
 version = "0.1.0"
 dependencies = [
+ "damsel-core",
  "damsel-macho",
  "serde",
 ]

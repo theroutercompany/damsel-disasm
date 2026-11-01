@@ -460,6 +460,13 @@ enum Command {
         path: PathBuf,
     },
     #[command(
+        about = "Reconstruct interface headers from runtime metadata",
+        long_about = "Reconstruct interface headers from runtime metadata.\n\nObjective-C today (classes with superclasses, adopted protocols, method signatures decoded from type encodings, properties, ivars, categories, protocols — the class-dump successor, provenance-carrying). Swift interface output arrives with the Swift type layer."
+    )]
+    Headers {
+        path: PathBuf,
+    },
+    #[command(
         about = "Swift semantic surface: symbols, protocols, types, conformances, fields",
         long_about = "Swift semantic surface.\n\nDemangles Swift symbols and reconstructs the reflection metadata: protocols (__swift5_protocols/__swift5_protos), type descriptors (__swift5_types), protocol conformances (__swift5_proto) with names resolved through descriptor joins, and field descriptors (__swift5_fieldmd + __swift5_reflstr)."
     )]
@@ -1196,6 +1203,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Slices { path } => {
             let image = load_image(path)?;
             output::print_slices(&image, &output_settings);
+        }
+        Command::Headers { path } => {
+            handle_headers(path, &output_settings)?;
         }
         Command::Swift { path, name } => {
             handle_swift(path, name.as_deref(), &output_settings)?;
@@ -3179,6 +3189,28 @@ fn handle_annotate(
             );
         }
     }
+    Ok(())
+}
+
+fn handle_headers(
+    path: PathBuf,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    let image = load_image(path)?;
+    let header =
+        damsel_recon_catalog::objc_headers::render_headers(image.objc(), env!("CARGO_PKG_VERSION"));
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "headers",
+            "classes": image.objc().classes.len(),
+            "protocols": image.objc().protocols.len(),
+            "categories": image.objc().categories.len(),
+            "header": header,
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+    print!("{header}");
     Ok(())
 }
 
