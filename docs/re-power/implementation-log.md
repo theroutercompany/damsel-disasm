@@ -1221,3 +1221,31 @@ Scope delivered:
 Proof: `cargo test -p damsel-cli --test mcp_tools` (agent loop now
 includes two in-process decompiles by renamed name); full workspace suite
 green.
+
+### Unit P1 — parallel chunk decoding (rayon) in xref + recovery — DONE
+
+Scope delivered:
+
+- `harvest_xrefs` and `recover_functions` now plan decode chunks first,
+  decode them across the rayon pool (shared read-only `BinaryImage` +
+  `AnnotationIndex`), and emit facts serially in chunk order. Fact order —
+  and therefore canonical exports — is identical to the serial pass by
+  construction; the store's single-writer discipline is untouched
+  (writes stay on the calling thread).
+- Workspace gains `rayon` (damsel-macho only). This is the Phase-2
+  foundation: whole-cache index builds and multi-image analysis reuse this
+  exact plan/decode/emit pattern.
+
+Proof:
+- Full workspace suite green (57 suites).
+- Determinism: two independent parallel-analysis runs of `objc-sample`
+  produce byte-identical canonical exports (only filename-derived
+  name/label differ).
+- Real macOS 27 Foundation (release): facts 194,270 / xrefs 1,414 /
+  bounds 44,253 — exactly matching the serial baseline; wall time 20.1s
+  (projection-bound; the decode stages are a small fraction now).
+- A/B on the same debug build: `RAYON_NUM_THREADS=1` and default both
+  abort at the same pre-existing capstone-rs arm64 enum-conversion panic
+  (`invalid value 0x200`) on that image — i.e. not a parallelism
+  regression; release is unaffected. Filed as follow-up: guard or upgrade
+  capstone bindings.

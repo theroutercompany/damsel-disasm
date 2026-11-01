@@ -19,6 +19,7 @@ use damsel_core::{
     DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2, DisassemblyTarget, Reference,
 };
 use damsel_project::{AnalysisFact, Confidence, FactKind, FactProvenance, ObjectId, TypedStore};
+use rayon::prelude::*;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -73,6 +74,10 @@ pub fn harvest_xrefs(
         xref_count: 0,
     };
 
+    // Plan chunks, decode them in parallel, emit facts serially in chunk
+    // order — fact order (and therefore canonical exports) stays identical
+    // to the serial pass while the decode work spreads across cores.
+    let mut chunks: Vec<(u64, u64, usize)> = Vec::new();
     let mut index = 0usize;
     while index < addresses.len() {
         let address = addresses[index];
@@ -103,20 +108,29 @@ pub fn harvest_xrefs(
             .copied()
             .filter(|next_address| *next_address > address && *next_address <= section_end)
             .unwrap_or(section_end);
+        chunks.push((address, end, next - index));
+        index = next;
+    }
 
-        let request = DisassemblyRequestV2 {
-            target: DisassemblyTarget::Address(address),
-            range: Some(address..end),
-            limit: DisassemblyLimit::Unlimited,
-            options: DisassemblyOptions {
-                include_annotations: true,
-                include_value_flow: true,
-            },
-        };
-        let result = disassemble_v2_with_index(image, &annotation_index, &request)?;
-        outcome.function_windows += next - index;
+    let decoded: Vec<damsel_core::DisassemblyResultV2> = chunks
+        .par_iter()
+        .map(|&(address, end, _window_count)| {
+            let request = DisassemblyRequestV2 {
+                target: DisassemblyTarget::Address(address),
+                range: Some(address..end),
+                limit: DisassemblyLimit::Unlimited,
+                options: DisassemblyOptions {
+                    include_annotations: true,
+                    include_value_flow: true,
+                },
+            };
+            disassemble_v2_with_index(image, &annotation_index, &request)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (&(_address, _end, window_count), result) in chunks.iter().zip(&decoded) {
+        outcome.function_windows += window_count;
         outcome.instructions += result.instructions.len();
-
         for instruction in &result.instructions {
             let mut emitted_here = 0usize;
             for reference in &instruction.references {
@@ -137,7 +151,6 @@ pub fn harvest_xrefs(
             }
             outcome.xref_count += emitted_here;
         }
-        index = next;
     }
     Ok(outcome)
 }
