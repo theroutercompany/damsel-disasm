@@ -1174,3 +1174,30 @@ semantics, actor scoping, undo exhaustion, export inclusion);
 `cargo test -p damsel-cli --test project_cli annotate_rename_undo_round_trip`
 (rename visible by new name → undo → seed name returns → typed
 function_not_found); workspace 56+ suites, 0 failures.
+
+## Automation (plan feature 19, slice 1) — DONE
+
+### Unit M1 — MCP structuredContent + in-process agent-loop tools — DONE
+
+Scope delivered:
+
+- Every MCP tool result now carries `structuredContent` (the parsed JSON
+  document) beside the text content, and every tool declares an
+  `outputSchema` — typed clients no longer parse prose. Tool errors set
+  `isError: true`.
+- In-process execution (no subprocess per call) for the agent-loop tools:
+  `damsel_functions` (with bounds join), `damsel_xrefs` (to/from/kind
+  filters), `damsel_search` (functions/symbols/imports/sections),
+  `damsel_strings` (class filter; values stay image-private by design),
+  `damsel_summary` (new tool: D0 report over facts), `damsel_annotate`,
+  `damsel_annotate_undo` (actor = DAMSEL_ACTOR, default `mcp`).
+  `damsel_analyze`, `damsel_decompile`, `damsel_recon`, `damsel_diff`,
+  `damsel_identify`, `damsel_corpus_export` keep the subprocess path for
+  now (image materialization); they return structuredContent all the same.
+- Tool inventory: 13 (was 11): + `damsel_strings`, + `damsel_summary`.
+
+Proof: `cargo test -p damsel-cli --test mcp_tools` — live stdio JSON-RPC
+session: tools/list (13 tools, schemas), and the agent loop analyze →
+functions (structuredContent) → annotate rename → functions-by-new-name →
+summary-by-renamed-name → xrefs → annotate_undo → seed name returns.
+Full workspace suite green.
