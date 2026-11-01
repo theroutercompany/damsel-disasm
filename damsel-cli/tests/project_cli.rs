@@ -42,8 +42,7 @@ fn analyze_show_export_round_trip() {
         .arg("json")
         .assert()
         .success();
-    let body: Value =
-        serde_json::from_slice(&analyze.get_output().stdout).expect("analyze json");
+    let body: Value = serde_json::from_slice(&analyze.get_output().stdout).expect("analyze json");
     assert_eq!(body["command"], "analyze");
     assert_eq!(body["sources"], 1);
     assert!(body["facts"].as_u64().unwrap() > 0);
@@ -60,8 +59,7 @@ fn analyze_show_export_round_trip() {
             .arg("json")
             .assert()
             .success();
-        let body: Value =
-            serde_json::from_slice(&show.get_output().stdout).expect("show json");
+        let body: Value = serde_json::from_slice(&show.get_output().stdout).expect("show json");
         assert_eq!(body["command"], "project_show");
         assert_eq!(body["project"]["name"], "arm64-symbolized");
         assert_eq!(body["sources"][0]["kind"], "macho_image");
@@ -108,7 +106,13 @@ fn functions_command_lists_seeded_functions() {
         .iter()
         .find(|f| f["name"] == "_main")
         .expect("_main listed");
-    assert!(main["seeds"].as_array().unwrap().iter().any(|s| s == "symbol_table"));
+    assert!(
+        main["seeds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s == "symbol_table")
+    );
 
     // Name filter narrows deterministically.
     let out = damsel()
@@ -135,10 +139,14 @@ fn xrefs_command_queries_by_direction_and_kind() {
 
     // --to a known function address: exactly the call site, attributed.
     let out = damsel()
-        .arg("xrefs").arg(&target)
-        .arg("--to").arg("0x100000460")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("xrefs")
+        .arg(&target)
+        .arg("--to")
+        .arg("0x100000460")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["command"], "xrefs");
@@ -150,16 +158,27 @@ fn xrefs_command_queries_by_direction_and_kind() {
 
     // kind filter narrows; a kind with no matches returns count 0.
     let out = damsel()
-        .arg("xrefs").arg(&target)
-        .arg("--to").arg("0x100000460")
-        .arg("--kind").arg("data")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("xrefs")
+        .arg(&target)
+        .arg("--to")
+        .arg("0x100000460")
+        .arg("--kind")
+        .arg("data")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["count"], 0);
 
     // missing direction is a typed argument error (exit 1, code invalid_args)
-    let out = damsel().arg("xrefs").arg(&target).arg("--format").arg("json").output().unwrap();
+    let out = damsel()
+        .arg("xrefs")
+        .arg(&target)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err_text = String::from_utf8(out.stderr).unwrap_or_default();
     assert!(err_text.contains("invalid_args"), "got: {err_text}");
@@ -173,9 +192,12 @@ fn strings_command_lists_values_and_filters() {
     damsel().arg("analyze").arg(&target).assert().success();
 
     let out = damsel()
-        .arg("strings").arg(&target)
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("strings")
+        .arg(&target)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["command"], "strings");
@@ -187,17 +209,25 @@ fn strings_command_lists_values_and_filters() {
 
     // name filter narrows to the match; a miss returns zero.
     let out = damsel()
-        .arg("strings").arg(&target)
-        .arg("--name").arg("hello")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("strings")
+        .arg(&target)
+        .arg("--name")
+        .arg("hello")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["count"], 1);
     let out = damsel()
-        .arg("strings").arg(&target)
-        .arg("--name").arg("no-such-string")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("strings")
+        .arg(&target)
+        .arg("--name")
+        .arg("no-such-string")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["count"], 0);
 }
@@ -212,9 +242,13 @@ fn search_ranks_across_kinds_with_filters() {
     // Cross-kind search: `main` finds the function; ranking puts exact
     // matches first.
     let out = damsel()
-        .arg("search").arg(&target).arg("main")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("search")
+        .arg(&target)
+        .arg("main")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["command"], "search");
     assert_eq!(body["count"], 1);
@@ -223,10 +257,15 @@ fn search_ranks_across_kinds_with_filters() {
 
     // Kind filter restricts; string search requires the target binary.
     let out = damsel()
-        .arg("search").arg(&target).arg("hello")
-        .arg("--kind").arg("string")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("search")
+        .arg(&target)
+        .arg("hello")
+        .arg("--kind")
+        .arg("string")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["strings_searchable"], true);
     assert_eq!(body["count"], 1);
@@ -234,9 +273,13 @@ fn search_ranks_across_kinds_with_filters() {
 
     // Miss returns zero deterministically.
     let out = damsel()
-        .arg("search").arg(&target).arg("zzz-not-present")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("search")
+        .arg(&target)
+        .arg("zzz-not-present")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["count"], 0);
 }
@@ -248,10 +291,17 @@ fn analyze_elf_end_to_end_functions_and_search() {
     std::fs::write(&target, damsel_elf::synth::shared_object()).unwrap();
 
     let out = damsel()
-        .arg("analyze").arg(&target)
-        .arg("--format").arg("json")
-        .output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        .arg("analyze")
+        .arg(&target)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["command"], "analyze");
     assert!(body["facts"].as_u64().unwrap() > 0);
@@ -262,9 +312,12 @@ fn analyze_elf_end_to_end_functions_and_search() {
 
     // Wave 4 queries work unchanged on the ELF project — with bounds.
     let out = damsel()
-        .arg("functions").arg(&target)
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("functions")
+        .arg(&target)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     let exported = body["functions"]
@@ -273,16 +326,24 @@ fn analyze_elf_end_to_end_functions_and_search() {
         .iter()
         .find(|f| f["name"] == "exported_func")
         .expect("exported_func listed");
-    assert!(exported["bound"].is_string(), "bounds present: {:?}", exported["bound"]);
+    assert!(
+        exported["bound"].is_string(),
+        "bounds present: {:?}",
+        exported["bound"]
+    );
 
     // xrefs --to the helper resolves the call site. Shared-fixture
     // layout: 3 phdrs (LOAD/DYNAMIC/NOTE) put .text at 0xE8; helper
     // (ret) at 0xF7, call at 0xEC.
     let out = damsel()
-        .arg("xrefs").arg(&target)
-        .arg("--to").arg("0xf7")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("xrefs")
+        .arg(&target)
+        .arg("--to")
+        .arg("0xf7")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["count"], 1);
@@ -291,9 +352,12 @@ fn analyze_elf_end_to_end_functions_and_search() {
     // Strings parity: the fixture's .rodata message is harvested and
     // readable through the same command surface.
     let out = damsel()
-        .arg("strings").arg(&target)
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("strings")
+        .arg(&target)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["command"], "strings");
     assert!(body["count"].as_u64().unwrap() >= 1);
@@ -301,9 +365,13 @@ fn analyze_elf_end_to_end_functions_and_search() {
     assert!(value.contains("hello from damsel elf"));
 
     let out = damsel()
-        .arg("search").arg(&target).arg("exported")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("search")
+        .arg(&target)
+        .arg("exported")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["count"], 1);
     assert_eq!(body["results"][0]["kind"], "function");
@@ -317,10 +385,14 @@ fn summary_command_reports_d0_function_summary() {
     damsel().arg("analyze").arg(&target).assert().success();
 
     let out = damsel()
-        .arg("summary").arg(&target)
-        .arg("--function").arg("_main")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("summary")
+        .arg(&target)
+        .arg("--function")
+        .arg("_main")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["command"], "summary");
@@ -329,15 +401,25 @@ fn summary_command_reports_d0_function_summary() {
     assert!(summary["bound"].as_str().unwrap().contains("stop=return"));
     let calls = summary["calls"].as_array().unwrap();
     assert!(calls.iter().any(|c| c["target"] == "import:_puts"));
-    assert!(summary["imports"].as_array().unwrap().iter().any(|i| i == "_puts"));
+    assert!(
+        summary["imports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i == "_puts")
+    );
     assert!(!summary["strings"].as_array().unwrap().is_empty());
 
     // Unknown selector is a typed error.
     let out = damsel()
-        .arg("summary").arg(&target)
-        .arg("--function").arg("nope")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("summary")
+        .arg(&target)
+        .arg("--function")
+        .arg("nope")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err_text = String::from_utf8(out.stderr).unwrap_or_default();
     assert!(err_text.contains("function_not_found"), "got: {err_text}");
@@ -351,10 +433,14 @@ fn decompile_command_renders_pseudocode_with_provenance() {
     damsel().arg("analyze").arg(&target).assert().success();
 
     let out = damsel()
-        .arg("decompile").arg(&target)
-        .arg("--function").arg("_main")
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("decompile")
+        .arg(&target)
+        .arg("--function")
+        .arg("_main")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["command"], "decompile");
@@ -366,15 +452,21 @@ fn decompile_command_renders_pseudocode_with_provenance() {
     // cset now models as a conditional-set assignment (6.14) — the
     // adrp unknown from earlier versions is also gone.
     assert!(texts.iter().any(|t| t.contains("cond:")));
-    assert!(texts.iter().any(|t| t.contains("[-0x4]")), "negative slot renders signed");
+    assert!(
+        texts.iter().any(|t| t.contains("[-0x4]")),
+        "negative slot renders signed"
+    );
     // Frame facts ride along.
     assert_eq!(body["frame"]["frame_size"], 32);
 
     // Unknown function is typed.
     let out = damsel()
-        .arg("decompile").arg(&target)
-        .arg("--function").arg("nope")
-        .output().unwrap();
+        .arg("decompile")
+        .arg(&target)
+        .arg("--function")
+        .arg("nope")
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1));
 }
 
@@ -386,16 +478,27 @@ fn decompile_elf_function_via_x86_lift() {
     damsel().arg("analyze").arg(&target).assert().success();
 
     let out = damsel()
-        .arg("decompile").arg(&target)
-        .arg("--function").arg("exported_func")
-        .arg("--format").arg("json")
-        .output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        .arg("decompile")
+        .arg(&target)
+        .arg("--function")
+        .arg("exported_func")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     let lines = body["pseudocode"]["lines"].as_array().unwrap();
     let texts: Vec<&str> = lines.iter().map(|l| l["text"].as_str().unwrap()).collect();
     // .text at 0xE8 → helper at 0xF7; the call renders resolved.
-    assert!(texts.iter().any(|t| t.contains("sub_f7(")), "got: {texts:?}");
+    assert!(
+        texts.iter().any(|t| t.contains("sub_f7(")),
+        "got: {texts:?}"
+    );
     assert!(texts.iter().any(|t| *t == "return;"));
     // push/pop model as stack stores (6.16).
     assert!(texts.iter().any(|t| t.contains("&sp")));
@@ -406,8 +509,10 @@ fn recon_reports_entropy_and_verdict() {
     let out = damsel()
         .arg("recon")
         .arg(repo_root().join("fixtures/bin/arm64-symbolized"))
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["command"], "recon");
@@ -424,13 +529,20 @@ fn batch_processes_list_with_typed_failures() {
     std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
     let missing = dir.join("does-not-exist");
     let list = dir.join("batch.txt");
-    std::fs::write(&list, format!("{}\n{}", target.display(), missing.display())).unwrap();
+    std::fs::write(
+        &list,
+        format!("{}\n{}", target.display(), missing.display()),
+    )
+    .unwrap();
 
     let out = damsel()
         .arg("batch")
-        .arg("--inputs").arg(&list)
-        .arg("--out").arg(dir.join("batch-results"))
-        .output().unwrap();
+        .arg("--inputs")
+        .arg(&list)
+        .arg("--out")
+        .arg(dir.join("batch-results"))
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1), "one failure → exit 1");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("1 passed, 1 failed"));
@@ -457,9 +569,13 @@ fn diff_reports_symbol_and_address_matches() {
     damsel().arg("analyze").arg(&right).assert().success();
 
     let out = damsel()
-        .arg("diff").arg(&left).arg(&right)
-        .arg("--format").arg("json")
-        .output().unwrap();
+        .arg("diff")
+        .arg(&left)
+        .arg(&right)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     let report = &body["report"];
@@ -475,7 +591,13 @@ fn analyze_refuses_existing_project_and_refresh_rebuilds() {
     let target = dir.join("arm64-symbolized");
     std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
 
-    damsel().arg("analyze").arg(&target).arg("--format").arg("json").assert().success();
+    damsel()
+        .arg("analyze")
+        .arg(&target)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
 
     let second = damsel()
         .arg("analyze")
@@ -486,7 +608,11 @@ fn analyze_refuses_existing_project_and_refresh_rebuilds() {
         .unwrap();
     assert_eq!(second.status.code(), Some(1));
     let err_text = String::from_utf8(
-        second.stderr.is_empty().then(|| second.stdout.clone()).unwrap_or(second.stderr.clone()),
+        second
+            .stderr
+            .is_empty()
+            .then(|| second.stdout.clone())
+            .unwrap_or(second.stderr.clone()),
     )
     .unwrap();
     assert!(err_text.contains("project_exists"), "got: {err_text}");
@@ -515,4 +641,138 @@ fn project_show_unknown_is_typed_error() {
     assert_eq!(out.status.code(), Some(1));
     let err_text = String::from_utf8(out.stderr).unwrap_or_default();
     assert!(err_text.contains("project_not_found"), "got: {err_text}");
+}
+
+/// Wave 1 cache ingest mapping: analyze one projected shared-cache image,
+/// then run every project surface against it without extracting the cache.
+#[test]
+fn analyze_shared_cache_image_end_to_end() {
+    let dir = smoke_dir("cache-image");
+    let cache = dir.join("valid-single-arm64.cache");
+    std::fs::copy(
+        repo_root().join("fixtures/shared-cache-corpus/valid-single-arm64.cache"),
+        &cache,
+    )
+    .expect("copy synthetic cache");
+    let project = dir.join("valid-single-arm64.cache.Foundation.damsel");
+
+    let analyze = damsel()
+        .arg("analyze")
+        .arg(&cache)
+        .arg("--image")
+        .arg("Foundation")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&analyze.get_output().stdout).expect("analyze json");
+    assert_eq!(body["command"], "analyze");
+    assert_eq!(body["source_kind"], "shared_cache_projected_image");
+    assert_eq!(
+        body["image"]["install_name"],
+        "/System/Library/Frameworks/Foundation.framework/Foundation"
+    );
+    assert_eq!(
+        body["image"]["cache_uuid"],
+        "11111111-2222-3333-4444-555555555555"
+    );
+    assert_eq!(body["image"]["image_index"], 2);
+    assert!(body["facts"].as_u64().unwrap() > 0);
+    assert!(body["xrefs"].as_u64().unwrap() > 0);
+    assert!(project.join("project.db").is_file());
+    assert!(project.join("target.json").is_file());
+
+    // Source provenance is the projected-image kind, in the cache space.
+    let show = damsel()
+        .arg("project")
+        .arg("show")
+        .arg(&project)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&show.get_output().stdout).expect("show json");
+    assert_eq!(body["sources"][0]["kind"], "shared_cache_projected_image");
+    assert_eq!(body["sources"][0]["address_spaces"][0], "cache_vmaddr");
+
+    // Function recovery runs on cache-vmaddr-relative addresses.
+    let functions = damsel()
+        .arg("functions")
+        .arg(&project)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value =
+        serde_json::from_slice(&functions.get_output().stdout).expect("functions json");
+    let rows = body["functions"].as_array().expect("functions array");
+    assert!(!rows.is_empty());
+    assert!(
+        rows.iter().any(|row| row["name"]
+            .as_str()
+            .is_some_and(|name| name.contains("Greeter"))),
+        "expected Objective-C names in a projected Foundation image"
+    );
+
+    // Decompile resolves the image through target.json, not the cache path.
+    let decompile = damsel()
+        .arg("decompile")
+        .arg(&project)
+        .arg("--function")
+        .arg("0x18020001c")
+        .assert()
+        .success();
+    let text = String::from_utf8(decompile.get_output().stdout.clone()).unwrap();
+    assert!(text.contains("fn 0x18020001c()"), "got: {text}");
+
+    // Re-analyzing the same image refuses without --refresh.
+    let second = damsel()
+        .arg("analyze")
+        .arg(&cache)
+        .arg("--image")
+        .arg("Foundation")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert_eq!(second.status.code(), Some(1));
+    let err_text = String::from_utf8(second.stderr).unwrap();
+    assert!(err_text.contains("project_exists"), "got: {err_text}");
+
+    // --refresh rebuilds in place.
+    damsel()
+        .arg("analyze")
+        .arg(&cache)
+        .arg("--image")
+        .arg("Foundation")
+        .arg("--refresh")
+        .assert()
+        .success();
+}
+
+/// A cache root passed without `--image` gets an actionable error instead
+/// of a Mach-O parse failure.
+#[test]
+fn analyze_shared_cache_without_image_is_typed_error() {
+    let dir = smoke_dir("cache-no-image");
+    let cache = dir.join("valid-single-arm64.cache");
+    std::fs::copy(
+        repo_root().join("fixtures/shared-cache-corpus/valid-single-arm64.cache"),
+        &cache,
+    )
+    .expect("copy synthetic cache");
+
+    let out = damsel()
+        .arg("analyze")
+        .arg(&cache)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    // Synthetic corpus starts with `SYNTHETIC_DYLD_CACHE`, not the real
+    // `dyld_v1` magic, so this asserts the filter did not misfire; the
+    // real-cache path is covered by the real-cache evidence harness.
+    assert!(!out.status.success());
+    let err_text = String::from_utf8(out.stderr).unwrap();
+    assert!(err_text.contains("unsupported_input") || err_text.contains("malformed"));
 }

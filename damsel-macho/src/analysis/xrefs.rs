@@ -14,13 +14,11 @@
 //! this pass stays read-only over engine output.
 
 use crate::MachoError;
+use crate::disasm::{AnnotationIndex, disassemble_v2_with_index};
 use damsel_core::{
     DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2, DisassemblyTarget, Reference,
 };
-use crate::disasm::disassemble_v2;
-use damsel_project::{
-    AnalysisFact, Confidence, FactKind, FactProvenance, ObjectId, TypedStore,
-};
+use damsel_project::{AnalysisFact, Confidence, FactKind, FactProvenance, ObjectId, TypedStore};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -39,6 +37,13 @@ pub struct XrefOutcome {
 }
 
 const PASS: &str = "xref_v1";
+/// Merge consecutive function windows into decode chunks of at most this
+/// many bytes. Per-window decoding rebuilds a capstone instance and the
+/// value-flow pass for every symbol (70k+ on large system images); chunking
+/// keeps coverage identical — windows still start at seed addresses and end
+/// at the next seed or section end — while collapsing the pass to hundreds
+/// of decodes.
+const MAX_CHUNK_BYTES: u64 = 256 * 1024;
 
 /// Harvest xref facts for the given seeded function addresses (sorted
 /// ascending by the caller; deduplicated here).
@@ -61,24 +66,42 @@ pub fn harvest_xrefs(
         .collect();
 
     let provenance = FactProvenance::analyzer(PASS, analyzer_version);
+    let annotation_index = AnnotationIndex::build(image);
     let mut outcome = XrefOutcome {
         function_windows: 0,
         instructions: 0,
         xref_count: 0,
     };
 
-    for (index, &address) in addresses.iter().enumerate() {
+    let mut index = 0usize;
+    while index < addresses.len() {
+        let address = addresses[index];
         // Window end: next seed, else the end of the containing section.
         let Some(&(_start, section_end)) = executable_ranges
             .iter()
             .find(|(start, end)| address >= *start && address < *end)
         else {
+            index += 1;
             continue;
         };
+
+        // Merge following in-section seeds into one decode chunk while the
+        // chunk stays within the byte cap.
+        let mut next = index + 1;
+        while next < addresses.len() {
+            let candidate = addresses[next];
+            if candidate <= address || candidate > section_end {
+                break;
+            }
+            if candidate - address > MAX_CHUNK_BYTES {
+                break;
+            }
+            next += 1;
+        }
         let end = addresses
-            .get(index + 1)
+            .get(next)
             .copied()
-            .filter(|next| *next > address && *next <= section_end)
+            .filter(|next_address| *next_address > address && *next_address <= section_end)
             .unwrap_or(section_end);
 
         let request = DisassemblyRequestV2 {
@@ -90,8 +113,8 @@ pub fn harvest_xrefs(
                 include_value_flow: true,
             },
         };
-        let result = disassemble_v2(image, &request)?;
-        outcome.function_windows += 1;
+        let result = disassemble_v2_with_index(image, &annotation_index, &request)?;
+        outcome.function_windows += next - index;
         outcome.instructions += result.instructions.len();
 
         for instruction in &result.instructions {
@@ -114,6 +137,7 @@ pub fn harvest_xrefs(
             }
             outcome.xref_count += emitted_here;
         }
+        index = next;
     }
     Ok(outcome)
 }
@@ -125,12 +149,8 @@ fn classify_reference(reference: &Reference) -> Option<(&'static str, String)> {
     match reference {
         Reference::Call { target } => Some(("call", format!("function:{target:#x}"))),
         Reference::Branch { target } => Some(("branch", format!("function:{target:#x}"))),
-        Reference::IndirectCall { via } => {
-            Some(("indirect_call", format!("register:{via}")))
-        }
-        Reference::IndirectBranch { via } => {
-            Some(("indirect_branch", format!("register:{via}")))
-        }
+        Reference::IndirectCall { via } => Some(("indirect_call", format!("register:{via}"))),
+        Reference::IndirectBranch { via } => Some(("indirect_branch", format!("register:{via}"))),
         Reference::Page { target } | Reference::Data { target } => {
             Some(("data", format!("data:{target:#x}")))
         }
@@ -139,7 +159,9 @@ fn classify_reference(reference: &Reference) -> Option<(&'static str, String)> {
             Some(("import", format!("import:{name}")))
         }
         Reference::ImportBinding { name, .. } => Some(("import_binding", format!("import:{name}"))),
-        Reference::Stub { name, stub_address, .. } => match name {
+        Reference::Stub {
+            name, stub_address, ..
+        } => match name {
             Some(name) => Some(("stub", format!("import:{name}"))),
             None => Some(("stub", format!("stub:{stub_address:#x}"))),
         },
