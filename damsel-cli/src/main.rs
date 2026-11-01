@@ -625,6 +625,29 @@ enum Command {
         #[arg(long, help = "Maximum rows to print")]
         limit: Option<usize>,
     },
+    #[command(
+        about = "Add, list, or undo user annotations (renames, comments, tags)",
+        long_about = "Add, list, or undo user annotations.\n\nAnnotations are user_asserted facts with a full audit trail and appear in canonical exports. Renames immediately replace the displayed function name in `functions`, `search`, and exports. Undo pops the newest annotation for the acting user (set DAMSEL_ACTOR to attribute writes)."
+    )]
+    Annotate {
+        project: PathBuf,
+        #[arg(
+            long,
+            value_name = "TARGET",
+            help = "Target function (0xADDR or current name)"
+        )]
+        function: Option<String>,
+        #[arg(long, help = "Rename the target function (replaces any prior rename)")]
+        rename: Option<String>,
+        #[arg(long, help = "Attach a comment to the target")]
+        comment: Option<String>,
+        #[arg(long, help = "Attach a tag to the target")]
+        tag: Option<String>,
+        #[arg(long, help = "List all annotations")]
+        list: bool,
+        #[arg(long, help = "Undo the newest annotation for the acting user")]
+        undo: bool,
+    },
     #[command(about = "List strings harvested from an analyzed project")]
     Strings {
         project: PathBuf,
@@ -1265,6 +1288,26 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             limit,
         } => {
             handle_strings(project, name, class, min_len, limit, &output_settings)?;
+        }
+        Command::Annotate {
+            project,
+            function,
+            rename,
+            comment,
+            tag,
+            list,
+            undo,
+        } => {
+            handle_annotate(
+                project,
+                function.as_deref(),
+                rename.as_deref(),
+                comment.as_deref(),
+                tag.as_deref(),
+                list,
+                undo,
+                &output_settings,
+            )?;
         }
         Command::Search {
             project,
@@ -2909,6 +2952,168 @@ fn handle_summary(
         }
         for problem in &report.problems {
             println!("  problem {problem}");
+        }
+    }
+    Ok(())
+}
+
+fn annotation_actor() -> String {
+    std::env::var("DAMSEL_ACTOR").unwrap_or_else(|_| "cli".to_string())
+}
+
+fn resolve_function_object(
+    store: &damsel_project::StoreHandle,
+    target: &str,
+) -> Result<damsel_project::ObjectId, CliRunError> {
+    if let Some(hex) = target.strip_prefix("0x") {
+        let address = u64::from_str_radix(hex, 16)
+            .map_err(|_| CliRunError::invalid_args(format!("bad address: {target}")))?;
+        return Ok(damsel_project::ObjectId::new(
+            "function",
+            format!("{address:#x}"),
+        ));
+    }
+    let summaries = damsel_project::function_summaries(store).map_err(map_store_error)?;
+    let matches: Vec<_> = summaries
+        .iter()
+        .filter(|summary| summary.name.as_deref() == Some(target))
+        .collect();
+    match matches.as_slice() {
+        [one] => Ok(damsel_project::ObjectId::new(
+            "function",
+            format!("{:#x}", one.address),
+        )),
+        [] => Err(CliRunError::command(
+            "function_not_found",
+            format!("no function named `{target}` (renames included); pass 0xADDR otherwise"),
+        )),
+        many => Err(CliRunError::command(
+            "ambiguous_function",
+            format!("`{target}` matches {} functions; pass 0xADDR", many.len()),
+        )),
+    }
+}
+
+fn annotation_json(record: &damsel_project::AnnotationRecord) -> serde_json::Value {
+    serde_json::json!({
+        "object": record.object_id.as_str(),
+        "kind": record.kind.as_str(),
+        "value": record.value,
+        "actor": record.actor,
+        "source_id": record.source_id,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_annotate(
+    project: PathBuf,
+    function: Option<&str>,
+    rename: Option<&str>,
+    comment: Option<&str>,
+    tag: Option<&str>,
+    list: bool,
+    undo: bool,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{AnnotationKind, Create, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let actor = annotation_actor();
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let mut store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
+
+    if list {
+        let annotations = damsel_project::list_annotations(&store).map_err(map_store_error)?;
+        if output_settings.format == output::OutputFormat::Json {
+            let value = serde_json::json!({
+                "command": "annotate",
+                "action": "list",
+                "count": annotations.len(),
+                "annotations": annotations.iter().map(annotation_json).collect::<Vec<_>>(),
+            });
+            println!("{}", project_json(value));
+        } else {
+            println!("annotations: {}", annotations.len());
+            for record in &annotations {
+                println!(
+                    "  {:<16} {:<8} {}  [{}]",
+                    record.object_id, record.kind, record.value, record.actor
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    if undo {
+        let undone =
+            damsel_project::undo_last_annotation(&mut store, &actor).map_err(map_store_error)?;
+        if output_settings.format == output::OutputFormat::Json {
+            let value = serde_json::json!({
+                "command": "annotate",
+                "action": "undo",
+                "actor": actor,
+                "annotation": undone.as_ref().map(annotation_json),
+            });
+            println!("{}", project_json(value));
+        } else if let Some(record) = &undone {
+            println!(
+                "undone: {} {} {} (actor {})",
+                record.object_id, record.kind, record.value, record.actor
+            );
+        } else {
+            println!("nothing to undo for actor {actor}");
+        }
+        return Ok(());
+    }
+
+    let Some(target) = function else {
+        return Err(CliRunError::invalid_args(
+            "pass --function <0xADDR|name> plus one of --rename/--comment/--tag, or --list/--undo",
+        ));
+    };
+    let object = resolve_function_object(&store, target)?;
+    let mut stored: Vec<(AnnotationKind, &str, i64)> = Vec::new();
+    for (kind, value) in [
+        (AnnotationKind::Rename, rename),
+        (AnnotationKind::Comment, comment),
+        (AnnotationKind::Tag, tag),
+    ] {
+        let Some(value) = value else { continue };
+        let outcome = damsel_project::put_annotation(&mut store, &object, kind, value, &actor)
+            .map_err(map_store_error)?;
+        stored.push((kind, value, outcome.event_seq));
+    }
+    if stored.is_empty() {
+        return Err(CliRunError::invalid_args(
+            "nothing to annotate: pass --rename, --comment, or --tag",
+        ));
+    }
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "annotate",
+            "action": "added",
+            "object": object.as_str(),
+            "actor": actor,
+            "annotations": stored.iter().map(|(kind, value, seq)| {
+                serde_json::json!({
+                    "kind": kind.as_str(),
+                    "value": value,
+                    "event_seq": seq,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        for (kind, value, seq) in &stored {
+            println!(
+                "annotated {} {kind} `{value}` (actor {actor}, event {seq})",
+                object.as_str()
+            );
         }
     }
     Ok(())

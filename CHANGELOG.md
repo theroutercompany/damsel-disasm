@@ -10,6 +10,12 @@ GitHub prerelease conventions:
 ## [Unreleased]
 
 ### Added
+- User annotations: `damsel annotate` adds renames/comments/tags as
+  `user_asserted` facts with a full audit trail (`--list`, `--undo`,
+  `DAMSEL_ACTOR` attribution). Renames immediately override function names
+  in `functions`, `search`, and canonical exports; renames are
+  replace-semantics so the read model stays deterministic. MCP gained
+  `damsel_annotate` and `damsel_annotate_undo` (11 tools total).
 - Shared-cache project ingest: `damsel analyze <cache> --image <selector>`
   registers a projected dyld shared-cache image as a
   `shared_cache_projected_image` source in the `cache_vmaddr` space and

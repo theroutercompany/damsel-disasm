@@ -112,6 +112,183 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Source that owns an interned object, if any.
+    pub fn source_for_object(&self, object_id: &ObjectId) -> Result<Option<i64>, StoreError> {
+        let existing: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT source_id FROM objects WHERE kind = ?1 AND key = ?2 LIMIT 1",
+                rusqlite::params![object_id.kind(), object_id.key()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(existing)
+    }
+
+    /// Delete all annotation facts of one kind for an object (rename
+    /// replace-semantics). Only ever touches `user_asserted` facts.
+    pub(crate) fn delete_annotation_facts(
+        &mut self,
+        source_id: i64,
+        object_id: &ObjectId,
+        kind: crate::annotations::AnnotationKind,
+    ) -> Result<(), StoreError> {
+        let prefix = format!("{}|", kind.as_str());
+        self.conn.execute(
+            "DELETE FROM facts
+             WHERE source_id = ?1
+               AND object_id = (SELECT object_id FROM objects
+                                WHERE source_id = ?1 AND kind = ?2 AND key = ?3)
+               AND kind = ?4
+               AND confidence = 'user_asserted'
+               AND payload LIKE ?5 || '%'",
+            rusqlite::params![
+                source_id,
+                object_id.kind(),
+                object_id.key(),
+                crate::annotations::ANNOTATION_FACT_KIND,
+                prefix
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Delete the exact annotation fact for `(object, kind, value)`.
+    pub(crate) fn delete_annotation_fact_exact(
+        &mut self,
+        source_id: i64,
+        object_id: &ObjectId,
+        kind: crate::annotations::AnnotationKind,
+        value: &str,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "DELETE FROM facts
+             WHERE source_id = ?1
+               AND object_id = (SELECT object_id FROM objects
+                                WHERE source_id = ?1 AND kind = ?2 AND key = ?3)
+               AND kind = ?4
+               AND confidence = 'user_asserted'
+               AND payload = ?5",
+            rusqlite::params![
+                source_id,
+                object_id.kind(),
+                object_id.key(),
+                crate::annotations::ANNOTATION_FACT_KIND,
+                crate::annotations::payload_for(kind, value),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Append an annotation audit event; returns its seq.
+    pub(crate) fn log_annotation_event(
+        &self,
+        actor: &str,
+        kind: &str,
+        payload: &str,
+    ) -> Result<i64, StoreError> {
+        self.conn.execute(
+            "INSERT INTO events (actor, origin, kind, payload) VALUES (?1, 'annotation', ?2, ?3)",
+            rusqlite::params![actor, kind, payload],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Newest `annotation_added` event for `actor` whose seq is not
+    /// already retired by an `annotation_undone` event (retire rows can be
+    /// written by any actor — replace-semantics — so undones are global).
+    pub(crate) fn latest_active_annotation_event(
+        &self,
+        actor: &str,
+    ) -> Result<Option<(i64, String)>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT seq, kind, payload FROM events
+             WHERE (kind = 'annotation_added' AND actor = ?1)
+                OR kind = 'annotation_undone'
+             ORDER BY seq",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![actor], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut added: Vec<(i64, String)> = Vec::new();
+        let mut undone = std::collections::BTreeSet::new();
+        for (seq, kind, payload) in rows {
+            if kind == "annotation_added" {
+                added.push((seq, payload));
+            } else if let Ok(value) = serde_json::from_str::<serde_json::Value>(&payload) {
+                if let Some(seq) = value.get("added_seq").and_then(|v| v.as_i64()) {
+                    undone.insert(seq);
+                }
+            }
+        }
+        Ok(added
+            .into_iter()
+            .rev()
+            .find(|(seq, _)| !undone.contains(seq)))
+    }
+
+    /// Retire every active `rename` annotation event for an object except
+    /// `except_seq` (replace-semantics on the audit log).
+    pub(crate) fn retire_rename_events_for(
+        &self,
+        object_id: &ObjectId,
+        except_seq: i64,
+    ) -> Result<(), StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT seq, kind, payload FROM events
+             WHERE kind IN ('annotation_added', 'annotation_undone')
+             ORDER BY seq",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut active: Vec<(i64, String)> = Vec::new();
+        let mut undone = std::collections::BTreeSet::new();
+        for (seq, kind, payload) in rows {
+            if kind == "annotation_added" {
+                active.push((seq, payload));
+            } else if let Ok(value) = serde_json::from_str::<serde_json::Value>(&payload) {
+                if let Some(seq) = value.get("added_seq").and_then(|v| v.as_i64()) {
+                    undone.insert(seq);
+                }
+            }
+        }
+        for (seq, payload) in active {
+            if seq == except_seq || undone.contains(&seq) {
+                continue;
+            }
+            let matches = serde_json::from_str::<serde_json::Value>(&payload)
+                .ok()
+                .and_then(|value| {
+                    let object = value.get("object").and_then(|v| v.as_str());
+                    let kind = value.get("kind").and_then(|v| v.as_str());
+                    Some(object == Some(object_id.as_str()) && kind == Some("rename"))
+                })
+                .unwrap_or(false);
+            if !matches {
+                continue;
+            }
+            self.conn.execute(
+                "INSERT INTO events (actor, origin, kind, payload)
+                 VALUES ('damsel', 'annotation', 'annotation_undone', ?1)",
+                rusqlite::params![serde_json::json!({ "added_seq": seq }).to_string()],
+            )?;
+        }
+        Ok(())
+    }
+
     fn intern_object(
         &mut self,
         source_id: i64,

@@ -160,7 +160,10 @@ async fn project_xrefs(
         .into_response();
     };
     let Some(to_addr) = query.get("to").and_then(|v| {
-        v.trim_start_matches("0x").parse::<u64>().ok().or_else(|| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+        v.trim_start_matches("0x")
+            .parse::<u64>()
+            .ok()
+            .or_else(|| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok())
     }) else {
         return ApiError {
             status: StatusCode::BAD_REQUEST,
@@ -417,12 +420,21 @@ async fn run_async(config: UiConfig) -> Result<(), CliRunError> {
         .route("/api/images", post(upload_image))
         .route("/api/images/{image_id}/symbols", get(symbol_suggestions))
         .route("/api/images/{image_id}/disasm", post(disassemble_image))
-        .route("/api/projects/{project_id}/functions", get(project_functions))
+        .route(
+            "/api/projects/{project_id}/functions",
+            get(project_functions),
+        )
         .route("/api/projects/{project_id}/xrefs", get(project_xrefs))
-        .route("/api/projects/{project_id}/decompile/{function}", get(project_decompile))
+        .route(
+            "/api/projects/{project_id}/decompile/{function}",
+            get(project_decompile),
+        )
         .route("/api/projects/{project_id}/search", get(project_search))
         .route("/api/projects/{project_id}/strings", get(project_strings))
-        .route("/api/projects/{project_id}/summary/{function}", get(project_summary))
+        .route(
+            "/api/projects/{project_id}/summary/{function}",
+            get(project_summary),
+        )
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(state);
 
@@ -536,7 +548,12 @@ async fn project_strings(
                 "object": object.as_str(),
             }))
         })
-        .take(query.get("limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(100))
+        .take(
+            query
+                .get("limit")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(100),
+        )
         .collect();
     Json(json!({ "strings": strings, "count": strings.len() })).into_response()
 }
@@ -561,7 +578,8 @@ async fn project_summary(
         return not_found("project_not_found", "project has no sources");
     };
     match damsel_decomp::summarize_named(&store, source.source_id, &function) {
-        Ok(report) => Json(json!({ "summary": serde_json::to_value(&report).unwrap_or_default() })).into_response(),
+        Ok(report) => Json(json!({ "summary": serde_json::to_value(&report).unwrap_or_default() }))
+            .into_response(),
         Err(e) => not_found("function_not_found", &e.to_string()),
     }
 }

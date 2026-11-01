@@ -1142,3 +1142,35 @@ Proof: `damsel-macho --lib prebuilt_annotation_index_matches_default_disassembly
 `damsel-project --test store_contract batch_transaction_commits_and_rolls_back`,
 full `cargo test --workspace` (56 suites, 0 failures), and the real-cache
 timings above.
+
+## Annotations (plan feature 18, slice 1) — DONE
+
+### Unit A1 — user annotations with provenance + undo — DONE
+
+Scope delivered:
+
+- `damsel-project::annotations` (`user_v1`): renames, comments, and tags
+  stored as `user_asserted` facts (kind `annotation`, payload
+  `rename|to=`/`comment|text=`/`tag|name=`), provenance pass `user_v1`
+  with the actor as the provenance version.
+- Audit trail: every annotation writes an `annotation_added` event;
+  `damsel annotate --undo` pops the newest not-yet-undone event for the
+  acting user (`DAMSEL_ACTOR`, default `cli`), deletes the matching fact,
+  and records `annotation_undone` referencing the original seq. Undo is
+  actor-scoped and exhaustion-safe (undoing an empty stack is a no-op).
+- Rename replace-semantics: a new rename retires the prior rename's fact
+  *and* its audit event, so `function_summaries` stays deterministic
+  without event ordering and undo never pops a superseded fact.
+- Read model: renames override seed names in `function_summaries`, so
+  `functions`, `search`, and exports show renamed functions with no
+  separate query path. Annotations are analysis state: they appear in
+  canonical exports (unlike target descriptors).
+- CLI `damsel annotate` (--function 0xADDR|name, --rename/--comment/--tag,
+  --list, --undo); MCP `damsel_annotate` + `damsel_annotate_undo`.
+
+Proof: `cargo test -p damsel-project --test store_contract
+annotations_persist_list_undo_and_override_names` (round trip, replace
+semantics, actor scoping, undo exhaustion, export inclusion);
+`cargo test -p damsel-cli --test project_cli annotate_rename_undo_round_trip`
+(rename visible by new name → undo → seed name returns → typed
+function_not_found); workspace 56+ suites, 0 failures.

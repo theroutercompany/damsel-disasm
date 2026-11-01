@@ -13,7 +13,8 @@ Current analysis scope:
 - **Decompiler**: D0–D5 pipeline (summaries, IR, SSA, stack frames,
   structuring, pseudocode renderer) with provenance-carrying output.
 - **Automation**: batch analysis, binary diffing, recon triage, symbol-reuse
-  identification, and an MCP server (9 tools) for AI agents.
+  identification, user annotations (renames, comments, undo), and an
+  MCP server (11 tools) for AI agents.
 
 ## Commands
 
@@ -45,13 +46,21 @@ damsel diff <left> <right>        # Function-level binary comparison
                                   #   (includes defense_added findings)
 damsel diff <left> <right> --markdown  # Markdown report
 damsel diff <left> <right> --html      # Self-contained HTML report
-damsel serve                      # MCP server over stdio (9 tools)
+damsel serve                      # MCP server over stdio (11 tools)
 ```
 
 ### Project Management
 ```sh
 damsel project show <project>     # Metadata, sources, fact counts
 damsel project export <project>   # Canonical deterministic export
+```
+
+### Annotations
+```sh
+damsel annotate <project> --function _main --rename main_entry
+                                   # User rename (comment/tag too)
+damsel annotate <project> --list   # List annotations
+damsel annotate <project> --undo   # Undo newest (set DAMSEL_ACTOR)
 ```
 
 ### Mach-O Specific
@@ -86,7 +95,7 @@ Function recovery on real binaries: `ls` (1,798 functions, 78,142 xrefs),
 
 ## MCP Server
 
-`damsel serve` implements the Model Context Protocol over stdio with 9 tools:
+`damsel serve` implements the Model Context Protocol over stdio with 11 tools:
 
 ## Proprietary-Target Depth (Wave 8)
 

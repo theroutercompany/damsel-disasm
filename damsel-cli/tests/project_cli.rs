@@ -776,3 +776,121 @@ fn analyze_shared_cache_without_image_is_typed_error() {
     let err_text = String::from_utf8(out.stderr).unwrap();
     assert!(err_text.contains("unsupported_input") || err_text.contains("malformed"));
 }
+
+/// Annotations (plan feature 18, slice 1): rename → visible in functions →
+/// undo → reverted; canonical export carries annotations as facts.
+#[test]
+fn annotate_rename_undo_round_trip() {
+    let dir = smoke_dir("annotate");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+    let project = dir.join("arm64-symbolized.damsel");
+
+    // Rename by symbol name; the read model shows the new name.
+    damsel()
+        .arg("annotate")
+        .arg(&project)
+        .arg("--function")
+        .arg("_main")
+        .arg("--rename")
+        .arg("main_entry")
+        .arg("--tag")
+        .arg("entry")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+
+    let functions = damsel()
+        .arg("functions")
+        .arg(&project)
+        .arg("--name")
+        .arg("main_entry")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value =
+        serde_json::from_slice(&functions.get_output().stdout).expect("functions json");
+    assert_eq!(
+        body["count"], 1,
+        "renamed function is findable by its new name"
+    );
+
+    // Undo pops newest first: tag, then rename.
+    damsel()
+        .arg("annotate")
+        .arg(&project)
+        .arg("--undo")
+        .assert()
+        .success();
+    let list = damsel()
+        .arg("annotate")
+        .arg(&project)
+        .arg("--list")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&list.get_output().stdout).expect("list json");
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["annotations"][0]["kind"], "rename");
+
+    damsel()
+        .arg("annotate")
+        .arg(&project)
+        .arg("--undo")
+        .assert()
+        .success();
+    let functions = damsel()
+        .arg("functions")
+        .arg(&project)
+        .arg("--name")
+        .arg("_main")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value =
+        serde_json::from_slice(&functions.get_output().stdout).expect("functions json");
+    assert_eq!(body["count"], 1, "seed name returns after undo");
+
+    // Annotations are analysis state: exported canonically.
+    damsel()
+        .arg("annotate")
+        .arg(&project)
+        .arg("--function")
+        .arg("_main")
+        .arg("--comment")
+        .arg("exported comment")
+        .assert()
+        .success();
+    let export = damsel()
+        .arg("project")
+        .arg("export")
+        .arg(&project)
+        .output()
+        .unwrap();
+    let text = String::from_utf8(export.stdout).unwrap();
+    assert!(text.contains("\"annotation\""));
+
+    // Unknown targets are typed errors.
+    let missing = damsel()
+        .arg("annotate")
+        .arg(&project)
+        .arg("--function")
+        .arg("does_not_exist")
+        .arg("--tag")
+        .arg("x")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("function_not_found")
+    );
+}
