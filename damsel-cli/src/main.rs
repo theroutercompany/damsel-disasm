@@ -695,6 +695,9 @@ enum ProjectCommand {
 
 #[derive(Debug, Subcommand)]
 enum CacheCommand {
+    Index {
+        cache: PathBuf,
+    },
     Info {
         cache: PathBuf,
     },
@@ -3862,6 +3865,34 @@ fn handle_cache_command(
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     match command {
+        CacheCommand::Index { cache } => {
+            let session = inspect_shared_cache(cache.clone()).map_err(map_cache_error)?;
+            // Synthetic fixtures carry no member bytes to stat; indexing
+            // them would be a cache of text documents.
+            if session.is_synthetic() {
+                return Err(CliRunError::command(
+                    "synthetic_not_indexed",
+                    "synthetic fixture caches are not indexed; index a real cache",
+                ));
+            }
+            let stats =
+                damsel_macho::build_index(session.cache(), &cache).map_err(map_cache_error)?;
+            if output_settings.format == output::OutputFormat::Json {
+                let value = serde_json::json!({
+                    "command": "cache_index",
+                    "index_path": stats.index_path.display().to_string(),
+                    "images": stats.images,
+                    "mappings": stats.mappings,
+                    "members": stats.members,
+                });
+                println!("{}", project_json(value));
+            } else {
+                println!("index -> {}", stats.index_path.display());
+                println!("  images    = {}", stats.images);
+                println!("  mappings  = {}", stats.mappings);
+                println!("  members   = {}", stats.members);
+            }
+        }
         CacheCommand::Info { cache } => {
             let session = inspect_shared_cache(cache).map_err(map_cache_error)?;
             output::print_cache_info(&cache_info_view(session.cache()), output_settings);

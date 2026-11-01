@@ -1,4 +1,5 @@
 mod analysis;
+mod cache_index;
 mod disasm;
 mod dyld;
 mod errors;
@@ -13,6 +14,7 @@ pub use analysis::{
     ingest_binary_image, ingest_binary_image_with_options, ingest_projected_cache_image,
     ingest_projected_cache_image_with_options, recover_functions,
 };
+pub use cache_index::{CacheIndexStats, build_index, index_path_for, try_load_fresh};
 pub use damsel_core::{
     CacheImageId, CacheImageRecord, CacheLookupResult, SharedCache, SharedCacheHeader,
     SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,
