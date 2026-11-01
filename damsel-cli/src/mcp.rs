@@ -136,6 +136,24 @@ fn handle_list_tools() -> Value {
                     },
                     "required": ["project"]
                 })),
+                tool("damsel_annotate", "Attach a user annotation to a function (rename, comment, or tag)", json!({
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Path to the .damsel directory or target" },
+                        "function": { "type": "string", "description": "Target function (0xADDR or current name; renames included)" },
+                        "rename": { "type": "string", "description": "New name for the function (replaces any prior rename)" },
+                        "comment": { "type": "string", "description": "Comment to attach" },
+                        "tag": { "type": "string", "description": "Tag to attach" }
+                    },
+                    "required": ["project", "function"]
+                })),
+                tool("damsel_annotate_undo", "Undo the newest annotation for the acting user", json!({
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Path to the .damsel directory or target" }
+                    },
+                    "required": ["project"]
+                })),
                 tool("damsel_corpus_export", "Export a fingerprint corpus from a symbolized project for reuse identification", json!({
                     "type": "object",
                     "properties": {
@@ -216,6 +234,25 @@ fn handle_call_tool(params: &Value, _config: &McpConfig) -> Value {
             let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             run_cli(&refs)
         }
+        "damsel_annotate" => {
+            let mut args = vec![
+                "annotate",
+                get_str(&arguments, "project"),
+                "--function",
+                get_str(&arguments, "function"),
+            ];
+            for (flag, key) in [
+                ("--rename", "rename"),
+                ("--comment", "comment"),
+                ("--tag", "tag"),
+            ] {
+                if let Some(value) = arguments.get(key).and_then(|v| v.as_str()) {
+                    args.extend([flag, value]);
+                }
+            }
+            run_cli(&args)
+        }
+        "damsel_annotate_undo" => run_cli(&["annotate", get_str(&arguments, "project"), "--undo"]),
         "damsel_corpus_export" => {
             let args = [
                 "corpus-export",

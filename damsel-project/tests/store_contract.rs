@@ -224,3 +224,80 @@ fn batch_transaction_commits_and_rolls_back() {
         assert_eq!(store.sources().unwrap().len(), 1);
     }
 }
+
+#[test]
+fn annotations_persist_list_undo_and_override_names() {
+    use damsel_project::{
+        AnnotationKind, FactKind, FactProvenance, ObjectId, list_annotations, put_annotation,
+        undo_last_annotation,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("p.damsel").join("project.db");
+    let object = ObjectId::parse("function:0x1000").unwrap();
+
+    {
+        let mut store = open_store(&db, Create::New, &meta()).unwrap();
+        let source_id = store
+            .add_source(sample_source(AnalysisSourceKind::MachOImage))
+            .unwrap();
+        // Seed fact so the function exists for summaries.
+        store
+            .put_fact(AnalysisFact {
+                source_id,
+                object_id: Some(object.clone()),
+                kind: FactKind::new("seed"),
+                payload: "symbol_table|name=_original|size=16".to_string(),
+                confidence: Confidence::Strong,
+                provenance: FactProvenance::analyzer("ingest_v1", "0.1.0"),
+            })
+            .unwrap();
+
+        put_annotation(&mut store, &object, AnnotationKind::Rename, "my_func", "alice").unwrap();
+        put_annotation(&mut store, &object, AnnotationKind::Comment, "checks license", "alice")
+            .unwrap();
+        put_annotation(&mut store, &object, AnnotationKind::Tag, "crypto", "alice").unwrap();
+        // Rename replace-semantics retires the first rename.
+        put_annotation(&mut store, &object, AnnotationKind::Rename, "better_name", "alice")
+            .unwrap();
+
+        let list = list_annotations(&store).unwrap();
+        assert_eq!(list.len(), 3, "rename replaced, comment + tag remain");
+        assert!(list
+            .iter()
+            .any(|a| a.kind == AnnotationKind::Rename && a.value == "better_name"));
+
+        // Renames override seed names in the read model.
+        let summaries = damsel_project::function_summaries(&store).unwrap();
+        let summary = summaries.iter().find(|s| s.address == 0x1000).unwrap();
+        assert_eq!(summary.name.as_deref(), Some("better_name"));
+    }
+
+    {
+        let mut store = open_store(&db, Create::Existing, &meta()).unwrap();
+        // Undo pops newest-first (rename, tag, comment) and is actor-scoped.
+        let undone = undo_last_annotation(&mut store, "alice").unwrap().unwrap();
+        assert_eq!((undone.kind, undone.value.as_str()), (AnnotationKind::Rename, "better_name"));
+        let undone = undo_last_annotation(&mut store, "alice").unwrap().unwrap();
+        assert_eq!(undone.kind, AnnotationKind::Tag);
+        assert!(undo_last_annotation(&mut store, "alice").unwrap().is_some());
+        assert!(undo_last_annotation(&mut store, "alice").unwrap().is_none());
+        assert!(list_annotations(&store).unwrap().is_empty());
+
+        put_annotation(&mut store, &object, AnnotationKind::Tag, "keep", "bob").unwrap();
+        assert_eq!(list_annotations(&store).unwrap().len(), 1);
+        assert!(undo_last_annotation(&mut store, "alice").unwrap().is_none());
+
+        // Undo exhaustion does not resurrect retired events.
+        assert!(undo_last_annotation(&mut store, "bob").unwrap().is_some());
+        assert!(undo_last_annotation(&mut store, "bob").unwrap().is_none());
+    }
+
+    // Annotations are analysis state: they appear in canonical exports.
+    {
+        let mut store = open_store(&db, Create::Existing, &meta()).unwrap();
+        put_annotation(&mut store, &object, AnnotationKind::Comment, "exported", "alice").unwrap();
+        let export = String::from_utf8(store.export_canonical().unwrap()).unwrap();
+        assert!(export.contains("annotation") && export.contains("comment|text=exported"));
+    }
+}

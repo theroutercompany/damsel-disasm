@@ -100,6 +100,30 @@ pub fn function_summaries(store: &impl ProjectStore) -> Result<Vec<FunctionSumma
         summary.seeds.sort();
         summary.seeds.dedup();
     }
+
+    // User renames (`user_v1` annotations) override seed names: every
+    // consumer of function summaries — listings, search, exports — sees
+    // the renamed function without a separate query path.
+    for fact in &facts {
+        if !crate::annotations::is_user_annotation(&fact) {
+            continue;
+        }
+        let Some(object) = &fact.object_id else { continue };
+        if object.kind() != "function" {
+            continue;
+        }
+        let Some((crate::annotations::AnnotationKind::Rename, name)) =
+            crate::annotations::parse_payload(&fact.payload)
+        else {
+            continue;
+        };
+        let Some(address) = parse_function_address(object.key()) else {
+            continue;
+        };
+        if let Some(summary) = out.iter_mut().find(|s| s.address == address) {
+            summary.name = Some(name.to_string());
+        }
+    }
     Ok(out)
 }
 
