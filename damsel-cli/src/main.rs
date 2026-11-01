@@ -697,6 +697,25 @@ enum ProjectCommand {
 enum CacheCommand {
     Index {
         cache: PathBuf,
+        /// Also index every image's symbols (address→name and name→address
+        /// across the whole cache) into the same `.didx`.
+        #[arg(long)]
+        symbols: bool,
+    },
+    /// Address → symbol from the persisted symbol index (instant; requires
+    /// `cache index --symbols`).
+    A2s {
+        cache: PathBuf,
+        #[arg(value_parser = parse_address)]
+        vmaddr: u64,
+    },
+    /// Symbol name → cache addresses from the persisted symbol index
+    /// (instant; requires `cache index --symbols`).
+    S2a {
+        cache: PathBuf,
+        name: String,
+        #[arg(long)]
+        limit: Option<usize>,
     },
     Info {
         cache: PathBuf,
@@ -3865,7 +3884,7 @@ fn handle_cache_command(
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     match command {
-        CacheCommand::Index { cache } => {
+        CacheCommand::Index { cache, symbols } => {
             let session = inspect_shared_cache(cache.clone()).map_err(map_cache_error)?;
             // Synthetic fixtures carry no member bytes to stat; indexing
             // them would be a cache of text documents.
@@ -3877,20 +3896,134 @@ fn handle_cache_command(
             }
             let stats =
                 damsel_macho::build_index(session.cache(), &cache).map_err(map_cache_error)?;
+            let mut symbol_stats = None;
+            if symbols {
+                let image_count = session.cache().header().image_count;
+                let built = damsel_macho::build_symbol_index(
+                    &cache,
+                    |image_index| session.symbol_rows_for_image(image_index),
+                    image_count,
+                )
+                .map_err(map_cache_error)?;
+                symbol_stats = Some(built);
+            }
             if output_settings.format == output::OutputFormat::Json {
-                let value = serde_json::json!({
+                let mut value = serde_json::json!({
                     "command": "cache_index",
                     "index_path": stats.index_path.display().to_string(),
                     "images": stats.images,
                     "mappings": stats.mappings,
                     "members": stats.members,
+                    "symbols": serde_json::Value::Null,
                 });
+                if let Some(built) = &symbol_stats {
+                    value["symbols"] = serde_json::json!({
+                        "rows": built.symbols,
+                        "images_with_symbols": built.images_indexed,
+                    });
+                }
                 println!("{}", project_json(value));
             } else {
                 println!("index -> {}", stats.index_path.display());
                 println!("  images    = {}", stats.images);
                 println!("  mappings  = {}", stats.mappings);
                 println!("  members   = {}", stats.members);
+                if let Some(built) = &symbol_stats {
+                    println!(
+                        "  symbols   = {} ({} images with symbols)",
+                        built.symbols, built.images_indexed
+                    );
+                }
+            }
+        }
+        CacheCommand::A2s { cache, vmaddr } => {
+            // The session open validates inventory freshness; symbol rows
+            // live in the same file and drop with any inventory rebuild.
+            let session = inspect_shared_cache(cache.clone()).map_err(map_cache_error)?;
+            let index = require_fresh_symbol_index(&cache)?;
+            let Some(hit) =
+                damsel_macho::query_symbol_at(&index, vmaddr).map_err(map_cache_error)?
+            else {
+                return Err(CliRunError::command(
+                    "symbol_not_found",
+                    format!("no symbol at or below {vmaddr:#x}"),
+                ));
+            };
+            let exact = hit.is_exact(vmaddr);
+            let image = session.cache().images().get(hit.image_index as usize);
+            let install_name = image.map(|image| image.install_name.as_str());
+            if output_settings.format == output::OutputFormat::Json {
+                let value = serde_json::json!({
+                    "command": "cache_a2s",
+                    "address": format!("{vmaddr:#x}"),
+                    "match": if exact { "exact" } else { "nearest" },
+                    "symbol": {
+                        "name": hit.name,
+                        "address": format!("{:#x}", hit.cache_vmaddr),
+                        "offset": vmaddr - hit.cache_vmaddr,
+                        "image_index": hit.image_index,
+                        "image": install_name,
+                        "source": hit.source,
+                    },
+                });
+                println!("{}", project_json(value));
+            } else {
+                println!("{} {}", if exact { "exact:" } else { "nearest:" }, hit.name);
+                println!(
+                    "  address = {:#x} (+{:#x})",
+                    hit.cache_vmaddr,
+                    vmaddr - hit.cache_vmaddr
+                );
+                println!("  image   = {}", install_name.unwrap_or("?"));
+                println!("  source  = {}", hit.source);
+            }
+        }
+        CacheCommand::S2a { cache, name, limit } => {
+            let session = inspect_shared_cache(cache.clone()).map_err(map_cache_error)?;
+            let index = require_fresh_symbol_index(&cache)?;
+            let hits =
+                damsel_macho::query_symbols_named(&index, &name, None).map_err(map_cache_error)?;
+            if hits.is_empty() {
+                return Err(CliRunError::command("symbol_not_found", name));
+            }
+            let cap = normalize_limit(limit, "--limit")?;
+            let total = hits.len();
+            let truncated = cap.is_some_and(|cap| total > cap);
+            let shown: Vec<_> = hits.into_iter().take(cap.unwrap_or(usize::MAX)).collect();
+            if output_settings.format == output::OutputFormat::Json {
+                let rows: Vec<_> = shown
+                    .iter()
+                    .map(|hit| {
+                        serde_json::json!({
+                            "name": hit.name,
+                            "address": format!("{:#x}", hit.cache_vmaddr),
+                            "image_index": hit.image_index,
+                            "source": hit.source,
+                        })
+                    })
+                    .collect();
+                let value = serde_json::json!({
+                    "command": "cache_s2a",
+                    "symbol": name,
+                    "count": total,
+                    "truncated": truncated,
+                    "addresses": rows,
+                });
+                println!("{}", project_json(value));
+            } else {
+                println!(
+                    "symbol: {name} ({total} hits{})",
+                    if truncated { ", truncated" } else { "" }
+                );
+                for hit in &shown {
+                    let image = session.cache().images().get(hit.image_index as usize);
+                    println!(
+                        "  {:#012x}  [{}] {}",
+                        hit.cache_vmaddr,
+                        hit.source,
+                        image.map(|i| i.install_name.as_str()).unwrap_or("?")
+                    );
+                }
             }
         }
         CacheCommand::Info { cache } => {
@@ -5305,6 +5438,23 @@ fn collect_objc_method_candidates(
 
 fn load_image(path: PathBuf) -> Result<BinaryImage, CliRunError> {
     load(path).map_err(map_macho_error)
+}
+
+/// Path to a fresh `.didx` carrying symbol rows, or a typed error
+/// explaining how to build one.
+fn require_fresh_symbol_index(cache: &Path) -> Result<PathBuf, CliRunError> {
+    let index = damsel_macho::index_path_for(cache);
+    if damsel_macho::try_load_fresh(cache).is_some() && damsel_macho::symbols_present(&index) {
+        return Ok(index);
+    }
+    Err(CliRunError::command(
+        "symbols_not_indexed",
+        format!(
+            "no fresh symbol index at `{}`; run `damsel cache index {} --symbols`",
+            index.display(),
+            cache.display()
+        ),
+    ))
 }
 
 pub(crate) fn map_cache_error(error: damsel_macho::MachoError) -> CliRunError {

@@ -143,6 +143,31 @@ impl SharedCacheSession {
         matches!(self.kind, SharedCacheSessionKind::Synthetic { .. })
     }
 
+    /// Symbol rows (name, cache_vmaddr, source) for one image, extracted
+    /// over the session member-byte cache. Synthetic sessions have none.
+    pub fn symbol_rows_for_image(&self, image_index: u32) -> Result<Vec<(String, u64, String)>> {
+        let root_path = match &self.kind {
+            SharedCacheSessionKind::Real { root_path, .. } => root_path,
+            SharedCacheSessionKind::Synthetic { .. } => return Ok(Vec::new()),
+        };
+        let image = self
+            .cache
+            .images()
+            .get(image_index as usize)
+            .ok_or_else(|| MachoError::CacheImageNotFound(format!("image index {image_index}")))?;
+        let candidates = self.real_symbol_candidates(root_path, image, true)?;
+        Ok(candidates
+            .into_iter()
+            .map(|candidate| {
+                let source = match candidate.source {
+                    CacheSymbolSource::Export => "export",
+                    CacheSymbolSource::Local => "local",
+                };
+                (candidate.name, candidate.cache_vmaddr, source.to_string())
+            })
+            .collect())
+    }
+
     /// Member bytes, read once per session and reused across projections.
     fn cached_member_bytes(&self, path: &Path) -> Result<Arc<[u8]>> {
         if let SharedCacheSessionKind::Real { member_bytes, .. } = &self.kind {

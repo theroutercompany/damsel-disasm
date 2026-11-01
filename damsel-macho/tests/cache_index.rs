@@ -102,3 +102,78 @@ fn index_refuses_a_different_root_path() {
     std::fs::copy(&root, &copy).unwrap();
     assert!(try_load_fresh(&copy).is_none(), "foreign root refused");
 }
+
+/// Unit I3: symbol rows are served from the index — exact and nearest
+/// address queries, name queries, and the inventory-rebuild invalidation
+/// contract.
+#[test]
+fn symbol_index_serves_and_invalidates() {
+    use damsel_macho::{build_symbol_index, query_symbol_at, query_symbols_named, symbols_present};
+
+    let dir = fixture_dir("symbols");
+    let (root, cache) = fabricate_real_cache(&dir);
+    build_index(&cache, &root).expect("inventory index");
+
+    let index_path = damsel_macho::index_path_for(&root);
+    assert!(!symbols_present(&index_path), "no symbols yet");
+
+    // Fabricated caches carry no extractable symbols; seed rows directly
+    // through the same builder contract (rows come from the session).
+    let stats = build_symbol_index(
+        &root,
+        |image_index| {
+            Ok(if image_index == 0 {
+                vec![
+                    (
+                        "_objc_msgSend".to_string(),
+                        0x180405000,
+                        "export".to_string(),
+                    ),
+                    ("_malloc".to_string(), 0x180406000, "export".to_string()),
+                ]
+            } else {
+                Vec::new()
+            })
+        },
+        1,
+    )
+    .expect("build symbol index");
+    assert_eq!(stats.symbols, 2);
+    assert_eq!(stats.images_indexed, 1);
+    assert!(symbols_present(&index_path));
+
+    // Exact hit.
+    let hit = query_symbol_at(&index_path, 0x180405000)
+        .expect("query")
+        .expect("exact row");
+    assert_eq!(hit.name, "_objc_msgSend");
+    assert!(hit.is_exact(0x180405000));
+
+    // Nearest symbol at or below an interior address.
+    let nearest = query_symbol_at(&index_path, 0x180405fff)
+        .expect("query")
+        .expect("nearest row");
+    assert_eq!(nearest.name, "_objc_msgSend");
+    assert!(!nearest.is_exact(0x180405fff));
+
+    // Below every row → None.
+    assert!(
+        query_symbol_at(&index_path, 0x1000)
+            .expect("query")
+            .is_none()
+    );
+
+    // Name query across images.
+    let hits = query_symbols_named(&index_path, "_malloc", None).expect("named");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].cache_vmaddr, 0x180406000);
+    assert!(
+        query_symbols_named(&index_path, "_absent", None)
+            .expect("named")
+            .is_empty()
+    );
+
+    // Inventory rebuild drops symbol rows with it.
+    build_index(&cache, &root).expect("rebuild inventory");
+    assert!(!symbols_present(&index_path), "symbols dropped on rebuild");
+}

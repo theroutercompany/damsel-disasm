@@ -14,7 +14,10 @@ pub use analysis::{
     ingest_binary_image, ingest_binary_image_with_options, ingest_projected_cache_image,
     ingest_projected_cache_image_with_options, recover_functions,
 };
-pub use cache_index::{CacheIndexStats, build_index, index_path_for, try_load_fresh};
+pub use cache_index::{
+    CacheIndexStats, IndexedSymbol, SymbolIndexStats, build_index, build_symbol_index,
+    index_path_for, query_symbol_at, query_symbols_named, symbols_present, try_load_fresh,
+};
 pub use damsel_core::{
     CacheImageId, CacheImageRecord, CacheLookupResult, SharedCache, SharedCacheHeader,
     SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,
