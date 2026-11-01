@@ -20,6 +20,7 @@ Current analysis scope:
 ### Analysis
 ```sh
 damsel analyze <binary>           # Create a project database
+damsel analyze <cache> --image Foundation  # Analyze one dyld shared-cache image
 damsel functions <project>        # List discovered functions
 damsel xrefs <project> --to 0x…   # Cross-references (both directions)
 damsel strings <project>          # Harvested strings
