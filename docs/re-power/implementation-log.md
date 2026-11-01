@@ -1400,3 +1400,33 @@ emphasis;`), the NSObject protocol reconstructed with opaque `void * /*
 
 Proof: `cargo test -p damsel-cli --test cli_json objc_headers_contract`
 + workspace 58 suites green.
+
+### Unit A3 — code signature & entitlements inspector — DONE
+
+Scope delivered:
+
+- `damsel-macho::codesign`: LC_CODE_SIGNATURE reconstruction — SuperBlob
+  slot walk (CodeDirectory, Entitlements XML plist, CMS wrapper),
+  CodeDirectory v0x20400-aware field decoding (identifier, TeamID at
+  teamOffset, flags, codeLimit, hashType, pageSize). Flag decoding names
+  only well-attested bits (0x0002 adhoc, 0x0200 library validation,
+  0x10000 hardened runtime) and always ships the raw word. Endianness
+  split honored: Mach-O header/load commands little-endian, signature
+  blobs big-endian.
+- `damsel codesign <binary>` (text + JSON, `signed:false` for unsigned).
+
+Evidence: `objc-sample` → adhoc 0x00020002, identifier `objc-sample`,
+SHA-256 pages of 4096, codeLimit 0xd5d0 (byte-identical to an
+independent hand parse); `damsel-cli` itself → adhoc with the nix
+identifier; `/usr/sbin/appsleepd` → Apple CD v0x20400, CMS present,
+entitlements decoded (`com.apple.security.hardened-process` = true).
+Apple platform binaries legitimately omit TeamID in the CodeDirectory
+(teamOffset 0) — shown as `?`, never fabricated. DER entitlements
+(slot 7, 0xfade7172) noted as follow-up. Found + logged a pre-existing
+loader limitation: chained-fixups parsing rejects some real app binaries
+(`ambiguous pointer slots`).
+
+Proof: 4 new unit tests (fixture adhoc contract, entitlements plist
+decoder incl. true/false/string/integer, synthetic superblob with
+CD+entitlements+CMS incl. TeamID path, unsigned no-fabrication) +
+workspace 58 suites green.

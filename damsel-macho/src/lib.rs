@@ -1,5 +1,6 @@
 mod analysis;
 mod cache_index;
+mod codesign;
 mod disasm;
 mod dyld;
 mod errors;
@@ -14,6 +15,7 @@ pub use analysis::{
     ingest_binary_image, ingest_binary_image_with_options, ingest_projected_cache_image,
     ingest_projected_cache_image_with_options, recover_functions,
 };
+pub use codesign::{CodesignInfo, Entitlement, read_codesign, read_codesign_path};
 pub use cache_index::{
     CacheIndexStats, IndexedSymbol, SymbolIndexStats, build_index, build_symbol_index,
     index_path_for, query_symbol_at, query_symbols_named, symbols_present, try_load_fresh,
