@@ -254,6 +254,12 @@ jobs:
           tmpdir="$(mktemp -d)"
           trap 'rm -rf "${tmpdir}"' EXIT
 
+          # Build once: the empty-stderr contracts below assert on doctor
+          # output only, and a fresh `cargo run` emits compile warnings on
+          # stderr that would violate them.
+          cargo build -q -p damsel-cli
+          damsel_bin="target/debug/damsel-cli"
+
           expect_threshold_failure() {
             local label="$1"
             shift
@@ -281,7 +287,7 @@ jobs:
             fi
           }
 
-          help_text="$(cargo run -q -p damsel-cli -- doctor --help)"
+          help_text="$("${damsel_bin}" doctor --help)"
           grep -q -- "--check" <<<"${help_text}"
           grep -q -- "macho-analysis" <<<"${help_text}"
           grep -q -- "fixture-rebuild" <<<"${help_text}"
@@ -289,19 +295,19 @@ jobs:
           grep -q -- "bench-compile" <<<"${help_text}"
           grep -q -- "bench-runtime" <<<"${help_text}"
 
-          cargo run -q -p damsel-cli -- doctor --check "macho-analysis" --require-status "supported"
-          cargo run -q -p damsel-cli -- doctor --check "fixture-drift-check" --require-status "supported"
-          cargo run -q -p damsel-cli -- doctor --check "bench-compile" --require-status "supported"
+          "${damsel_bin}" doctor --check "macho-analysis" --require-status "supported"
+          "${damsel_bin}" doctor --check "fixture-drift-check" --require-status "supported"
+          "${damsel_bin}" doctor --check "bench-compile" --require-status "supported"
           if [[ "${CHECK_FIXTURE_REBUILD}" == "true" ]]; then
-            cargo run -q -p damsel-cli -- doctor --check "fixture-rebuild" --require-status "supported"
+            "${damsel_bin}" doctor --check "fixture-rebuild" --require-status "supported"
           else
             expect_threshold_failure "fixture_rebuild_strict" \
-              cargo run -q -p damsel-cli -- doctor --check "fixture-rebuild" --require-status "supported"
+              "${damsel_bin}" doctor --check "fixture-rebuild" --require-status "supported"
           fi
-          cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "${EXPECTED_BENCH_RUNTIME_STATUS}"
+          "${damsel_bin}" doctor --check "bench-runtime" --require-status "${EXPECTED_BENCH_RUNTIME_STATUS}"
           if [[ "${EXPECT_STRICT_BENCH_RUNTIME_FAILURE}" == "true" ]]; then
             expect_threshold_failure "bench_runtime_strict" \
-              cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "supported"
+              "${damsel_bin}" doctor --check "bench-runtime" --require-status "supported"
           fi
       - name: Validate doctor JSON contract and statuses
         env:
@@ -758,8 +764,13 @@ jobs:
           tmpdir="$(mktemp -d)"
           trap 'rm -rf "${tmpdir}"' EXIT
 
+          # Build once so the empty-stderr assertion below sees doctor
+          # output only (fresh `cargo run` puts compile warnings on stderr).
+          cargo build -q -p damsel-cli
+          damsel_bin="target/debug/damsel-cli"
+
           set +e
-          cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "supported" >"${tmpdir}/strict.stdout" 2>"${tmpdir}/strict.stderr"
+          "${damsel_bin}" doctor --check "bench-runtime" --require-status "supported" >"${tmpdir}/strict.stdout" 2>"${tmpdir}/strict.stderr"
           strict_status=$?
           set -e
           if [[ "${strict_status}" -ne 2 ]]; then
@@ -771,7 +782,7 @@ jobs:
           grep -Eq "^(host_os:|Host:)" "${tmpdir}/strict.stdout"
           [[ ! -s "${tmpdir}/strict.stderr" ]]
 
-          cargo run -q -p damsel-cli -- doctor --check "bench-runtime" --require-status "${EXPECTED_BENCH_RUNTIME_STATUS}"
+          "${damsel_bin}" doctor --check "bench-runtime" --require-status "${EXPECTED_BENCH_RUNTIME_STATUS}"
 
           cargo bench -p damsel-macho --bench decode_bench -- compatibility::unsupported_host_runtime_skip --warm-up-time 0.01 --measurement-time 0.02 --sample-size 10 | tee bench.log
           grep -Fq "compatibility::unsupported_host_runtime_skip" bench.log
