@@ -1249,3 +1249,32 @@ Proof:
   (`invalid value 0x200`) on that image — i.e. not a parallelism
   regression; release is unaffected. Filed as follow-up: guard or upgrade
   capstone bindings.
+
+## Whole-Cache Index (plan feature 2, slice 1) — DONE
+
+### Unit I1 — persisted cache inventory index — DONE
+
+Scope delivered:
+
+- `damsel cache index <cache>`: persists the session inventory (header,
+  members, mappings, 4,115 images on the host macOS 27 cache) to
+  `<cache>.didx` (SQLite, schema-versioned) beside the cache, falling back
+  to `DAMSEL_PROJECTS_DIR`/`~/Library/Application Support/damsel/cache-indexes`
+  on read-only volumes — same policy as cache projects.
+- `inspect_shared_cache` transparently loads a fresh index instead of
+  re-parsing members. Freshness is strict and cheap: canonical root path,
+  exact member set, every member size stat'd; any drift falls back to the
+  authoritative parse. The index is a local performance artifact only —
+  projections always read cache bytes.
+- Synthetic fixture caches are refused with a typed
+  `synthetic_not_indexed` error.
+
+Evidence on the host macOS 27 cache (82 members, 4,115 images): cold
+`cache info` 7.64s → warm **0.063s** (~120x) with byte-identical output;
+one-time `cache index` build 6.8s. Warm `cache sections Foundation` is
+10.2s — inventory is instant, projection (~10s member re-read) is unit I2.
+
+Proof: `cargo test -p damsel-macho --test cache_index` (fabricated
+real-kind cache: round trip incl. header/mappings/images equality,
+member-growth staleness refusal, foreign-root refusal); full workspace
+58 suites green.

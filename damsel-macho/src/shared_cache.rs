@@ -101,6 +101,19 @@ pub fn inspect_shared_cache<P: AsRef<Path>>(path: P) -> Result<SharedCacheSessio
     if is_synthetic_cache_bytes(root_bytes.as_ref()) {
         return build_synthetic_session(input_path, &root_candidate, root_bytes);
     }
+    // Fresh persisted inventory (plan feature 2): skips the full member
+    // re-parse. Any drift falls through to the authoritative parse.
+    if let Some(cache) = crate::cache_index::try_load_fresh(input_path) {
+        return Ok(SharedCacheSession {
+            cache,
+            kind: SharedCacheSessionKind::Real {
+                root_path: root_candidate,
+                projections: RefCell::new(BTreeMap::new()),
+            },
+            import_relations: RefCell::new(None),
+            export_relations: RefCell::new(None),
+        });
+    }
     let (cache, root_path) = load_real_shared_cache_inventory(input_path, &root_candidate)?;
     Ok(SharedCacheSession {
         cache,
@@ -116,6 +129,11 @@ pub fn inspect_shared_cache<P: AsRef<Path>>(path: P) -> Result<SharedCacheSessio
 impl SharedCacheSession {
     pub fn cache(&self) -> &SharedCache {
         &self.cache
+    }
+
+    /// True for synthetic text-fixture caches (not indexable).
+    pub fn is_synthetic(&self) -> bool {
+        matches!(self.kind, SharedCacheSessionKind::Synthetic { .. })
     }
 
     pub fn into_cache(self) -> SharedCache {
