@@ -10,9 +10,7 @@
 //! provenance-tagged inferred).
 
 use crate::MachoError;
-use damsel_project::{
-    AnalysisFact, Confidence, FactKind, FactProvenance, ObjectId, TypedStore,
-};
+use damsel_project::{AnalysisFact, Confidence, FactKind, FactProvenance, ObjectId, TypedStore};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -56,8 +54,7 @@ pub fn harvest_strings(
         let mut cursor = start;
         while cursor < end {
             let address = cursor;
-            let Some((encoding, value, consumed)) =
-                read_string(image, cursor, end, is_utf16)
+            let Some((encoding, value, consumed)) = read_string(image, cursor, end, is_utf16)
             else {
                 break;
             };

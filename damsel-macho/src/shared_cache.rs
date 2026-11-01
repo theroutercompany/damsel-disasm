@@ -1220,7 +1220,29 @@ impl SharedCacheSession {
         root_path: &Path,
         image: &CacheImageRecord,
     ) -> Result<ProjectedBinaryImage> {
-        self.with_real_cache_cached(root_path, |cache| {
+        // Projection cache (unit I4): a fresh reconstructed-image file
+        // skips the member re-read + reconstruction entirely; fall back
+        // to the authoritative path on any miss or staleness.
+        let digest = crate::cache_index::projection_digest(&self.cache);
+        let projection_dir = crate::cache_index::projection_dir_for(root_path);
+        if let Some(bytes) =
+            crate::cache_index::read_projection(&projection_dir, digest, image.image_index)
+        {
+            let binary_image = load_bytes(
+                Some(format!("projected-cache:{}", image.install_name)),
+                bytes,
+            )?;
+            return Ok(ProjectedBinaryImage {
+                provenance: projected_image_provenance(
+                    &self.cache,
+                    image,
+                    self.cache.header().has_local_symbols,
+                ),
+                image: binary_image,
+            });
+        }
+
+        let reconstructed = self.with_real_cache_cached(root_path, |cache| {
             let dyld_image = dyld_cache_image_by_index(cache, image.image_index as usize)?;
             let (image_data, header_offset) =
                 dyld_image
@@ -1233,20 +1255,25 @@ impl SharedCacheSession {
                     .map_err(|error: object::Error| {
                         MachoError::MalformedSharedCache(error.to_string())
                     })?;
-            let reconstructed =
-                reconstruct_projected_image_bytes(&object_file, image_data, header_offset)?;
-            let binary_image = load_bytes(
-                Some(format!("projected-cache:{}", image.install_name)),
-                reconstructed,
-            )?;
-            Ok(ProjectedBinaryImage {
-                provenance: projected_image_provenance(
-                    &self.cache,
-                    image,
-                    self.cache.header().has_local_symbols,
-                ),
-                image: binary_image,
-            })
+            reconstruct_projected_image_bytes(&object_file, image_data, header_offset)
+        })?;
+        crate::cache_index::write_projection(
+            &projection_dir,
+            digest,
+            image.image_index,
+            &reconstructed,
+        );
+        let binary_image = load_bytes(
+            Some(format!("projected-cache:{}", image.install_name)),
+            reconstructed,
+        )?;
+        Ok(ProjectedBinaryImage {
+            provenance: projected_image_provenance(
+                &self.cache,
+                image,
+                self.cache.header().has_local_symbols,
+            ),
+            image: binary_image,
         })
     }
 }

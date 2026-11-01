@@ -1460,3 +1460,26 @@ entitlements.
 
 Proof: workspace 58 suites green (all existing import/stub/indirect
 matrix fixtures unchanged); real-binary evidence above.
+
+### Unit I4 — persisted projection cache — DONE
+
+Scope delivered:
+
+- Reconstructed images persist zstd-compressed in `<cache>.dproj/`
+  (one `<index>.macho.zst` per image, same read-only-volume fallback as
+  the index). Freshness is a stat-only digest: cache UUID + every
+  member's (path, size); any drift ignores the store and the
+  authoritative reconstruction rewrites it. Writes are temp+rename;
+  `DAMSEL_NO_PROJECTION_CACHE` bypasses.
+- Compression is load-bearing: reconstructed images are vm-range padded
+  (Foundation reconstructs to 1.6 GB raw) and compress ~6× (282 MB on
+  disk), with decompression far cheaper than a 3 GB member re-read.
+
+Evidence (host macOS 27 cache, release): cold `cache sections
+Foundation` 12.5s (reconstruct + compress + write); warm **1.09s**
+(12×), including inventory, decompress, parse, and section render. Warm
+`cache disasm` 1.10s. Output byte-identical to the
+`DAMSEL_NO_PROJECTION_CACHE` bypass run (70 sections, JSON equality).
+
+Proof: `projection_store_round_trip_and_staleness` (round trip, foreign
+digest refusal, env bypass) + workspace 58 suites green.

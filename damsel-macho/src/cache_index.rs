@@ -574,3 +574,105 @@ pub fn query_symbols_named(
         .map_err(sql_error)?;
     Ok(rows)
 }
+
+// ---------------------------------------------------------------------------
+// Projection cache (plan feature 2, slice 4): persist the reconstructed
+// standalone image bytes so a fresh process skips the member re-read and
+// reconstruction on warm projection. Files live in `<cache>.dproj/`
+// (same read-only-volume fallback as the index), one `<index>.macho` per
+// image, fresh while the cache's member (path, size) digest is unchanged.
+
+/// Directory holding projected image files for a cache.
+pub fn projection_dir_for(cache: &Path) -> PathBuf {
+    let file_name = cache
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "dyld_shared_cache".to_string());
+    if let Some(parent) = cache.parent() {
+        let preferred = parent.join(format!("{file_name}.dproj"));
+        if dir_is_writable(parent) {
+            return preferred;
+        }
+    }
+    fallback_root().join(format!("{file_name}.dproj"))
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// Digest binding projection files to a cache state: UUID + every
+/// member's (path, size). Stat-only — no bytes read.
+pub fn projection_digest(cache: &SharedCache) -> u64 {
+    let mut acc = Vec::new();
+    acc.extend_from_slice(cache.header().cache_uuid.as_bytes());
+    for member in cache.members() {
+        acc.extend_from_slice(member.path.display().to_string().as_bytes());
+        acc.extend_from_slice(&member.file_size.to_le_bytes());
+    }
+    fnv1a(&acc)
+}
+
+fn projection_meta_path(dir: &Path) -> PathBuf {
+    dir.join("meta.json")
+}
+
+fn read_projection_digest(dir: &Path) -> Option<u64> {
+    let text = std::fs::read_to_string(projection_meta_path(dir)).ok()?;
+    let meta = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    let raw = meta.get("digest")?.as_str()?;
+    u64::from_str_radix(raw.trim_start_matches("0x"), 16).ok()
+}
+
+fn write_projection_meta(dir: &Path, digest: u64) {
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(
+        projection_meta_path(dir),
+        serde_json::json!({ "digest": format!("{digest:#x}") }).to_string(),
+    );
+}
+
+/// Load the reconstructed image bytes for `image_index` when the
+/// projection store is fresh for `digest`. Set `DAMSEL_NO_PROJECTION_CACHE`
+/// to bypass.
+pub fn read_projection(dir: &Path, digest: u64, image_index: u32) -> Option<Vec<u8>> {
+    if std::env::var_os("DAMSEL_NO_PROJECTION_CACHE").is_some() {
+        return None;
+    }
+    if read_projection_digest(dir) != Some(digest) {
+        return None;
+    }
+    let compressed = std::fs::read(dir.join(format!("{image_index}.macho.zst"))).ok()?;
+    zstd::bulk::decompress(&compressed, PROJECTION_DECOMPRESS_CAP).ok()
+}
+
+/// Reconstructed images are bounded by the cache itself; the cap guards
+/// against corrupt files asking for absurd allocations.
+const PROJECTION_DECOMPRESS_CAP: usize = 8 * 1024 * 1024 * 1024;
+
+/// Persist reconstructed image bytes (zstd-compressed: reconstructed
+/// images are vm-range padded and compress by an order of magnitude);
+/// the meta digest is (re)written so subsequent reads validate against it.
+pub fn write_projection(dir: &Path, digest: u64, image_index: u32, bytes: &[u8]) {
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let compressed = match zstd::bulk::compress(bytes, 3) {
+        Ok(compressed) => compressed,
+        Err(_) => return,
+    };
+    let temp = dir.join(format!(".{image_index}.macho.zst.tmp"));
+    if std::fs::write(&temp, compressed).is_err() {
+        return;
+    }
+    if std::fs::rename(&temp, dir.join(format!("{image_index}.macho.zst"))).is_err() {
+        let _ = std::fs::remove_file(&temp);
+        return;
+    }
+    write_projection_meta(dir, digest);
+}

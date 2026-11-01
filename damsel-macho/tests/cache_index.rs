@@ -177,3 +177,40 @@ fn symbol_index_serves_and_invalidates() {
     build_index(&cache, &root).expect("rebuild inventory");
     assert!(!symbols_present(&index_path), "symbols dropped on rebuild");
 }
+
+/// Unit I4: projection store round trip, digest staleness, and the
+/// env bypass.
+#[test]
+fn projection_store_round_trip_and_staleness() {
+    let dir = fixture_dir("projections");
+    let (root, cache) = fabricate_real_cache(&dir);
+    let projection_dir = damsel_macho::projection_dir_for(&root);
+    let digest = damsel_macho::projection_digest(&cache);
+
+    // Nothing cached yet.
+    assert!(damsel_macho::read_projection_cache_for_test(&projection_dir, digest, 0).is_none());
+
+    // Write + read back.
+    let bytes = vec![0xceu8, 1, 2, 0xfe, 0xed, 0xfa, 0xce, 0xfa];
+    damsel_macho::write_projection(&projection_dir, digest, 0, &bytes);
+    assert_eq!(
+        damsel_macho::read_projection_cache_for_test(&projection_dir, digest, 0),
+        Some(bytes)
+    );
+
+    // A different digest (member growth) refuses the same files.
+    let other_digest = digest ^ 0x1;
+    assert!(
+        damsel_macho::read_projection_cache_for_test(&projection_dir, other_digest, 0).is_none()
+    );
+
+    // The env bypass skips warm reads.
+    unsafe {
+        std::env::set_var("DAMSEL_NO_PROJECTION_CACHE", "1");
+    }
+    let none = damsel_macho::read_projection_cache_for_test(&projection_dir, digest, 0).is_none();
+    unsafe {
+        std::env::remove_var("DAMSEL_NO_PROJECTION_CACHE");
+    }
+    assert!(none, "env bypass active");
+}
