@@ -16,11 +16,11 @@
 //! - `function_problem` → `overlap|<other function id>|<range>`.
 
 use crate::MachoError;
+use crate::disasm::{AnnotationIndex, disassemble_v2_with_index};
 use damsel_core::{
-    DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2,
+    DecodedInstruction, DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2,
     DisassemblyTarget,
 };
-use crate::disasm::disassemble_v2;
 use damsel_project::{AnalysisFact, Confidence, FactKind, FactProvenance, ObjectId, TypedStore};
 use thiserror::Error;
 
@@ -40,6 +40,63 @@ pub struct RecoveryOutcome {
 }
 
 const PASS: &str = "recovery_v1";
+/// Merge consecutive recovery windows into decode chunks of at most this
+/// many bytes (same batching rationale as the xref pass).
+const MAX_CHUNK_BYTES: u64 = 256 * 1024;
+
+fn recovery_request(start: u64, end: u64) -> DisassemblyRequestV2 {
+    DisassemblyRequestV2 {
+        target: DisassemblyTarget::Address(start),
+        range: Some(start..end),
+        limit: DisassemblyLimit::Unlimited,
+        options: DisassemblyOptions {
+            include_annotations: false,
+            include_value_flow: false,
+        },
+    }
+}
+
+/// First hard terminator within `[start, window_end)` ends the function
+/// (v1 policy); otherwise the seed boundary or section end wins.
+fn recover_bound(
+    instructions: &[DecodedInstruction],
+    start: u64,
+    window_end: u64,
+    section_end: u64,
+    rank6: bool,
+) -> FunctionBound {
+    let begin = instructions.partition_point(|instruction| instruction.address < start);
+    let mut bound_end = None;
+    let mut stop_reason = "seed_boundary";
+    for instruction in &instructions[begin..] {
+        if instruction.address >= window_end {
+            break;
+        }
+        let lower = instruction.mnemonic.to_ascii_lowercase();
+        let is_return = matches!(lower.as_str(), "ret" | "retab" | "retaa" | "braa" | "brab")
+            || lower.starts_with("ret");
+        let is_trap = matches!(lower.as_str(), "brk" | "hlt" | "udf");
+        if is_return || is_trap {
+            bound_end = Some(instruction.address + instruction.size as u64);
+            stop_reason = if is_return { "return" } else { "trap" };
+            break;
+        }
+    }
+    let end = bound_end.unwrap_or(window_end);
+    if bound_end.is_none() {
+        stop_reason = if window_end == section_end {
+            "section_end"
+        } else {
+            "seed_boundary"
+        };
+    }
+    FunctionBound {
+        start,
+        end,
+        stop_reason,
+        rank6,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FunctionBound {
@@ -75,11 +132,7 @@ pub fn recover_functions(
     let stub_ranges: Vec<(u64, u64)> = image
         .sections()
         .iter()
-        .filter(|s| {
-            s.executable
-                && s.size > 0
-                && s.name.to_ascii_lowercase().contains("stub")
-        })
+        .filter(|s| s.executable && s.size > 0 && s.name.to_ascii_lowercase().contains("stub"))
         .map(|s| (s.address, s.address.saturating_add(s.size)))
         .collect();
     let in_stub = |address: u64| {
@@ -95,6 +148,7 @@ pub fn recover_functions(
     };
 
     let provenance = FactProvenance::analyzer(PASS, analyzer_version);
+    let annotation_index = AnnotationIndex::build(image);
     let mut outcome = RecoveryOutcome {
         bounds: 0,
         rank6_seeded: 0,
@@ -125,64 +179,90 @@ pub fn recover_functions(
     all_work.sort();
 
     let mut bounds: Vec<FunctionBound> = Vec::new();
-    for &(address, is_rank6) in &all_work {
+    // Same batching strategy as the xref pass: decode merged chunks once
+    // instead of building a capstone instance per seed. If a chunk decode
+    // stops before covering a seed (invalid bytes in text), fall back to a
+    // per-window decode for the uncovered items.
+    let mut index = 0usize;
+    while index < all_work.len() {
+        let address = all_work[index].0;
         let Some(hard_end) = section_end(address) else {
+            index += 1;
             continue;
         };
-        let next_seed = all_work
-            .iter()
-            .map(|&(a, _)| a)
-            .filter(|&a| a > address)
-            .min()
-            .unwrap_or(hard_end);
-        let window_end = next_seed.min(hard_end);
 
-        let request = DisassemblyRequestV2 {
-            target: DisassemblyTarget::Address(address),
-            range: Some(address..window_end),
-            limit: DisassemblyLimit::Unlimited,
-            options: DisassemblyOptions {
-                include_annotations: false,
-                include_value_flow: false,
-            },
-        };
-        let Ok(result) = disassemble_v2(image, &request) else {
-            continue;
-        };
-        if result.instructions.is_empty() {
-            continue;
-        }
-
-        // First hard terminator ends the function (v1 policy).
-        let mut bound_end = None;
-        let mut stop_reason = "seed_boundary";
-        for instruction in &result.instructions {
-            let lower = instruction.mnemonic.to_ascii_lowercase();
-            let is_return = matches!(lower.as_str(), "ret" | "retab" | "retaa" | "braa" | "brab")
-                || lower.starts_with("ret");
-            let is_trap = matches!(lower.as_str(), "brk" | "hlt" | "udf");
-            if is_return || is_trap {
-                bound_end = Some(instruction.address + instruction.size as u64);
-                stop_reason = if is_return { "return" } else { "trap" };
+        let mut next = index + 1;
+        while next < all_work.len() {
+            let candidate = all_work[next].0;
+            if candidate <= address || candidate > hard_end {
                 break;
             }
+            if candidate - address > MAX_CHUNK_BYTES {
+                break;
+            }
+            next += 1;
         }
-        let end = bound_end.unwrap_or(window_end);
-        if bound_end.is_none() {
-            stop_reason = if window_end == hard_end {
-                "section_end"
-            } else {
-                "seed_boundary"
-            };
-        }
+        let chunk_end = all_work
+            .get(next)
+            .map(|&(a, _)| a)
+            .filter(|end| *end > address && *end <= hard_end)
+            .unwrap_or(hard_end);
 
-        let bound = FunctionBound {
-            start: address,
-            end,
-            stop_reason,
-            rank6: is_rank6,
-        };
-        bounds.push(bound);
+        let chunk = disassemble_v2_with_index(
+            image,
+            &annotation_index,
+            &recovery_request(address, chunk_end),
+        )
+        .ok();
+        let chunk_covers_start = chunk.as_ref().is_some_and(|result| {
+            result
+                .instructions
+                .first()
+                .is_some_and(|instruction| instruction.address <= address)
+        });
+
+        for k in index..next {
+            let (start, is_rank6) = all_work[k];
+            let window_end = all_work
+                .get(k + 1)
+                .map(|&(a, _)| a)
+                .filter(|end| *end > start && *end <= hard_end)
+                .unwrap_or(hard_end);
+
+            let decoded = if chunk_covers_start {
+                chunk.as_ref()
+            } else {
+                None
+            };
+            let fallback;
+            let result = match decoded {
+                Some(result) => result,
+                None => {
+                    fallback = disassemble_v2_with_index(
+                        image,
+                        &annotation_index,
+                        &recovery_request(start, window_end),
+                    )
+                    .ok();
+                    let Some(result) = fallback.as_ref() else {
+                        continue;
+                    };
+                    result
+                }
+            };
+            if result.instructions.is_empty() {
+                continue;
+            }
+
+            bounds.push(recover_bound(
+                &result.instructions,
+                start,
+                window_end,
+                hard_end,
+                is_rank6,
+            ));
+        }
+        index = next;
     }
 
     // Persist facts + overlap problems.
