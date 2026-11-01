@@ -1372,3 +1372,31 @@ Proof: `cargo test -p damsel-recon-catalog` (fixture-driven parser test
 incl. join + indirect-ref assertions), `cargo test -p damsel-cli --test
 cli_json swift_surface_json_contract` (full JSON contract incl. name
 filter); workspace 58 suites green.
+
+### Unit S2 — Objective-C header reconstruction (class-dump successor) — DONE
+
+Scope delivered:
+
+- `damsel-recon-catalog::objc_headers`: renders compilable-style
+  `@interface` / `@protocol` / category declarations from the runtime
+  metadata damsel already extracts — superclasses, adopted protocols,
+  method signatures decoded from type encodings (return + argument types,
+  argument names derived from selector segments, `argN` fallback),
+  properties with attribute flags (readonly/nonatomic/copy), ivars with
+  types, protocols with required/@optional sections.
+- Honesty rules mirror the decompiler: undecodable struct/array/union
+  encodings render as `void *` carrying the raw encoding in a comment —
+  never a guessed layout; every method carries its `imp` address as
+  provenance.
+- `damsel headers <binary>` (text + JSON). Works on any standalone Mach-O
+  with ObjC metadata. Reading headers straight from cache-project images
+  lands with the multi-image project unit.
+
+Evidence (objc-sample fixture): `@interface Greeter : Speaker
+<Excitement, GreetingProviding>` with typed ivars/properties, setters
+decoded (`- (void)setName:(id)arg0;`, `@property (nonatomic) long long
+emphasis;`), the NSObject protocol reconstructed with opaque `void * /*
+{_NSZone=} */` handling, and imp provenance on every method.
+
+Proof: `cargo test -p damsel-cli --test cli_json objc_headers_contract`
++ workspace 58 suites green.
