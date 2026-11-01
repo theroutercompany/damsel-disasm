@@ -10,6 +10,8 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
 pub(crate) struct McpConfig {
+    /// Reserved: default project for tools that accept relative targets.
+    #[allow(dead_code)]
     pub(crate) project: Option<PathBuf>,
 }
 

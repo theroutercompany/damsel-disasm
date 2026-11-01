@@ -3230,10 +3230,6 @@ fn is_hard_control_flow_boundary(mnemonic: &str) -> bool {
     is_cfg_boundary_mnemonic(mnemonic)
 }
 
-fn instruction_writes_destination(mnemonic: &str) -> bool {
-    damsel_core::semantics_arm64::instruction_writes_destination(mnemonic)
-}
-
 fn is_call_mnemonic(mnemonic: &str) -> bool {
     damsel_core::semantics_arm64::is_call(mnemonic)
 }

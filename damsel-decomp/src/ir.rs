@@ -144,7 +144,7 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
     };
     let mut unknown_count = 0usize;
 
-    let mut statement_for = |instruction: &DecodedInstruction,
+    let statement_for = |instruction: &DecodedInstruction,
                              statements: &mut Vec<IrStatement>,
                              unknowns: &mut usize| {
         let lower = instruction.mnemonic.to_ascii_lowercase();
@@ -820,7 +820,7 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                 // memcpy fast paths. Modeled as readable pseudo-ops —
                 // the vector semantics are described, not simulated.
                 "movdqa" | "movdqu" | "movaps" | "movups" | "movdqu8"
-                    | "movd" | "movq" => {
+                    | "movd" => {
                     // Vector move: reg←reg, reg←[mem], or [mem]←reg.
                     if let Some(dest_reg) = instruction.operands.first().and_then(register_of) {
                         if let Some(src_reg) = instruction.operands.get(1).and_then(register_of) {
@@ -969,7 +969,7 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                     // Bit scan: dest = index of first/last set bit in
                     // src. Model as reading the integer view of src.
                     let dest = instruction.operands.first().and_then(register_of);
-                    let src = instruction.operands.get(1).and_then(|op| {
+                    let _src = instruction.operands.get(1).and_then(|op| {
                         register_of(op).or_else(|| memory_expr_from(op).map(|_| String::new()))
                     });
                     // For memory sources, load from the address.

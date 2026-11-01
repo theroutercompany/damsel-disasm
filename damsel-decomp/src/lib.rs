@@ -29,7 +29,7 @@ pub use diff::{
 pub use recon::{
     AntiAnalysisIndicator, FlatteningIndicator, PackerSignature, ReconReport, SectionEntropy,
     Verdict, assess, detect_anti_analysis, detect_cfg_flattening, detect_opaque_predicates, detect_packers, detect_string_encryption,
-    shannon_entropy,
+    render_recon_markdown, shannon_entropy,
 };
 pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};
 pub use ssa::{

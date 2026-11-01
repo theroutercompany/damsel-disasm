@@ -11,10 +11,15 @@ use crate::store::{ProjectStore, StoreError};
 use std::collections::BTreeMap;
 
 /// Seed-source tags, mirroring the ingest payload vocabulary.
-#[allow(dead_code)] // consumers land with the recovery worker + tests
+// Consumers land with the recovery worker + tests; kept as the canonical
+// spelling of the fact payload vocabulary.
+#[allow(dead_code)]
 pub const SEED_SYMBOL_TABLE: &str = "symbol_table";
+#[allow(dead_code)]
 pub const SEED_FUNCTION_STARTS: &str = "function_starts";
+#[allow(dead_code)]
 pub const SEED_OBJC_METHOD: &str = "objc_method";
+#[allow(dead_code)]
 pub const SEED_ENTRY_POINT: &str = "entry_point";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -4,7 +4,7 @@
 //! Every match carries its evidence; unmatched functions are
 //! reported as added/removed — never silently dropped.
 
-use damsel_project::{FunctionSummary, ProjectStore, StoreError};
+use damsel_project::{ProjectStore, StoreError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
