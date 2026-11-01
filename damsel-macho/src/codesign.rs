@@ -74,7 +74,12 @@ fn cstring_at(data: &[u8], offset: usize) -> Option<String> {
 
 /// Locate the LC_CODE_SIGNATURE blob range, if any.
 fn code_signature_range(image: &BinaryImage) -> Option<(u64, u64)> {
-    let header = image.bytes_for_file_range(0, 4096)?;
+    // Big binaries carry load commands well past 4 KiB (dozens of dylibs,
+    // sections); size the read from sizeofcmds.
+    let header_probe = image.bytes_for_file_range(0, 32)?;
+    let sizeofcmds = le_u32(header_probe, 20)? as u64;
+    let commands_bytes = sizeofcmds.saturating_add(32).min(64 * 1024);
+    let header = image.bytes_for_file_range(0, commands_bytes)?;
     // The Mach-O header and load commands are little-endian on damsel's
     // targets; only the signature blobs are big-endian.
     let ncmds = le_u32(header, 16)? as usize;

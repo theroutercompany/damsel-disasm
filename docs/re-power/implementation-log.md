@@ -1430,3 +1430,33 @@ Proof: 4 new unit tests (fixture adhoc contract, entitlements plist
 decoder incl. true/false/string/integer, synthetic superblob with
 CD+entitlements+CMS incl. TeamID path, unsigned no-fabrication) +
 workspace 58 suites green.
+
+### Unit L1 — loader: real system binaries load again — DONE
+
+Found while evidencing A3 (codesign): the chained-fixups loader rejected
+real Apple binaries outright — `/bin/zsh`, `/System/Applications/*.app`
+— with `ambiguous pointer slots`. Two selection bugs in
+`select_pointer_slot_for_stub`:
+
+1. Multiple slots sharing one dylib ordinal (a binary importing dozens
+   of symbols from one library) aborted the load. Ordinal matches now
+   refine by dylib+name instead of erroring.
+2. Multiple slots binding the *same* symbol (a lazy arm plus a non-lazy
+   GOT entry — normal in real binaries) also aborted. Stub annotation now
+   prefers the lazy arm, else the first slot in section order —
+   deterministic, never fatal.
+
+Also: the codesign locator now sizes its load-command read from
+`sizeofcmds` (the App Store binary's commands exceed 4 KiB, which made it
+read as "unsigned").
+
+Evidence: `/bin/zsh` loads (1,251 symbols, 184 stubs, 388 bindings);
+App Store binary loads (6,935 symbols, 12,314 imports, 224 ObjC classes,
+54 protocols, 4,009 stubs, 18,079 bindings) and its signature reads:
+identifier `com.apple.AppStore`, CMS present, **61 entitlements decoded**
+including restricted ones (`com.apple.accounts.appleaccount.fullaccess`,
+`com.apple.authkit.client.internal`). `com.apple.zsh`: CMS-signed, 0
+entitlements.
+
+Proof: workspace 58 suites green (all existing import/stub/indirect
+matrix fixtures unchanged); real-binary evidence above.

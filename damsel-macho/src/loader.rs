@@ -1136,66 +1136,67 @@ struct PointerSlotMetadata {
 fn select_pointer_slot_for_stub<'a>(
     slots: &'a [PointerSlotMetadata],
     resolution: &ResolvedIndirectSymbol<'_>,
-    symbol_index: u32,
+    _symbol_index: u32,
 ) -> Result<Option<&'a PointerSlotMetadata>> {
     if slots.is_empty() {
         return Ok(None);
     }
 
+    // Many binaries import dozens of symbols from one dylib, so several
+    // slots legitimately share an ordinal — refine by dylib+name before
+    // declaring anything ambiguous.
+    let mut candidates: Vec<&PointerSlotMetadata> = Vec::new();
     if let Some(ordinal) = resolution.ordinal {
-        let ordinal_matches = slots
+        candidates = slots
             .iter()
             .filter(|slot| slot.ordinal == Some(ordinal))
-            .collect::<Vec<_>>();
-        if ordinal_matches.len() == 1 {
-            return Ok(ordinal_matches.first().copied());
-        }
-        if ordinal_matches.len() > 1 {
-            return Err(MachoError::MalformedDyldPayload(format!(
-                "ambiguous pointer slots for symbol index {symbol_index}: multiple ordinal matches for ordinal {ordinal}"
-            )));
-        }
+            .collect();
+    }
+    if candidates.is_empty() {
+        candidates = slots.iter().collect();
     }
 
-    let dylib_name_matches = slots
+    let dylib_name_matches = candidates
         .iter()
+        .copied()
         .filter(|slot| {
             slot.dylib == resolution.import.dylib
                 && normalize_import_name(&slot.name)
                     == normalize_import_name(&resolution.import.name)
         })
         .collect::<Vec<_>>();
-    if dylib_name_matches.len() == 1 {
-        return Ok(dylib_name_matches.first().copied());
-    }
-    if dylib_name_matches.len() > 1 {
-        return Err(MachoError::MalformedDyldPayload(format!(
-            "ambiguous pointer slots for symbol index {symbol_index}: multiple dylib/name matches for {}:{}",
-            resolution.import.dylib, resolution.import.name
-        )));
+    if !dylib_name_matches.is_empty() {
+        // Real binaries legitimately bind one symbol through several
+        // pointer slots (a lazy arm plus a non-lazy GOT entry). Stub
+        // annotations prefer the lazy arm; otherwise the first slot
+        // (slots are collected in section order) — deterministic, never
+        // an error.
+        return Ok(dylib_name_matches
+            .iter()
+            .copied()
+            .find(|slot| slot.binding_kind == PointerBindingKind::Lazy)
+            .or_else(|| dylib_name_matches.first().copied()));
     }
 
-    let lazy_matches = slots
+    // Name-based refinement found nothing (stripped ordinal, unusual
+    // naming): fall back to lazy slots, then a single remaining candidate.
+    let lazy_matches = candidates
         .iter()
+        .copied()
         .filter(|slot| slot.binding_kind == PointerBindingKind::Lazy)
         .collect::<Vec<_>>();
     if lazy_matches.len() == 1 {
         return Ok(lazy_matches.first().copied());
     }
-    if lazy_matches.len() > 1 {
-        return Err(MachoError::MalformedDyldPayload(format!(
-            "ambiguous pointer slots for symbol index {symbol_index}: multiple lazy candidates"
-        )));
+    if candidates.len() == 1 {
+        return Ok(candidates.first().copied());
     }
-
-    if slots.len() == 1 {
-        return Ok(slots.first());
+    // Several same-ordinal slots with no name agreement: still no reason
+    // to fail the whole load — pick deterministically and continue.
+    if !lazy_matches.is_empty() {
+        return Ok(lazy_matches.first().copied());
     }
-
-    Err(MachoError::MalformedDyldPayload(format!(
-        "ambiguous pointer slots for symbol index {symbol_index}: {} candidates",
-        slots.len()
-    )))
+    Ok(candidates.first().copied())
 }
 
 #[derive(Debug, Clone)]
