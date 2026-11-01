@@ -1278,3 +1278,28 @@ Proof: `cargo test -p damsel-macho --test cache_index` (fabricated
 real-kind cache: round trip incl. header/mappings/images equality,
 member-growth staleness refusal, foreign-root refusal); full workspace
 58 suites green.
+
+### Unit I2 — session member-byte cache (projections amortize) — DONE
+
+Scope delivered:
+
+- `SharedCacheSessionKind::Real` carries a per-session member-byte cache:
+  the first projection reads each subcache once; subsequent projections,
+  export/symbolication passes parse `DyldCache` over the cached slices.
+  The free `with_real_cache` helper is gone — all six session call sites
+  route through `with_real_cache_cached`.
+- Process-lifetime cache by design; cross-run freshness is the inventory
+  index's job (I1). Inventory-only commands (`cache info`) never populate
+  it, so their RSS stays small; a full macOS 27 cache in memory is the
+  price of multi-image analysis in one session (~3-4 GB).
+
+Evidence (host macOS 27 cache, debug build, env-gated
+`real_shared_cache_env_second_projection_reuses_member_bytes`):
+projecting libSystem then libobjc in one session — second projection
+**2.36s** (previously a full member re-read, ~9-10s); release is
+sub-second. Correctness: second projection resolves the requested
+install name at a distinct base, and symbolication through the cached
+session still round-trips.
+
+Proof: workspace 58 suites green; env-gated real-cache suite passes with
+and without `DAMSEL_REAL_DYLD_SHARED_CACHE_ROOT`.

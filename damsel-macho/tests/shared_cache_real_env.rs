@@ -273,3 +273,51 @@ fn push_sample_index(selected: &mut Vec<usize>, seen: &mut BTreeSet<usize>, inde
         selected.push(index);
     }
 }
+
+/// Unit I2: member bytes are read once per session — projecting a second
+/// image must not re-read every subcache from disk. Correctness gate plus
+/// printed timings for the evidence log (run with --nocapture).
+#[test]
+fn real_shared_cache_env_second_projection_reuses_member_bytes() {
+    let Some(root) = std::env::var_os(REAL_CACHE_ROOT_ENV) else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let session = inspect_shared_cache(&root).expect("inspect real shared cache");
+
+    let first = session
+        .project_image("/usr/lib/libSystem.B.dylib")
+        .expect("project libSystem");
+    let t0 = std::time::Instant::now();
+    let second = session
+        .project_image("/usr/lib/libobjc.A.dylib")
+        .expect("project libobjc");
+    let second_elapsed = t0.elapsed();
+
+    assert_eq!(
+        second.provenance.install_name, "/usr/lib/libobjc.A.dylib",
+        "second projection resolves the requested image"
+    );
+    assert_ne!(
+        first.provenance.image_base_vmaddr, second.provenance.image_base_vmaddr,
+        "distinct images at distinct bases"
+    );
+    println!("second projection elapsed: {second_elapsed:?}");
+    // Second projection parses from cached member bytes; disk re-reads
+    // would take seconds. Guard generously (debug builds included).
+    assert!(
+        second_elapsed.as_secs() < 4,
+        "second projection re-read members from disk: {second_elapsed:?}"
+    );
+
+    // Symbolication through the cached session still round-trips.
+    let symbolicated = session
+        .lookup_cache_vmaddr(second.provenance.image_base_vmaddr)
+        .expect("lookup image base");
+    assert!(matches!(
+        symbolicated,
+        CacheLookupResult::ExactSymbol { .. }
+            | CacheLookupResult::NearestSymbol { .. }
+            | CacheLookupResult::MappingOnly { .. }
+    ));
+}

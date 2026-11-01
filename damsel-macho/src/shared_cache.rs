@@ -55,6 +55,11 @@ enum SharedCacheSessionKind {
     Real {
         root_path: PathBuf,
         projections: RefCell<BTreeMap<CacheImageId, ProjectedBinaryImage>>,
+        /// Member bytes read once per session (unit I2): projections
+        /// re-read every subcache from disk otherwise — seconds per call
+        /// on real caches. Process-lifetime cache; freshness is the
+        /// inventory index's job.
+        member_bytes: RefCell<BTreeMap<PathBuf, Arc<[u8]>>>,
     },
 }
 
@@ -109,6 +114,7 @@ pub fn inspect_shared_cache<P: AsRef<Path>>(path: P) -> Result<SharedCacheSessio
             kind: SharedCacheSessionKind::Real {
                 root_path: root_candidate,
                 projections: RefCell::new(BTreeMap::new()),
+                member_bytes: RefCell::new(BTreeMap::new()),
             },
             import_relations: RefCell::new(None),
             export_relations: RefCell::new(None),
@@ -120,6 +126,7 @@ pub fn inspect_shared_cache<P: AsRef<Path>>(path: P) -> Result<SharedCacheSessio
         kind: SharedCacheSessionKind::Real {
             root_path,
             projections: RefCell::new(BTreeMap::new()),
+            member_bytes: RefCell::new(BTreeMap::new()),
         },
         import_relations: RefCell::new(None),
         export_relations: RefCell::new(None),
@@ -134,6 +141,53 @@ impl SharedCacheSession {
     /// True for synthetic text-fixture caches (not indexable).
     pub fn is_synthetic(&self) -> bool {
         matches!(self.kind, SharedCacheSessionKind::Synthetic { .. })
+    }
+
+    /// Member bytes, read once per session and reused across projections.
+    fn cached_member_bytes(&self, path: &Path) -> Result<Arc<[u8]>> {
+        if let SharedCacheSessionKind::Real { member_bytes, .. } = &self.kind {
+            let cached = member_bytes.borrow().get(path).cloned();
+            if let Some(bytes) = cached {
+                return Ok(bytes);
+            }
+            let bytes = read_member_bytes(path)?;
+            member_bytes
+                .borrow_mut()
+                .insert(path.to_path_buf(), bytes.clone());
+            Ok(bytes)
+        } else {
+            read_member_bytes(path)
+        }
+    }
+
+    /// `with_real_cache` over session-cached member bytes: the DyldCache
+    /// parse is cheap once the bytes are in memory.
+    fn with_real_cache_cached<T>(
+        &self,
+        root_path: &Path,
+        f: impl for<'a> FnOnce(&DyldCache<'a, ObjectEndianness, &'a [u8]>) -> Result<T>,
+    ) -> Result<T> {
+        let root_bytes = self.cached_member_bytes(root_path)?;
+        ensure_real_dyld_cache_kind(root_bytes.as_ref())?;
+        let suffixes = DyldCache::<ObjectEndianness, &[u8]>::subcache_suffixes(root_bytes.as_ref())
+            .map_err(|error| MachoError::MalformedSharedCache(error.to_string()))?;
+        let mut extra_members = Vec::<Arc<[u8]>>::new();
+        let root_name = root_path.file_name().ok_or_else(|| {
+            MachoError::MalformedSharedCache("cache root path has no file name".to_string())
+        })?;
+        for suffix in suffixes {
+            let mut member_name = OsString::from(root_name);
+            member_name.push(&suffix);
+            let member_path = root_path.with_file_name(member_name);
+            extra_members.push(self.cached_member_bytes(&member_path)?);
+        }
+        let member_refs = extra_members
+            .iter()
+            .map(|member| member.as_ref())
+            .collect::<Vec<_>>();
+        let cache = DyldCache::<ObjectEndianness, &[u8]>::parse(root_bytes.as_ref(), &member_refs)
+            .map_err(classify_real_cache_parse_error)?;
+        f(&cache)
     }
 
     pub fn into_cache(self) -> SharedCache {
@@ -218,7 +272,7 @@ impl SharedCacheSession {
             }
             SharedCacheSessionKind::Real { root_path, .. } => {
                 let image = self.resolve_image(selector)?;
-                with_real_cache(root_path, |cache| {
+                self.with_real_cache_cached(root_path, |cache| {
                     let dyld_image = dyld_cache_image_by_index(cache, image.image_index as usize)?;
                     let object_file =
                         dyld_image.parse_object().map_err(|error: object::Error| {
@@ -501,7 +555,7 @@ impl SharedCacheSession {
         image: &CacheImageRecord,
         include_nearest_candidates: bool,
     ) -> Result<Vec<RealSymbolCandidate>> {
-        with_real_cache(root_path, |cache| {
+        self.with_real_cache_cached(root_path, |cache| {
             let dyld_image = dyld_cache_image_by_index(cache, image.image_index as usize)?;
             let object_file = dyld_image.parse_object().map_err(|error: object::Error| {
                 MachoError::MalformedSharedCache(error.to_string())
@@ -712,7 +766,7 @@ impl SharedCacheSession {
         >::new();
         let mut importers_by_symbol = BTreeMap::<String, Vec<ImportEdge>>::new();
 
-        with_real_cache(root_path, |cache| {
+        self.with_real_cache_cached(root_path, |cache| {
             for cache_image in self.cache.images() {
                 let dyld_image =
                     dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
@@ -832,7 +886,7 @@ impl SharedCacheSession {
         selector: &str,
     ) -> Result<Vec<CacheImageDependencyRecord>> {
         let cache_image = self.resolve_image(selector)?;
-        with_real_cache(root_path, |cache| {
+        self.with_real_cache_cached(root_path, |cache| {
             let dyld_image = dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
             let object_file = dyld_image.parse_object().map_err(|error: object::Error| {
                 MachoError::MalformedSharedCache(error.to_string())
@@ -882,7 +936,7 @@ impl SharedCacheSession {
         symbol_name: &str,
     ) -> Result<Vec<CacheSymbolProviderRecord>> {
         let mut providers = Vec::new();
-        with_real_cache(root_path, |cache| {
+        self.with_real_cache_cached(root_path, |cache| {
             for cache_image in self.cache.images() {
                 let dyld_image =
                     dyld_cache_image_by_index(cache, cache_image.image_index as usize)?;
@@ -1141,7 +1195,7 @@ impl SharedCacheSession {
         root_path: &Path,
         image: &CacheImageRecord,
     ) -> Result<ProjectedBinaryImage> {
-        with_real_cache(root_path, |cache| {
+        self.with_real_cache_cached(root_path, |cache| {
             let dyld_image = dyld_cache_image_by_index(cache, image.image_index as usize)?;
             let (image_data, header_offset) =
                 dyld_image
@@ -2010,33 +2064,6 @@ fn parse_real_member_header(bytes: &[u8]) -> Result<ParsedMemberHeader> {
         architecture,
         uuid: header.uuid,
     })
-}
-
-fn with_real_cache<T>(
-    root_path: &Path,
-    f: impl for<'a> FnOnce(&DyldCache<'a, ObjectEndianness, &'a [u8]>) -> Result<T>,
-) -> Result<T> {
-    let root_bytes = read_member_bytes(root_path)?;
-    ensure_real_dyld_cache_kind(root_bytes.as_ref())?;
-    let suffixes = DyldCache::<ObjectEndianness, &[u8]>::subcache_suffixes(root_bytes.as_ref())
-        .map_err(|error| MachoError::MalformedSharedCache(error.to_string()))?;
-    let mut extra_members = Vec::<Arc<[u8]>>::new();
-    let root_name = root_path.file_name().ok_or_else(|| {
-        MachoError::MalformedSharedCache("cache root path has no file name".to_string())
-    })?;
-    for suffix in suffixes {
-        let mut member_name = OsString::from(root_name);
-        member_name.push(&suffix);
-        let member_path = root_path.with_file_name(member_name);
-        extra_members.push(read_member_bytes(&member_path)?);
-    }
-    let member_refs = extra_members
-        .iter()
-        .map(|member| member.as_ref())
-        .collect::<Vec<_>>();
-    let cache = DyldCache::<ObjectEndianness, &[u8]>::parse(root_bytes.as_ref(), &member_refs)
-        .map_err(classify_real_cache_parse_error)?;
-    f(&cache)
 }
 
 fn reconstruct_projected_image_bytes<'data>(
