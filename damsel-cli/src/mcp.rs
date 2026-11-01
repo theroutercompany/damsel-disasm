@@ -41,7 +41,11 @@ pub(crate) fn run_mcp(config: McpConfig) -> Result<(), crate::CliRunError> {
 
         if let (Some(mut response), Some(request_id)) = (response, id_value) {
             response["id"] = request_id;
-            let _ = writeln!(writer, "{}", serde_json::to_string(&response).unwrap_or_default());
+            let _ = writeln!(
+                writer,
+                "{}",
+                serde_json::to_string(&response).unwrap_or_default()
+            );
             let _ = writer.flush();
         }
     }
@@ -69,7 +73,10 @@ fn handle_list_tools() -> Value {
             "tools": [
                 tool("damsel_analyze", "Analyze a binary into a project database", json!({
                     "type": "object",
-                    "properties": { "path": { "type": "string", "description": "Path to the binary" } },
+                    "properties": {
+                        "path": { "type": "string", "description": "Path to the binary, or to a dyld shared cache root when `image` is set" },
+                        "image": { "type": "string", "description": "Projected image selector inside a dyld shared cache (install name, id, or basename)" }
+                    },
                     "required": ["path"]
                 })),
                 tool("damsel_functions", "List functions in an analyzed project", json!({
@@ -150,7 +157,13 @@ fn handle_call_tool(params: &Value, _config: &McpConfig) -> Value {
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
     let result = match name {
-        "damsel_analyze" => run_cli(&["analyze", get_str(&arguments, "path")]),
+        "damsel_analyze" => {
+            let path = get_str(&arguments, "path");
+            match arguments.get("image").and_then(|v| v.as_str()) {
+                Some(image) => run_cli(&["analyze", path, "--image", image]),
+                None => run_cli(&["analyze", path]),
+            }
+        }
         "damsel_functions" => {
             let mut args = vec!["functions", get_str(&arguments, "project")];
             if let Some(name) = arguments.get("name").and_then(|n| n.as_str()) {
@@ -168,12 +181,28 @@ fn handle_call_tool(params: &Value, _config: &McpConfig) -> Value {
             }
             run_cli(&args)
         }
-        "damsel_search" => run_cli(&["search", get_str(&arguments, "project"), get_str(&arguments, "query")]),
-        "damsel_decompile" => run_cli(&["decompile", get_str(&arguments, "project"), "--function", get_str(&arguments, "function")]),
+        "damsel_search" => run_cli(&[
+            "search",
+            get_str(&arguments, "project"),
+            get_str(&arguments, "query"),
+        ]),
+        "damsel_decompile" => run_cli(&[
+            "decompile",
+            get_str(&arguments, "project"),
+            "--function",
+            get_str(&arguments, "function"),
+        ]),
         "damsel_recon" => run_cli(&["recon", get_str(&arguments, "path")]),
-        "damsel_diff" => run_cli(&["diff", get_str(&arguments, "left"), get_str(&arguments, "right")]),
+        "damsel_diff" => run_cli(&[
+            "diff",
+            get_str(&arguments, "left"),
+            get_str(&arguments, "right"),
+        ]),
         "damsel_identify" => {
-            let mut args = vec!["identify".to_string(), get_str(&arguments, "project").to_string()];
+            let mut args = vec![
+                "identify".to_string(),
+                get_str(&arguments, "project").to_string(),
+            ];
             if let Some(corpus) = arguments.get("corpus").and_then(|v| v.as_str()) {
                 args.push("--corpus".to_string());
                 args.push(corpus.to_string());
@@ -222,8 +251,7 @@ fn get_str<'a>(value: &'a Value, key: &str) -> &'a str {
 }
 
 fn run_cli(args: &[&str]) -> Result<String, String> {
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("failed to find damsel binary: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| format!("failed to find damsel binary: {e}"))?;
     let output = std::process::Command::new(exe)
         .args(args)
         .arg("--format")
