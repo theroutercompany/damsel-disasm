@@ -7,7 +7,12 @@ mod objc;
 mod shared_cache;
 mod shared_cache_query;
 
-pub use analysis::{FunctionBound, IngestError, IngestOptions, IngestOutcome, RecoveryError, RecoveryOutcome, StringsError, StringsOutcome, XrefError, XrefOutcome, harvest_strings, harvest_xrefs, ingest_binary_image, ingest_binary_image_with_options, recover_functions};
+pub use analysis::{
+    FunctionBound, IngestError, IngestOptions, IngestOutcome, RecoveryError, RecoveryOutcome,
+    StringsError, StringsOutcome, XrefError, XrefOutcome, harvest_strings, harvest_xrefs,
+    ingest_binary_image, ingest_binary_image_with_options, ingest_projected_cache_image,
+    ingest_projected_cache_image_with_options, recover_functions,
+};
 pub use damsel_core::{
     CacheImageId, CacheImageRecord, CacheLookupResult, SharedCache, SharedCacheHeader,
     SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,

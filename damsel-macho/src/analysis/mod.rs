@@ -6,7 +6,11 @@ pub mod recovery;
 pub mod strings;
 pub mod xrefs;
 
-pub use ingest::{IngestError, IngestOptions, IngestOutcome, ingest_binary_image, ingest_binary_image_with_options};
+pub use ingest::{
+    IngestError, IngestOptions, IngestOutcome, ingest_binary_image,
+    ingest_binary_image_with_options, ingest_projected_cache_image,
+    ingest_projected_cache_image_with_options,
+};
 pub use recovery::{FunctionBound, RecoveryError, RecoveryOutcome, recover_functions};
 pub use strings::{StringsError, StringsOutcome, harvest_strings};
 pub use xrefs::{XrefError, XrefOutcome, harvest_xrefs};

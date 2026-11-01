@@ -11,7 +11,8 @@ use damsel_core::{
     DisassemblySummary, DisassemblyTarget, DisassemblyTargetSummary, DisassemblyTargetUse,
     Endianness, Import, ImportBindingKind, ImportBindingRecord, ImportBindingSource,
     IndirectTargetReason, Operand, RecoveredValue, RecoveredValueKind, RecoveredValueSource,
-    Reference, Relocation, Section, StubHelperEntry, Symbol, SymbolKind, TableSlotEncoding,
+    Reference, Relocation, Section, StubEntry, StubHelperEntry, Symbol, SymbolKind,
+    TableSlotEncoding,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -753,6 +754,25 @@ fn disassemble_impl(
     image: &BinaryImage,
     request: &DisassemblyRequestV2,
 ) -> Result<DisassemblyComputation> {
+    let index = AnnotationIndex::build(image);
+    disassemble_impl_with_index(image, &index, request)
+}
+
+/// Disassemble with a prebuilt annotation index (analysis passes that walk
+/// many windows over one image build the index once).
+pub(crate) fn disassemble_v2_with_index(
+    image: &BinaryImage,
+    index: &AnnotationIndex<'_>,
+    request: &DisassemblyRequestV2,
+) -> Result<DisassemblyResultV2> {
+    Ok(disassemble_impl_with_index(image, index, request)?.into_v2())
+}
+
+fn disassemble_impl_with_index(
+    image: &BinaryImage,
+    index: &AnnotationIndex<'_>,
+    request: &DisassemblyRequestV2,
+) -> Result<DisassemblyComputation> {
     let window = resolve_disassembly_target_v2(image, request)?;
     let mut instructions = damsel_core::decode_aarch64(
         window.bytes,
@@ -774,7 +794,7 @@ fn disassemble_impl(
     if include_value_flow {
         synthesize_analysis_references(image, &mut instructions, include_annotations);
     }
-    annotate_instructions(image, &mut instructions, include_annotations);
+    annotate_instructions(index, image, &mut instructions, include_annotations);
     let decoded_bytes = instructions
         .last()
         .map(|instruction| {
@@ -1525,49 +1545,99 @@ fn non_default_return_register(instruction: &DecodedInstruction) -> Option<Strin
     (key != "x30").then_some(register)
 }
 
+/// Prebuilt lookup tables for instruction annotation. Building them is
+/// O(symbols + imports + stubs + bindings); callers that disassemble many
+/// windows over one image build this once instead of per window.
+pub(crate) struct AnnotationIndex<'a> {
+    symbols_by_address: BTreeMap<u64, Vec<&'a Symbol>>,
+    imports_by_address: BTreeMap<u64, Vec<&'a Import>>,
+    imports_by_name: BTreeMap<String, Vec<&'a Import>>,
+    stubs_by_address: BTreeMap<u64, &'a StubEntry>,
+    helpers_by_address: BTreeMap<u64, &'a StubHelperEntry>,
+    bindings_by_address: BTreeMap<u64, Vec<&'a ImportBindingRecord>>,
+}
+
+impl<'a> AnnotationIndex<'a> {
+    pub(crate) fn build(image: &'a BinaryImage) -> Self {
+        let symbols_by_address = image
+            .symbols()
+            .iter()
+            .filter(|symbol| symbol.defined && symbol.address != 0)
+            .fold(BTreeMap::<u64, Vec<&Symbol>>::new(), |mut acc, symbol| {
+                acc.entry(symbol.address).or_default().push(symbol);
+                acc
+            });
+        let imports_by_address =
+            image
+                .imports()
+                .iter()
+                .fold(BTreeMap::<u64, Vec<&Import>>::new(), |mut acc, import| {
+                    if let Some(address) = import.address {
+                        acc.entry(address).or_default().push(import);
+                    }
+                    acc
+                });
+        let imports_by_name = image.imports().iter().fold(
+            BTreeMap::<String, Vec<&Import>>::new(),
+            |mut acc, import| {
+                acc.entry(normalize_import_name(&import.name))
+                    .or_default()
+                    .push(import);
+                acc
+            },
+        );
+        let stubs_by_address = image
+            .dyld()
+            .stubs
+            .iter()
+            .map(|stub| (stub.stub_address, stub))
+            .collect();
+        let helpers_by_address = image
+            .dyld()
+            .stub_helpers
+            .iter()
+            .map(|helper| (helper.helper_address, helper))
+            .collect();
+        let bindings_by_address = image.dyld().import_bindings.iter().fold(
+            BTreeMap::<u64, Vec<&ImportBindingRecord>>::new(),
+            |mut acc, binding| {
+                if let Some(address) = binding.address {
+                    acc.entry(address).or_default().push(binding);
+                }
+                acc
+            },
+        );
+        Self {
+            symbols_by_address,
+            imports_by_address,
+            imports_by_name,
+            stubs_by_address,
+            helpers_by_address,
+            bindings_by_address,
+        }
+    }
+}
+
 fn annotate_instructions(
+    index: &AnnotationIndex<'_>,
     image: &BinaryImage,
     instructions: &mut [DecodedInstruction],
     include_annotations: bool,
 ) {
-    let symbol_map = image
-        .symbols()
-        .iter()
-        .filter(|symbol| symbol.defined && symbol.address != 0)
-        .fold(BTreeMap::<u64, Vec<&Symbol>>::new(), |mut acc, symbol| {
-            acc.entry(symbol.address).or_default().push(symbol);
-            acc
-        });
-    let import_address_map =
-        image
-            .imports()
-            .iter()
-            .fold(BTreeMap::<u64, Vec<&Import>>::new(), |mut acc, import| {
-                if let Some(address) = import.address {
-                    acc.entry(address).or_default().push(import);
-                }
-                acc
-            });
-    let import_name_map = image.imports().iter().fold(
-        BTreeMap::<String, Vec<&Import>>::new(),
-        |mut acc, import| {
-            acc.entry(normalize_import_name(&import.name))
-                .or_default()
-                .push(import);
-            acc
-        },
-    );
-
     for instruction in instructions {
         let mut derived = Vec::new();
         let lower = instruction.mnemonic.to_ascii_lowercase();
         if include_annotations {
-            push_instruction_address_annotations(&mut derived, &symbol_map, instruction.address);
+            push_instruction_address_annotations(
+                &mut derived,
+                &index.symbols_by_address,
+                instruction.address,
+            );
         }
         let mut import_already_tagged = false;
         let mut synthesized_import_refs = Vec::<Reference>::new();
 
-        if let Some(helper) = image.dyld().helper_for_address(instruction.address) {
+        if let Some(helper) = index.helpers_by_address.get(&instruction.address) {
             import_already_tagged |= push_helper_context(
                 include_annotations.then_some(&mut derived),
                 image,
@@ -1576,7 +1646,7 @@ fn annotate_instructions(
             );
         }
 
-        if let Some(stub) = image.dyld().stub_for_address(instruction.address) {
+        if let Some(stub) = index.stubs_by_address.get(&instruction.address) {
             push_reference_if_missing(
                 &mut instruction.references,
                 Reference::Stub {
@@ -1630,9 +1700,9 @@ fn annotate_instructions(
                 | Reference::Data { target } => {
                     import_already_tagged |= push_reference_target_annotations(
                         include_annotations.then_some(&mut derived),
-                        &symbol_map,
-                        &import_address_map,
-                        &import_name_map,
+                        &index.symbols_by_address,
+                        &index.imports_by_address,
+                        &index.imports_by_name,
                         image,
                         &mut synthesized_import_refs,
                         target,
@@ -1640,6 +1710,7 @@ fn annotate_instructions(
                     import_already_tagged |= push_dyld_target_hooks(
                         include_annotations.then_some(&mut derived),
                         image,
+                        index,
                         &mut instruction.references,
                         target,
                     );
@@ -1821,7 +1892,10 @@ fn annotate_instructions(
                 );
             }
 
-            if let Some(imports) = import_name_map.get(&normalize_import_name(&relocation.target)) {
+            if let Some(imports) = index
+                .imports_by_name
+                .get(&normalize_import_name(&relocation.target))
+            {
                 for import in imports {
                     push_reference_if_missing(
                         &mut synthesized_import_refs,
@@ -5269,16 +5343,22 @@ fn push_reference_target_annotations(
 fn push_dyld_target_hooks(
     mut out: Option<&mut Vec<DerivedAnnotation>>,
     image: &BinaryImage,
+    index: &AnnotationIndex<'_>,
     instruction_references: &mut Vec<Reference>,
     target: u64,
 ) -> bool {
     let mut import_added = false;
 
-    if let Some(helper) = image.dyld().helper_for_address(target) {
+    if let Some(helper) = index.helpers_by_address.get(&target) {
         import_added |= push_helper_context(out.take(), image, instruction_references, helper);
     }
 
-    for binding in image.dyld().bindings_at_address(target) {
+    for binding in index
+        .bindings_by_address
+        .get(&target)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
         push_reference_if_missing(
             instruction_references,
             Reference::ImportBinding {
@@ -5317,7 +5397,7 @@ fn push_dyld_target_hooks(
         import_added = true;
     }
 
-    if let Some(stub) = image.dyld().stub_for_address(target) {
+    if let Some(stub) = index.stubs_by_address.get(&target) {
         push_reference_if_missing(
             instruction_references,
             Reference::Stub {
@@ -15984,6 +16064,25 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn prebuilt_annotation_index_matches_default_disassembly() {
+        let image = synthetic_image();
+        let request = DisassemblyRequestV2 {
+            target: DisassemblyTarget::Section("__text".to_string()),
+            range: None,
+            limit: DisassemblyLimit::Instructions(16),
+            options: damsel_core::DisassemblyOptions {
+                include_annotations: true,
+                include_value_flow: true,
+            },
+        };
+        let default = disassemble_v2(&image, &request).expect("default disassembly");
+        let index = AnnotationIndex::build(&image);
+        let indexed =
+            disassemble_v2_with_index(&image, &index, &request).expect("indexed disassembly");
+        assert_eq!(default, indexed);
     }
 }
 

@@ -17,7 +17,7 @@
 //! ingests of identical bytes produce byte-identical exports.
 
 use crate::MachoError;
-use damsel_core::{BinaryImage, SymbolKind};
+use damsel_core::{BinaryImage, ProjectedBinaryImage, SymbolKind};
 use damsel_project::{
     AddressSpaceId, AnalysisFact, AnalysisSourceKind, Confidence, FactKind, FactProvenance,
     ObjectId, SourceRecord, TypedStore,
@@ -53,7 +53,9 @@ pub struct IngestOptions {
 
 impl Default for IngestOptions {
     fn default() -> Self {
-        Self { include_symbol_seeds: true }
+        Self {
+            include_symbol_seeds: true,
+        }
     }
 }
 
@@ -64,6 +66,52 @@ pub fn ingest_binary_image(
     analyzer_version: &str,
 ) -> Result<IngestOutcome, IngestError> {
     ingest_binary_image_with_options(store, image, analyzer_version, &IngestOptions::default())
+}
+
+/// Register a dyld shared-cache projected image as a project source and
+/// emit seed facts (Wave 1 "cache ingest mapping").
+///
+/// The source is anchored in the cache vmaddr space and carries the cache
+/// UUID plus the projected image index as its content identity, so a
+/// projected UIKit and a projected Foundation never share a source.
+pub fn ingest_projected_cache_image(
+    store: &mut impl TypedStore,
+    projected: &ProjectedBinaryImage,
+    analyzer_version: &str,
+) -> Result<IngestOutcome, IngestError> {
+    ingest_projected_cache_image_with_options(
+        store,
+        projected,
+        analyzer_version,
+        &IngestOptions::default(),
+    )
+}
+
+pub fn ingest_projected_cache_image_with_options(
+    store: &mut impl TypedStore,
+    projected: &ProjectedBinaryImage,
+    analyzer_version: &str,
+    options: &IngestOptions,
+) -> Result<IngestOutcome, IngestError> {
+    let provenance = &projected.provenance;
+    let source = SourceSpec {
+        kind: AnalysisSourceKind::SharedCacheProjectedImage,
+        label: Some(provenance.install_name.clone()),
+        content_hash: Some(format!(
+            "dyld_cache:{}#{}",
+            provenance.cache_uuid,
+            provenance.image_id.image_index()
+        )),
+        address_space: damsel_project::names::CACHE_VMADDR,
+        note_suffix: Some(format!(
+            "|cache_uuid={}|image={}|member={}|image_base={:#x}",
+            provenance.cache_uuid,
+            provenance.install_name,
+            provenance.member_name,
+            provenance.image_base_vmaddr
+        )),
+    };
+    ingest_image(store, &projected.image, analyzer_version, options, &source)
 }
 
 pub fn ingest_binary_image_with_options(
@@ -77,14 +125,40 @@ pub fn ingest_binary_image_with_options(
         .file_path()
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().into_owned());
-
-    let source_id = store.add_source(SourceRecord {
-        source_id: 0,
+    let source = SourceSpec {
         kind: AnalysisSourceKind::MachOImage,
         label,
         content_hash: None,
+        address_space: damsel_project::names::IMAGE_VMADDR,
+        note_suffix: None,
+    };
+    ingest_image(store, image, analyzer_version, options, &source)
+}
+
+/// Source identity for one ingest pass.
+struct SourceSpec {
+    kind: AnalysisSourceKind,
+    label: Option<String>,
+    content_hash: Option<String>,
+    address_space: &'static str,
+    /// Additional `project_note` payload appended verbatim.
+    note_suffix: Option<String>,
+}
+
+fn ingest_image(
+    store: &mut impl TypedStore,
+    image: &BinaryImage,
+    analyzer_version: &str,
+    options: &IngestOptions,
+    source: &SourceSpec,
+) -> Result<IngestOutcome, IngestError> {
+    let source_id = store.add_source(SourceRecord {
+        source_id: 0,
+        kind: source.kind.clone(),
+        label: source.label.clone(),
+        content_hash: source.content_hash.clone(),
         parent_source_id: None,
-        address_spaces: vec![AddressSpaceId::new(damsel_project::names::IMAGE_VMADDR)],
+        address_spaces: vec![AddressSpaceId::new(source.address_space)],
     })?;
 
     let provenance = FactProvenance::analyzer(PASS, analyzer_version);
@@ -117,7 +191,10 @@ pub fn ingest_binary_image_with_options(
         let end = section.address.saturating_add(section.size);
         let payload = format!(
             "{}|{:#x}-{:#x}|exec={}",
-            section.kind, start, end, u8::from(section.executable)
+            section.kind,
+            start,
+            end,
+            u8::from(section.executable)
         );
         emit!(Some(object), "byte_class", payload);
     }
@@ -132,10 +209,7 @@ pub fn ingest_binary_image_with_options(
         match &symbol.kind {
             SymbolKind::Text if options.include_symbol_seeds => {
                 let object = ObjectId::new("function", format!("{:#x}", symbol.address));
-                let payload = format!(
-                    "symbol_table|name={}|size={}",
-                    symbol.name, symbol.size
-                );
+                let payload = format!("symbol_table|name={}|size={}", symbol.name, symbol.size);
                 emit!(Some(object), "seed", payload);
             }
             SymbolKind::Section | SymbolKind::File => {}
@@ -217,11 +291,12 @@ pub fn ingest_binary_image_with_options(
         None::<ObjectId>,
         "project_note",
         format!(
-            "ingest_complete|arch={}|sections={}|symbols={}|imports={}",
+            "ingest_complete|arch={}|sections={}|symbols={}|imports={}{}",
             image.architecture(),
             image.sections().len(),
             image.symbols().len(),
-            image.imports().len()
+            image.imports().len(),
+            source.note_suffix.as_deref().unwrap_or("")
         ),
     );
 
