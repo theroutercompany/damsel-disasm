@@ -3718,3 +3718,77 @@ fn cache_reexports_json_contract() {
         );
     }
 }
+
+/// Swift semantic surface (plan feature 4, slice 1): protocols, types,
+/// conformances with descriptor joins, and field descriptors from the
+/// swift-rich fixture.
+#[test]
+fn swift_surface_json_contract() {
+    let path = repo_root()
+        .join("fixtures/bin/adversarial/swift-rich-arm64")
+        .display()
+        .to_string();
+    let stdout = run_json_ok(&["--format", "json", "swift", &path]);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("swift json");
+    assert_eq!(value["command"], "swift");
+    assert_eq!(value["is_swift"], true);
+
+    // Protocol descriptor named through the const-section join.
+    let protocols = value["protocols"].as_array().expect("protocols");
+    assert!(protocols.iter().any(|protocol| protocol["name"] == "Shape"));
+
+    // Types with decoded kinds (fixture truth: structs, enum, class).
+    let types = value["types"].as_array().expect("types");
+    for (kind, name) in [
+        ("struct", "Circle"),
+        ("struct", "Rect"),
+        ("enum", "Color"),
+        ("class", "Renderer"),
+    ] {
+        assert!(
+            types
+                .iter()
+                .any(|entry| entry["kind"] == kind && entry["name"] == name),
+            "expected {kind} {name} in {types:?}"
+        );
+    }
+
+    // Conformances: the fixture's own protocol joins by name; stdlib
+    // protocol references stay indirect (never fabricated).
+    let conformances = value["conformances"].as_array().expect("conformances");
+    assert!(
+        conformances
+            .iter()
+            .any(|entry| entry["protocol_name"] == "Shape" && entry["type_name"] == "Rect")
+    );
+    assert!(
+        conformances
+            .iter()
+            .any(|entry| entry["protocol_name"] == "Shape" && entry["type_name"] == "Circle")
+    );
+    assert!(
+        conformances
+            .iter()
+            .any(|entry| entry["protocol_name"].is_null() && entry["type_kind"] == "enum")
+    );
+
+    // Field descriptors: names from __swift5_fieldmd + __swift5_reflstr.
+    let fields = value["field_descriptors"].as_array().expect("fields");
+    assert!(
+        fields
+            .iter()
+            .any(|entry| entry["field_names"] == serde_json::json!(["w", "h"]))
+    );
+    assert!(
+        fields
+            .iter()
+            .any(|entry| entry["field_names"] == serde_json::json!(["red", "green", "blue"]))
+    );
+
+    // Demangled symbols and the name filter.
+    assert!(value["demangled_symbol_count"].as_u64().unwrap_or(0) > 100);
+    let filtered = run_json_ok(&["--format", "json", "swift", &path, "--name", "Renderer"]);
+    let value: serde_json::Value = serde_json::from_str(&filtered).expect("filtered json");
+    let types = value["types"].as_array().expect("types");
+    assert!(types.iter().all(|entry| entry["name"] == "Renderer"));
+}

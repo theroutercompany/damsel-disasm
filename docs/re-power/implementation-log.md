@@ -1334,3 +1334,41 @@ follow-up. ipsw's equivalent cold lookup is ~30s per run, unpersisted.
 Proof: `cargo test -p damsel-macho --test cache_index
 symbol_index_serves_and_invalidates` (exact/nearest/name queries, below-
 every-row refusal, inventory-rebuild invalidation) + workspace 58 suites.
+
+## Swift Semantics (plan feature 4, slice 1) — DONE
+
+### Unit S1 — protocol / type / conformance reconstruction — DONE
+
+Closes Wave 8.3's remaining item ("protocol/conformance records remain")
+and wires the previously-unwired field-descriptor parsers into a CLI
+surface.
+
+Scope delivered:
+
+- `damsel-recon-catalog::swift` gains three parsers over the Swift
+  reflection ABI: `parse_protocols` (`__swift5_protocols`/`__swift5_protos`
+  → named protocol descriptors), `parse_types` (`__swift5_types` →
+  class/struct/enum/protocol/extension descriptors with decoded kinds),
+  and `parse_conformances` (`__swift5_proto`: an array of relative
+  pointers to `ConformanceDescriptor { Protocol, TypeRef, Flags }`
+  records in `__const`) with names resolved by joining the protocol and
+  type descriptor sets. Indirect references (runtime-library protocols,
+  low-bit flag) surface as `None` names — never fabricated.
+- Descriptor headers and names resolve across the const sections
+  (`__constg_swiftt`, `__TEXT,__const`, `__cstring`, `__swift5_reflstr`,
+  `__swift5_typeref`, `__swift5_fieldmd`) via a vaddr-range resolver.
+- `damsel swift <binary>`: demangled symbols (filter by --name),
+  protocols, types, conformances, and field descriptors
+  (`__swift5_fieldmd` + `__swift5_reflstr`, finally wired) in text + JSON.
+
+Evidence (swift-rich-arm64 fixture): protocol `Shape`; types struct
+`Circle`, struct `Rect`, enum `Color`, class `Renderer` (kinds match the
+fixture source); conformances `Circle: Shape` and `Rect: Shape` with both
+names resolved through the descriptor join; 4 indirect stdlib
+conformances on `Color`; field descriptors `[radius]`, `[w, h]`,
+`[red, green, blue]`; 140 demangled symbols.
+
+Proof: `cargo test -p damsel-recon-catalog` (fixture-driven parser test
+incl. join + indirect-ref assertions), `cargo test -p damsel-cli --test
+cli_json swift_surface_json_contract` (full JSON contract incl. name
+filter); workspace 58 suites green.
