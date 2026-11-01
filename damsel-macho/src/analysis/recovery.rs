@@ -22,6 +22,7 @@ use damsel_core::{
     DisassemblyTarget,
 };
 use damsel_project::{AnalysisFact, Confidence, FactKind, FactProvenance, ObjectId, TypedStore};
+use rayon::prelude::*;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -178,11 +179,13 @@ pub fn recover_functions(
     }
     all_work.sort();
 
-    let mut bounds: Vec<FunctionBound> = Vec::new();
     // Same batching strategy as the xref pass: decode merged chunks once
     // instead of building a capstone instance per seed. If a chunk decode
     // stops before covering a seed (invalid bytes in text), fall back to a
-    // per-window decode for the uncovered items.
+    // per-window decode for the uncovered items. Chunks decode in
+    // parallel; facts emit serially in chunk order so bound order (and
+    // canonical exports) match the serial pass exactly.
+    let mut chunks: Vec<(u64, u64, u64, usize, usize)> = Vec::new();
     let mut index = 0usize;
     while index < all_work.len() {
         let address = all_work[index].0;
@@ -207,63 +210,72 @@ pub fn recover_functions(
             .map(|&(a, _)| a)
             .filter(|end| *end > address && *end <= hard_end)
             .unwrap_or(hard_end);
-
-        let chunk = disassemble_v2_with_index(
-            image,
-            &annotation_index,
-            &recovery_request(address, chunk_end),
-        )
-        .ok();
-        let chunk_covers_start = chunk.as_ref().is_some_and(|result| {
-            result
-                .instructions
-                .first()
-                .is_some_and(|instruction| instruction.address <= address)
-        });
-
-        for k in index..next {
-            let (start, is_rank6) = all_work[k];
-            let window_end = all_work
-                .get(k + 1)
-                .map(|&(a, _)| a)
-                .filter(|end| *end > start && *end <= hard_end)
-                .unwrap_or(hard_end);
-
-            let decoded = if chunk_covers_start {
-                chunk.as_ref()
-            } else {
-                None
-            };
-            let fallback;
-            let result = match decoded {
-                Some(result) => result,
-                None => {
-                    fallback = disassemble_v2_with_index(
-                        image,
-                        &annotation_index,
-                        &recovery_request(start, window_end),
-                    )
-                    .ok();
-                    let Some(result) = fallback.as_ref() else {
-                        continue;
-                    };
-                    result
-                }
-            };
-            if result.instructions.is_empty() {
-                continue;
-            }
-
-            bounds.push(recover_bound(
-                &result.instructions,
-                start,
-                window_end,
-                hard_end,
-                is_rank6,
-            ));
-        }
+        chunks.push((address, chunk_end, hard_end, index, next));
         index = next;
     }
+
+    let chunk_bounds: Vec<Vec<FunctionBound>> = chunks
+        .par_iter()
+        .map(|&(address, chunk_end, hard_end, k_start, k_end)| {
+            let chunk = disassemble_v2_with_index(
+                image,
+                &annotation_index,
+                &recovery_request(address, chunk_end),
+            )
+            .ok();
+            let chunk_covers_start = chunk.as_ref().is_some_and(|result| {
+                result
+                    .instructions
+                    .first()
+                    .is_some_and(|instruction| instruction.address <= address)
+            });
+
+            let mut local: Vec<FunctionBound> = Vec::new();
+            for k in k_start..k_end {
+                let (start, is_rank6) = all_work[k];
+                let window_end = all_work
+                    .get(k + 1)
+                    .map(|&(a, _)| a)
+                    .filter(|end| *end > start && *end <= hard_end)
+                    .unwrap_or(hard_end);
+
+                let decoded = if chunk_covers_start {
+                    chunk.as_ref()
+                } else {
+                    None
+                };
+                let fallback;
+                let result = match decoded {
+                    Some(result) => result,
+                    None => {
+                        fallback = disassemble_v2_with_index(
+                            image,
+                            &annotation_index,
+                            &recovery_request(start, window_end),
+                        )
+                        .ok();
+                        let Some(result) = fallback.as_ref() else {
+                            continue;
+                        };
+                        result
+                    }
+                };
+                if result.instructions.is_empty() {
+                    continue;
+                }
+
+                local.push(recover_bound(
+                    &result.instructions,
+                    start,
+                    window_end,
+                    hard_end,
+                    is_rank6,
+                ));
+            }
+            local
+        })
+        .collect();
+    let bounds: Vec<FunctionBound> = chunk_bounds.into_iter().flatten().collect();
 
     // Persist facts + overlap problems.
     for index in 1..bounds.len() {

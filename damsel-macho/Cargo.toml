@@ -13,6 +13,7 @@ damsel-core = { path = "../damsel-core" }
 goblin.workspace = true
 memmap2.workspace = true
 object.workspace = true
+rayon.workspace = true
 thiserror.workspace = true
 damsel-project = { path = "../damsel-project" }
 
