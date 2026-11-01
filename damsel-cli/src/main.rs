@@ -460,6 +460,13 @@ enum Command {
         path: PathBuf,
     },
     #[command(
+        about = "Inspect the code signature: entitlements, TeamID, hardened runtime",
+        long_about = "Inspect LC_CODE_SIGNATURE.\n\nReconstructs the signing summary codesign(1) gives: identifier, TeamID, entitlements (XML plist decoded), hardened-runtime and library-validation flags, adhoc detection, CMS presence. Read-only; flag decoding names only well-attested bits and always ships the raw word."
+    )]
+    Codesign {
+        path: PathBuf,
+    },
+    #[command(
         about = "Reconstruct interface headers from runtime metadata",
         long_about = "Reconstruct interface headers from runtime metadata.\n\nObjective-C today (classes with superclasses, adopted protocols, method signatures decoded from type encodings, properties, ivars, categories, protocols — the class-dump successor, provenance-carrying). Swift interface output arrives with the Swift type layer."
     )]
@@ -1203,6 +1210,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Slices { path } => {
             let image = load_image(path)?;
             output::print_slices(&image, &output_settings);
+        }
+        Command::Codesign { path } => {
+            handle_codesign(path, &output_settings)?;
         }
         Command::Headers { path } => {
             handle_headers(path, &output_settings)?;
@@ -3188,6 +3198,76 @@ fn handle_annotate(
                 object.as_str()
             );
         }
+    }
+    Ok(())
+}
+
+fn handle_codesign(
+    path: PathBuf,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    let image = load_image(path)?;
+    let info = damsel_macho::read_codesign(&image).map_err(map_cache_error)?;
+    let Some(info) = info else {
+        if output_settings.format == output::OutputFormat::Json {
+            println!(
+                "{}",
+                project_json(serde_json::json!({
+                    "command": "codesign",
+                    "signed": false,
+                }))
+            );
+        } else {
+            println!("unsigned (no LC_CODE_SIGNATURE)");
+        }
+        return Ok(());
+    };
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "codesign",
+            "signed": true,
+            "info": info,
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+    println!("identifier : {}", info.identifier.as_deref().unwrap_or("?"));
+    println!(
+        "team       : {}",
+        info.team_id
+            .as_deref()
+            .unwrap_or(if info.adhoc { "(adhoc)" } else { "?" })
+    );
+    println!(
+        "flags      : {:#010x}{}{}{}",
+        info.flags,
+        if info.hardened_runtime {
+            " hardened-runtime"
+        } else {
+            ""
+        },
+        if info.library_validation {
+            " library-validation"
+        } else {
+            ""
+        },
+        if info.adhoc { " adhoc" } else { "" },
+    );
+    println!(
+        "cms        : {}",
+        if info.has_cms {
+            "present (signed)"
+        } else {
+            "absent"
+        }
+    );
+    println!(
+        "code       : limit={:#x} hash_type={} page={}",
+        info.code_limit, info.hash_type, info.page_size
+    );
+    println!("entitlements: {}", info.entitlements.len());
+    for entitlement in &info.entitlements {
+        println!("  {} = {}", entitlement.key, entitlement.value);
     }
     Ok(())
 }
