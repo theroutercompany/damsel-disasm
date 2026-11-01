@@ -40,7 +40,10 @@ fn standalone_macho_ingests_sections_symbols_and_imports() {
     let store = open_store(&dir.path().join("project.db"), Create::Existing, &meta()).unwrap();
     let sources = store.sources().unwrap();
     assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0].kind, damsel_project::AnalysisSourceKind::MachOImage);
+    assert_eq!(
+        sources[0].kind,
+        damsel_project::AnalysisSourceKind::MachOImage
+    );
     assert_eq!(sources[0].address_spaces.len(), 1);
     assert_eq!(sources[0].address_spaces[0].as_str(), "image_vmaddr");
 
@@ -49,7 +52,10 @@ fn standalone_macho_ingests_sections_symbols_and_imports() {
         .iter()
         .filter(|f| f.kind.as_str() == "byte_class")
         .count();
-    assert!(byte_class >= 5, "expected section classifications, got {byte_class}");
+    assert!(
+        byte_class >= 5,
+        "expected section classifications, got {byte_class}"
+    );
 
     // Rank-1 seeds: symbol-table text symbols (fixture has `_main`).
     let seeds: Vec<_> = facts
@@ -62,12 +68,13 @@ fn standalone_macho_ingests_sections_symbols_and_imports() {
     );
 
     // Rank-2 seeds: function starts.
-    assert!(facts
-        .iter()
-        .any(|f| f.payload == "function_starts"));
+    assert!(facts.iter().any(|f| f.payload == "function_starts"));
 
     // Imports recorded with linkage payloads.
-    let imports: Vec<_> = facts.iter().filter(|f| f.kind.as_str() == "import").collect();
+    let imports: Vec<_> = facts
+        .iter()
+        .filter(|f| f.kind.as_str() == "import")
+        .collect();
     assert!(!imports.is_empty());
     assert!(imports[0].payload.starts_with("dylib="));
 }
@@ -84,6 +91,54 @@ fn objc_fixture_ingests_imp_seeds() {
             .any(|f| f.kind.as_str() == "seed" && f.payload.starts_with("objc_method|selector=")),
         "expected objc IMP seeds"
     );
+}
+
+#[test]
+fn projected_cache_image_ingests_with_cache_provenance() {
+    let cache = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures/shared-cache-corpus/valid-single-arm64.cache");
+    let session = damsel_macho::inspect_shared_cache(&cache).expect("inspect synthetic cache");
+    let projected = session
+        .project_image("Foundation")
+        .expect("project Foundation");
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&dir.path().join("project.db"), Create::New, &meta()).unwrap();
+    let outcome = damsel_macho::ingest_projected_cache_image(&mut store, &projected, "0.1.0")
+        .expect("ingest projected image");
+
+    let sources = store.sources().unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(
+        sources[0].kind,
+        damsel_project::AnalysisSourceKind::SharedCacheProjectedImage
+    );
+    assert_eq!(
+        sources[0].label.as_deref(),
+        Some("/System/Library/Frameworks/Foundation.framework/Foundation")
+    );
+    assert_eq!(
+        sources[0].content_hash.as_deref(),
+        Some("dyld_cache:11111111-2222-3333-4444-555555555555#2")
+    );
+    assert_eq!(sources[0].address_spaces.len(), 1);
+    assert_eq!(sources[0].address_spaces[0].as_str(), "cache_vmaddr");
+    assert!(outcome.fact_count > 0);
+
+    let facts = store.facts_for_source(outcome.source_id).unwrap();
+    let note = facts
+        .iter()
+        .find(|f| f.kind.as_str() == "project_note")
+        .expect("project note");
+    assert!(
+        note.payload
+            .contains("cache_uuid=11111111-2222-3333-4444-555555555555")
+    );
+    assert!(
+        note.payload
+            .contains("image=/System/Library/Frameworks/Foundation.framework/Foundation")
+    );
+    assert!(note.payload.contains("image_base=0x180200000"));
 }
 
 #[test]
@@ -115,22 +170,22 @@ fn xref_harvest_round_trips_from_both_ends() {
         .iter()
         .map(|f| f.address)
         .collect();
-    let xref_outcome = damsel_macho::harvest_xrefs(
-        &mut store, &image, outcome.source_id, &addresses, "0.1.0",
-    )
-    .unwrap();
+    let xref_outcome =
+        damsel_macho::harvest_xrefs(&mut store, &image, outcome.source_id, &addresses, "0.1.0")
+            .unwrap();
     assert!(xref_outcome.xref_count > 0);
     assert_eq!(xref_outcome.function_windows, 3);
 
     // Round trip: every xref fact is discoverable by target address.
     let facts = store.facts_for_source(outcome.source_id).unwrap();
-    let xref_facts: Vec<_> = facts
-        .iter()
-        .filter(|f| f.kind.as_str() == "xref")
-        .collect();
+    let xref_facts: Vec<_> = facts.iter().filter(|f| f.kind.as_str() == "xref").collect();
     assert!(!xref_facts.is_empty());
     for fact in &xref_facts {
-        assert!(fact.payload.contains("|to="), "payload shape: {}", fact.payload);
+        assert!(
+            fact.payload.contains("|to="),
+            "payload shape: {}",
+            fact.payload
+        );
         let (_, target) = fact.payload.split_once("|to=").unwrap();
         let (kind, key) = target.split_once(':').unwrap();
         assert!(!kind.is_empty() && !key.is_empty());
@@ -144,9 +199,11 @@ fn xref_harvest_round_trips_from_both_ends() {
         }
     }
     // A call into _exported_sum exists and is attributed to _main's window.
-    assert!(xref_facts
-        .iter()
-        .any(|f| f.payload == "call|to=function:0x100000460"));
+    assert!(
+        xref_facts
+            .iter()
+            .any(|f| f.payload == "call|to=function:0x100000460")
+    );
 }
 
 #[test]
@@ -155,8 +212,8 @@ fn string_harvest_extracts_cstring_with_value_at_address() {
     let image = load(fixture("arm64-symbolized")).unwrap();
     let mut store = open_store(&dir.path().join("project.db"), Create::New, &meta()).unwrap();
     let outcome = ingest_binary_image(&mut store, &image, "0.1.0").unwrap();
-    let strings = damsel_macho::harvest_strings(&mut store, &image, outcome.source_id, "0.1.0")
-        .unwrap();
+    let strings =
+        damsel_macho::harvest_strings(&mut store, &image, outcome.source_id, "0.1.0").unwrap();
     assert!(strings.strings >= 1, "expected at least one cstring");
 
     // The stored address must be the string START (regression for the
@@ -167,8 +224,7 @@ fn string_harvest_extracts_cstring_with_value_at_address() {
             continue;
         }
         let object = fact.object_id.as_ref().unwrap();
-        let address =
-            u64::from_str_radix(object.key().trim_start_matches("0x"), 16).unwrap();
+        let address = u64::from_str_radix(object.key().trim_start_matches("0x"), 16).unwrap();
         let (_, len_part) = fact.payload.split_once("|len=").unwrap();
         let len: usize = len_part.parse().unwrap();
         let value = image
@@ -203,11 +259,16 @@ fn recovery_audit_recall_and_false_positives() {
         .filter(|sym| {
             sym.defined
                 && matches!(sym.kind, damsel_core::SymbolKind::Text)
-                && exec.iter().any(|(a, b)| sym.address >= *a && sym.address < *b)
+                && exec
+                    .iter()
+                    .any(|(a, b)| sym.address >= *a && sym.address < *b)
         })
         .map(|sym| sym.address)
         .collect();
-    assert!(truth.len() >= 3, "fixture must have >=3 ground-truth functions");
+    assert!(
+        truth.len() >= 3,
+        "fixture must have >=3 ground-truth functions"
+    );
 
     // Stripped-mode pipeline: no rank-1 symbol seeds.
     let dir = tempfile::tempdir().unwrap();
@@ -216,7 +277,9 @@ fn recovery_audit_recall_and_false_positives() {
         &mut store,
         &image,
         "0.1.0",
-        &IngestOptions { include_symbol_seeds: false },
+        &IngestOptions {
+            include_symbol_seeds: false,
+        },
     )
     .unwrap();
     let seeds: Vec<u64> = damsel_project::function_summaries(&store)
@@ -225,14 +288,8 @@ fn recovery_audit_recall_and_false_positives() {
         .map(|f| f.address)
         .collect();
     harvest_xrefs(&mut store, &image, outcome.source_id, &seeds, "0.1.0").unwrap();
-    let recovery = recover_functions(
-        &mut store,
-        &image,
-        outcome.source_id,
-        &seeds,
-        "0.1.0",
-    )
-    .unwrap();
+    let recovery =
+        recover_functions(&mut store, &image, outcome.source_id, &seeds, "0.1.0").unwrap();
 
     // Recovered set: functions with bounds (rank-1..5 seeds + rank-6).
     let facts = store.facts_for_source(outcome.source_id).unwrap();
