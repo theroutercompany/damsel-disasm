@@ -2,6 +2,7 @@ mod debug;
 mod frida_bridge;
 mod mcp;
 mod output;
+mod taint;
 mod ui;
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
@@ -703,6 +704,18 @@ enum Command {
             help = "List direct callers of a function"
         )]
         callers_of: Option<String>,
+        #[arg(
+            long,
+            value_name = "TARGET",
+            help = "Taint source: the function whose parameters are the taint source"
+        )]
+        taint_from: Option<String>,
+        #[arg(
+            long,
+            value_name = "TARGET",
+            help = "Taint sink: does the source reach this function's parameters?"
+        )]
+        taint_to: Option<String>,
     },
     #[command(
         about = "Match functions across two analyzed projects and transfer annotations",
@@ -1621,12 +1634,16 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             from,
             to,
             callers_of,
+            taint_from,
+            taint_to,
         } => {
             handle_query(
                 project,
                 from.as_deref(),
                 to.as_deref(),
                 callers_of.as_deref(),
+                taint_from.as_deref(),
+                taint_to.as_deref(),
                 &output_settings,
             )?;
         }
@@ -2304,6 +2321,136 @@ fn run_batch_target(
 
 fn line_of(path: &std::path::Path) -> String {
     path.display().to_string()
+}
+
+fn handle_taint_query(
+    project_dir: PathBuf,
+    source_target: &str,
+    sink_target: Option<&str>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    let engine = crate::taint::engine_for(&project_dir)
+        .map_err(|e| CliRunError::command("taint_error", e))?;
+    let meta = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = damsel_project::open_store(
+        &project_dir.join("project.db"),
+        damsel_project::Create::Existing,
+        &meta,
+    )
+    .map_err(map_store_error)?;
+
+    let label = |address: u64| -> String {
+        engine
+            .names
+            .get(&address)
+            .cloned()
+            .unwrap_or_else(|| format!("sub_{address:x}"))
+    };
+
+    if let Some(sink) = sink_target {
+        let source = resolve_query_target(&store, source_target)?;
+        let sink = resolve_query_target(&store, sink)?;
+        match engine.path(source, sink) {
+            Some(hops) => {
+                if output_settings.format == output::OutputFormat::Json {
+                    let value = serde_json::json!({
+                        "command": "query",
+                        "action": "taint",
+                        "from": label(source),
+                        "to": label(sink),
+                        "reachable": true,
+                        "hops": hops.iter().map(|hop| serde_json::json!({
+                            "from": label(hop.from_function),
+                            "to": label(hop.to_function),
+                            "via": hop.via,
+                            "site": format!("{:#x}", hop.site),
+                        })).collect::<Vec<_>>(),
+                    });
+                    println!("{}", project_json(value));
+                } else {
+                    println!(
+                        "taint: parameters of {} reach parameters of {} via:",
+                        label(source),
+                        label(sink)
+                    );
+                    for hop in &hops {
+                        println!(
+                            "  {} -> {} ({} at {:#x})",
+                            label(hop.from_function),
+                            label(hop.to_function),
+                            hop.via,
+                            hop.site
+                        );
+                    }
+                }
+            }
+            None => {
+                if output_settings.format == output::OutputFormat::Json {
+                    println!(
+                        "{}",
+                        project_json(serde_json::json!({
+                            "command": "query",
+                            "action": "taint",
+                            "from": label(source),
+                            "to": label(sink),
+                            "reachable": false,
+                        }))
+                    );
+                } else {
+                    println!(
+                        "taint: parameters of {} do NOT reach parameters of {}",
+                        label(source),
+                        label(sink)
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // No sink: report everything the source reaches, plus its own
+    // escape facts (return/memory).
+    let source = resolve_query_target(&store, source_target)?;
+    let reachable = engine.reachable_from(source);
+    let Some(summary) = engine.summaries.get(&source) else {
+        return Err(CliRunError::command(
+            "function_not_found",
+            format!("no summary for `{source_target}` (bounded functions only)"),
+        ));
+    };
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "query",
+            "action": "taint",
+            "from": label(source),
+            "returns_taint_slots": summary.returns_taint.count_ones(),
+            "stores_taint_slots": summary.stores_taint.count_ones(),
+            "indirect_calls": summary.indirect_calls.len(),
+            "reachable": reachable.keys().map(|address| serde_json::json!({
+                "function": label(*address),
+                "hops": reachable[address].iter().map(|hop| serde_json::json!({
+                    "from": label(hop.from_function),
+                    "to": label(hop.to_function),
+                    "via": hop.via,
+                    "site": format!("{:#x}", hop.site),
+                })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", project_json(value));
+    } else {
+        println!(
+            "taint from {} ({}): returns={} slots, memory={} slots, indirect calls={}",
+            label(source),
+            format!("{source:#x}"),
+            summary.returns_taint.count_ones(),
+            summary.stores_taint.count_ones(),
+            summary.indirect_calls.len()
+        );
+        for (address, hops) in &reachable {
+            println!("  reaches {} via {} hop(s)", label(*address), hops.len());
+        }
+    }
+    Ok(())
 }
 
 fn resolve_query_target(
@@ -3037,6 +3184,8 @@ fn handle_query(
     from: Option<&str>,
     to: Option<&str>,
     callers_of: Option<&str>,
+    taint_from: Option<&str>,
+    taint_to: Option<&str>,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{Create, open_store};
@@ -3061,6 +3210,10 @@ fn handle_query(
             .cloned()
             .unwrap_or_else(|| format!("sub_{address:x}"))
     };
+
+    if let Some(source_target) = taint_from {
+        return handle_taint_query(project_dir, source_target, taint_to, output_settings);
+    }
 
     if let Some(target) = callers_of {
         let address = resolve_query_target(&store, target)?;

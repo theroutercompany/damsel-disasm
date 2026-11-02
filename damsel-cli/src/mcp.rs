@@ -275,7 +275,9 @@ fn handle_list_tools() -> Value {
                         "project": { "type": "string", "description": "Path to the .damsel directory or target" },
                         "from": { "type": "string", "description": "Source function (0xADDR or name; renames included)" },
                         "to": { "type": "string", "description": "Sink function (0xADDR or name)" },
-                        "callers_of": { "type": "string", "description": "List direct callers of this function instead" }
+                        "callers_of": { "type": "string", "description": "List direct callers of this function instead" },
+                        "taint_from": { "type": "string", "description": "Taint source: function whose parameters are the taint source" },
+                        "taint_to": { "type": "string", "description": "Taint sink: does the source reach this function's parameters?" }
                     },
                     "required": ["project"]
                 })),
