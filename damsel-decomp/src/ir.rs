@@ -25,6 +25,10 @@ pub enum IrBinOp {
     Xor,
     Shl,
     Shr,
+    /// Arithmetic (sign-preserving) shift right — arm64 `asr`.
+    Asr,
+    /// Integer/FP division — arm64 `sdiv`/`udiv`/`fdiv`.
+    Div,
     /// Element-wise equality mask (SSE pcmpeqb family).
     CmpEq,
     /// Element-wise greater-than mask (SSE pcmpgtb family).
@@ -38,6 +42,14 @@ pub enum IrExpr {
         op: IrBinOp,
         lhs: Box<IrExpr>,
         rhs: Box<IrExpr>,
+    },
+    /// Conditional select (arm64 `csel`/`csinc`/…). The condition is the
+    /// raw condition site v1 — flag resolution in D4 replaces `cond`
+    /// with the real expression; renderers must show it, not invent one.
+    Select {
+        condition: String,
+        taken: Box<IrExpr>,
+        not_taken: Box<IrExpr>,
     },
     /// Memory address: base register + displacement.
     AddrOf {
@@ -63,6 +75,8 @@ pub enum IrExpr {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IrCallTarget {
     Function(u64),
+    /// Indirect call through a register (arm64 `blr` family).
+    Register(String),
     Unknown(String),
 }
 
@@ -145,8 +159,8 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
     let mut unknown_count = 0usize;
 
     let statement_for = |instruction: &DecodedInstruction,
-                             statements: &mut Vec<IrStatement>,
-                             unknowns: &mut usize| {
+                         statements: &mut Vec<IrStatement>,
+                         unknowns: &mut usize| {
         let lower = instruction.mnemonic.to_ascii_lowercase();
         let site = instruction.address;
         // Data movement / arithmetic floor set.
@@ -158,6 +172,11 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
             "eor" => Some(IrBinOp::Xor),
             "lsl" => Some(IrBinOp::Shl),
             "lsr" => Some(IrBinOp::Shr),
+            "asr" => Some(IrBinOp::Asr),
+            "sdiv" | "udiv" | "fdiv" => Some(IrBinOp::Div),
+            "fmul" | "fnmul" | "mul" => Some(IrBinOp::Mul),
+            "fadd" | "fadds" => Some(IrBinOp::Add),
+            "fsub" | "fsubs" => Some(IrBinOp::Sub),
             _ => None,
         };
         // Flag-setting compares (arm64: cmp/cmn/tst) mirror the x86
@@ -263,7 +282,10 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     }
                 } else {
                     *unknowns += 1;
-                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                    statements.push(IrStatement::Unknown {
+                        mnemonic: lower,
+                        site,
+                    });
                 }
             }
             "ldp" | "ldp.nu" => {
@@ -282,7 +304,10 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     }
                 } else {
                     *unknowns += 1;
-                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                    statements.push(IrStatement::Unknown {
+                        mnemonic: lower,
+                        site,
+                    });
                 }
             }
             "cset" | "cinc" => {
@@ -299,7 +324,10 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     });
                 } else {
                     *unknowns += 1;
-                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                    statements.push(IrStatement::Unknown {
+                        mnemonic: lower,
+                        site,
+                    });
                 }
             }
             "adrp" | "adr" => {
@@ -318,10 +346,18 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     });
                 } else {
                     *unknowns += 1;
-                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                    statements.push(IrStatement::Unknown {
+                        mnemonic: lower,
+                        site,
+                    });
                 }
             }
-            "ldr" | "ldur" => {
+            "ldr" | "ldur" | "ldrb" | "ldurb" | "ldrsb" | "ldursb" | "ldrh" | "ldurh" | "ldrsh"
+            | "ldursh" | "ldrsw" | "ldurw" | "ldar" | "ldarb" | "ldarh" | "ldxr" | "ldxrb"
+            | "ldxrh" => {
+                // Byte/half/word loads share the Load model; the width is
+                // type information (feature 7), not control flow. The
+                // acquire/exclusive flavors differ in ordering only.
                 if let Some(dst) = destination.clone() {
                     if let Some(address) = memory_expr(instruction) {
                         statements.push(IrStatement::Load {
@@ -330,17 +366,128 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                         });
                     } else {
                         *unknowns += 1;
-                        statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                        statements.push(IrStatement::Unknown {
+                            mnemonic: lower,
+                            site,
+                        });
                     }
                 }
             }
-            "str" | "stur" => {
+            "str" | "stur" | "strb" | "sturb" | "strh" | "sturh" | "stlr" | "stlrb" | "stlrh"
+            | "stxr" | "stxrb" | "stxrh" => {
                 if let Some(address) = memory_expr(instruction) {
                     let value = operand_expr(instruction.operands.first());
                     statements.push(IrStatement::Store { address, value });
                 } else {
                     *unknowns += 1;
-                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                    statements.push(IrStatement::Unknown {
+                        mnemonic: lower,
+                        site,
+                    });
+                }
+            }
+            "csel" | "csinc" | "csinv" | "csneg" => {
+                // Conditional select: dst = cond ? a : b. The condition
+                // code is not decoded v1 — rendered as `cond` with the
+                // line's provenance pointing at the instruction; D4 flag
+                // resolution replaces it with the real expression.
+                if let Some(dst) = destination.clone() {
+                    statements.push(IrStatement::Assign {
+                        destination: dst,
+                        expression: IrExpr::Select {
+                            condition: "cond".to_string(),
+                            taken: Box::new(operand_expr(instruction.operands.get(1))),
+                            not_taken: Box::new(operand_expr(instruction.operands.get(2))),
+                        },
+                    });
+                } else {
+                    *unknowns += 1;
+                    statements.push(IrStatement::Unknown {
+                        mnemonic: lower,
+                        site,
+                    });
+                }
+            }
+            "fmov" => {
+                // FP register move: dst = src (immediates surface as
+                // constants; the FP-vs-integer distinction is type work).
+                if let Some(dst) = destination.clone() {
+                    statements.push(IrStatement::Assign {
+                        destination: dst,
+                        expression: operand_expr(instruction.operands.get(1)),
+                    });
+                }
+            }
+            "madd" | "msub" => {
+                // Multiply-accumulate: dst = a ± b*c (operands 3..5 for
+                // the 4-register forms: madd Xd, Xn, Xm, Xa).
+                if let Some(dst) = destination.clone() {
+                    let (op, accumul) = if lower == "madd" {
+                        (IrBinOp::Add, 3)
+                    } else {
+                        (IrBinOp::Sub, 3)
+                    };
+                    statements.push(IrStatement::Assign {
+                        destination: dst,
+                        expression: IrExpr::BinOp {
+                            op,
+                            lhs: Box::new(operand_expr(instruction.operands.get(accumul))),
+                            rhs: Box::new(IrExpr::BinOp {
+                                op: IrBinOp::Mul,
+                                lhs: Box::new(operand_expr(instruction.operands.get(1))),
+                                rhs: Box::new(operand_expr(instruction.operands.get(2))),
+                            }),
+                        },
+                    });
+                }
+            }
+            "movi" => {
+                // Vector move-immediate: constant when the decoder gave us
+                // one; vector lane specs stay unknown rather than fake.
+                let immediate = instruction
+                    .operands
+                    .get(1)
+                    .and_then(|operand| match operand {
+                        damsel_core::Operand::ImmediateSigned(value) => {
+                            Some(IrExpr::Value(IrValue::Const(*value as u64)))
+                        }
+                        damsel_core::Operand::ImmediateUnsigned(value) => {
+                            Some(IrExpr::Value(IrValue::Const(*value)))
+                        }
+                        damsel_core::Operand::FloatingImmediate(value) => {
+                            Some(IrExpr::Value(IrValue::Const(u64::from(*value))))
+                        }
+                        _ => None,
+                    });
+                if let (Some(dst), Some(value)) = (destination.clone(), immediate) {
+                    statements.push(IrStatement::Assign {
+                        destination: dst,
+                        expression: value,
+                    });
+                } else {
+                    *unknowns += 1;
+                    statements.push(IrStatement::Unknown {
+                        mnemonic: lower,
+                        site,
+                    });
+                }
+            }
+            "blr" | "blraa" | "blraaz" | "blrab" | "blrabz" => {
+                // Indirect call through a register (arm64e-authenticated
+                // included): modeled as an inline call like `bl`, with the
+                // target register named — PAC signatures surface through
+                // the engine's reference annotations (feature 5).
+                if let Some(via) = instruction.operands.first().and_then(register_of) {
+                    statements.push(IrStatement::Call {
+                        target: IrCallTarget::Register(via),
+                        site,
+                    });
+                } else {
+                    *unknowns += 1;
+                    statements.push(IrStatement::Unknown {
+                        mnemonic: lower,
+                        site,
+                    });
                 }
             }
             "bl" => {
@@ -352,27 +499,28 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                 // names like _objc_msgSend$SELECTOR in TargetSymbol
                 // annotations on the calling instruction. Also check the
                 // Stub/Import references for the same.
-                let objc_name = instruction.annotations.iter().find_map(|a| {
-                    match a {
-                        damsel_core::Annotation::TargetSymbol { address, name }
-                            if name.contains("objc_msgSend")
-                                && call_target.is_some_and(|t| t == *address) =>
+                let objc_name = instruction.annotations.iter().find_map(|a| match a {
+                    damsel_core::Annotation::TargetSymbol { address, name }
+                        if name.contains("objc_msgSend")
+                            && call_target.is_some_and(|t| t == *address) =>
+                    {
+                        Some(name.clone())
+                    }
+                    _ => None,
+                });
+                let import_name = objc_name.or_else(|| {
+                    instruction.references.iter().find_map(|r| match r {
+                        damsel_core::Reference::Stub {
+                            name: Some(name), ..
+                        } if name.contains("objc_msgSend") => Some(name.clone()),
+                        damsel_core::Reference::Import { name, .. }
+                            if name.contains("objc_msgSend") =>
                         {
                             Some(name.clone())
                         }
                         _ => None,
-                    }
+                    })
                 });
-                let import_name = objc_name
-                    .or_else(|| {
-                        instruction.references.iter().find_map(|r| match r {
-                            damsel_core::Reference::Stub { name: Some(name), .. }
-                                if name.contains("objc_msgSend") => Some(name.clone()),
-                            damsel_core::Reference::Import { name, .. }
-                                if name.contains("objc_msgSend") => Some(name.clone()),
-                            _ => None,
-                        })
-                    });
                 if let Some(name) = import_name {
                     statements.push(IrStatement::Call {
                         target: IrCallTarget::Unknown(format!("objc:{name}")),
@@ -385,7 +533,10 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     });
                 } else {
                     *unknowns += 1;
-                    statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                    statements.push(IrStatement::Unknown {
+                        mnemonic: lower,
+                        site,
+                    });
                 }
             }
             _ if damsel_core::semantics_arm64::is_cfg_boundary(&lower) => {
@@ -393,14 +544,23 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
             }
             _ => {
                 *unknowns += 1;
-                statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                statements.push(IrStatement::Unknown {
+                    mnemonic: lower,
+                    site,
+                });
             }
         }
     };
 
     for instruction in instructions {
         let lower = instruction.mnemonic.to_ascii_lowercase();
-        let is_boundary = damsel_core::semantics_arm64::is_cfg_boundary(&lower);
+        // Indirect calls (blr family) flow like direct calls: a Call
+        // statement in the block, not a terminator — the callee returns.
+        let is_boundary = damsel_core::semantics_arm64::is_cfg_boundary(&lower)
+            && !matches!(
+                lower.as_str(),
+                "blr" | "blraa" | "blraaz" | "blrab" | "blrabz"
+            );
         if !is_boundary {
             statement_for(instruction, &mut current.statements, &mut unknown_count);
             continue;
@@ -437,7 +597,10 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                 terminator: IrTerminator::WindowEnd,
             },
         ));
-        unknown_count += usize::from(matches!(blocks.last().unwrap().terminator, IrTerminator::Unknown { .. }));
+        unknown_count += usize::from(matches!(
+            blocks.last().unwrap().terminator,
+            IrTerminator::Unknown { .. }
+        ));
     }
     // Final open block (e.g. window ended after a return's fallthrough
     // padding or the last instruction was not a boundary).
@@ -487,13 +650,18 @@ fn operand_expr(operand: Option<&Operand>) -> IrExpr {
 }
 
 fn memory_expr(instruction: &DecodedInstruction) -> Option<IrExpr> {
-    instruction.operands.iter().find_map(|operand| match operand {
-        Operand::Memory { base, displacement, .. } => Some(IrExpr::AddrOf {
-            base: base.clone(),
-            displacement: *displacement,
-        }),
-        _ => None,
-    })
+    instruction
+        .operands
+        .iter()
+        .find_map(|operand| match operand {
+            Operand::Memory {
+                base, displacement, ..
+            } => Some(IrExpr::AddrOf {
+                base: base.clone(),
+                displacement: *displacement,
+            }),
+            _ => None,
+        })
 }
 
 fn branch_target(instruction: &DecodedInstruction) -> Option<&u64> {
@@ -528,8 +696,10 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
         let site = instruction.address;
 
         // Terminator first (x86 terminators emit no statements).
-        if sem::is_return(&lower) || matches!(lower.as_str(), "jmp" | "ljmp")
-            || sem::is_conditional_branch(&lower) || sem::is_trap(&lower)
+        if sem::is_return(&lower)
+            || matches!(lower.as_str(), "jmp" | "ljmp")
+            || sem::is_conditional_branch(&lower)
+            || sem::is_trap(&lower)
         {
             let next = instruction.address + instruction.size as u64;
             let terminator = if sem::is_return(&lower) {
@@ -550,7 +720,9 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                     IrTerminator::Branch(target)
                 }
             } else {
-                IrTerminator::Unknown { mnemonic: lower.clone() }
+                IrTerminator::Unknown {
+                    mnemonic: lower.clone(),
+                }
             };
             current.terminator = terminator;
             blocks.push(std::mem::replace(
@@ -819,8 +991,7 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                 // the vector instructions used by glibc strlen/strcmp/
                 // memcpy fast paths. Modeled as readable pseudo-ops —
                 // the vector semantics are described, not simulated.
-                "movdqa" | "movdqu" | "movaps" | "movups" | "movdqu8"
-                    | "movd" => {
+                "movdqa" | "movdqu" | "movaps" | "movups" | "movdqu8" | "movd" => {
                     // Vector move: reg←reg, reg←[mem], or [mem]←reg.
                     if let Some(dest_reg) = instruction.operands.first().and_then(register_of) {
                         if let Some(src_reg) = instruction.operands.get(1).and_then(register_of) {
@@ -841,10 +1012,16 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                     } else if let Some(address) =
                         instruction.operands.first().and_then(memory_expr_from)
                     {
-                        let src = instruction.operands.get(1).and_then(register_of)
+                        let src = instruction
+                            .operands
+                            .get(1)
+                            .and_then(register_of)
                             .map(|r| IrExpr::Value(IrValue::Register(r)))
                             .unwrap_or(IrExpr::Value(IrValue::Const(0)));
-                        Some(IrStatement::Store { address, value: src })
+                        Some(IrStatement::Store {
+                            address,
+                            value: src,
+                        })
                     } else {
                         None
                     }
@@ -887,12 +1064,19 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                     let src = instruction.operands.get(1).and_then(register_of);
                     (dest.zip(src)).map(|(d, s)| IrStatement::Load {
                         destination: d,
-                        address: IrExpr::AddrOf { base: s, displacement: 0 },
+                        address: IrExpr::AddrOf {
+                            base: s,
+                            displacement: 0,
+                        },
                     })
                 }
                 "psrldq" | "pslldq" => {
                     // Byte-wise 128-bit shift: dest = dest << / >> imm bytes.
-                    let op = if lower == "pslldq" { IrBinOp::Shl } else { IrBinOp::Shr };
+                    let op = if lower == "pslldq" {
+                        IrBinOp::Shl
+                    } else {
+                        IrBinOp::Shr
+                    };
                     let dest = instruction.operands.first().and_then(register_of);
                     let count = instruction.operands.get(1).and_then(|o| match o {
                         Operand::ImmediateUnsigned(v) => Some(*v),
@@ -911,7 +1095,11 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                 "psubb" | "psubw" | "psubd" | "psubq" | "paddb" | "paddw" | "paddd" | "paddq" => {
                     // Packed integer add/sub: element-wise, modeled as
                     // scalar add/sub on the vector register.
-                    let op = if lower.starts_with("padd") { IrBinOp::Add } else { IrBinOp::Sub };
+                    let op = if lower.starts_with("padd") {
+                        IrBinOp::Add
+                    } else {
+                        IrBinOp::Sub
+                    };
                     let dest = instruction.operands.first().and_then(register_of);
                     let src_reg = instruction.operands.get(1).and_then(register_of);
                     (dest.zip(src_reg)).map(|(d, sr)| IrStatement::Assign {
@@ -957,10 +1145,16 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                     } else if let Some(address) =
                         instruction.operands.first().and_then(memory_expr_from)
                     {
-                        let src = instruction.operands.get(1).and_then(register_of)
+                        let src = instruction
+                            .operands
+                            .get(1)
+                            .and_then(register_of)
                             .map(|r| IrExpr::Value(IrValue::Register(r)))
                             .unwrap_or(IrExpr::Value(IrValue::Const(0)));
-                        Some(IrStatement::Store { address, value: src })
+                        Some(IrStatement::Store {
+                            address,
+                            value: src,
+                        })
                     } else {
                         None
                     }
@@ -977,13 +1171,17 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
                         if let Some(address) =
                             instruction.operands.get(1).and_then(memory_expr_from)
                         {
-                            Some(IrStatement::Load { destination: d, address })
-                        } else if let Some(s) =
-                            instruction.operands.get(1).and_then(register_of)
-                        {
                             Some(IrStatement::Load {
                                 destination: d,
-                                address: IrExpr::AddrOf { base: s, displacement: 0 },
+                                address,
+                            })
+                        } else if let Some(s) = instruction.operands.get(1).and_then(register_of) {
+                            Some(IrStatement::Load {
+                                destination: d,
+                                address: IrExpr::AddrOf {
+                                    base: s,
+                                    displacement: 0,
+                                },
                             })
                         } else {
                             None
@@ -1040,7 +1238,10 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
             Some(statement) => current.statements.push(statement),
             None => {
                 unknown_count += 1;
-                current.statements.push(IrStatement::Unknown { mnemonic: lower, site });
+                current.statements.push(IrStatement::Unknown {
+                    mnemonic: lower,
+                    site,
+                });
             }
         }
     }
@@ -1058,7 +1259,13 @@ pub fn lift_x86_64(instructions: &[DecodedInstruction]) -> IrFunction {
 
 fn memory_expr_from(operand: &Operand) -> Option<IrExpr> {
     match operand {
-        Operand::Memory { base, index, index_modifier, displacement, .. } => {
+        Operand::Memory {
+            base,
+            index,
+            index_modifier,
+            displacement,
+            ..
+        } => {
             // Segment-prefixed memory (fs:/gs:) → SegmentAddr.
             if base == "fs" || base == "gs" {
                 return Some(IrExpr::SegmentAddr {

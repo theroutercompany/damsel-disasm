@@ -5,9 +5,51 @@
 mod support;
 
 use damsel_core::{DisassemblyLimit, DisassemblyOptions, DisassemblyRequestV2, DisassemblyTarget};
-use damsel_decomp::{
-    IrCallTarget, IrStatement, IrTerminator, lift_arm64,
-};
+use damsel_decomp::{IrCallTarget, IrStatement, IrTerminator, lift_arm64};
+use std::collections::BTreeMap;
+
+/// One-instruction windows mined from the swift-rich fixture, indexed by
+/// mnemonic — the Q2 lift floor set exercises exactly the instructions
+/// the fidelity scoreboard flagged.
+fn fixture_instructions(mnemonic: &str) -> Vec<damsel_core::DecodedInstruction> {
+    use std::cell::RefCell;
+    thread_local! {
+        static INDEX: RefCell<Option<BTreeMap<String, damsel_core::DecodedInstruction>>> =
+            RefCell::new(None);
+    }
+    INDEX.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if cache.is_none() {
+            let image =
+                damsel_macho::load(support::fixture("adversarial/swift-rich-arm64")).unwrap();
+            let request = DisassemblyRequestV2 {
+                target: DisassemblyTarget::Section("__text".to_string()),
+                range: None,
+                limit: DisassemblyLimit::Unlimited,
+                options: DisassemblyOptions {
+                    include_annotations: false,
+                    include_value_flow: false,
+                },
+            };
+            let mut map = BTreeMap::new();
+            for instruction in damsel_macho::disassemble_v2(&image, &request)
+                .unwrap()
+                .instructions
+            {
+                map.entry(instruction.mnemonic.to_ascii_lowercase())
+                    .or_insert_with(|| instruction.clone());
+            }
+            *cache = Some(map);
+        }
+        cache
+            .as_ref()
+            .unwrap()
+            .get(mnemonic)
+            .cloned()
+            .map(|instruction| vec![instruction])
+            .unwrap_or_else(|| panic!("fixture carries no {mnemonic} instruction"))
+    })
+}
 
 fn disassemble_main() -> Vec<damsel_core::DecodedInstruction> {
     let image = damsel_macho::load(support::fixture("arm64-symbolized")).unwrap();
@@ -20,7 +62,9 @@ fn disassemble_main() -> Vec<damsel_core::DecodedInstruction> {
             include_value_flow: false,
         },
     };
-    damsel_macho::disassemble_v2(&image, &request).unwrap().instructions
+    damsel_macho::disassemble_v2(&image, &request)
+        .unwrap()
+        .instructions
 }
 
 #[test]
@@ -32,10 +76,12 @@ fn lift_main_produces_blocks_call_and_return() {
     assert_eq!(function.entry_address, instructions[0].address);
     assert_eq!(function.instruction_count, instructions.len());
     // _main ends with a return-terminated block.
-    assert!(function
-        .blocks
-        .iter()
-        .any(|b| b.terminator == IrTerminator::Return));
+    assert!(
+        function
+            .blocks
+            .iter()
+            .any(|b| b.terminator == IrTerminator::Return)
+    );
 
     // The bl to _exported_sum lifts as a resolved Call statement
     // (target 0x100000460 per the fixture layout).
@@ -46,8 +92,13 @@ fn lift_main_produces_blocks_call_and_return() {
         .filter(|s| matches!(s, IrStatement::Call { .. }))
         .collect();
     assert!(
-        calls.iter().any(|s| matches!(s,
-            IrStatement::Call { target: IrCallTarget::Function(0x100000460), .. })),
+        calls.iter().any(|s| matches!(
+            s,
+            IrStatement::Call {
+                target: IrCallTarget::Function(0x100000460),
+                ..
+            }
+        )),
         "expected call to _exported_sum, got {calls:?}"
     );
 
@@ -77,7 +128,11 @@ fn subs_emits_flags_and_destination() {
     };
     let function = lift_arm64(&[instruction]);
     let statements = &function.blocks[0].statements;
-    assert_eq!(statements.len(), 2, "flags + destination, got {statements:?}");
+    assert_eq!(
+        statements.len(),
+        2,
+        "flags + destination, got {statements:?}"
+    );
     assert!(matches!(&statements[0],
         IrStatement::Assign { destination, .. } if destination == "flags"));
     assert!(matches!(&statements[1],
@@ -114,4 +169,72 @@ fn lift_empty_window_is_empty_not_panicking() {
     let function = lift_arm64(&[]);
     assert!(function.blocks.is_empty());
     assert_eq!(function.instruction_count, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Q2 lift floor set (plan feature 8, slice 2): csel-family Select, blr as
+// inline call, width/atomic memory ops, FP arithmetic, madd, movi.
+
+#[test]
+fn lifts_csel_family_as_select() {
+    let instructions = fixture_instructions("csel");
+    let function = damsel_decomp::lift_arm64(&instructions);
+    let pseudo = damsel_decomp::render_pseudocode(&function, None);
+    let text: Vec<&str> = pseudo.lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(
+        text.iter().any(|line| line.contains("(cond ?")),
+        "csel renders as a select: {text:?}"
+    );
+    assert_eq!(function.unknown_count, 0);
+}
+
+#[test]
+fn lifts_blr_as_inline_call_not_unknown() {
+    let instructions = fixture_instructions("blr");
+    let function = damsel_decomp::lift_arm64(&instructions);
+    let pseudo = damsel_decomp::render_pseudocode(&function, None);
+    let text: Vec<&str> = pseudo.lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(
+        text.iter().any(|line| line.contains("call_via_")),
+        "blr names its target register: {text:?}"
+    );
+    assert!(
+        !text.iter().any(|line| line.contains("/* unknown")),
+        "blr is not an unknown: {text:?}"
+    );
+}
+
+#[test]
+fn lifts_width_and_atomic_memory_ops() {
+    // stlr/ldar are absent from the fixture corpus — the width stores
+    // present there cover the shared arm.
+    for mnemonic in ["ldrb", "strb"] {
+        let instructions = fixture_instructions(mnemonic);
+        let function = damsel_decomp::lift_arm64(&instructions);
+        assert_eq!(
+            function.unknown_count, 0,
+            "{mnemonic} must lift without unknowns"
+        );
+    }
+}
+
+#[test]
+fn lifts_fp_arithmetic_and_accumulate() {
+    for mnemonic in ["fmul", "fmov", "madd", "asr"] {
+        let instructions = fixture_instructions(mnemonic);
+        let function = damsel_decomp::lift_arm64(&instructions);
+        assert_eq!(
+            function.unknown_count, 0,
+            "{mnemonic} must lift without unknowns"
+        );
+    }
+    let pseudo = damsel_decomp::render_pseudocode(
+        &damsel_decomp::lift_arm64(&fixture_instructions("madd")),
+        None,
+    );
+    let text: Vec<&str> = pseudo.lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(
+        text.iter().any(|line| line.contains("*")),
+        "madd shows the multiply-accumulate shape: {text:?}"
+    );
 }
