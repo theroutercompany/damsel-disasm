@@ -1483,3 +1483,36 @@ Foundation` 12.5s (reconstruct + compress + write); warm **1.09s**
 
 Proof: `projection_store_round_trip_and_staleness` (round trip, foreign
 digest refusal, env bypass) + workspace 58 suites green.
+
+## Kernelcache (plan feature 3, slice 1) — DONE
+
+### Unit K1 — MH_FILESET inventory + entry projection — DONE
+
+Scope delivered:
+
+- `damsel-macho::kernelcache`: parses MH_FILESET kernel collections —
+  the primary header plus `LC_FILESET_ENTRY` records (entry_id, vmaddr,
+  fileoff) — into an inventory, with shared-cache-style selector
+  ergonomics (exact id, unique substring, typed ambiguity/miss).
+  `project_entry` slices the embedded image (entry fileoff → next entry
+  or EOF, how filesets partition the file) and runs it through the full
+  standalone Mach-O pipeline: sections, symbols, imports, ObjC — the
+  foundation for KEXT typing (OSMetaClass, kalloc_type) later.
+- `damsel kernelcache <path>` lists entries; `--entry <id>` projects one
+  and reports counts. Text + JSON. Non-fileset binaries get a typed
+  refusal.
+- No MH_FILESET image is reachable on this host (boot KernelCollections
+  dir empty; the preboot restore kernelcache is an IM4P-compressed
+  payload), so evidence is a crafted fileset (real fixtures embedded at
+  16 KiB-aligned offsets, exactly Apple's shape) plus an env-gated
+  `DAMSEL_KERNELCACHE_PATH` hook for hosts with a real boot KC.
+
+Evidence: crafted 2-entry fileset → inventory (ids, vmaddrs, offsets),
+substring/ambiguity/miss selectors, `--entry driver.Foo` projecting the
+embedded objc-sample with its ObjC classes intact.
+
+Proof: `cargo test -p damsel-macho --test kernelcache` (synthetic
+fileset incl. projection + typed refusals; real-host env hook) and
+`cargo test -p damsel-cli --test cli_json kernelcache_list_and_entry_contract`
+(list + entry + ambiguous/miss error contracts); workspace 59 suites
+green.

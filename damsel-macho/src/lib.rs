@@ -3,6 +3,7 @@ mod cache_index;
 mod codesign;
 mod disasm;
 mod dyld;
+mod kernelcache;
 mod errors;
 mod loader;
 mod objc;
@@ -22,6 +23,10 @@ pub use cache_index::{
     write_projection,
 };
 pub use codesign::{CodesignInfo, Entitlement, read_codesign, read_codesign_path};
+pub use kernelcache::{
+    KernelcacheEntry, KernelcacheInventory, inspect_kernelcache, inspect_kernelcache_bytes,
+    is_kernelcache_bytes, project_entry, resolve_entry,
+};
 pub use damsel_core::{
     CacheImageId, CacheImageRecord, CacheLookupResult, SharedCache, SharedCacheHeader,
     SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,

@@ -460,6 +460,15 @@ enum Command {
         path: PathBuf,
     },
     #[command(
+        about = "Kernelcache (MH_FILESET) inventory and entry projection",
+        long_about = "Kernelcache (MH_FILESET) inventory and entry projection.\n\nLists the LC_FILESET_ENTRY images (kernel + KEXTs) of an Apple kernel collection, or with --entry projects one embedded image through the full analysis pipeline (sections, symbols, imports, ObjC). KEXT typing (OSMetaClass, kalloc_type) builds on this in later units."
+    )]
+    Kernelcache {
+        path: PathBuf,
+        #[arg(long, help = "Project one entry (exact id, or unique substring)")]
+        entry: Option<String>,
+    },
+    #[command(
         about = "Inspect the code signature: entitlements, TeamID, hardened runtime",
         long_about = "Inspect LC_CODE_SIGNATURE.\n\nReconstructs the signing summary codesign(1) gives: identifier, TeamID, entitlements (XML plist decoded), hardened-runtime and library-validation flags, adhoc detection, CMS presence. Read-only; flag decoding names only well-attested bits and always ships the raw word."
     )]
@@ -1210,6 +1219,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         Command::Slices { path } => {
             let image = load_image(path)?;
             output::print_slices(&image, &output_settings);
+        }
+        Command::Kernelcache { path, entry } => {
+            handle_kernelcache(path, entry.as_deref(), &output_settings)?;
         }
         Command::Codesign { path } => {
             handle_codesign(path, &output_settings)?;
@@ -3198,6 +3210,72 @@ fn handle_annotate(
                 object.as_str()
             );
         }
+    }
+    Ok(())
+}
+
+fn handle_kernelcache(
+    path: PathBuf,
+    entry: Option<&str>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    let inventory = damsel_macho::inspect_kernelcache(&path).map_err(map_cache_error)?;
+    if let Some(selector) = entry {
+        let image = damsel_macho::project_entry(&inventory, selector).map_err(map_cache_error)?;
+        let resolved =
+            damsel_macho::resolve_entry(&inventory, selector).map_err(map_cache_error)?;
+        if output_settings.format == output::OutputFormat::Json {
+            let value = serde_json::json!({
+                "command": "kernelcache",
+                "action": "entry",
+                "entry": {
+                    "id": resolved.entry_id,
+                    "vmaddr": format!("{:#x}", resolved.vmaddr),
+                    "fileoff": format!("{:#x}", resolved.fileoff),
+                },
+                "counts": {
+                    "sections": image.sections().len(),
+                    "symbols": image.symbols().len(),
+                    "imports": image.imports().len(),
+                    "objc_classes": image.objc().classes.len(),
+                },
+            });
+            println!("{}", project_json(value));
+            return Ok(());
+        }
+        println!("entry   : {}", resolved.entry_id);
+        println!("vmaddr  : {:#x}", resolved.vmaddr);
+        println!("fileoff : {:#x}", resolved.fileoff);
+        println!(
+            "image   : sections={} symbols={} imports={} objc_classes={}",
+            image.sections().len(),
+            image.symbols().len(),
+            image.imports().len(),
+            image.objc().classes.len()
+        );
+        return Ok(());
+    }
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "kernelcache",
+            "action": "list",
+            "count": inventory.entries.len(),
+            "entries": inventory.entries.iter().map(|entry| serde_json::json!({
+                "id": entry.entry_id,
+                "vmaddr": format!("{:#x}", entry.vmaddr),
+                "fileoff": format!("{:#x}", entry.fileoff),
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+    println!("kernelcache: {}", inventory.path.display());
+    println!("entries: {}", inventory.entries.len());
+    for entry in &inventory.entries {
+        println!(
+            "  {:#018x} {:#010x}  {}",
+            entry.vmaddr, entry.fileoff, entry.entry_id
+        );
     }
     Ok(())
 }
