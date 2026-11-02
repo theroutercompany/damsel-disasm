@@ -1972,3 +1972,27 @@ reachability incl. the no-edge and unmentioned-slot negatives) +
 `query_taint_reachability_with_precision` CLI test (summary facts,
 both kill cases, the positive chain with site) + workspace 60 suites,
 zero warnings.
+
+### Unit D3 — pseudocode diff: LCS line diff over matched pairs — DONE
+
+Feature 16, slice 2: `damsel diff --pseudocode` decompiles every
+matched function pair and LCS-diffs the rendered lines — "what changed
+inside this function between versions" reads like a source diff. Line
+*text* is the comparison key (addresses are provenance, not identity),
+so pure address moves don't pollute the diff. Text output prints
+per-pair summaries with +/- markers; JSON carries the full line lists.
+
+New fixture: `arm64-symbolized-v2` (hello.c one revision later:
+helper +5→+7, helper(1)→helper(2), compare 11→12) — the reproducible
+changed-version pair (build script updated).
+
+Evidence: v1↔v1 → every pair +0/−0; v1→v2 →
+`_helper: w0 = (w8 + 0x5)` → `w0 = (w8 + 0x7)` (+1/−1);
+`_exported_sum: w0 = 0x1` → `w0 = 0x2` (+1/−1);
+`_main: w0 - 0xb` → `w0 - 0xc` (+2/−2) — exactly the source-level
+change set.
+
+Proof: pseudodiff unit tests (identical clean, change = remove+add,
+pure insertion) + `diff_pseudocode_surfaces_real_changes` CLI test
+(self-diff clean, all three v2 deltas with exact line assertions) +
+workspace 60 suites, zero warnings.

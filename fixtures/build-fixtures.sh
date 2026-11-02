@@ -336,6 +336,15 @@ build_fixtures() {
     "$SRC/hello.c" \
     -o "$BIN/arm64-symbolized"
 
+  # v2: the same program one revision later (helper +7, helper(2),
+  # compares against 12) — the pseudocode-diff fixture pair.
+  "$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    "$SRC/hello-v2.c" \
+    -o "$BIN/arm64-symbolized-v2"
+
   cp "$BIN/arm64-symbolized" "$BIN/arm64-stripped"
   "$STRIP" -S -x "$BIN/arm64-stripped"
 

@@ -1620,3 +1620,72 @@ fn query_taint_reachability_with_precision() {
     assert_eq!(body["hops"][0]["to"], "_helper");
     assert_eq!(body["hops"][0]["site"], "0x100000488");
 }
+
+/// Pseudocode diff (plan feature 16, slice 2): matched pairs diff at
+/// the line level — identical versions are clean, the v2 fixture's
+/// real changes surface as remove/add pairs.
+#[test]
+fn diff_pseudocode_surfaces_real_changes() {
+    let dir = smoke_dir("pseudodiff");
+    let v1 = dir.join("v1");
+    let v2 = dir.join("v2");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &v1).unwrap();
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized-v2"), &v2).unwrap();
+    damsel().arg("analyze").arg(&v1).assert().success();
+    damsel().arg("analyze").arg(&v2).assert().success();
+
+    // Identical binaries: every pair clean.
+    let out = damsel()
+        .arg("diff")
+        .arg(&v1)
+        .arg(&v1)
+        .arg("--pseudocode")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("self diff json");
+    for diff in body["pseudocode_diffs"].as_array().unwrap() {
+        assert_eq!(diff["added"], 0, "{diff:#?}");
+        assert_eq!(diff["removed"], 0, "{diff:#?}");
+    }
+
+    // v1 -> v2: the three changed functions carry the real deltas.
+    let out = damsel()
+        .arg("diff")
+        .arg(&v1)
+        .arg(&v2)
+        .arg("--pseudocode")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("v2 diff json");
+    let diffs = body["pseudocode_diffs"].as_array().unwrap();
+    let by_name = |name: &str| {
+        diffs
+            .iter()
+            .find(|d| d["function"] == name)
+            .unwrap_or_else(|| panic!("missing {name}: {diffs:#?}"))
+    };
+    // helper: +5 became +7.
+    let helper = by_name("_helper");
+    assert_eq!(helper["added"], 1);
+    assert_eq!(helper["removed"], 1);
+    let texts: Vec<&str> = helper["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["text"].as_str().unwrap())
+        .collect();
+    assert!(texts.iter().any(|t| t.contains("w8 + 0x5")), "{texts:#?}");
+    assert!(texts.iter().any(|t| t.contains("w8 + 0x7")), "{texts:#?}");
+    // exported_sum: helper(1) became helper(2).
+    let sum = by_name("_exported_sum");
+    assert_eq!(sum["added"], 1);
+    assert_eq!(sum["removed"], 1);
+    // main: the 11-compare became 12.
+    let main = by_name("_main");
+    assert_eq!(main["added"], 2);
+    assert_eq!(main["removed"], 2);
+}
