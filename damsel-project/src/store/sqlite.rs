@@ -84,9 +84,15 @@ pub fn open(
 impl SqliteStore {
     /// WAL mode + foreign keys + schema version assertions (test surface).
     pub fn pragmas(&self) -> Result<(String, bool, i32), StoreError> {
-        let mode: String = self.conn.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
-        let fk: bool = self.conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
-        let version: i32 = self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        let mode: String = self
+            .conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
+        let fk: bool = self
+            .conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
+        let version: i32 = self
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))?;
         Ok((mode, fk, version))
     }
 
@@ -289,11 +295,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    fn intern_object(
-        &mut self,
-        source_id: i64,
-        object_id: &ObjectId,
-    ) -> Result<i64, StoreError> {
+    fn intern_object(&mut self, source_id: i64, object_id: &ObjectId) -> Result<i64, StoreError> {
         let existing: Option<i64> = self
             .conn
             .query_row(
@@ -363,8 +365,8 @@ impl ProjectStore for SqliteStore {
             .collect::<Result<Vec<_>, _>>()?;
         let mut out = Vec::new();
         for (id, kind, label, hash, parent) in rows {
-            let kind = crate::AnalysisSourceKind::from_str(&kind)
-                .ok_or(StoreError::SourceNotFound(id))?;
+            let kind =
+                crate::AnalysisSourceKind::from_str(&kind).ok_or(StoreError::SourceNotFound(id))?;
             let mut spaces_stmt = self.conn.prepare(
                 "SELECT space_name FROM source_address_spaces
                  WHERE source_id = ?1 ORDER BY ordinal",
@@ -378,10 +380,7 @@ impl ProjectStore for SqliteStore {
                 label,
                 content_hash: hash,
                 parent_source_id: parent,
-                address_spaces: spaces
-                    .into_iter()
-                    .map(crate::AddressSpaceId::new)
-                    .collect(),
+                address_spaces: spaces.into_iter().map(crate::AddressSpaceId::new).collect(),
             });
         }
         Ok(out)
@@ -411,8 +410,9 @@ impl ProjectStore for SqliteStore {
         let mut out = Vec::new();
         for (source, okind, okey, kind, payload, confidence, pass, version) in rows {
             let object_id = match (okind, okey) {
-                (Some(k), Some(key)) => Some(ObjectId::parse(&format!("{k}:{key}"))
-                    .unwrap_or_else(|| ObjectId::new(k, key))),
+                (Some(k), Some(key)) => Some(
+                    ObjectId::parse(&format!("{k}:{key}")).unwrap_or_else(|| ObjectId::new(k, key)),
+                ),
                 _ => None,
             };
             out.push(AnalysisFact {
@@ -463,10 +463,14 @@ impl TypedStore for SqliteStore {
 
     fn put_fact(&mut self, fact: AnalysisFact) -> Result<(), StoreError> {
         // Source must exist (FK enforced, but fail with our typed error).
-        let exists: bool = self.conn.query_row(
-            "SELECT COUNT(1) FROM sources WHERE source_id = ?1",
-            rusqlite::params![fact.source_id],
-            |r| r.get::<_, i64>(0)).map(|n| n > 0)?;
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(1) FROM sources WHERE source_id = ?1",
+                rusqlite::params![fact.source_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)?;
         if !exists {
             return Err(StoreError::SourceNotFound(fact.source_id));
         }
@@ -493,6 +497,10 @@ impl TypedStore for SqliteStore {
     }
 
     fn facts_for_source(&self, source_id: i64) -> Result<Vec<AnalysisFact>, StoreError> {
-        Ok(self.facts()?.into_iter().filter(|f| f.source_id == source_id).collect())
+        Ok(self
+            .facts()?
+            .into_iter()
+            .filter(|f| f.source_id == source_id)
+            .collect())
     }
 }

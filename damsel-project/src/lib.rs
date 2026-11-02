@@ -15,6 +15,7 @@
 
 mod address;
 mod annotations;
+mod callgraph;
 mod facts;
 mod functions;
 mod object;
@@ -24,12 +25,13 @@ mod source;
 mod store;
 mod target;
 
-pub use annotations::{
-    AnnotationKind, AnnotationRecord, StoredAnnotation, ANNOTATION_FACT_KIND, ANNOTATION_PASS,
-    list_annotations, put_annotation, undo_last_annotation,
-};
 pub use address::AddressSpaceId;
 pub use address::names;
+pub use annotations::{
+    ANNOTATION_FACT_KIND, ANNOTATION_PASS, AnnotationKind, AnnotationRecord, StoredAnnotation,
+    list_annotations, put_annotation, undo_last_annotation,
+};
+pub use callgraph::CallGraph;
 pub use facts::{AnalysisFact, Confidence, FactKind, FactProvenance};
 pub use functions::{FunctionSummary, function_summaries};
 pub use object::ObjectId;

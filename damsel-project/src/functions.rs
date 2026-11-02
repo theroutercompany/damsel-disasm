@@ -66,18 +66,22 @@ pub fn function_summaries(store: &impl ProjectStore) -> Result<Vec<FunctionSumma
         if fact.kind.as_str() != "seed" {
             continue;
         }
-        let Some(object) = &fact.object_id else { continue };
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
         if object.kind() != "function" {
             continue;
         }
         let Some(address) = parse_function_address(object.key()) else {
             continue;
         };
-        let entry = by_address.entry(address).or_insert_with(|| FunctionSummary {
-            address,
-            name: None,
-            seeds: Vec::new(),
-        });
+        let entry = by_address
+            .entry(address)
+            .or_insert_with(|| FunctionSummary {
+                address,
+                name: None,
+                seeds: Vec::new(),
+            });
         let tag = seed_tag(&fact.payload);
         if !entry.seeds.iter().any(|s| s == tag) {
             entry.seeds.push(tag.to_string());
@@ -108,7 +112,9 @@ pub fn function_summaries(store: &impl ProjectStore) -> Result<Vec<FunctionSumma
         if !crate::annotations::is_user_annotation(&fact) {
             continue;
         }
-        let Some(object) = &fact.object_id else { continue };
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
         if object.kind() != "function" {
             continue;
         }
@@ -131,8 +137,5 @@ pub fn function_summaries(store: &impl ProjectStore) -> Result<Vec<FunctionSumma
 /// upcoming recovery worker).
 #[allow(dead_code)]
 pub fn seed_facts(facts: &[AnalysisFact]) -> Vec<&AnalysisFact> {
-    facts
-        .iter()
-        .filter(|f| f.kind.as_str() == "seed")
-        .collect()
+    facts.iter().filter(|f| f.kind.as_str() == "seed").collect()
 }

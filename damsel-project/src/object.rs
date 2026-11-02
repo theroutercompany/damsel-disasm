@@ -24,7 +24,10 @@ impl ObjectId {
     pub fn new(kind: impl Into<String>, key: impl Into<String>) -> Self {
         let kind = kind.into();
         let key = key.into();
-        debug_assert!(!kind.is_empty() && !key.is_empty(), "object id parts must be non-empty");
+        debug_assert!(
+            !kind.is_empty() && !key.is_empty(),
+            "object id parts must be non-empty"
+        );
         debug_assert!(!kind.contains(':'), "object id kind must not contain ':'");
         let value = format!("{kind}:{key}");
         Self { kind, key, value }
