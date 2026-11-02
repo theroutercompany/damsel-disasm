@@ -432,3 +432,181 @@ fn ui_shell_smoke_test_serves_html_assets_and_api() {
             .is_some()
     );
 }
+
+/// Run `damsel analyze` on a copy of a fixture into `dir`, returning the
+/// project directory path (`.damsel`).
+fn analyze_fixture(dir: &Path, name: &str) -> PathBuf {
+    let target = dir.join(name);
+    std::fs::copy(fixture(name), &target).expect("copy fixture");
+    let status = Command::new(env!("CARGO_BIN_EXE_damsel-cli"))
+        .arg("analyze")
+        .arg(&target)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("run analyze");
+    assert!(status.success(), "analyze failed for {name}");
+    PathBuf::from(format!("{}.damsel", target.display()))
+}
+
+/// Percent-encode a path for use as a single URL segment (project ids
+/// are filesystem paths and contain `/`).
+fn encode_segment(raw: &str) -> String {
+    let mut out = String::new();
+    for byte in raw.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Workbench completion (plan feature 20b/c): the pseudocode route
+/// returns decompiled lines with source addresses.
+#[test]
+fn ui_pseudocode_route_returns_lines() {
+    let client = http_client();
+    let server = UiServer::spawn();
+    let dir = std::env::temp_dir().join(format!("damsel-ui-pseudo-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let project = analyze_fixture(&dir, "arm64-symbolized");
+
+    let project_id = encode_segment(&project.display().to_string());
+    let response = client
+        .get(format!(
+            "{}/api/projects/{}/pseudocode/_main",
+            server.base_url, project_id
+        ))
+        .send()
+        .expect("pseudocode request");
+    assert!(response.status().is_success(), "{response:?}");
+    let payload = parse_json(response);
+    assert_eq!(payload["function"], "_main");
+    assert!(payload["lines"].as_array().unwrap().len() >= 10);
+    assert_eq!(payload["lines"][0]["text"], "fn _main() {");
+    assert!(
+        payload["lines"][0]["addresses"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("0x")
+    );
+
+    // Unknown functions are typed 404s.
+    let missing = client
+        .get(format!(
+            "{}/api/projects/{}/pseudocode/_nope",
+            server.base_url, project_id
+        ))
+        .send()
+        .expect("missing request");
+    assert_eq!(missing.status().as_u16(), 404);
+}
+
+/// Workbench completion (plan feature 20c): the CFG route returns
+/// blocks with terminators and taken/fallthrough edges — verified on a
+/// function with real branching.
+#[test]
+fn ui_cfg_route_returns_blocks_and_edges() {
+    let client = http_client();
+    let server = UiServer::spawn();
+    let dir = std::env::temp_dir().join(format!("damsel-ui-cfg-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let project = analyze_fixture(&dir, "swift-sample");
+
+    // Find a branching function: chooseValue has cond branches.
+    let function = "_$s17DamselSwiftSample11chooseValueyS2iF";
+    let project_id = encode_segment(&project.display().to_string());
+    let function_id = encode_segment(function);
+    let response = client
+        .get(format!(
+            "{}/api/projects/{}/cfg/{}",
+            server.base_url, project_id, function_id
+        ))
+        .send()
+        .expect("cfg request");
+    assert!(response.status().is_success(), "{response:?}");
+    let payload = parse_json(response);
+    let blocks = payload["blocks"].as_array().unwrap();
+    let edges = payload["edges"].as_array().unwrap();
+    assert!(
+        blocks.len() >= 5,
+        "branching function has {}/blocks",
+        blocks.len()
+    );
+    assert!(edges.len() >= 5);
+    // At least one cond_branch with taken+fallthrough targets.
+    assert!(
+        blocks.iter().any(
+            |b| b["terminator"] == "cond_branch" && b["targets"].as_array().unwrap().len() == 2
+        ),
+        "cond branch with two targets: {blocks:#?}"
+    );
+    // Edge kinds cover taken and fallthrough.
+    assert!(edges.iter().any(|e| e["kind"] == "taken"));
+    assert!(edges.iter().any(|e| e["kind"] == "fallthrough"));
+    // Every edge endpoint is a real block address.
+    let addresses: Vec<&str> = blocks
+        .iter()
+        .map(|b| b["address"].as_str().unwrap())
+        .collect();
+    for edge in edges {
+        assert!(
+            addresses.contains(&edge["from"].as_str().unwrap()),
+            "edge source is a block"
+        );
+    }
+}
+
+/// Workbench completion (plan feature 20b): the hex route returns
+/// section-resolved rows with hex + ascii, and typed errors off-map.
+#[test]
+fn ui_hex_route_returns_rows() {
+    let client = http_client();
+    let server = UiServer::spawn();
+    let payload = upload_fixture(&client, &server, "arm64-symbolized");
+    let image_id = payload["imageId"].as_str().unwrap();
+
+    // Default address (text section start).
+    let response = client
+        .get(format!(
+            "{}/api/images/{}/hex?length=32",
+            server.base_url, image_id
+        ))
+        .send()
+        .expect("hex request");
+    assert!(response.status().is_success(), "{response:?}");
+    let hex = parse_json(response);
+    assert_eq!(hex["section"], "__TEXT:__text");
+    let rows = hex["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "32 bytes = 2 rows of 16");
+    assert_eq!(rows[0]["hex"].as_array().unwrap().len(), 16);
+    assert!(rows[0]["address"].as_str().unwrap().starts_with("0x"));
+
+    // Explicit address inside the section.
+    let at = rows[1]["address"].as_str().unwrap();
+    let response = client
+        .get(format!(
+            "{}/api/images/{}/hex?address={}&length=16",
+            server.base_url, image_id, at
+        ))
+        .send()
+        .expect("hex at address");
+    assert!(response.status().is_success());
+    let hex = parse_json(response);
+    assert_eq!(hex["address"], *at);
+
+    // Off-map addresses are typed 404s.
+    let unmapped = client
+        .get(format!(
+            "{}/api/images/{}/hex?address=0xdeadbeef",
+            server.base_url, image_id
+        ))
+        .send()
+        .expect("unmapped request");
+    assert_eq!(unmapped.status().as_u16(), 404);
+    let body: Value = unmapped.json().expect("error json");
+    assert_eq!(body["code"], "address_unmapped");
+}
