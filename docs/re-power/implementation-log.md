@@ -1784,3 +1784,26 @@ backtrace frame; `--persist` wrote 7 `runtime_register` facts with
 
 Proof: debug::tests (register line parsing, full transcript parsing
 with function/pc/stop-reason/backtrace) + workspace 60 suites green.
+
+## Frida Bridge (plan feature 12, slice 1) — DONE
+
+### Unit F1 — agent script generation + spawn bridge + event parsing — DONE
+
+`damsel-cli::frida_bridge`: generates a Frida agent script (ObjC method
+tracing with class filters, call budgets, structured event output:
+`DAMSEL_FRIDA_CALL class method +/- args…`), drives `frida` CLI
+spawn, and parses the transcript into `MethodCall` records plus module
+inventories. `damsel frida <project> --class C [--duration N]
+[--max-calls N]` reports captured calls; typed `frida_error` when
+frida is absent (this host), `frida_unsupported` for cache-image
+targets.
+
+Evidence: script generation with class filters verified; event-line and
+transcript parsing unit-tested (class/method/kind/args extraction,
+module list from `objc_available` events, noise rejection); typed
+absence error confirmed live (`frida not found on PATH; install with
+pip install frida-tools`).
+
+Proof: frida_bridge::tests (script shape, event parsing, transcript
+parsing) + workspace 60 suites green. Live attach requires frida
+installation (user decision).
