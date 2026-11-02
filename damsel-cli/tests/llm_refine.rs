@@ -172,3 +172,63 @@ fn llm_refine_without_key_is_a_typed_error() {
     assert!(stderr.contains("refine_unconfigured"), "{stderr}");
     assert!(stderr.contains("DAMSEL_LLM_API_KEY"), "{stderr}");
 }
+
+/// Frida live attach (plan feature 12, verification): with frida on
+/// PATH (env-gated), the bridge captures the objc-sample's real main
+/// call sequence — Greeter init/greeting.
+#[test]
+fn frida_live_attach_captures_objc_calls() {
+    let frida = std::process::Command::new("which")
+        .arg("frida")
+        .output()
+        .expect("which");
+    if !frida.status.success() {
+        eprintln!("skipping: frida not on PATH");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("damsel-frida-live-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("objc-sample");
+    std::fs::copy(repo_root().join("fixtures/bin/objc-sample"), &target).unwrap();
+    let status = std::process::Command::new(cargo_bin!("damsel-cli"))
+        .arg("analyze")
+        .arg(&target)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("analyze");
+    assert!(status.success());
+
+    let output = std::process::Command::new(cargo_bin!("damsel-cli"))
+        .arg("frida")
+        .arg(&target)
+        .arg("--class")
+        .arg("Greeter")
+        .arg("--duration")
+        .arg("5")
+        .arg("--max-calls")
+        .arg("10")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .expect("frida run");
+    assert!(
+        output.status.success(),
+        "frida failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let body: Value = serde_json::from_slice(&output.stdout).expect("frida json");
+    let calls = body["calls"].as_array().expect("calls");
+    assert!(
+        calls
+            .iter()
+            .any(|c| c["method_name"] == "init" && c["class_name"] == "Greeter"),
+        "init captured: {calls:#?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|c| c["method_name"] == "greeting" && c["class_name"] == "Greeter"),
+        "greeting captured: {calls:#?}"
+    );
+}
