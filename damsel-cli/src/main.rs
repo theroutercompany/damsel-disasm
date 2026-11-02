@@ -599,6 +599,19 @@ enum Command {
         library: String,
     },
     #[command(
+        about = "Declare and list user struct types (applied in pseudocode)",
+        long_about = "User type declarations (plan feature 7).\n\n`--struct NAME --field 0x10:char*:name ...` declares a struct (repeatable --field); persisted through the annotation layer (provenance, undoable); `--list` shows declared types. Decompile applies declared offsets: `&x1[0x10]` under a typed pointer renders the field name."
+    )]
+    Type {
+        project: PathBuf,
+        #[arg(long, help = "Declare a struct with this name (requires --field)")]
+        r#struct: Option<String>,
+        #[arg(long = "field", help = "Field: 0xOFFSET:TYPE:NAME (repeatable)")]
+        fields: Vec<String>,
+        #[arg(long, help = "List declared types")]
+        list: bool,
+    },
+    #[command(
         about = "Model-refine function names from context (provenance-tagged, undoable)",
         long_about = "Model refinement pass (plan feature 17).\n\nProposes renames for stripped functions from decompiler context (imports called, string references). Dry-run by default; --apply writes through the annotation layer with actor `model:heuristic-v1` — provenance-tagged, reviewable via `annotate --list`, undoable via `annotate --undo`."
     )]
@@ -1475,6 +1488,14 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
+        Command::Type {
+            project,
+            r#struct,
+            fields,
+            list,
+        } => {
+            handle_type(project, r#struct, &fields, list, &output_settings)?;
+        }
         Command::Refine { project, apply } => {
             handle_refine(project, apply, &output_settings)?;
         }
@@ -2192,6 +2213,112 @@ fn resolve_query_target(
             format!("`{target}` matches {} functions; pass 0xADDR", many.len()),
         )),
     }
+}
+
+fn handle_type(
+    project: PathBuf,
+    struct_name: Option<String>,
+    fields: &[String],
+    list: bool,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, open_store};
+    use damsel_recon_catalog::types::{StructDecl, StructField, TypeTable};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let mut store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
+
+    if list {
+        let table =
+            TypeTable::from_store(&store).map_err(|e| CliRunError::command("type_error", e))?;
+        if output_settings.format == output::OutputFormat::Json {
+            let value = serde_json::json!({
+                "command": "type",
+                "action": "list",
+                "count": table.structs.len(),
+                "structs": table.structs.values().collect::<Vec<_>>(),
+            });
+            println!("{}", project_json(value));
+        } else {
+            println!("types: {}", table.structs.len());
+            for decl in table.structs.values() {
+                println!("struct {} {{", decl.name);
+                for field in &decl.fields {
+                    println!(
+                        "    +{:#06x} {} {};",
+                        field.offset, field.type_name, field.field_name
+                    );
+                }
+                println!("}}");
+            }
+        }
+        return Ok(());
+    }
+
+    let Some(name) = struct_name else {
+        return Err(CliRunError::invalid_args(
+            "pass --struct NAME --field 0xOFF:TYPE:NAME (repeatable), or --list",
+        ));
+    };
+    if fields.is_empty() {
+        return Err(CliRunError::invalid_args(
+            "--struct requires at least one --field",
+        ));
+    }
+    let mut parsed = Vec::new();
+    for field in fields {
+        let mut segments = field.splitn(3, ':');
+        let offset = segments
+            .next()
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+            .ok_or_else(|| {
+                CliRunError::invalid_args(format!("bad --field (want 0xOFF:TYPE:NAME): {field}"))
+            })?;
+        let type_name = segments
+            .next()
+            .ok_or_else(|| CliRunError::invalid_args(format!("bad --field type: {field}")))?
+            .to_string();
+        let field_name = segments
+            .next()
+            .ok_or_else(|| CliRunError::invalid_args(format!("bad --field name: {field}")))?
+            .to_string();
+        parsed.push(StructField {
+            offset,
+            type_name,
+            field_name,
+        });
+    }
+    let decl = StructDecl {
+        name: name.clone(),
+        fields: parsed,
+    };
+    let actor = annotation_actor();
+    TypeTable::declare(&mut store, &decl, &actor)
+        .map_err(|e| CliRunError::command("type_error", e))?;
+    if output_settings.format == output::OutputFormat::Json {
+        println!(
+            "{}",
+            project_json(serde_json::json!({
+                "command": "type",
+                "action": "declare",
+                "struct": decl,
+                "actor": actor,
+            }))
+        );
+    } else {
+        println!(
+            "declared struct {} ({} fields, actor {actor})",
+            decl.name,
+            decl.fields.len()
+        );
+    }
+    Ok(())
 }
 
 fn handle_refine(

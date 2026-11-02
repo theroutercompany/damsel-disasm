@@ -1690,3 +1690,22 @@ via `functions --name`, and undone actor-scoped.
 Proof: `refine_applies_model_annotations_with_provenance` CLI test
 (dry-run writes nothing; apply attributes to `model:*` with evidence) +
 MCP inventory test (15 tools); workspace 60 suites green.
+
+## Type System (plan feature 7, slice 1) — DONE
+
+### Unit T1 — user struct declarations — DONE
+
+The type system's persistence contract: `damsel type <project> --struct
+NAME --field 0xOFF:TYPE:NAME …` declares structs, stored through the
+annotation layer (`type:struct:NAME` objects, structured payloads,
+actor-scoped, re-declare = replace, undoable) and listed back
+(`--list`, text renders C-style blocks). `TypeTable::from_store` loads
+the declared environment with `render_field_access` offset resolution —
+the substrate the decompiler renderer and DWARF import build on.
+
+Evidence: declare `Frame {+0x0 u64 count, +0x10 char* name}` → listed
+back field-exact; visible as an annotation (`type:struct:Frame [cli]`);
+re-declare replaces (no duplicates); malformed fields are typed errors.
+
+Proof: `type_declares_and_lists_structs` CLI test + payload round-trip
+and offset-lookup unit tests in `types.rs`; workspace 60 suites.

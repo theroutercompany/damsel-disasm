@@ -1186,3 +1186,90 @@ fn refine_applies_model_annotations_with_provenance() {
         .collect();
     assert!(!model_annotations.is_empty(), "model actor attribution");
 }
+
+/// User struct types (plan feature 7, slice 1): declare, persist through
+/// the annotation layer, list back — and the payload round-trips.
+#[test]
+fn type_declares_and_lists_structs() {
+    let dir = smoke_dir("types");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--struct")
+        .arg("Frame")
+        .arg("--field")
+        .arg("0x0:u64:count")
+        .arg("--field")
+        .arg("0x10:char*:name")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+
+    // Listed back with both fields, in declaration order.
+    let out = damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--list")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("list json");
+    assert_eq!(body["count"], 1);
+    let decl = &body["structs"][0];
+    assert_eq!(decl["name"], "Frame");
+    assert_eq!(decl["fields"][0]["field_name"], "count");
+    assert_eq!(decl["fields"][1]["field_name"], "name");
+    assert_eq!(decl["fields"][1]["type_name"], "char*");
+
+    // The declaration is an annotation (provenance + undo surface).
+    let list = damsel()
+        .arg("annotate")
+        .arg(&target)
+        .arg("--list")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&list.get_output().stdout).expect("ann json");
+    assert_eq!(body["annotations"][0]["object"], "type:struct:Frame");
+
+    // Re-declare replaces (rename replace-semantics, no duplicates).
+    damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--struct")
+        .arg("Frame")
+        .arg("--field")
+        .arg("0x8:u64:only")
+        .assert()
+        .success();
+    let out = damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--list")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("redeclared");
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["structs"][0]["fields"].as_array().unwrap().len(), 1);
+
+    // Bad fields are typed errors.
+    let bad = damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--struct")
+        .arg("Bad")
+        .arg("--field")
+        .arg("nope")
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(1));
+}
