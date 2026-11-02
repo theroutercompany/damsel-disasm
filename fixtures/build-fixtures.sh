@@ -345,6 +345,15 @@ build_fixtures() {
     "$SRC/hello-v2.c" \
     -o "$BIN/arm64-symbolized-v2"
 
+  # v3: helper restructured (multiply added) — the fuzzy-matching
+  # fixture pair (shape-exact fails, n-gram similarity holds).
+  "$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    "$SRC/hello-v3.c" \
+    -o "$BIN/arm64-symbolized-v3"
+
   cp "$BIN/arm64-symbolized" "$BIN/arm64-stripped"
   "$STRIP" -S -x "$BIN/arm64-stripped"
 

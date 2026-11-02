@@ -1689,3 +1689,69 @@ fn diff_pseudocode_surfaces_real_changes() {
     assert_eq!(main["added"], 2);
     assert_eq!(main["removed"], 2);
 }
+
+/// Fuzzy matching tier (plan feature 15, tier 2): a restructured
+/// function (shape-exact fails) is found by Dice token-similarity;
+/// unrelated programs stay below the threshold.
+#[test]
+fn match_fuzzy_finds_restructured_function() {
+    let dir = smoke_dir("fuzzy");
+    let v1 = dir.join("v1");
+    let v3 = dir.join("v3");
+    let other = dir.join("other");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &v1).unwrap();
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized-v3"), &v3).unwrap();
+    std::fs::copy(repo_root().join("fixtures/bin/import-rich"), &other).unwrap();
+    for target in [&v1, &v3, &other] {
+        damsel().arg("analyze").arg(target).assert().success();
+    }
+
+    // v1 vs v3: _exported_sum and _main match shape-exact; _helper
+    // (restructured: multiply added) is found only by the fuzzy tier.
+    let out = damsel()
+        .arg("match")
+        .arg(&v1)
+        .arg(&v3)
+        .arg("--fuzzy")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("match json");
+    assert_eq!(body["matches"], 2, "shape-exact pair count: {body:#?}");
+    let fuzzy = body["fuzzy_matches"].as_array().unwrap();
+    assert_eq!(fuzzy.len(), 1, "the restructured helper: {fuzzy:#?}");
+    assert_eq!(fuzzy[0]["right_name"], "_helper");
+    assert_eq!(fuzzy[0]["left"], "0x1000004a0");
+    assert!(
+        fuzzy[0]["score"].as_f64().unwrap() >= 0.7,
+        "score {}: {fuzzy:#?}",
+        fuzzy[0]["score"]
+    );
+
+    // Without --fuzzy the tier is off.
+    let out = damsel()
+        .arg("match")
+        .arg(&v1)
+        .arg(&v3)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("plain json");
+    assert_eq!(body["fuzzy_matches"].as_array().unwrap().len(), 0);
+
+    // Cross-program: nothing fuzzy-matches above the threshold.
+    let out = damsel()
+        .arg("match")
+        .arg(&v1)
+        .arg(&other)
+        .arg("--fuzzy")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("cross json");
+    assert_eq!(body["fuzzy_matches"].as_array().unwrap().len(), 0);
+    assert_eq!(body["matches"], 0);
+}

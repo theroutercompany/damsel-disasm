@@ -2032,3 +2032,36 @@ Proof: llm_refiner unit tests (prompt shape, per-provider request
 bodies, text extraction, invented-function dropping, provider
 parsing) + 2 e2e tests (mock round trip, typed key error) +
 workspace 61 suites, zero warnings.
+
+### Unit M4 — fuzzy matching tier: Dice token-similarity — DONE
+
+Feature 15, tier 2: `damsel match --fuzzy [--threshold 0.7]` adds a
+second tier over shape-exact leftovers. Each function's masked
+instruction stream (mnemonic + operand kinds; immediates and addresses
+never enter) becomes a token sequence; similarity is the Dice
+coefficient 2·LCS/(len_a+len_b) — position-aware, so a function whose
+every instruction survived a restructure (plus inserts) scores high
+while a small function merely contained in a large one does not.
+Pairs accept greedily by descending score (mutual best, each function
+used once); below-threshold pairs are never guessed.
+
+Metric calibration mattered (documented honestly): a bag-of-bigrams
+cosine was prototyped first and *inverted* on the fixture corpus
+(unrelated same-program pairs scored 0.84 above the 0.76 restructured
+twin — arm64 scaffolding dominates bags); LCS/max undershot the true
+twin (6→10 instructions = 0.6, below any usable threshold). Dice
+separates all three cases: restructured twin **0.75**, same-program
+unrelated 0.46, cross-program 0.375.
+
+New fixture: `arm64-symbolized-v3` (hello.c with helper restructured —
+multiply added), the reproducible fuzzy pair.
+
+Evidence: v1 vs v3 → 2 shape-exact (`_exported_sum`, `_main`) +
+**fuzzy: `_helper` 0.1000004a0 ~ 0.1000004a0 (score 0.75)** — exactly
+the Dice prediction 2·6/16; cross-program (import-rich) → 0 fuzzy at
+the same threshold.
+
+Proof: fuzzy unit tests (identity, restructured-high/not-exact,
+related/cross-program separation, mutual-best + threshold behavior) +
+`match_fuzzy_finds_restructured_function` CLI test (tier on/off,
+score bound, cross-program zero) + workspace 61 suites, zero warnings.

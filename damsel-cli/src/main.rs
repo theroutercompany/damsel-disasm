@@ -735,6 +735,13 @@ enum Command {
             help = "Transfer user renames from left onto matched functions in right"
         )]
         transfer: bool,
+        #[arg(
+            long,
+            help = "Add the fuzzy tier (LCS token-similarity) over shape-exact leftovers"
+        )]
+        fuzzy: bool,
+        #[arg(long, default_value_t = 0.7, help = "Fuzzy threshold (0.0-1.0)")]
+        threshold: f64,
         #[arg(long, help = "Actor for transferred annotations (default: match)")]
         actor: Option<String>,
     },
@@ -1666,9 +1673,19 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             left,
             right,
             transfer,
+            fuzzy,
+            threshold,
             actor,
         } => {
-            handle_match(left, right, transfer, actor.as_deref(), &output_settings)?;
+            handle_match(
+                left,
+                right,
+                transfer,
+                fuzzy,
+                threshold,
+                actor.as_deref(),
+                &output_settings,
+            )?;
         }
         Command::Diff {
             left,
@@ -3373,6 +3390,8 @@ fn handle_match(
     left: PathBuf,
     right: PathBuf,
     transfer: bool,
+    fuzzy: bool,
+    threshold: f64,
     actor: Option<&str>,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
@@ -3385,11 +3404,12 @@ fn handle_match(
     let left_image = load_project_image(&left_dir)?;
     let right_image = load_project_image(&right_dir)?;
 
-    let matches = damsel_recon_catalog::matching::match_projects(
+    let (matches, fuzzy_matches) = damsel_recon_catalog::matching::match_projects_tiered(
         &left_store,
         &right_store,
         &left_image,
         &right_image,
+        if fuzzy { threshold } else { 1.1 }, // disabled without --fuzzy
     )
     .map_err(|e| CliRunError::command("match_error", e))?;
 
@@ -3409,6 +3429,13 @@ fn handle_match(
         let value = serde_json::json!({
             "command": "match",
             "matches": matches.len(),
+            "fuzzy_matches": fuzzy_matches.iter().map(|m| serde_json::json!({
+                "left": format!("{:#x}", m.left_address),
+                "right": format!("{:#x}", m.right_address),
+                "right_name": m.right_name,
+                "score": m.score,
+                "instructions": m.instruction_count,
+            })).collect::<Vec<_>>(),
             "pairs": matches.iter().map(|m| serde_json::json!({
                 "left": format!("{:#x}", m.left_address),
                 "right": format!("{:#x}", m.right_address),
@@ -3422,6 +3449,21 @@ fn handle_match(
         return Ok(());
     }
     println!("matches: {} (tier: shape-exact)", matches.len());
+    if fuzzy {
+        println!(
+            "fuzzy matches: {} (threshold {threshold})",
+            fuzzy_matches.len()
+        );
+        for m in fuzzy_matches.iter().take(20) {
+            println!(
+                "  {:#010x} ~ {:#010x}  {}  (score {:.2})",
+                m.left_address,
+                m.right_address,
+                m.right_name.as_deref().unwrap_or("(stripped)"),
+                m.score
+            );
+        }
+    }
     for m in matches.iter().take(20) {
         println!(
             "  {:#010x} -> {:#010x}  {}",
