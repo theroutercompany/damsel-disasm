@@ -1872,3 +1872,34 @@ Proof: 3 new ui_api tests (pseudocode lines + typed 404, CFG blocks/
 edges/kinds/endpoint-consistency on swift-sample, hex rows + explicit
 address + unmapped 404) — ui_api suite 7/7; workspace 60 suites,
 zero warnings; damsel-app 76/76.
+
+### Unit W2 — native app surfaces: pseudocode pane, CFG canvas, hex view — DONE
+
+The workbench native app grows from one surface (disassembly) to four:
+a segmented picker (Disassembly | Pseudocode | Graph | Hex) switches
+the main area.
+
+- **PseudocodePane**: decompiled lines with a source-address gutter,
+  a line count, and an unknown-count badge (clean/orange) — the
+  decompiler output practitioners actually read.
+- **CFGCanvasView**: the control-flow canvas — blocks laid out by
+  longest-path layering (`CfgLayout`, pure and unit-tested: diamond
+  layering, self-loop safety, deterministic output), terminator-kind
+  coloring, edges drawn as bezier arrows (taken solid purple,
+  fallthrough dashed blue).
+- **HexView**: address + length controls over 16-byte rows (address,
+  hex pairs, ascii) with section readouts.
+
+Plumbing: `WorkbenchAPIClient` gains `decompile`/`cfg`/`hex` (with
+honest default implementations so minimal test doubles refuse rather
+than fake); two new server routes mirror the disasm shape for the
+app's upload flow — `POST /api/images/{id}/decompile` and
+`POST /api/images/{id}/cfg` (target {kind, value}), verified live:
+`_main` → 20 lines/0 unknowns by symbol, CFG by address, typed
+`symbol_not_found` 404s.
+
+Evidence: app builds and launches; Swift 83/83 (7 new: model
+decoding from server shapes, CfgLayout diamond/cycle/determinism,
+client POST paths + hex query building); ui_api 8/8 (image
+decompile/cfg + missing-symbol 404); workspace 60 suites, zero
+warnings.

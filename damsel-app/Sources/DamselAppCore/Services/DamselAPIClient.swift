@@ -4,6 +4,25 @@ protocol WorkbenchAPIClient: AnyObject {
     func uploadImage(fileURL: URL) async throws -> ImageUploadResponse
     func symbolSuggestions(imageId: String, query: String, limit: Int) async throws -> [String]
     func disassemble(imageId: String, request payload: DisasmAPIRequest) async throws -> DisassemblyResponse
+    func decompile(imageId: String, request payload: DisasmAPIRequest) async throws -> PseudocodeResponse
+    func cfg(imageId: String, request payload: DisasmAPIRequest) async throws -> CfgResponse
+    func hex(imageId: String, address: String?, length: Int) async throws -> HexResponse
+}
+
+extension WorkbenchAPIClient {
+    /// Surface routes (plan feature 20b/c): test doubles and minimal
+    /// clients get honest refusals; the real client implements them.
+    public func decompile(imageId: String, request payload: DisasmAPIRequest) async throws -> PseudocodeResponse {
+        throw DamselClientError.invalidResponse
+    }
+
+    public func cfg(imageId: String, request payload: DisasmAPIRequest) async throws -> CfgResponse {
+        throw DamselClientError.invalidResponse
+    }
+
+    public func hex(imageId: String, address: String?, length: Int) async throws -> HexResponse {
+        throw DamselClientError.invalidResponse
+    }
 }
 
 public enum DamselClientError: LocalizedError, Equatable, Sendable {
@@ -63,6 +82,58 @@ public final class DamselAPIClient {
         request.httpBody = body
 
         return try await send(request, as: ImageUploadResponse.self)
+    }
+
+    public func decompile(
+        imageId: String,
+        request payload: DisasmAPIRequest
+    ) async throws -> PseudocodeResponse {
+        try await postJSON(
+            imageURL(imageId: imageId, suffix: "decompile"),
+            body: payload,
+            as: PseudocodeResponse.self
+        )
+    }
+
+    public func cfg(
+        imageId: String,
+        request payload: DisasmAPIRequest
+    ) async throws -> CfgResponse {
+        try await postJSON(
+            imageURL(imageId: imageId, suffix: "cfg"),
+            body: payload,
+            as: CfgResponse.self
+        )
+    }
+
+    public func hex(imageId: String, address: String?, length: Int) async throws -> HexResponse {
+        var components: [URLQueryItem] = [URLQueryItem(name: "length", value: String(length))]
+        if let address, !address.isEmpty {
+            components.append(URLQueryItem(name: "address", value: address))
+        }
+        guard var componentsURL = URLComponents(
+            url: try imageURL(imageId: imageId, suffix: "hex"),
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw DamselClientError.invalidURL("hex")
+        }
+        componentsURL.queryItems = components
+        guard let url = componentsURL.url else {
+            throw DamselClientError.invalidURL("hex query")
+        }
+        return try await send(URLRequest(url: url), as: HexResponse.self)
+    }
+
+    private func postJSON<Body: Encodable, Response: Decodable>(
+        _ url: URL,
+        body: Body,
+        as responseType: Response.Type
+    ) async throws -> Response {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(body)
+        return try await send(request, as: Response.self)
     }
 
     public func symbolSuggestions(imageId: String, query: String, limit: Int = 30) async throws -> [String] {

@@ -12,6 +12,19 @@ public struct ContentView: View {
         self.store = store
     }
 
+    private var surfacePicker: some View {
+        Picker("Surface", selection: $store.surfaceMode) {
+            ForEach(WorkbenchStore.SurfaceMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: 320)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             if let banner = store.bannerMessage {
@@ -28,8 +41,21 @@ public struct ContentView: View {
                 )
                 .frame(minWidth: 260, idealWidth: 310, maxWidth: 380)
 
-                InstructionSurfaceView(store: store)
-                    .frame(minWidth: 520, maxWidth: .infinity)
+                VStack(spacing: 0) {
+                    surfacePicker
+                    Divider()
+                    switch store.surfaceMode {
+                    case .disassembly:
+                        InstructionSurfaceView(store: store)
+                    case .pseudocode:
+                        PseudocodePane(store: store)
+                    case .graph:
+                        CFGCanvasView(store: store)
+                    case .hex:
+                        HexView(store: store)
+                    }
+                }
+                .frame(minWidth: 520, maxWidth: .infinity)
 
                 InspectorPane(store: store)
                     .frame(minWidth: 300, idealWidth: 360, maxWidth: 460)

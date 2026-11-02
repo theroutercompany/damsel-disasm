@@ -1057,6 +1057,7 @@ private actor SlowDisassemblyClient: WorkbenchAPIClient {
         try await Task.sleep(nanoseconds: 20_000_000)
         return try WorkbenchStoreTests.sampleDisassembly()
     }
+
 }
 
 private final class CountingServerProcess: DamselServerStarting {
@@ -1119,4 +1120,6 @@ private actor SuggestionClient: WorkbenchAPIClient {
         }
         return disassemblyResponse
     }
+
+
 }

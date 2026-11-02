@@ -420,6 +420,8 @@ async fn run_async(config: UiConfig) -> Result<(), CliRunError> {
         .route("/api/images", post(upload_image))
         .route("/api/images/{image_id}/symbols", get(symbol_suggestions))
         .route("/api/images/{image_id}/disasm", post(disassemble_image))
+        .route("/api/images/{image_id}/decompile", post(decompile_image))
+        .route("/api/images/{image_id}/cfg", post(cfg_image))
         .route(
             "/api/projects/{project_id}/functions",
             get(project_functions),
@@ -939,6 +941,162 @@ async fn symbol_suggestions(
     symbols.dedup();
     symbols.truncate(limit);
     Ok(Json(json!({ "symbols": symbols })))
+}
+
+/// Lift a function from a stored image by API target (symbol or
+/// address) — shared by the decompile and cfg image routes.
+fn lift_image_function(
+    stored: &StoredImageHandle,
+    request: &DisasmApiRequest,
+) -> Result<damsel_decomp::IrFunction, ApiError> {
+    let selector = match request.target.kind {
+        TargetKind::Address => format!(
+            "{:#x}",
+            parse_address(&request.target.value).map_err(|error| {
+                CliRunError::invalid_args(format!(
+                    "invalid address `{}`: {error}",
+                    request.target.value
+                ))
+            })?
+        ),
+        _ => request.target.value.clone(),
+    };
+    let decompiled =
+        crate::decompile_project_function(&stored.image, &selector).map_err(|error| {
+            let status = if matches!(error.code, "function_not_found" | "symbol_not_found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            ApiError {
+                status,
+                error: error.to_error_response(),
+            }
+        })?;
+    // Re-lift for the IR function (decompile_project_function returns
+    // rendered pseudocode; the CFG needs blocks).
+    let request_v2 = damsel_core::DisassemblyRequestV2 {
+        target: match request.target.kind {
+            TargetKind::Address => damsel_core::DisassemblyTarget::Address(
+                parse_address(&request.target.value).unwrap_or_default(),
+            ),
+            _ => damsel_core::DisassemblyTarget::Symbol(request.target.value.clone()),
+        },
+        range: None,
+        limit: damsel_core::DisassemblyLimit::Unlimited,
+        options: damsel_core::DisassemblyOptions {
+            include_annotations: false,
+            include_value_flow: false,
+        },
+    };
+    let _ = &decompiled;
+    let result = damsel_macho::disassemble_v2(&stored.image, &request_v2)
+        .map_err(|_| ApiError::not_found("function_not_found", request.target.value.clone()))?;
+    if result.instructions.is_empty() {
+        return Err(ApiError::not_found(
+            "function_not_found",
+            request.target.value.clone(),
+        ));
+    }
+    Ok(damsel_decomp::lift_arm64(&result.instructions))
+}
+
+/// POST /api/images/{id}/decompile — pseudocode for an uploaded image
+/// (plan feature 20b): target {kind, value} like the disasm route.
+async fn decompile_image(
+    State(state): State<AppState>,
+    Path(image_id): Path<String>,
+    Json(request): Json<DisasmApiRequest>,
+) -> Result<Response, ApiError> {
+    let stored = lookup_image(&state, &image_id)?;
+    let selector = request.target.value.clone();
+    let lifted = lift_image_function(&stored, &request)?;
+    let pseudocode = damsel_decomp::render_pseudocode(&lifted, Some(&selector));
+    let lines: Vec<serde_json::Value> = pseudocode
+        .lines
+        .iter()
+        .map(|line| {
+            json!({
+                "text": line.text,
+                "addresses": line.source_addresses.iter().map(|a| format!("{a:#x}")).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "function": selector,
+        "unknownCount": lifted.unknown_count,
+        "lines": lines,
+    }))
+    .into_response())
+}
+
+/// POST /api/images/{id}/cfg — the control-flow graph for an uploaded
+/// image function (plan feature 20c).
+async fn cfg_image(
+    State(state): State<AppState>,
+    Path(image_id): Path<String>,
+    Json(request): Json<DisasmApiRequest>,
+) -> Result<Response, ApiError> {
+    let stored = lookup_image(&state, &image_id)?;
+    let selector = request.target.value.clone();
+    let lifted = lift_image_function(&stored, &request)?;
+
+    let blocks: Vec<serde_json::Value> = lifted
+        .blocks
+        .iter()
+        .map(|block| {
+            let terminator = &block.terminator;
+            let (kind, targets) = match terminator {
+                damsel_decomp::IrTerminator::Return => ("return".to_string(), vec![]),
+                damsel_decomp::IrTerminator::Branch(target) => {
+                    ("branch".to_string(), vec![format!("{target:#x}")])
+                }
+                damsel_decomp::IrTerminator::CondBranch {
+                    taken, fallthrough, ..
+                } => (
+                    "cond_branch".to_string(),
+                    vec![format!("{taken:#x}"), format!("{fallthrough:#x}")],
+                ),
+                damsel_decomp::IrTerminator::WindowEnd => ("window_end".to_string(), vec![]),
+                damsel_decomp::IrTerminator::Trap => ("trap".to_string(), vec![]),
+                damsel_decomp::IrTerminator::Unknown { mnemonic } => {
+                    (format!("unknown:{mnemonic}"), vec![])
+                }
+            };
+            json!({
+                "id": block.id,
+                "address": format!("{:#x}", block.start_address),
+                "statements": block.statements.len(),
+                "terminator": kind,
+                "targets": targets,
+            })
+        })
+        .collect();
+    let edges: Vec<serde_json::Value> = lifted
+        .blocks
+        .iter()
+        .filter_map(|block| {
+            let source = format!("{:#x}", block.start_address);
+            match &block.terminator {
+                damsel_decomp::IrTerminator::Branch(target) => {
+                    Some(vec![json!({ "from": source, "to": format!("{target:#x}"), "kind": "branch" })])
+                }
+                damsel_decomp::IrTerminator::CondBranch { taken, fallthrough, .. } => Some(vec![
+                    json!({ "from": source, "to": format!("{taken:#x}"), "kind": "taken" }),
+                    json!({ "from": source, "to": format!("{fallthrough:#x}"), "kind": "fallthrough" }),
+                ]),
+                _ => None,
+            }
+        })
+        .flatten()
+        .collect();
+
+    Ok(Json(json!({
+        "function": selector,
+        "blocks": blocks,
+        "edges": edges,
+    }))
+    .into_response())
 }
 
 async fn disassemble_image(
