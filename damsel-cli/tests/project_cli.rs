@@ -1442,3 +1442,98 @@ fn emulate_runs_leaf_function_to_completion() {
         .unwrap();
     assert_eq!(bad.status.code(), Some(1));
 }
+
+/// Type application (plan feature 7, slice 2): --bind persists pointer
+/// bindings; decompile renders declared field names for bound bases at
+/// declared offsets — and nothing else changes.
+#[test]
+fn decompile_applies_type_bindings() {
+    let dir = smoke_dir("types-apply");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    // Baseline: raw displacement forms present.
+    let baseline = damsel()
+        .arg("decompile")
+        .arg(&target)
+        .arg("--function")
+        .arg("_main")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&baseline.get_output().stdout).expect("baseline json");
+    assert_eq!(body["typed"], false);
+    let text = body["pseudocode"]["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["text"].as_str().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("&sp[0x10]"), "raw form in baseline:\n{text}");
+    assert!(
+        !text.contains("sp->"),
+        "no typed forms in baseline:\n{text}"
+    );
+
+    // Declare + bind.
+    damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--struct")
+        .arg("Frame")
+        .arg("--field")
+        .arg("0x10:u64:saved_fp")
+        .arg("--field")
+        .arg("0x18:u64:saved_lr")
+        .assert()
+        .success();
+    damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--bind")
+        .arg("sp=Frame")
+        .assert()
+        .success();
+
+    // Typed decompile: field names replace the declared offsets.
+    let typed = damsel()
+        .arg("decompile")
+        .arg(&target)
+        .arg("--function")
+        .arg("_main")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&typed.get_output().stdout).expect("typed json");
+    assert_eq!(body["typed"], true);
+    let text = body["pseudocode"]["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["text"].as_str().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("sp->saved_fp"), "field named:\n{text}");
+    assert!(text.contains("sp->saved_lr"), "field named:\n{text}");
+    assert!(!text.contains("&sp[0x10]"), "raw form replaced:\n{text}");
+    assert!(!text.contains("&sp[0x18]"), "raw form replaced:\n{text}");
+
+    // Binding an undeclared struct is a typed error.
+    let bad = damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--bind")
+        .arg("x0=Missing")
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(1));
+    assert!(
+        String::from_utf8(bad.stderr)
+            .unwrap()
+            .contains("undeclared struct")
+    );
+}
