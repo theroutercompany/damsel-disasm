@@ -10,10 +10,35 @@ public enum InstructionClipboardPayload: Sendable {
 
 @MainActor
 public final class WorkbenchStore: ObservableObject {
+    /// Which main surface is shown (plan feature 20b/c).
+    public enum SurfaceMode: String, CaseIterable, Identifiable {
+        case disassembly
+        case pseudocode
+        case graph
+        case hex
+
+        public var id: String { rawValue }
+
+        public var title: String {
+            switch self {
+            case .disassembly: return "Disassembly"
+            case .pseudocode: return "Pseudocode"
+            case .graph: return "Graph"
+            case .hex: return "Hex"
+            }
+        }
+    }
+
+    @Published public var surfaceMode: SurfaceMode = .disassembly
     @Published public private(set) var serverState: ServerState = .stopped
     @Published public private(set) var loadedImage: ImageUploadResponse?
     @Published public private(set) var selectedFileURL: URL?
     @Published public private(set) var disassembly: DisassemblyResponse?
+    @Published public private(set) var pseudocode: PseudocodeResponse?
+    @Published public private(set) var cfg: CfgResponse?
+    @Published public private(set) var hexData: HexResponse?
+    @Published public var hexAddressText = ""
+    @Published public var hexLengthText = "256"
     @Published public private(set) var symbolSuggestions: [String] = []
     @Published public private(set) var isBusy = false
     @Published public private(set) var statusText = "Awaiting local binary"
@@ -489,6 +514,96 @@ public final class WorkbenchStore: ObservableObject {
             }
             bannerMessage = error.localizedDescription
             statusText = "Load failed"
+        }
+    }
+
+    /// The target for the pseudocode/graph surfaces: symbol or address
+    /// (sections are not function targets).
+    private var functionTarget: (kind: TargetKind, value: String)? {
+        switch targetKind {
+        case .symbol:
+            let symbol = symbolText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return symbol.isEmpty ? nil : (.symbol, symbol)
+        case .address:
+            guard let address = AddressValue(text: addressText) else { return nil }
+            return (.address, address.requestString)
+        case .section:
+            // Fall back to the selected instruction's enclosing symbol
+            // when the current target is a section.
+            guard let instruction = selectedInstruction else { return nil }
+            return (.address, String(instruction.address, radix: 16))
+        }
+    }
+
+    private func surfaceRequest(kind: TargetKind, value: String) -> DisasmAPIRequest {
+        DisasmAPIRequest(
+            target: DisasmTarget(kind: kind, value: value),
+            window: DisasmWindow(),
+            options: DisasmOptions(includeAnnotations: false, includeValueFlow: false, includeAnalysis: false)
+        )
+    }
+
+    /// Load the pseudocode surface (plan feature 20b).
+    public func loadPseudocode() async {
+        await loadFunctionSurface { client, imageId, request in
+            try await client.decompile(imageId: imageId, request: request)
+        } into: { self.pseudocode = $0 }
+    }
+
+    /// Load the graph surface (plan feature 20c).
+    public func loadCfg() async {
+        await loadFunctionSurface { client, imageId, request in
+            try await client.cfg(imageId: imageId, request: request)
+        } into: { self.cfg = $0 }
+    }
+
+    private func loadFunctionSurface<T>(
+        fetch: (any WorkbenchAPIClient, String, DisasmAPIRequest) async throws -> T,
+        into assign: @escaping (T) -> Void
+    ) async {
+        guard loadedImage != nil else {
+            bannerMessage = "Load a Mach-O first."
+            return
+        }
+        guard let target = functionTarget else {
+            bannerMessage = "Enter a symbol or address target for this surface."
+            return
+        }
+        await bootstrap()
+        guard let client, let imageId = loadedImage?.imageId else { return }
+        let request = surfaceRequest(kind: target.kind, value: target.value)
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let payload = try await fetch(client, imageId, request)
+            assign(payload)
+            statusText = "Loaded \(request.target.value)"
+        } catch {
+            bannerMessage = error.localizedDescription
+        }
+    }
+
+    /// Load the hex surface (plan feature 20b).
+    public func loadHex() async {
+        guard loadedImage != nil else {
+            bannerMessage = "Load a Mach-O first."
+            return
+        }
+        await bootstrap()
+        guard let client, let imageId = loadedImage?.imageId else { return }
+        let length = Int(hexLengthText) ?? 256
+        let address = hexAddressText.trimmingCharacters(in: .whitespacesAndNewlines)
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            hexData = try await client.hex(
+                imageId: imageId,
+                address: address.isEmpty ? nil : address,
+                length: length
+            )
+            statusText = "Hex \(hexData?.address ?? "")"
+        } catch {
+            bannerMessage = error.localizedDescription
         }
     }
 

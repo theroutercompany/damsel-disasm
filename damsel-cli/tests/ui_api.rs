@@ -610,3 +610,60 @@ fn ui_hex_route_returns_rows() {
     let body: Value = unmapped.json().expect("error json");
     assert_eq!(body["code"], "address_unmapped");
 }
+
+/// Workbench image routes (plan feature 20b/c): the app's upload flow
+/// gets pseudocode and CFG without a project — POST with the disasm
+/// target shape.
+#[test]
+fn ui_image_decompile_and_cfg_routes() {
+    let client = http_client();
+    let server = UiServer::spawn();
+    let payload = upload_fixture(&client, &server, "arm64-symbolized");
+    let image_id = payload["imageId"].as_str().unwrap();
+
+    // Decompile by symbol.
+    let response = client
+        .post(format!(
+            "{}/api/images/{}/decompile",
+            server.base_url, image_id
+        ))
+        .json(&serde_json::json!({
+            "target": { "kind": "symbol", "value": "_main" }
+        }))
+        .send()
+        .expect("decompile request");
+    assert!(response.status().is_success(), "{response:?}");
+    let body = parse_json(response);
+    assert_eq!(body["function"], "_main");
+    assert!(body["lines"].as_array().unwrap().len() >= 10);
+    assert_eq!(body["unknownCount"], 0);
+
+    // CFG by address (the address of _main).
+    let response = client
+        .post(format!("{}/api/images/{}/cfg", server.base_url, image_id))
+        .json(&serde_json::json!({
+            "target": { "kind": "address", "value": "0x1000004b8" }
+        }))
+        .send()
+        .expect("cfg request");
+    assert!(response.status().is_success(), "{response:?}");
+    let body = parse_json(response);
+    assert!(!body["blocks"].as_array().unwrap().is_empty());
+    // The first block is the entry at the requested address.
+    assert_eq!(body["blocks"][0]["address"], "0x1000004b8");
+
+    // Missing symbols are typed 404s.
+    let missing = client
+        .post(format!(
+            "{}/api/images/{}/decompile",
+            server.base_url, image_id
+        ))
+        .json(&serde_json::json!({
+            "target": { "kind": "symbol", "value": "_nope" }
+        }))
+        .send()
+        .expect("missing request");
+    assert_eq!(missing.status().as_u16(), 404);
+    let error: Value = missing.json().expect("error json");
+    assert_eq!(error["code"], "symbol_not_found");
+}
