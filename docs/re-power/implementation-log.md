@@ -1642,3 +1642,26 @@ Proof: `damsel-project` callgraph unit tests (synthetic cyclic graph:
 containment attribution, unbounded-target nodes, shortest paths through
 sinks, empty graph) + `query_paths_callers_and_rename_resolution` CLI
 test; workspace 60 suites green.
+
+### Unit D2 — diff v2: shape tier + annotation porting — DONE
+
+Feature 16, slice 1: `diff_functions_with_shapes` adds a third pass —
+after symbol and address tiers, unmatched functions pair by exact
+masked-shape signature (same body, moved address, changed name:
+recompiles, relinks). Unique matches only; an ambiguous shape stays
+added/removed rather than guessed. The CLI loads both project images,
+computes shape maps once, and reports matches with a `shape` strategy
+label.
+
+`damsel diff <left> <right> --port` transfers user renames from left
+onto matched functions in right through the annotation layer (actor
+`diff-port`, provenance, undoable).
+
+Evidence: unit test — 0x1000/`alpha` vs 0x9000/`beta` with identical
+signatures pairs via `shape` (symbol/address tiers miss); ambiguity
+stays added/removed; no shape maps = legacy behavior byte-identical.
+CLI: `--port` moved `main_renamed` into the right project and it is
+findable via `functions --name`.
+
+Proof: `shape_tier_matches_moved_functions` + `diff_ports_renames`
++ workspace 60 suites green.

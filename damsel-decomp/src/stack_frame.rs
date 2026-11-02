@@ -31,7 +31,10 @@ pub fn analyze_stack_frame(function: &IrFunction) -> StackFrameFacts {
     for block in &function.blocks {
         for statement in &block.statements {
             match statement {
-                IrStatement::Assign { destination, expression } => {
+                IrStatement::Assign {
+                    destination,
+                    expression,
+                } => {
                     if destination != "sp" && destination != "x31" {
                         continue;
                     }

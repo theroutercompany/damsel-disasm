@@ -63,14 +63,18 @@ pub fn summarize_function<S: ProjectStore + TypedStore>(
     let bound = facts
         .iter()
         .find(|f| {
-            f.object_id.as_ref().is_some_and(|o| o.as_str() == function_id)
+            f.object_id
+                .as_ref()
+                .is_some_and(|o| o.as_str() == function_id)
                 && f.kind.as_str() == "function_bound"
         })
         .map(|f| f.payload.clone());
     let problems: Vec<String> = facts
         .iter()
         .filter(|f| {
-            f.object_id.as_ref().is_some_and(|o| o.as_str() == function_id)
+            f.object_id
+                .as_ref()
+                .is_some_and(|o| o.as_str() == function_id)
                 && f.kind.as_str() == "function_problem"
         })
         .map(|f| f.payload.clone())
@@ -104,12 +108,13 @@ pub fn summarize_function<S: ProjectStore + TypedStore>(
         if fact.kind.as_str() != "xref" {
             continue;
         }
-        let Some(object) = &fact.object_id else { continue };
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
         if object.kind() != "instruction" {
             continue;
         }
-        let Ok(from_addr) = u64::from_str_radix(object.key().trim_start_matches("0x"), 16)
-        else {
+        let Ok(from_addr) = u64::from_str_radix(object.key().trim_start_matches("0x"), 16) else {
             continue;
         };
         if !window.contains(&from_addr) {
@@ -163,8 +168,8 @@ pub fn summarize_named<S: ProjectStore + TypedStore>(
     selector: &str,
 ) -> Result<FunctionSummaryReport, SummaryError> {
     if let Some(hex) = selector.strip_prefix("0x") {
-        let address =
-            u64::from_str_radix(hex, 16).map_err(|_| SummaryError::FunctionNotFound(selector.into()))?;
+        let address = u64::from_str_radix(hex, 16)
+            .map_err(|_| SummaryError::FunctionNotFound(selector.into()))?;
         return summarize_function(store, source_id, address);
     }
     let matches: Vec<u64> = function_summaries(store)?

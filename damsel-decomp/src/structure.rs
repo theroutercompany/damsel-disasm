@@ -38,9 +38,10 @@ pub fn resolve_condition(function: &IrFunction, block_id: usize) -> ResolvedCond
         return ResolvedCondition::Unresolved("not-cond".to_string());
     };
     // Find the last flags assignment in the block.
-    let last_flags = block.statements.iter().rev().find(|s| {
-        matches!(s, IrStatement::Assign { destination, .. } if destination == "flags")
-    });
+    let last_flags =
+        block.statements.iter().rev().find(
+            |s| matches!(s, IrStatement::Assign { destination, .. } if destination == "flags"),
+        );
     let Some(IrStatement::Assign { expression, .. }) = last_flags else {
         return ResolvedCondition::Unresolved(condition_raw(condition));
     };
@@ -62,18 +63,26 @@ pub fn resolve_condition(function: &IrFunction, block_id: usize) -> ResolvedCond
         (IrBinOp::Sub, "jae") | (IrBinOp::Sub, "b.hs") => rel(lhs, ">=u", rhs),
         (IrBinOp::Add, "b.eq") => rel(lhs, "==", rhs),
         (IrBinOp::Add, "b.ne") => rel(lhs, "!=", rhs),
-        (IrBinOp::And, "je") | (IrBinOp::And, "b.eq") => {
-            ResolvedCondition::Mask { lhs, rhs, nonzero: false }
-        }
-        (IrBinOp::And, "jne") | (IrBinOp::And, "b.ne") => {
-            ResolvedCondition::Mask { lhs, rhs, nonzero: true }
-        }
+        (IrBinOp::And, "je") | (IrBinOp::And, "b.eq") => ResolvedCondition::Mask {
+            lhs,
+            rhs,
+            nonzero: false,
+        },
+        (IrBinOp::And, "jne") | (IrBinOp::And, "b.ne") => ResolvedCondition::Mask {
+            lhs,
+            rhs,
+            nonzero: true,
+        },
         _ => ResolvedCondition::Unresolved(mnemonic),
     }
 }
 
 fn rel(lhs: String, op: &str, rhs: String) -> ResolvedCondition {
-    ResolvedCondition::Relational { lhs, op: op.to_string(), rhs }
+    ResolvedCondition::Relational {
+        lhs,
+        op: op.to_string(),
+        rhs,
+    }
 }
 
 fn condition_raw(condition: &IrCondition) -> String {
@@ -112,7 +121,10 @@ pub fn find_diamonds(function: &IrFunction) -> Vec<Diamond> {
 
     let mut out = Vec::new();
     for cond in &function.blocks {
-        let IrTerminator::CondBranch { taken, fallthrough, .. } = cond.terminator else {
+        let IrTerminator::CondBranch {
+            taken, fallthrough, ..
+        } = cond.terminator
+        else {
             continue;
         };
         let (Some(then_id), Some(else_id)) = (block_at.get(&taken), block_at.get(&fallthrough))
@@ -187,9 +199,9 @@ pub fn find_loops(function: &IrFunction) -> Vec<LoopBack> {
                     condition: None,
                 });
             }
-            IrTerminator::CondBranch { taken, fallthrough, .. }
-                if *taken <= block.start_address && *fallthrough > block.start_address =>
-            {
+            IrTerminator::CondBranch {
+                taken, fallthrough, ..
+            } if *taken <= block.start_address && *fallthrough > block.start_address => {
                 out.push(LoopBack {
                     from_block: block.id,
                     to_address: *taken,
@@ -227,7 +239,9 @@ pub fn find_natural_loops(function: &IrFunction) -> Vec<NaturalLoop> {
         let mut targets = Vec::new();
         match &block.terminator {
             IrTerminator::Branch(target) => targets.push(*target),
-            IrTerminator::CondBranch { taken, fallthrough, .. } => {
+            IrTerminator::CondBranch {
+                taken, fallthrough, ..
+            } => {
                 targets.push(*taken);
                 targets.push(*fallthrough);
             }
@@ -242,7 +256,9 @@ pub fn find_natural_loops(function: &IrFunction) -> Vec<NaturalLoop> {
 
     let mut out = Vec::new();
     for back in find_loops(function) {
-        let Some(header_id) = block_at.get(&back.to_address) else { continue };
+        let Some(header_id) = block_at.get(&back.to_address) else {
+            continue;
+        };
         // v1 dominance approximation: the header's predecessors are all
         // inside the loop — i.e. every predecessor lies in the address
         // range [header, back-edge source].
