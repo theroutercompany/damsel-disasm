@@ -599,6 +599,19 @@ enum Command {
         library: String,
     },
     #[command(
+        about = "Emulate a function's IR in a bounded sandbox",
+        long_about = "Emulate a function's lifted IR in a bounded sandbox (plan feature 11).\n\n--set reg=value seeds registers; the run interprets arithmetic, loads, and stores over a sparse memory (image-backed reads), reports steps, final registers, memory writes, and an honest stop reason on anything unsupported (calls, unresolved selects, unknown statements)."
+    )]
+    Emulate {
+        project: PathBuf,
+        #[arg(long, help = "Function name or 0x address")]
+        function: String,
+        #[arg(long, value_name = "REG=VALUE", help = "Seed a register (repeatable)")]
+        set: Vec<String>,
+        #[arg(long, default_value_t = 10_000, help = "Step budget")]
+        budget: usize,
+    },
+    #[command(
         about = "Declare and list user struct types (applied in pseudocode)",
         long_about = "User type declarations (plan feature 7).\n\n`--struct NAME --field 0x10:char*:name ...` declares a struct (repeatable --field); persisted through the annotation layer (provenance, undoable); `--list` shows declared types. Decompile applies declared offsets: `&x1[0x10]` under a typed pointer renders the field name."
     )]
@@ -1495,6 +1508,14 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
+        Command::Emulate {
+            project,
+            function,
+            set,
+            budget,
+        } => {
+            handle_emulate(project, &function, &set, budget, &output_settings)?;
+        }
         Command::Type {
             project,
             r#struct,
@@ -2220,6 +2241,115 @@ fn resolve_query_target(
             format!("`{target}` matches {} functions; pass 0xADDR", many.len()),
         )),
     }
+}
+
+fn handle_emulate(
+    project: PathBuf,
+    selector: &str,
+    seeds: &[String],
+    budget: usize,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_decomp::{EmulationOutcome, Emulator};
+
+    let project_dir = resolve_project_dir(&project)?;
+    if let Some(ProjectImageSource::File(target)) = project_image_source(&project_dir)? {
+        if is_elf_file(&target) {
+            return Err(CliRunError::command(
+                "emulate_unsupported",
+                "emulation v1 supports Mach-O arm64 projects",
+            ));
+        }
+    }
+    let image = load_project_image(&project_dir)?;
+    let decompiled = decompile_project_function(&image, selector)
+        .map_err(|e| CliRunError::command("function_not_found", e.to_string()))?;
+
+    // Re-lift through the IR (the decompile core renders; emulate needs
+    // the IR function itself).
+    let request = damsel_core::DisassemblyRequestV2 {
+        target: if let Some(hex) = selector.strip_prefix("0x") {
+            damsel_core::DisassemblyTarget::Address(
+                u64::from_str_radix(hex, 16)
+                    .map_err(|_| CliRunError::invalid_args("bad address"))?,
+            )
+        } else {
+            damsel_core::DisassemblyTarget::Symbol(selector.to_string())
+        },
+        range: None,
+        limit: damsel_core::DisassemblyLimit::Unlimited,
+        options: damsel_core::DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: false,
+        },
+    };
+    let result = disassemble_v2(&image, &request).map_err(map_macho_error)?;
+    if result.instructions.is_empty() {
+        return Err(CliRunError::command(
+            "function_not_found",
+            selector.to_string(),
+        ));
+    }
+    let lifted = damsel_decomp::lift_arm64(&result.instructions);
+    let _ = decompiled;
+
+    let mut emulator = Emulator::with_image(&image, budget);
+    for seed in seeds {
+        let (register, value) = seed.split_once('=').ok_or_else(|| {
+            CliRunError::invalid_args(format!("bad --set (want REG=VALUE): {seed}"))
+        })?;
+        let value = u64::from_str_radix(value.trim_start_matches("0x"), 16)
+            .map_err(|_| CliRunError::invalid_args(format!("bad --set value: {seed}")))?;
+        emulator.set_register(&register.to_ascii_lowercase(), value);
+    }
+    let outcome = emulator.run(&lifted);
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "emulate",
+            "function": selector,
+            "budget": budget,
+            "outcome": match &outcome {
+                EmulationOutcome::Returned { steps, registers } => serde_json::json!({
+                    "kind": "returned", "steps": steps,
+                    "registers": registers.iter().map(|(k, v)| serde_json::json!({
+                        "register": k, "value": format!("{v:#x}"),
+                    })).collect::<Vec<_>>(),
+                }),
+                EmulationOutcome::Branched { target, steps } => serde_json::json!({
+                    "kind": "branched", "target": format!("{target:#x}"), "steps": steps,
+                }),
+                EmulationOutcome::BudgetExhausted { steps, pc } => serde_json::json!({
+                    "kind": "budget_exhausted", "steps": steps, "pc": format!("{pc:#x}"),
+                }),
+                EmulationOutcome::Unsupported { at_step, what } => serde_json::json!({
+                    "kind": "unsupported", "step": at_step, "what": what,
+                }),
+            },
+            "memory_writes": emulator.memory.writes().len(),
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+    match &outcome {
+        EmulationOutcome::Returned { steps, registers } => {
+            println!("returned after {steps} steps; registers:");
+            for (register, value) in registers {
+                println!("  {register:<6} = {value:#x}");
+            }
+        }
+        EmulationOutcome::Branched { target, steps } => {
+            println!("branched to {target:#x} after {steps} steps (outside window)");
+        }
+        EmulationOutcome::BudgetExhausted { steps, pc } => {
+            println!("budget exhausted after {steps} steps near {pc:#x}");
+        }
+        EmulationOutcome::Unsupported { at_step, what } => {
+            println!("unsupported at step {at_step}: {what}");
+        }
+    }
+    println!("memory writes: {}", emulator.memory.writes().len());
+    Ok(())
 }
 
 fn handle_type(
