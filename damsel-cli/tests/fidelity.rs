@@ -22,6 +22,8 @@ use std::process::{Command as StdCommand, Stdio};
 /// Baseline 0.0371 (Q1) → 0.0028 (Q2: csel/blr/width-memory/FP/MADD) →
 /// 0.0000 expected after Q3 (PAC sign/verify modeled as no-ops).
 const GLOBAL_UNKNOWN_RATE_MAX: f64 = 0.01;
+/// Structuring ceiling (SAILR): share of functions with goto output.
+const GOTO_RATE_MAX: f64 = 0.55;
 /// Fixtures allowed a higher unknown rate (documented honesty cases).
 const FIXTURE_CEILINGS: &[(&str, f64)] = &[];
 
@@ -39,6 +41,7 @@ struct FunctionRow {
     instructions: usize,
     lines: usize,
     unknowns: usize,
+    has_goto: bool,
 }
 
 fn decompile_fixture(fixture_rel: &str) -> Vec<FunctionRow> {
@@ -98,6 +101,7 @@ fn decompile_fixture(fixture_rel: &str) -> Vec<FunctionRow> {
             instructions: record["line_count"].as_u64().unwrap_or(0) as usize,
             lines: lines.len(),
             unknowns,
+            has_goto: text.iter().any(|line| line.contains("goto ")),
         });
     }
     rows
@@ -132,12 +136,19 @@ fn decompiler_fidelity_scoreboard_and_gate() {
     } else {
         0.0
     };
+    // Structuring signal (SAILR): the share of functions whose
+    // rendered output still contains gotos — lower is better-
+    // structured. Gated so structuring changes cannot silently
+    // regress readability into spaghetti.
+    let goto_functions = all_rows.iter().filter(|row| row.has_goto).count();
+    let goto_rate = goto_functions as f64 / all_rows.len().max(1) as f64;
     println!(
-        "fidelity: functions={} lines={} unknowns={} rate={:.4}",
+        "fidelity: functions={} lines={} unknowns={} rate={:.4} goto-rate={:.4} ({goto_functions} fns)",
         all_rows.len(),
         total_lines,
         total_unknowns,
-        global_rate
+        global_rate,
+        goto_rate
     );
 
     // Per-fixture ceilings.
@@ -163,6 +174,12 @@ fn decompiler_fidelity_scoreboard_and_gate() {
     assert!(
         global_rate <= GLOBAL_UNKNOWN_RATE_MAX,
         "global unknown-rate {global_rate:.4} exceeds floor {GLOBAL_UNKNOWN_RATE_MAX}"
+    );
+
+    // Structuring gate: goto share of rendered functions.
+    assert!(
+        goto_rate <= GOTO_RATE_MAX,
+        "goto-rate {goto_rate:.4} exceeds structuring ceiling {GOTO_RATE_MAX}"
     );
 
     // Worst offenders surfaced for the log.

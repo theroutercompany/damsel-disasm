@@ -2091,3 +2091,30 @@ moves recorded, death marking the last interval) +
 `timeline_chains_versions_into_histories` CLI test (version names,
 per-interval change vectors, presence spans, text markers, typed
 error for single-project chains) + workspace 61 suites, zero warnings.
+
+### Unit Q3 — SAILR-style condition recovery + goto gate — DONE
+
+Feature 8, the structuring slice: `render_terminator` now resolves
+conditions through `structure::resolve_condition` — a `b.ne` whose
+block carries `flags = (x8 - x9)` renders `if (x8 != x9)` instead of
+`if (flags:b.ne)` (the resolver existed since the diamond work; the
+terminator path never called it). Combined compare-and-branch forms
+gain first-class IR: `IrCondition::CompareBranch { register, nonzero,
+bit }` lifted from cbz/cbnz/tbz/tbnz operands, rendering
+`x8 != 0` and `(w8 & (1 << 0)) != 0` — no flags needed, because the
+tested register IS the condition. Raw mnemonics remain the honest
+fallback for anything unresolved.
+
+Structuring quality is now measured and gated: the fidelity scoreboard
+reports the **goto-rate** (share of functions whose rendering still
+contains gotos — SAILR's core complaint about decompiler output) with
+a committed ceiling. Baseline: **0.2696** (31/115 functions), ceiling
+0.55.
+
+Evidence (swift-sample chooseValue, 17 blocks): every `if (` renders a
+real condition — `if (x8 != 0)` (cbnz), `if (x8 != x9)` (b.ne after
+cmp), `if ((w8 & (1 << 0)) != 0)` (tbnz); zero raw-mnemonic leaks.
+
+Proof: `conditions_render_semantically` (all three forms present, no
+flags: leaks) + fidelity gate green with the goto-rate assertion +
+workspace 61 suites, zero warnings.

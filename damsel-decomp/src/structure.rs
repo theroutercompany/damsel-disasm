@@ -88,6 +88,10 @@ fn rel(lhs: String, op: &str, rhs: String) -> ResolvedCondition {
 fn condition_raw(condition: &IrCondition) -> String {
     match condition {
         IrCondition::Raw(raw) => raw.clone(),
+        // Combined compare-and-branch conditions carry their own
+        // semantics (handled directly by the renderer); the resolver
+        // has no flags to consult.
+        IrCondition::CompareBranch { .. } => "compare-branch".to_string(),
     }
 }
 

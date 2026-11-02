@@ -289,7 +289,7 @@ fn render_pseudocode_impl(
                 warnings,
             });
         }
-        let (text, warnings) = render_terminator(&block.terminator);
+        let (text, warnings) = render_terminator(&block.terminator, function, block.id);
         if !text.is_empty() {
             lines.push(PseudocodeLine {
                 indent: 1,
@@ -358,7 +358,11 @@ fn render_statement(statement: &IrStatement) -> (String, Vec<String>) {
     }
 }
 
-fn render_terminator(terminator: &IrTerminator) -> (String, Vec<String>) {
+fn render_terminator(
+    terminator: &IrTerminator,
+    function: &IrFunction,
+    block_id: usize,
+) -> (String, Vec<String>) {
     match terminator {
         IrTerminator::Return => ("return;".to_string(), Vec::new()),
         IrTerminator::Branch(target) => (format!("goto sub_{target:x};"), Vec::new()),
@@ -369,7 +373,7 @@ fn render_terminator(terminator: &IrTerminator) -> (String, Vec<String>) {
         } => (
             format!(
                 "if ({}) {{ goto sub_{taken:x}; }} else {{ goto sub_{fallthrough:x}; }}",
-                render_condition(condition)
+                condition_text(function, block_id, condition)
             ),
             Vec::new(),
         ),
@@ -382,9 +386,38 @@ fn render_terminator(terminator: &IrTerminator) -> (String, Vec<String>) {
     }
 }
 
+/// SAILR-style condition recovery: a conditional branch renders the
+/// *semantic* condition (`w0 == 0xb`) when the flag-defining compare is
+/// visible in the block; raw mnemonics stay as the honest fallback.
+fn condition_text(
+    function: &IrFunction,
+    block_id: usize,
+    condition: &crate::ir::IrCondition,
+) -> String {
+    let resolved = crate::structure::resolve_condition(function, block_id);
+    match &resolved {
+        crate::structure::ResolvedCondition::Relational { .. }
+        | crate::structure::ResolvedCondition::Mask { .. } => {
+            crate::structure::render_condition_text(&resolved)
+        }
+        _ => render_condition(condition),
+    }
+}
+
 fn render_condition(condition: &crate::ir::IrCondition) -> String {
     match condition {
         crate::ir::IrCondition::Raw(raw) => format!("flags:{raw}"),
+        crate::ir::IrCondition::CompareBranch {
+            register,
+            nonzero,
+            bit,
+        } => match bit {
+            None => format!("{register} {} 0", if *nonzero { "!=" } else { "==" }),
+            Some(bit) => format!(
+                "({register} & (1 << {bit})) {} 0",
+                if *nonzero { "!=" } else { "==" }
+            ),
+        },
     }
 }
 
