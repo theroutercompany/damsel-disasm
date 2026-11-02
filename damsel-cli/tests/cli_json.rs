@@ -3818,3 +3818,118 @@ fn objc_headers_contract() {
     // Provenance addresses ride along.
     assert!(header.contains("// imp 0x"));
 }
+
+/// Kernelcache (MH_FILESET) CLI contract (plan feature 3, slice 1):
+/// list + entry projection over a crafted fileset.
+#[test]
+fn kernelcache_list_and_entry_contract() {
+    use std::io::Write as _;
+
+    let dir = repo_root().join("target/tmp-kc-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("kernelcache.cli-test");
+
+    let payloads: Vec<(&str, std::path::PathBuf)> = vec![
+        (
+            "com.apple.kernel",
+            repo_root().join("fixtures/bin/arm64-symbolized"),
+        ),
+        (
+            "com.apple.driver.Foo",
+            repo_root().join("fixtures/bin/objc-sample"),
+        ),
+    ];
+    let mut body = Vec::new();
+    let mut offsets = Vec::new();
+    for (_, payload) in &payloads {
+        while body.len() % 0x4000 != 0 {
+            body.push(0);
+        }
+        offsets.push(body.len() as u64);
+        body.extend_from_slice(&std::fs::read(payload).unwrap());
+    }
+
+    let mut commands = Vec::new();
+    for (index, (entry_id, _)) in payloads.iter().enumerate() {
+        let mut payload = entry_id.as_bytes().to_vec();
+        payload.push(0);
+        while (32 + payload.len()) % 8 != 0 {
+            payload.push(0);
+        }
+        let cmdsize = (32 + payload.len()) as u32;
+        commands.extend_from_slice(&0x8000_0034u32.to_le_bytes());
+        commands.extend_from_slice(&cmdsize.to_le_bytes());
+        commands.extend_from_slice(&(0xffff_fff0_0000_0000u64 + index as u64).to_le_bytes());
+        commands.extend_from_slice(&0u64.to_le_bytes()); // fileoff patched below
+        commands.extend_from_slice(&32u32.to_le_bytes());
+        commands.extend_from_slice(&0u32.to_le_bytes());
+        commands.extend_from_slice(&payload);
+    }
+
+    let mut file = Vec::new();
+    file.extend_from_slice(&0xfeed_facfu32.to_le_bytes()); // magic
+    file.extend_from_slice(&0x0100_000cu32.to_le_bytes()); // arm64
+    file.extend_from_slice(&0u32.to_le_bytes()); // cpusubtype
+    file.extend_from_slice(&11u32.to_le_bytes()); // MH_FILESET
+    file.extend_from_slice(&(payloads.len() as u32).to_le_bytes());
+    file.extend_from_slice(&(commands.len() as u32).to_le_bytes());
+    file.extend_from_slice(&0u32.to_le_bytes()); // flags
+    file.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    file.extend_from_slice(&commands);
+    while file.len() % 0x4000 != 0 {
+        file.push(0);
+    }
+    let base = file.len() as u64;
+    // Patch file offsets now that the header block size is known.
+    let mut cursor = 32usize;
+    for index in 0..payloads.len() {
+        let cmdsize = u32::from_le_bytes(file[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+        file[cursor + 16..cursor + 24].copy_from_slice(&(base + offsets[index]).to_le_bytes());
+        cursor += cmdsize;
+    }
+    file.extend_from_slice(&body);
+    let mut handle = std::fs::File::create(&path).unwrap();
+    handle.write_all(&file).unwrap();
+
+    let target = path.display().to_string();
+    let stdout = run_json_ok(&["--format", "json", "kernelcache", &target]);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("kernelcache json");
+    assert_eq!(value["command"], "kernelcache");
+    assert_eq!(value["count"], 2);
+    assert_eq!(value["entries"][0]["id"], "com.apple.kernel");
+    assert_eq!(value["entries"][1]["id"], "com.apple.driver.Foo");
+
+    let stdout = run_json_ok(&[
+        "--format",
+        "json",
+        "kernelcache",
+        &target,
+        "--entry",
+        "driver.Foo",
+    ]);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("entry json");
+    assert_eq!(value["action"], "entry");
+    assert_eq!(value["entry"]["id"], "com.apple.driver.Foo");
+    assert!(value["counts"]["sections"].as_u64().unwrap_or(0) > 0);
+    assert!(value["counts"]["objc_classes"].as_u64().unwrap_or(0) > 0);
+
+    // Ambiguous and missing selectors are typed errors.
+    let ambiguous = run_json_output(&[
+        "--format",
+        "json",
+        "kernelcache",
+        &target,
+        "--entry",
+        "com.apple",
+    ]);
+    assert!(!ambiguous.status.success());
+    let missing = run_json_output(&[
+        "--format",
+        "json",
+        "kernelcache",
+        &target,
+        "--entry",
+        "nope",
+    ]);
+    assert!(!missing.status.success());
+}
