@@ -107,9 +107,17 @@ pub enum IrStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IrCondition {
-    /// Flag condition not yet modeled (e.g. `b.eq` v1) — kept as the
-    /// mnemonic so renderers can show it instead of inventing one.
+    /// Flag condition not yet modeled — kept as the mnemonic so
+    /// renderers can show it instead of inventing one.
     Raw(String),
+    /// Combined compare-and-branch (arm64 cbz/cbnz/tbz/tbnz): the
+    /// tested register IS the condition — `reg != 0` (cbnz), `reg == 0`
+    /// (cbz), `reg & (1 << bit) == 0` (tbz), `!= 0` (tbnz).
+    CompareBranch {
+        register: String,
+        nonzero: bool,
+        bit: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -577,26 +585,61 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
         }
         // Boundary instruction: close the block with a terminator.
         let next = instruction.address + instruction.size as u64;
-        let terminator = if damsel_core::semantics_arm64::is_return(&lower) {
-            IrTerminator::Return
-        } else if damsel_core::semantics_arm64::is_trap(&lower) {
-            IrTerminator::Trap
-        } else if let Some(target) = branch_target(instruction) {
-            let target = *target;
-            if damsel_core::semantics_arm64::is_conditional_branch(&lower) {
-                IrTerminator::CondBranch {
-                    condition: IrCondition::Raw(lower),
-                    taken: target,
-                    fallthrough: next,
+        let terminator =
+            if damsel_core::semantics_arm64::is_return(&lower) {
+                IrTerminator::Return
+            } else if damsel_core::semantics_arm64::is_trap(&lower) {
+                IrTerminator::Trap
+            } else if let Some(target) = branch_target(instruction) {
+                let target = *target;
+                if damsel_core::semantics_arm64::is_conditional_branch(&lower) {
+                    let condition =
+                        match lower.as_str() {
+                            "cbz" | "cbnz" => instruction.operands.first().map(|operand| {
+                                IrCondition::CompareBranch {
+                                    register: register_name_of(operand),
+                                    nonzero: lower == "cbnz",
+                                    bit: None,
+                                }
+                            }),
+                            "tbz" | "tbnz" => {
+                                let bit =
+                                    instruction
+                                        .operands
+                                        .get(1)
+                                        .and_then(|operand| match operand {
+                                            damsel_core::Operand::ImmediateSigned(value) => {
+                                                u32::try_from(*value).ok()
+                                            }
+                                            damsel_core::Operand::ImmediateUnsigned(value) => {
+                                                u32::try_from(*value).ok()
+                                            }
+                                            _ => None,
+                                        });
+                                instruction.operands.first().map(|operand| {
+                                    IrCondition::CompareBranch {
+                                        register: register_name_of(operand),
+                                        nonzero: lower == "tbnz",
+                                        bit,
+                                    }
+                                })
+                            }
+                            _ => None,
+                        }
+                        .unwrap_or(IrCondition::Raw(lower));
+                    IrTerminator::CondBranch {
+                        condition,
+                        taken: target,
+                        fallthrough: next,
+                    }
+                } else {
+                    IrTerminator::Branch(target)
                 }
             } else {
-                IrTerminator::Branch(target)
-            }
-        } else {
-            IrTerminator::Unknown {
-                mnemonic: lower.clone(),
-            }
-        };
+                IrTerminator::Unknown {
+                    mnemonic: lower.clone(),
+                }
+            };
         current.terminator = terminator;
         blocks.push(std::mem::replace(
             &mut current,
@@ -637,6 +680,15 @@ fn simd_compare(instruction: &DecodedInstruction, op: IrBinOp) -> Option<IrState
             rhs: Box::new(IrExpr::Value(IrValue::Register(src))),
         },
     })
+}
+
+/// Register name of an operand (registers and qualified registers).
+fn register_name_of(operand: &Operand) -> String {
+    match operand {
+        Operand::Register(register) => register.clone(),
+        Operand::QualifiedRegister { register, .. } => register.clone(),
+        _ => "?".to_string(),
+    }
 }
 
 fn register_of(operand: &Operand) -> Option<String> {

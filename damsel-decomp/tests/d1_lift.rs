@@ -323,3 +323,52 @@ fn type_hints_refine_addrof_rendering() {
     );
     assert_eq!(wrong_text, untyped_text.iter().copied().collect::<Vec<_>>());
 }
+
+/// SAILR-style condition recovery: conditional branches render the
+/// semantic condition — flag-resolved relations for b.cond, and the
+/// combined compare-and-branch forms carry their own semantics.
+#[test]
+fn conditions_render_semantically() {
+    // chooseValue is full of cbnz/b.cond/tbnz — every `if (` must show
+    // a real condition, never `flags:cb…`.
+    let request = DisassemblyRequestV2 {
+        target: DisassemblyTarget::Symbol("_$s17DamselSwiftSample11chooseValueyS2iF".to_string()),
+        range: None,
+        limit: DisassemblyLimit::Unlimited,
+        options: DisassemblyOptions {
+            include_annotations: false,
+            include_value_flow: false,
+        },
+    };
+    let image = damsel_macho::load(support::fixture("swift-sample")).unwrap();
+    let instructions = damsel_macho::disassemble_v2(&image, &request)
+        .unwrap()
+        .instructions;
+    let function = damsel_decomp::lift_arm64(&instructions);
+    let pseudo = damsel_decomp::render_pseudocode(&function, None);
+    let text: Vec<&str> = pseudo.lines.iter().map(|l| l.text.as_str()).collect();
+
+    let ifs: Vec<&&str> = text.iter().filter(|l| l.starts_with("if (")).collect();
+    assert!(ifs.len() >= 3, "chooseValue has real branches: {text:#?}");
+    for line in &ifs {
+        assert!(
+            !line.contains("flags:cb") && !line.contains("flags:tb") && !line.contains("flags:b."),
+            "raw mnemonic leaked: {line}"
+        );
+    }
+    // The combined and relational forms both appear.
+    assert!(
+        text.iter().any(|l| l.contains("!= 0)")),
+        "cbnz/tbnz form: {text:#?}"
+    );
+    assert!(
+        text.iter()
+            .any(|l| l.contains("!= x") || l.contains("== x")),
+        "resolved relational form: {text:#?}"
+    );
+    // A tbnz bit test renders the mask.
+    assert!(
+        text.iter().any(|l| l.contains("& (1 <<")),
+        "bit-test form: {text:#?}"
+    );
+}
