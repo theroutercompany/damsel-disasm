@@ -21,9 +21,9 @@ mod taint;
 mod ttd;
 
 pub use diff::{
-    DefenseFinding, DiffError, DiffFunction, DiffReport, MatchStrategy, MatchedFunction, ShapeMap,
-    diff_defenses, diff_functions, diff_functions_with_shapes, render_diff_html,
-    render_diff_markdown,
+    DefenseFinding, DiffError, DiffFunction, DiffReport, FunctionHistory, IntervalInput,
+    MatchStrategy, MatchedFunction, ShapeMap, build_timeline, diff_defenses, diff_functions,
+    diff_functions_with_shapes, render_diff_html, render_diff_markdown,
 };
 pub use emulate::{EmulationOutcome, Emulator, Memory};
 pub use ir::{

@@ -2065,3 +2065,29 @@ Proof: fuzzy unit tests (identity, restructured-high/not-exact,
 related/cross-program separation, mutual-best + threshold behavior) +
 `match_fuzzy_finds_restructured_function` CLI test (tier on/off,
 score bound, cross-program zero) + workspace 61 suites, zero warnings.
+
+### Unit D4 — version timelines: chained diffs into histories — DONE
+
+Feature 16, slice 3: `damsel timeline <v1> <v2> <v3> …` — the OS-update
+archaeology view. Consecutive builds diff pairwise (symbol + address +
+shape tiers), matched pairs carry pseudocode deltas, and the pure
+`build_timeline` chains everything into per-function histories:
+addresses per version (moves recorded), per-interval changed flags,
+match strategies, birth/death spans. The text view renders a compact
+marker per version (`+` born, `c` changed, `·` stable, `x` died) —
+`+cc _helper` reads as "present from v1, changed in every interval".
+
+Evidence on the v1/v2/v3 fixture family:
+- `_helper`: `+cc` — changed v1→v2 (+5→+7) and v2→v3 (multiply
+  restructure, +4/−0 pseudocode).
+- `_exported_sum`: `+c·` — changed v1→v2 (helper(1)→helper(2)),
+  stable v2→v3 (verified: +0/−0).
+- `_main`: `+cc` — the v3 move (address shift from the larger helper)
+  surfaces in its rendered header; the delta is real, not noise.
+- `__mh_execute_header`: `+··` — stable throughout.
+
+Proof: timeline unit tests (birth/change/stability markers, address
+moves recorded, death marking the last interval) +
+`timeline_chains_versions_into_histories` CLI test (version names,
+per-interval change vectors, presence spans, text markers, typed
+error for single-project chains) + workspace 61 suites, zero warnings.

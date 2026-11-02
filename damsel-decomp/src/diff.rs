@@ -377,3 +377,272 @@ pub fn diff_defenses(
 
     (added, removed)
 }
+
+// ---------------------------------------------------------------------------
+// Version timelines (plan feature 16, slice 3): chain pairwise diffs
+// into per-function histories across N versions — the OS-update
+// archaeology view.
+
+/// One interval's inputs: a pairwise report plus which matched pairs
+/// carried pseudocode changes (`(left_addr, right_addr)` pairs with a
+/// nonzero line diff).
+pub struct IntervalInput {
+    pub report: DiffReport,
+    pub changed_pairs: std::collections::BTreeSet<(u64, u64)>,
+}
+
+/// One function's journey across the version chain.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct FunctionHistory {
+    /// The stable identity (matched name; addresses may move).
+    pub name: Option<String>,
+    /// Address per version (`None` before birth / after death).
+    pub addresses: Vec<Option<u64>>,
+    /// Per interval: did the body change (pseudocode delta)?
+    pub changed: Vec<bool>,
+    /// Per interval: which match strategy carried it.
+    pub strategies: Vec<Option<MatchStrategy>>,
+    /// First and last version index where present.
+    pub first_version: usize,
+    pub last_version: usize,
+}
+
+impl FunctionHistory {
+    /// Compact per-version marker: `·` present, `c` changed, `+` born,
+    /// `x` died, `-` absent.
+    pub fn timeline_text(&self) -> String {
+        let versions = self.addresses.len();
+        let mut out = String::new();
+        for version in 0..versions {
+            let present = self.addresses[version].is_some();
+            let marker = if present {
+                if version == self.first_version {
+                    '+'
+                } else if self.changed.get(version - 1).copied().unwrap_or(false) {
+                    'c'
+                } else {
+                    '·'
+                }
+            } else if version > 0 && self.addresses[version - 1].is_some() {
+                'x'
+            } else {
+                '-'
+            };
+            out.push(marker);
+        }
+        out
+    }
+}
+
+/// Build per-function histories from consecutive interval reports.
+/// Identity follows matched names; address moves within a live history
+/// are recorded (the address vector shows them); unmatched functions
+/// start (`+`) or end (`x`) histories.
+pub fn build_timeline(intervals: &[IntervalInput]) -> Vec<FunctionHistory> {
+    let version_count = intervals.len() + 1;
+    let mut version_names: Vec<String> = intervals
+        .first()
+        .map(|input| vec![input.report.left_name.clone()])
+        .unwrap_or_default();
+    for input in intervals {
+        version_names.push(input.report.right_name.clone());
+    }
+    let _ = version_names;
+
+    // Histories keyed by identity name; unnamed functions get
+    // address-scoped synthetic identities (only address-tier matches
+    // chain them).
+    let mut histories: Vec<FunctionHistory> = Vec::new();
+    let mut by_identity: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+
+    let mut identity_of_left: std::collections::BTreeMap<u64, String> =
+        std::collections::BTreeMap::new();
+    let mut identity_of_right: std::collections::BTreeMap<u64, String> =
+        std::collections::BTreeMap::new();
+
+    for (interval_index, input) in intervals.iter().enumerate() {
+        identity_of_right.clear();
+        let mut born_right: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+
+        // Pass 1: matched pairs continue or start histories.
+        for matched in &input.report.matched {
+            let changed = input
+                .changed_pairs
+                .contains(&(matched.left_address, matched.right_address));
+            let identity = identity_of_left
+                .get(&matched.left_address)
+                .cloned()
+                .or_else(|| matched.name.clone())
+                .unwrap_or_else(|| format!("sub_{:x}", matched.left_address));
+            identity_of_right.insert(matched.right_address, identity.clone());
+            if let Some(&index) = by_identity.get(&identity) {
+                histories[index].addresses[interval_index + 1] = Some(matched.right_address);
+                histories[index].changed.push(changed);
+                histories[index].strategies.push(Some(matched.strategy));
+                histories[index].last_version = interval_index + 1;
+            } else {
+                by_identity.insert(identity.clone(), histories.len());
+                let mut addresses = vec![None; version_count];
+                addresses[interval_index] = Some(matched.left_address);
+                addresses[interval_index + 1] = Some(matched.right_address);
+                let mut strategies = vec![None; version_count];
+                strategies[interval_index + 1] = Some(matched.strategy);
+                histories.push(FunctionHistory {
+                    name: matched
+                        .name
+                        .clone()
+                        .or_else(|| (!identity.starts_with("sub_")).then_some(identity.clone())),
+                    addresses,
+                    changed: vec![changed],
+                    strategies,
+                    first_version: interval_index,
+                    last_version: interval_index + 1,
+                });
+            }
+        }
+
+        // Pass 2: added functions (present only in right) start new
+        // histories at this version.
+        for added in &input.report.added {
+            if born_right.contains(&added.address) {
+                continue;
+            }
+            born_right.insert(added.address);
+            let identity = added
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("sub_{:x}", added.address));
+            if by_identity.contains_key(&identity) {
+                continue;
+            }
+            by_identity.insert(identity.clone(), histories.len());
+            let mut addresses = vec![None; version_count];
+            addresses[interval_index + 1] = Some(added.address);
+            histories.push(FunctionHistory {
+                name: added.name.clone(),
+                addresses,
+                changed: Vec::new(),
+                strategies: vec![None; version_count],
+                first_version: interval_index + 1,
+                last_version: interval_index + 1,
+            });
+        }
+
+        // Roll the right-side identities into the next interval's left.
+        identity_of_left = identity_of_right.clone();
+    }
+
+    histories.sort_by(|a, b| {
+        a.first_version
+            .cmp(&b.first_version)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    histories
+}
+
+#[cfg(test)]
+mod timeline_tests {
+    use super::*;
+    use crate::diff::{DiffFunction, MatchStrategy};
+
+    fn matched(name: &str, left: u64, right: u64) -> MatchedFunction {
+        MatchedFunction {
+            name: Some(name.to_string()),
+            left_address: left,
+            right_address: right,
+            strategy: MatchStrategy::ExactSymbol,
+        }
+    }
+
+    fn added(name: &str, address: u64) -> DiffFunction {
+        DiffFunction {
+            name: Some(name.to_string()),
+            address,
+        }
+    }
+
+    fn report(left: &str, right: &str) -> DiffReport {
+        DiffReport {
+            left_name: left.to_string(),
+            right_name: right.to_string(),
+            matched: Vec::new(),
+            added: Vec::new(),
+            removed: Vec::new(),
+            defense_added: Vec::new(),
+            defense_removed: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn chained_histories_mark_birth_change_and_stability() {
+        let mut first = report("v1", "v2");
+        first.matched = vec![
+            matched("stable", 0x100, 0x100),
+            matched("evolving", 0x200, 0x200),
+        ];
+        first.added = vec![added("newborn", 0x300)];
+        let mut second = report("v2", "v3");
+        second.matched = vec![
+            matched("stable", 0x100, 0x100),
+            matched("evolving", 0x200, 0x240), // moved
+            matched("newborn", 0x300, 0x300),
+        ];
+
+        let intervals = [
+            IntervalInput {
+                report: first,
+                changed_pairs: [(0x200u64, 0x200u64)].into(),
+            },
+            IntervalInput {
+                report: second,
+                changed_pairs: [].into(),
+            },
+        ];
+        let timeline = build_timeline(&intervals);
+        let by_name = |name: &str| {
+            timeline
+                .iter()
+                .find(|h| h.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("missing {name}: {timeline:#?}"))
+        };
+
+        let stable = by_name("stable");
+        assert_eq!(stable.timeline_text(), "+··");
+        assert!(stable.addresses.iter().all(|a| a.is_some()));
+
+        let evolving = by_name("evolving");
+        assert_eq!(evolving.timeline_text(), "+c·");
+        assert_eq!(evolving.addresses[2], Some(0x240), "move recorded");
+
+        let newborn = by_name("newborn");
+        assert_eq!(newborn.timeline_text(), "-+·");
+        assert_eq!(newborn.first_version, 1);
+    }
+
+    #[test]
+    fn death_marks_last_interval() {
+        let mut first = report("v1", "v2");
+        first.matched = vec![matched("doomed", 0x100, 0x100)];
+        let mut second = report("v2", "v3");
+        second.matched = Vec::new();
+        second.removed = vec![DiffFunction {
+            name: Some("doomed".to_string()),
+            address: 0x100,
+        }];
+        let timeline = build_timeline(&[
+            IntervalInput {
+                report: first,
+                changed_pairs: [].into(),
+            },
+            IntervalInput {
+                report: second,
+                changed_pairs: [].into(),
+            },
+        ]);
+        let doomed = &timeline[0];
+        assert_eq!(doomed.name.as_deref(), Some("doomed"));
+        assert_eq!(doomed.timeline_text(), "+·x");
+        assert_eq!(doomed.last_version, 1);
+    }
+}

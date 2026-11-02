@@ -745,6 +745,14 @@ enum Command {
         #[arg(long, help = "Actor for transferred annotations (default: match)")]
         actor: Option<String>,
     },
+    #[command(
+        about = "Version timeline: chain diffs across N analyzed builds",
+        long_about = "Version timelines (plan feature 16).\\n\\nDiffs consecutive builds (symbol + address + shape tiers, pseudocode deltas) and chains the pairwise results into per-function histories: which functions were born, changed, moved, or died in each interval — the OS-update archaeology view."
+    )]
+    Timeline {
+        /// Two or more analyzed project paths, oldest first.
+        projects: Vec<PathBuf>,
+    },
     #[command(about = "Diff two analyzed projects (function-level, Wave 7)")]
     Diff {
         left: PathBuf,
@@ -1686,6 +1694,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
                 actor.as_deref(),
                 &output_settings,
             )?;
+        }
+        Command::Timeline { projects } => {
+            handle_timeline(projects, &output_settings)?;
         }
         Command::Diff {
             left,
@@ -3477,6 +3488,120 @@ fn handle_match(
         for (address, name) in transfers.iter().take(10) {
             println!("  {address:#010x} -> {name}");
         }
+    }
+    Ok(())
+}
+
+fn handle_timeline(
+    projects: Vec<PathBuf>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_decomp::{IntervalInput, build_timeline};
+    use damsel_project::ProjectStore as _;
+
+    if projects.len() < 2 {
+        return Err(CliRunError::invalid_args(
+            "timeline needs at least two analyzed projects, oldest first",
+        ));
+    }
+
+    // Resolve and open every project once; pair the consecutive ones.
+    let mut dirs = Vec::new();
+    for project in &projects {
+        dirs.push(resolve_project_dir(project)?);
+    }
+
+    let mut intervals: Vec<IntervalInput> = Vec::new();
+    let mut version_names: Vec<String> = Vec::new();
+    for pair in dirs.windows(2) {
+        let (left_dir, right_dir) = (&pair[0], &pair[1]);
+        let meta = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+        let left_store = damsel_project::open_store(
+            &left_dir.join("project.db"),
+            damsel_project::Create::Existing,
+            &meta,
+        )
+        .map_err(map_store_error)?;
+        let right_store = damsel_project::open_store(
+            &right_dir.join("project.db"),
+            damsel_project::Create::Existing,
+            &meta,
+        )
+        .map_err(map_store_error)?;
+        let left_name = left_store.meta().map_err(map_store_error)?.name;
+        let right_name = right_store.meta().map_err(map_store_error)?.name;
+        if intervals.is_empty() {
+            version_names.push(left_name.clone());
+        }
+        version_names.push(right_name.clone());
+
+        let left_image = load_project_image(left_dir)?;
+        let right_image = load_project_image(right_dir)?;
+        let left_shapes = damsel_recon_catalog::matching::shape_map(&left_store, &left_image).ok();
+        let right_shapes =
+            damsel_recon_catalog::matching::shape_map(&right_store, &right_image).ok();
+        let report = damsel_decomp::diff_functions_with_shapes(
+            &left_store,
+            &right_store,
+            &left_name,
+            &right_name,
+            left_shapes.as_ref(),
+            right_shapes.as_ref(),
+        )
+        .map_err(|e| CliRunError::command("diff_error", e.to_string()))?;
+
+        // Pseudocode deltas per matched pair (changed intervals).
+        let left_functions = crate::taint::lifted_functions(left_dir)
+            .map_err(|e| CliRunError::command("diff_error", e))?
+            .0;
+        let right_functions = crate::taint::lifted_functions(right_dir)
+            .map_err(|e| CliRunError::command("diff_error", e))?
+            .0;
+        let mut changed_pairs = std::collections::BTreeSet::new();
+        for matched in &report.matched {
+            if let (Some(left_fn), Some(right_fn)) = (
+                left_functions.get(&matched.left_address),
+                right_functions.get(&matched.right_address),
+            ) {
+                let name = matched
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("sub_{:x}", matched.left_address));
+                let diff = damsel_decomp::diff_pseudocode(&name, left_fn, right_fn);
+                if diff.added + diff.removed > 0 {
+                    changed_pairs.insert((matched.left_address, matched.right_address));
+                }
+            }
+        }
+
+        intervals.push(IntervalInput {
+            report,
+            changed_pairs,
+        });
+    }
+
+    let timeline = build_timeline(&intervals);
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "timeline",
+            "versions": version_names,
+            "functions": timeline,
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+
+    println!(
+        "timeline: {} versions ({})",
+        version_names.len(),
+        version_names.join(" -> ")
+    );
+    println!("  legend: + born  c changed this interval  · stable  x died  - absent");
+    println!();
+    for history in &timeline {
+        let name = history.name.as_deref().unwrap_or("(stripped)");
+        println!("  {}  {}", history.timeline_text(), name);
     }
     Ok(())
 }
