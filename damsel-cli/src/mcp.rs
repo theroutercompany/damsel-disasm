@@ -261,6 +261,16 @@ fn handle_list_tools() -> Value {
                     },
                     "required": ["project"]
                 })),
+                tool("damsel_query", "Query the call graph: shortest path between functions, reachability, or direct callers", json!({
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Path to the .damsel directory or target" },
+                        "from": { "type": "string", "description": "Source function (0xADDR or name; renames included)" },
+                        "to": { "type": "string", "description": "Sink function (0xADDR or name)" },
+                        "callers_of": { "type": "string", "description": "List direct callers of this function instead" }
+                    },
+                    "required": ["project"]
+                })),
                 tool("damsel_annotate", "Attach a user annotation to a function (rename, comment, or tag)", json!({
                     "type": "object",
                     "properties": {

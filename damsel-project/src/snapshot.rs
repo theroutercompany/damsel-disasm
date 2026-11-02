@@ -20,14 +20,8 @@ pub fn canonical_export(
     facts: &[AnalysisFact],
 ) -> Vec<u8> {
     let mut root = BTreeMap::new();
-    root.insert(
-        "schema_version".to_string(),
-        Value::from(SCHEMA_VERSION),
-    );
-    root.insert(
-        "project".to_string(),
-        canonical_project(meta),
-    );
+    root.insert("schema_version".to_string(), Value::from(SCHEMA_VERSION));
+    root.insert("project".to_string(), canonical_project(meta));
     root.insert("sources".to_string(), canonical_sources(sources));
     root.insert("facts".to_string(), canonical_facts(facts));
     serde_json::to_vec(&Value::Object(Map::from_iter(root)))
@@ -36,7 +30,10 @@ pub fn canonical_export(
 
 fn canonical_project(meta: &AnalysisProjectMeta) -> Value {
     let mut m = BTreeMap::new();
-    m.insert("project_id".to_string(), Value::from(meta.project_id.as_str()));
+    m.insert(
+        "project_id".to_string(),
+        Value::from(meta.project_id.as_str()),
+    );
     m.insert("name".to_string(), Value::from(meta.name.as_str()));
     m.insert(
         "analyzer_version".to_string(),
@@ -124,5 +121,8 @@ fn canonical_facts(facts: &[AnalysisFact]) -> Value {
 }
 
 fn object_key(fact: &AnalysisFact) -> String {
-    fact.object_id.as_ref().map(|o| o.as_str().to_string()).unwrap_or_default()
+    fact.object_id
+        .as_ref()
+        .map(|o| o.as_str().to_string())
+        .unwrap_or_default()
 }

@@ -4,10 +4,10 @@
 pub mod migrations;
 pub mod sqlite;
 
+use crate::AddressSpaceId;
 use crate::facts::AnalysisFact;
 use crate::project::AnalysisProjectMeta;
 use crate::source::AnalysisSourceKind;
-use crate::AddressSpaceId;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -17,7 +17,9 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("store io error: {0}")]
     Sqlite(#[from] rusqlite::Error),
-    #[error("project store at {path} has schema version {found}; this damsel supports {supported}; open with an explicit upgrade path")]
+    #[error(
+        "project store at {path} has schema version {found}; this damsel supports {supported}; open with an explicit upgrade path"
+    )]
     UnsupportedSchema {
         path: PathBuf,
         found: i32,
@@ -67,7 +69,11 @@ pub use sqlite::SqliteStore as StoreHandle;
 /// existing file with `Create::New` fails with
 /// [`StoreError::AlreadyExists`] (no silent overwrites), and opening a
 /// missing file with `Create::Existing` fails cleanly.
-pub fn open_store(path: &Path, create: Create, meta: &AnalysisProjectMeta) -> Result<StoreHandle, StoreError> {
+pub fn open_store(
+    path: &Path,
+    create: Create,
+    meta: &AnalysisProjectMeta,
+) -> Result<StoreHandle, StoreError> {
     sqlite::open(path, create, meta)
 }
 

@@ -963,3 +963,102 @@ fn match_transfers_renames_across_projects() {
         "unrelated binaries must not shape-match"
     );
 }
+
+/// Call-graph queries (plan feature 10, slice 1): path, unreachability,
+/// callers, rename-aware resolution — over stored facts only.
+#[test]
+fn query_paths_callers_and_rename_resolution() {
+    let dir = smoke_dir("query");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    // Direct path main -> exported_sum.
+    let out = damsel()
+        .arg("query")
+        .arg(&target)
+        .arg("--from")
+        .arg("_main")
+        .arg("--to")
+        .arg("_exported_sum")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("path json");
+    assert_eq!(body["action"], "path");
+    assert_eq!(body["hops"], 1);
+    assert_eq!(body["path"][0]["name"], "_main");
+    assert_eq!(body["path"][1]["name"], "_exported_sum");
+
+    // Unreachability is a success with reachable=false.
+    let out = damsel()
+        .arg("query")
+        .arg(&target)
+        .arg("--from")
+        .arg("_exported_sum")
+        .arg("--to")
+        .arg("_main")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("unreachable json");
+    assert_eq!(body["reachable"], false);
+
+    // Callers.
+    let out = damsel()
+        .arg("query")
+        .arg(&target)
+        .arg("--callers-of")
+        .arg("_exported_sum")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("callers json");
+    assert_eq!(body["callers"][0]["name"], "_main");
+
+    // Renames resolve in queries.
+    damsel()
+        .arg("annotate")
+        .arg(&target)
+        .arg("--function")
+        .arg("_exported_sum")
+        .arg("--rename")
+        .arg("summer")
+        .assert()
+        .success();
+    let out = damsel()
+        .arg("query")
+        .arg(&target)
+        .arg("--from")
+        .arg("_main")
+        .arg("--to")
+        .arg("summer")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("renamed json");
+    assert_eq!(body["hops"], 1, "renamed target resolves");
+
+    // Unknown names stay typed errors.
+    let missing = damsel()
+        .arg("query")
+        .arg(&target)
+        .arg("--from")
+        .arg("_main")
+        .arg("--to")
+        .arg("nope")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("function_not_found")
+    );
+}

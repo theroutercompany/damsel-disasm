@@ -1613,3 +1613,32 @@ main_v2`; `import-rich` negative control → 0 matches.
 
 Proof: `match_transfers_renames_across_projects` CLI test (match +
 transfer + landing + negative); workspace 60 suites green.
+
+## Semantic Queries (plan feature 10, slice 1) — DONE
+
+### Unit Q1 — call-graph query engine — DONE
+
+`damsel-project::callgraph`: a directed call graph derived purely from
+stored facts — `call|to=function:…` xrefs attributed to functions by
+bound containment — with BFS shortest-path, reachability sets, and
+caller/callee indexes. Call targets without recovered bounds (thunks,
+stubs) are first-class nodes so paths survive; every edge is a stored
+fact, so results carry provenance by construction.
+
+`damsel query <project>`:
+- `--from A --to B` — shortest call path (names or 0xADDR; renames
+  resolve) or a typed `reachable: false`
+- `--from A` — everything reachable
+- `--callers-of B` — direct callers
+- MCP `damsel_query` (14 tools): the agent loop can now ask "can input
+  reach this sink" against stored facts.
+
+Evidence (arm64-symbolized): `_main → _exported_sum` = 1 hop with named
+path; reverse = unreachable; callers of `_exported_sum` = `_main`;
+renamed target (`summer`) resolves in queries; unknown names are typed
+`function_not_found`.
+
+Proof: `damsel-project` callgraph unit tests (synthetic cyclic graph:
+containment attribution, unbounded-target nodes, shortest paths through
+sinks, empty graph) + `query_paths_callers_and_rename_resolution` CLI
+test; workspace 60 suites green.

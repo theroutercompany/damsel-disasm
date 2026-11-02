@@ -599,6 +599,23 @@ enum Command {
         library: String,
     },
     #[command(
+        about = "Query the call graph: paths, reachability, callers/callees",
+        long_about = "Query the call graph derived from stored xref facts.\n\n--from/--to resolve names (renames included) or 0xADDR and report the shortest call path; --from alone lists reachable functions; --callers lists direct callers. Every edge is a stored fact — paths carry provenance by construction."
+    )]
+    Query {
+        project: PathBuf,
+        #[arg(long, value_name = "TARGET", help = "Source function (0xADDR or name)")]
+        from: Option<String>,
+        #[arg(long, value_name = "TARGET", help = "Sink function (0xADDR or name)")]
+        to: Option<String>,
+        #[arg(
+            long,
+            value_name = "TARGET",
+            help = "List direct callers of a function"
+        )]
+        callers_of: Option<String>,
+    },
+    #[command(
         about = "Match functions across two analyzed projects and transfer annotations",
         long_about = "Match functions across two analyzed projects.\n\nTier 1: exact shape signatures (masked mnemonic/operand-kind sequences — constants and addresses never enter the hash, WARP-style). Matched pairs can transfer user renames from the left project into the right through the annotation layer (provenance, undoable)."
     )]
@@ -1444,6 +1461,20 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
+        Command::Query {
+            project,
+            from,
+            to,
+            callers_of,
+        } => {
+            handle_query(
+                project,
+                from.as_deref(),
+                to.as_deref(),
+                callers_of.as_deref(),
+                &output_settings,
+            )?;
+        }
         Command::Match {
             left,
             right,
@@ -2117,6 +2148,172 @@ fn run_batch_target(
 
 fn line_of(path: &std::path::Path) -> String {
     path.display().to_string()
+}
+
+fn resolve_query_target(
+    store: &damsel_project::StoreHandle,
+    target: &str,
+) -> Result<u64, CliRunError> {
+    if let Some(hex) = target.strip_prefix("0x") {
+        return u64::from_str_radix(hex, 16)
+            .map_err(|_| CliRunError::invalid_args(format!("bad address: {target}")));
+    }
+    let summaries = damsel_project::function_summaries(store).map_err(map_store_error)?;
+    let matches: Vec<_> = summaries
+        .iter()
+        .filter(|summary| summary.name.as_deref() == Some(target))
+        .collect();
+    match matches.as_slice() {
+        [one] => Ok(one.address),
+        [] => Err(CliRunError::command(
+            "function_not_found",
+            format!("no function named `{target}` (renames included)"),
+        )),
+        many => Err(CliRunError::command(
+            "ambiguous_function",
+            format!("`{target}` matches {} functions; pass 0xADDR", many.len()),
+        )),
+    }
+}
+
+fn handle_query(
+    project: PathBuf,
+    from: Option<&str>,
+    to: Option<&str>,
+    callers_of: Option<&str>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
+    let graph = damsel_project::CallGraph::from_store(&store).map_err(map_store_error)?;
+    let names: BTreeMap<u64, String> = damsel_project::function_summaries(&store)
+        .map_err(map_store_error)?
+        .into_iter()
+        .filter_map(|summary| summary.name.map(|name| (summary.address, name)))
+        .collect();
+    let label = |address: u64| -> String {
+        names
+            .get(&address)
+            .cloned()
+            .unwrap_or_else(|| format!("sub_{address:x}"))
+    };
+
+    if let Some(target) = callers_of {
+        let address = resolve_query_target(&store, target)?;
+        let callers = graph.callers(address);
+        if output_settings.format == output::OutputFormat::Json {
+            let value = serde_json::json!({
+                "command": "query",
+                "action": "callers",
+                "function": label(address),
+                "address": format!("{address:#x}"),
+                "callers": callers.iter().map(|c| serde_json::json!({
+                    "address": format!("{c:#x}"),
+                    "name": label(*c),
+                })).collect::<Vec<_>>(),
+            });
+            println!("{}", project_json(value));
+        } else {
+            println!(
+                "callers of {} ({address:#x}): {}",
+                label(address),
+                callers.len()
+            );
+            for caller in callers {
+                println!("  {caller:#010x}  {}", label(caller));
+            }
+        }
+        return Ok(());
+    }
+
+    let Some(from_target) = from else {
+        return Err(CliRunError::invalid_args(
+            "pass --from <name|0xADDR> (plus optional --to), or --callers-of",
+        ));
+    };
+    let source = resolve_query_target(&store, from_target)?;
+
+    match to {
+        Some(to_target) => {
+            let sink = resolve_query_target(&store, to_target)?;
+            match graph.path(source, sink) {
+                Some(path) => {
+                    if output_settings.format == output::OutputFormat::Json {
+                        let value = serde_json::json!({
+                            "command": "query",
+                            "action": "path",
+                            "from": label(source),
+                            "to": label(sink),
+                            "hops": path.len().saturating_sub(1),
+                            "path": path.iter().map(|a| serde_json::json!({
+                                "address": format!("{a:#x}"),
+                                "name": label(*a),
+                            })).collect::<Vec<_>>(),
+                        });
+                        println!("{}", project_json(value));
+                    } else {
+                        println!(
+                            "path {} -> {} ({} hops):",
+                            label(source),
+                            label(sink),
+                            path.len().saturating_sub(1)
+                        );
+                        for (index, address) in path.iter().enumerate() {
+                            println!("  {index}: {address:#010x}  {}", label(*address));
+                        }
+                    }
+                }
+                None => {
+                    if output_settings.format == output::OutputFormat::Json {
+                        println!(
+                            "{}",
+                            project_json(serde_json::json!({
+                                "command": "query", "action": "path",
+                                "from": label(source), "to": label(sink), "reachable": false,
+                            }))
+                        );
+                    } else {
+                        println!("unreachable: {} -> {}", label(source), label(sink));
+                    }
+                }
+            }
+        }
+        None => {
+            let reachable = graph.reachable(source);
+            if output_settings.format == output::OutputFormat::Json {
+                let value = serde_json::json!({
+                    "command": "query",
+                    "action": "reachable",
+                    "from": label(source),
+                    "count": reachable.len(),
+                    "functions": reachable.iter().map(|a| serde_json::json!({
+                        "address": format!("{a:#x}"),
+                        "name": label(*a),
+                    })).collect::<Vec<_>>(),
+                });
+                println!("{}", project_json(value));
+            } else {
+                println!(
+                    "reachable from {} ({}): {}",
+                    label(source),
+                    reachable.len(),
+                    source
+                );
+                for address in reachable {
+                    println!("  {address:#010x}  {}", label(address));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn handle_match(
