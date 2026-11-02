@@ -13,4 +13,5 @@ pub use catalog::{
 };
 pub mod swift;
 pub mod matching;
+pub mod refine;
 pub mod reuse;

@@ -1107,3 +1107,82 @@ fn diff_ports_renames_to_matched_functions() {
         serde_json::from_slice(&functions.get_output().stdout).expect("functions json");
     assert_eq!(body["count"], 1, "rename ported through diff");
 }
+
+/// Model refinement (plan feature 17, slice 1): proposals are
+/// provenance-tagged annotations — dry-run default, apply writes,
+/// actor-scoped review + undo.
+#[test]
+fn refine_applies_model_annotations_with_provenance() {
+    let dir = smoke_dir("refine");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    // Strip the name of _exported_sum by renaming to a sub_ name via the
+    // annotation layer, then refine must propose for it (string refs in
+    // _main's window are attributed by containment).
+    damsel()
+        .arg("annotate")
+        .arg(&target)
+        .arg("--function")
+        .arg("_main")
+        .arg("--rename")
+        .arg("sub_1000004b8")
+        .assert()
+        .success();
+
+    // Dry-run: no annotations written.
+    let out = damsel()
+        .arg("refine")
+        .arg(&target)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("refine json");
+    assert_eq!(body["command"], "refine");
+    assert_eq!(body["applied"], false);
+    assert!(body["proposals"].as_u64().unwrap_or(0) >= 1, "{body:#?}");
+    let list = damsel()
+        .arg("annotate")
+        .arg(&target)
+        .arg("--list")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let list_body: Value = serde_json::from_slice(&list.get_output().stdout).expect("list");
+    assert_eq!(list_body["count"], 1, "dry-run wrote nothing");
+
+    // Apply: model-actor annotations with evidence.
+    let out = damsel()
+        .arg("refine")
+        .arg(&target)
+        .arg("--apply")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("apply json");
+    assert_eq!(body["applied"], true);
+    assert_eq!(body["actor"], "model:heuristic-v1");
+    assert!(body["applied_count"].as_u64().unwrap_or(0) >= 1);
+
+    // The proposed name is findable and attributed to the model actor.
+    let list = damsel()
+        .arg("annotate")
+        .arg(&target)
+        .arg("--list")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let list_body: Value = serde_json::from_slice(&list.get_output().stdout).expect("list");
+    let model_annotations: Vec<&Value> = list_body["annotations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| a["actor"].as_str().unwrap_or("").starts_with("model:"))
+        .collect();
+    assert!(!model_annotations.is_empty(), "model actor attribution");
+}

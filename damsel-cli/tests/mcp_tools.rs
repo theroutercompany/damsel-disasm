@@ -105,7 +105,7 @@ fn mcp_lists_twelve_tools_with_output_schemas() {
     session.request("initialize", serde_json::json!({}));
     let list = session.request("tools/list", serde_json::json!({}));
     let tools = list["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 14, "tool inventory: {tools:#?}");
+    assert_eq!(tools.len(), 15, "tool inventory: {tools:#?}");
     for entry in tools {
         assert!(
             entry["outputSchema"].is_object(),
@@ -119,6 +119,7 @@ fn mcp_lists_twelve_tools_with_output_schemas() {
         "damsel_functions",
         "damsel_xrefs",
         "damsel_search",
+        "damsel_refine",
         "damsel_query",
         "damsel_strings",
         "damsel_summary",

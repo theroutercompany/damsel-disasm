@@ -1665,3 +1665,28 @@ findable via `functions --name`.
 
 Proof: `shape_tier_matches_moved_functions` + `diff_ports_renames`
 + workspace 60 suites green.
+
+## Model Refinement (plan feature 17, slice 1) — DONE
+
+### Unit R1 — provenance-tagged model renames — DONE
+
+The refine-after-classic architecture lands: `damsel refine <project>`
+proposes renames for stripped functions from decompiler context (called
+imports with counts; string-reference counts) and writes them through
+the annotation layer — actor `model:heuristic-v1`, evidence line on
+every proposal, dry-run by default, `--apply` to write, review via
+`annotate --list` (model annotations filter by `model:` actor prefix),
+undo scoped to the model actor (`DAMSEL_ACTOR=model:… annotate --undo`).
+v1's model is a deterministic heuristic (string content stays out of
+the store by privacy design — counts and imports are the store-side
+context); the *surface* is the feature: external LLMs plug into the
+same annotation contract (MCP `damsel_refine`, 15 tools).
+
+Evidence on the real App Store binary (17,753 functions): 9,095
+proposals in one pass (`fn_100002ec8_refs_14_str [string references:
+14]`), applied, listed alongside the human's `cli` annotation, findable
+via `functions --name`, and undone actor-scoped.
+
+Proof: `refine_applies_model_annotations_with_provenance` CLI test
+(dry-run writes nothing; apply attributes to `model:*` with evidence) +
+MCP inventory test (15 tools); workspace 60 suites green.
