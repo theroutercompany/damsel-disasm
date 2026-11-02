@@ -472,6 +472,16 @@ pub fn lift_arm64(instructions: &[DecodedInstruction]) -> IrFunction {
                     });
                 }
             }
+            "pacibsp" | "paciasp" | "autibsp" | "autiasp" | "bti" | "nop" => {
+                // Pointer-authentication sign/verify and branch targets:
+                // LR transform only, no dataflow effect on the modeled
+                // function body — the standard decompiler treatment (and
+                // the arm64e entry marker). Provenance keeps the site.
+                statements.push(IrStatement::Assign {
+                    destination: "_nop".to_string(),
+                    expression: IrExpr::Value(IrValue::Const(0)),
+                });
+            }
             "blr" | "blraa" | "blraaz" | "blrab" | "blrabz" => {
                 // Indirect call through a register (arm64e-authenticated
                 // included): modeled as an inline call like `bl`, with the
