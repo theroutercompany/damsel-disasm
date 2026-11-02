@@ -2150,3 +2150,35 @@ type names, no-DWARF binary yields nothing) +
 counts/actor, field-exact listing, bind+apply with `x8->sides` /
 `x9->origin`, no invented fields, typed absence) + workspace 62
 suites, zero warnings.
+
+### Unit F2 — Frida live attach verified — DONE
+
+Feature 12 completes: frida installed (uv tool, 17.25.1) and the
+bridge verified against a real spawn. Three fixes the live run
+surfaced (all invisible without a live target):
+
+- frida 17 removed `--no-pause` (auto-resume is default) and the
+  batch invocation is `-q -t N` (quiet mode terminates after N
+  seconds; the interactive REPL waits on stdin forever).
+- The generated agent used the obsolete
+  `implementation.clone({onEnter})` pattern and re-entered ObjC from
+  inside onEnter (`new ObjC.Object(...).toString()`), which deadlocks
+  the runtime — rewritten on `Interceptor.attach(method.implementation,
+  {onEnter})` with raw pointer arguments (no ObjC re-entry). The
+  50-class shotgun default could also deadlock startup at spawn:
+  hooking is now named-classes only (`--class`), and the classless
+  session is an honest smoke report (modules + ObjC availability).
+- frida 17's `$ownMethods` entries render as `"- init"` (space), which
+  shifted the event fields — the selector trims.
+
+Evidence (live, objc-sample): `damsel frida --class Greeter --class
+Speaker --duration 3 --max-calls 12` → 12 calls in ~1s capturing
+main's exact sequence — `Greeter -init`, `Greeter -greeting`,
+`Greeter -emphasizedGreeting`, interleaved `Speaker -prefix` /
+`-title` from Greeter's internals, with argument pointers. The
+env-gated `frida_live_attach_captures_objc_calls` test asserts init
+and greeting on any host with frida on PATH (skips cleanly without).
+
+Proof: frida_bridge unit tests (script shape, event parsing incl. the
+frida-17 field alignment) + live e2e (1.15s) + workspace 62 suites,
+zero warnings.
