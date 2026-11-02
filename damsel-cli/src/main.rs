@@ -1,5 +1,6 @@
 mod debug;
 mod frida_bridge;
+mod llm_refiner;
 mod mcp;
 mod output;
 mod taint;
@@ -687,6 +688,11 @@ enum Command {
         project: PathBuf,
         #[arg(long, help = "Apply proposals (default: dry-run)")]
         apply: bool,
+        #[arg(
+            long,
+            help = "Use the external-LLM refiner (env: DAMSEL_LLM_PROVIDER/API_KEY/MODEL/BASE_URL)"
+        )]
+        llm: bool,
     },
     #[command(
         about = "Query the call graph: paths, reachability, callers/callees",
@@ -1631,8 +1637,12 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         } => {
             handle_type(project, r#struct, &fields, &bind, list, &output_settings)?;
         }
-        Command::Refine { project, apply } => {
-            handle_refine(project, apply, &output_settings)?;
+        Command::Refine {
+            project,
+            apply,
+            llm,
+        } => {
+            handle_refine(project, apply, llm, &output_settings)?;
         }
         Command::Query {
             project,
@@ -3119,6 +3129,7 @@ fn handle_type(
 fn handle_refine(
     project: PathBuf,
     apply: bool,
+    llm: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{Create, open_store};
@@ -3140,10 +3151,30 @@ fn handle_refine(
         ));
     }
 
-    let proposals = damsel_recon_catalog::refine::propose(&store)
-        .map_err(|e| CliRunError::command("refine_error", e))?;
+    use damsel_recon_catalog::refine::{Refiner, apply_as, collect_contexts};
+
+    let contexts = collect_contexts(&store).map_err(|e| CliRunError::command("refine_error", e))?;
+    let proposals = if llm {
+        let config = crate::llm_refiner::LlmConfig::from_env()
+            .map_err(|e| CliRunError::command("refine_unconfigured", e))?;
+        let refiner = crate::llm_refiner::LlmRefiner::new(config);
+        refiner
+            .propose(&contexts)
+            .map_err(|e| CliRunError::command("refine_error", e))?
+    } else {
+        damsel_recon_catalog::refine::HeuristicRefiner
+            .propose(&contexts)
+            .map_err(|e| CliRunError::command("refine_error", e))?
+    };
+    let actor = if llm {
+        let config = crate::llm_refiner::LlmConfig::from_env()
+            .map_err(|e| CliRunError::command("refine_unconfigured", e))?;
+        crate::llm_refiner::LlmRefiner::new(config).actor()
+    } else {
+        damsel_recon_catalog::refine::MODEL_ACTOR.to_string()
+    };
     let applied = if apply {
-        damsel_recon_catalog::refine::apply(&mut store, &proposals)
+        apply_as(&mut store, &proposals, &actor)
             .map_err(|e| CliRunError::command("refine_error", e))?
     } else {
         Vec::new()
@@ -3152,7 +3183,7 @@ fn handle_refine(
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({
             "command": "refine",
-            "actor": damsel_recon_catalog::refine::MODEL_ACTOR,
+            "actor": actor,
             "applied": apply,
             "proposals": proposals.len(),
             "items": proposals.iter().map(|p| serde_json::json!({
@@ -3167,8 +3198,7 @@ fn handle_refine(
         return Ok(());
     }
     println!(
-        "refine (actor {}, {}):",
-        damsel_recon_catalog::refine::MODEL_ACTOR,
+        "refine (actor {actor}, {}):",
         if apply { "APPLY" } else { "dry-run" }
     );
     for proposal in &proposals {

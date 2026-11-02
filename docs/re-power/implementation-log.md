@@ -1996,3 +1996,39 @@ Proof: pseudodiff unit tests (identical clean, change = remove+add,
 pure insertion) + `diff_pseudocode_surfaces_real_changes` CLI test
 (self-diff clean, all three v2 deltas with exact line assertions) +
 workspace 60 suites, zero warnings.
+
+### Unit R2 — external-LLM refiner: the Refiner trait + HTTP adapter — DONE
+
+Feature 17, slice 2: the refine-after-classic architecture opens to
+external models. `damsel_recon_catalog::refine::Refiner` is the
+provider contract (`actor()`, `propose(&[FunctionContext])`);
+`FunctionContext` (address, current name, imports called with counts,
+string-ref count) is what any refiner sees — string *content* never
+crosses the boundary (privacy by design). `HeuristicRefiner` is the
+deterministic v1 (unchanged behavior, now trait-shaped); `apply_as`
+writes with any model actor.
+
+`damsel-cli::llm_refiner::LlmRefiner` implements the trait over
+OpenAI- and Anthropic-compatible chat APIs: env config
+(`DAMSEL_LLM_PROVIDER|API_KEY|MODEL|BASE_URL`), temperature-0 request
+per provider, strict-JSON-array prompt from contexts, defensive
+completion parsing (prose-tolerant, invented addresses dropped,
+names sanitized, evidence capped). `damsel refine --llm [--apply]`
+selects it; a missing key is a typed `refine_unconfigured` error
+naming the env var; dry-run stays the default. Actor:
+`model:openai/<model>` / `model:anthropic/<model>`. MCP
+`damsel_refine` gains `llm` (15 tools).
+
+Evidence — full round trip through a one-shot local HTTP mock
+standing in for the provider: the captured request carries the bearer
+key, `model: test-model`, and a prompt containing the stripped
+function's address and import counts (no string content); the mock's
+OpenAI-shaped completion (`add_five_helper`) parses, applies, lands
+as `function:0x1000004a0 rename add_five_helper
+[model:openai/test-model]`, and is findable via `functions --name`.
+Missing key → typed error, verified.
+
+Proof: llm_refiner unit tests (prompt shape, per-provider request
+bodies, text extraction, invented-function dropping, provider
+parsing) + 2 e2e tests (mock round trip, typed key error) +
+workspace 61 suites, zero warnings.
