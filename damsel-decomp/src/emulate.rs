@@ -317,10 +317,9 @@ impl Emulator {
                     .wrapping_add(index_value.wrapping_mul(*scale))
                     .wrapping_add_signed(*displacement))
             }
-            IrExpr::SegmentAddr {
-                segment,
-                displacement,
-            } => Err(format!("segment addressing not modeled: {segment}")),
+            IrExpr::SegmentAddr { segment, .. } => {
+                Err(format!("segment addressing not modeled: {segment}"))
+            }
         }
     }
 }
