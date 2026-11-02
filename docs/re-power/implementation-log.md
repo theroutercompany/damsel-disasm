@@ -1576,3 +1576,20 @@ global ≤ 0.01, arm64e ceiling 0.35 → 0.05.
 Proof: 4 new d1 lift tests (Select shape, blr inline call, width
 memory, FP/MADD) mining one-instruction windows from the fixture;
 fidelity gate green at the tightened floors; workspace 60 suites.
+
+### Unit P1 — arm64e PAC floor set — DONE
+
+Feature 5 slice 1: pointer-authentication sign/verify instructions
+(`pacibsp`/`paciasp`/`autibsp`/`autiasp`), `bti`, and `nop` lift as
+provenance-carrying no-ops — LR transforms with no dataflow effect on
+the modeled body, the standard decompiler treatment. The authenticated
+call family (`blraa`…) was already inline-modeled in Q2; discriminator
+*resolution* (naming the callee via value flow) remains the feature-5
+deep work.
+
+Scoreboard: arm64e-sample unknown-rate 0.0400 → **0.0000**; the
+per-fixture ceiling table is now empty — one global floor (≤ 0.01)
+covers the whole corpus, actual **0.0021**.
+
+Proof: fidelity gate green with no per-fixture exceptions; workspace 60
+suites.

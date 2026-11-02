@@ -19,14 +19,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 
 /// Committed floors — bump DOWN only with evidence (implementation log).
-/// Baseline 0.0371 (Q1) → 0.0028 (Q2: csel/blr/width-memory/FP/MADD lifts).
+/// Baseline 0.0371 (Q1) → 0.0028 (Q2: csel/blr/width-memory/FP/MADD) →
+/// 0.0000 expected after Q3 (PAC sign/verify modeled as no-ops).
 const GLOBAL_UNKNOWN_RATE_MAX: f64 = 0.01;
 /// Fixtures allowed a higher unknown rate (documented honesty cases).
-const FIXTURE_CEILINGS: &[(&str, f64)] = &[
-    // arm64e: pacibsp/braa surface honestly as unknowns until PAC
-    // modeling (feature 5) lands.
-    ("arm64e-sample", 0.05),
-];
+const FIXTURE_CEILINGS: &[(&str, f64)] = &[];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
