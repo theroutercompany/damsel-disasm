@@ -695,6 +695,12 @@ enum Command {
             help = "Output directory for --all (one .pseudo file per function)"
         )]
         out: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "REG=VALUE",
+            help = "Value assertion (steering): pin a register at a site, e.g. x8=0x1000 or x8@0x1004=0x1000; persisted as user_asserted facts"
+        )]
+        r#assert: Vec<String>,
     },
     #[command(about = "D0 function summary: calls, imports, strings, problems (Wave 6)")]
     Summary {
@@ -1454,6 +1460,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             function,
             all,
             out,
+            r#assert,
         } => {
             if all {
                 handle_decompile_all(project, out, &output_settings)?;
@@ -1461,7 +1468,7 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
                 let function = function.ok_or_else(|| {
                     CliRunError::invalid_args("decompile requires --function or --all")
                 })?;
-                handle_decompile(project, &function, &output_settings)?;
+                handle_decompile(project, &function, &r#assert, &output_settings)?;
             }
         }
         Command::Recon { path } => {
@@ -3314,9 +3321,84 @@ pub(crate) fn decompile_project_function(
     })
 }
 
+/// A parsed steering assertion: register = value, optionally pinned at
+/// an instruction site (`x8@0x1004=0x1000`). Site-less assertions apply
+/// at the function entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SteeringAssertion {
+    register: String,
+    value: u64,
+    site: Option<u64>,
+}
+
+fn parse_assertion(raw: &str) -> Result<SteeringAssertion, CliRunError> {
+    let (target, value) = raw.split_once('=').ok_or_else(|| {
+        CliRunError::invalid_args(format!(
+            "bad --assert (want REG=VALUE or REG@0xSITE=VALUE): {raw}"
+        ))
+    })?;
+    let value = u64::from_str_radix(value.trim_start_matches("0x"), 16)
+        .map_err(|_| CliRunError::invalid_args(format!("bad --assert value: {raw}")))?;
+    let (register, site) = match target.split_once('@') {
+        Some((register, site)) => (
+            register.to_ascii_lowercase(),
+            Some(
+                u64::from_str_radix(site.trim_start_matches("0x"), 16)
+                    .map_err(|_| CliRunError::invalid_args(format!("bad --assert site: {raw}")))?,
+            ),
+        ),
+        None => (target.to_ascii_lowercase(), None),
+    };
+    if register.is_empty() || !register.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(CliRunError::invalid_args(format!(
+            "bad --assert register: {raw}"
+        )));
+    }
+    Ok(SteeringAssertion {
+        register,
+        value,
+        site,
+    })
+}
+
+/// Persist assertions as user_asserted facts and render them in the
+/// pseudocode preamble (steering v1: visible, provenance-carrying pins;
+/// D4-feeding structuring arrives with the SSA steering pass).
+fn steering_facts(
+    store: &mut damsel_project::StoreHandle,
+    source_id: i64,
+    function_address: u64,
+    assertions: &[SteeringAssertion],
+    actor: &str,
+) -> Result<usize, CliRunError> {
+    use damsel_project::{
+        AnalysisFact, Confidence, FactKind, FactProvenance, ObjectId, TypedStore,
+    };
+    let mut written = 0;
+    for assertion in assertions {
+        let site = assertion.site.unwrap_or(function_address);
+        store
+            .put_fact(AnalysisFact {
+                source_id,
+                object_id: Some(ObjectId::new("instruction", format!("{site:#x}"))),
+                kind: FactKind::new("value_assert"),
+                payload: format!(
+                    "{}={:#x}|function={:#x}|register={}",
+                    assertion.register, assertion.value, function_address, assertion.register
+                ),
+                confidence: Confidence::UserAsserted,
+                provenance: FactProvenance::analyzer("steer_v1", actor),
+            })
+            .map_err(map_store_error)?;
+        written += 1;
+    }
+    Ok(written)
+}
+
 fn handle_decompile(
     project: PathBuf,
     selector: &str,
+    assertions: &[String],
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     // v1 lift path: Mach-O arm64 via the engine's symbol/addr windows.
@@ -3332,6 +3414,52 @@ fn handle_decompile(
     }
 
     let image = load_project_image(&project_dir)?;
+
+    // Steering (plan feature 9): parse, persist as user_asserted facts
+    // (provenance steer_v1 + actor), and surface the pins in the output.
+    let mut parsed_assertions = Vec::new();
+    for raw in assertions {
+        parsed_assertions.push(parse_assertion(raw)?);
+    }
+    let mut steer_note = String::new();
+    if !parsed_assertions.is_empty() {
+        use damsel_project::{Create, ProjectStore, open_store};
+        let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+        let mut store = open_store(
+            &project_dir.join("project.db"),
+            Create::Existing,
+            &meta_for_open,
+        )
+        .map_err(map_store_error)?;
+        let source_id = store
+            .sources()
+            .map_err(map_store_error)?
+            .first()
+            .map(|record| record.source_id)
+            .ok_or_else(|| CliRunError::command("project_not_found", "project has no sources"))?;
+        let function_address = if let Some(hex) = selector.strip_prefix("0x") {
+            u64::from_str_radix(hex, 16).unwrap_or_default()
+        } else {
+            damsel_project::function_summaries(&store)
+                .map_err(map_store_error)?
+                .into_iter()
+                .find(|summary| summary.name.as_deref() == Some(selector))
+                .map(|summary| summary.address)
+                .unwrap_or_default()
+        };
+        let actor = annotation_actor();
+        let written = steering_facts(
+            &mut store,
+            source_id,
+            function_address,
+            &parsed_assertions,
+            &actor,
+        )?;
+        steer_note =
+            format!(" // steered: {written} assertion(s) persisted (pass steer_v1, actor {actor})");
+        drop(store);
+    }
+
     let decompiled = decompile_project_function(&image, selector)?;
     let DecompiledFunction {
         pseudocode,
@@ -3342,12 +3470,17 @@ fn handle_decompile(
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({
             "command": "decompile",
+            "steered": !steer_note.is_empty(),
+            "steer_note": if steer_note.is_empty() { serde_json::Value::Null } else { serde_json::json!(steer_note.trim()) },
             "pseudocode": serde_json::to_value(&pseudocode).unwrap_or_default(),
             "frame": frame,
             "unknown_count": unknown_count,
         });
         println!("{}", project_json(value));
     } else {
+        if !steer_note.is_empty() {
+            println!("{steer_note}");
+        }
         for line in &pseudocode.lines {
             let addresses = line
                 .source_addresses

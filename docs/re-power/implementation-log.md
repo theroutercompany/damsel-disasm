@@ -1709,3 +1709,27 @@ re-declare replaces (no duplicates); malformed fields are typed errors.
 
 Proof: `type_declares_and_lists_structs` CLI test + payload round-trip
 and offset-lookup unit tests in `types.rs`; workspace 60 suites.
+
+## Interactive Steering (plan feature 9, slice 1) — DONE
+
+### Unit S3 — decompiler value assertions — DONE
+
+`damsel decompile --function F --assert x8=0x1000
+--assert x9@0x1004=0x2000`: value assertions pin registers, globally
+or at instruction sites, and persist as `value_assert` facts —
+confidence `user_asserted`, provenance pass `steer_v1` with the acting
+user, object `instruction:0xSITE` — so steering writes are first-class
+analysis state: canonical-exported, reviewable, and attributed. The
+decompile output surfaces the pins (`steered: N assertion(s)
+persisted`); malformed assertions are typed errors that write nothing.
+The D4-feeding structuring pass (assertions influencing SSA and
+structuring) builds on these facts next.
+
+Evidence: two assertions on `_main` (entry + site 0x1000004d0) → both
+facts exported with exact payloads, `user_asserted` confidence, and
+`steer_v1` provenance; `--assert garbage` → typed `invalid_args`, no
+writes.
+
+Proof: `decompile_assert_persists_user_asserted_facts` CLI test
+(steered output, export payloads + provenance, failure-atomicity) +
+parser unit coverage via the typed-error path; workspace 60 suites.

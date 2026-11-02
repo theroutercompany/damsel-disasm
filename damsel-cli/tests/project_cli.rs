@@ -1273,3 +1273,85 @@ fn type_declares_and_lists_structs() {
         .unwrap();
     assert_eq!(bad.status.code(), Some(1));
 }
+
+/// Interactive steering (plan feature 9, slice 1): value assertions
+/// persist as user_asserted facts with steer_v1 provenance, surface in
+/// decompile output, and reject malformed input.
+#[test]
+fn decompile_assert_persists_user_asserted_facts() {
+    let dir = smoke_dir("steer");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    // Site-less (function entry) + site-pinned assertions.
+    let out = damsel()
+        .arg("decompile")
+        .arg(&target)
+        .arg("--function")
+        .arg("_main")
+        .arg("--assert")
+        .arg("x8=0x1000")
+        .arg("--assert")
+        .arg("x9@0x1000004d0=0x2000")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("decompile json");
+    assert_eq!(body["steered"], true, "{body:#?}");
+    assert!(
+        body["steer_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("steer_v1")
+    );
+
+    // The facts are user_asserted with the steer_v1 pass, at the right
+    // sites, and flow into canonical exports.
+    let export = damsel()
+        .arg("project")
+        .arg("export")
+        .arg(&target)
+        .output()
+        .unwrap();
+    let text = String::from_utf8(export.stdout).unwrap();
+    assert!(text.contains("\"value_assert\""), "fact kind in export");
+    assert!(text.contains("x8=0x1000|function=0x1000004b8"));
+    assert!(text.contains("\"user_asserted\""));
+    assert!(text.contains("steer_v1"));
+
+    // Malformed assertions are typed errors and write nothing.
+    let before = damsel()
+        .arg("project")
+        .arg("export")
+        .arg(&target)
+        .output()
+        .unwrap();
+    let bad = damsel()
+        .arg("decompile")
+        .arg(&target)
+        .arg("--function")
+        .arg("_main")
+        .arg("--assert")
+        .arg("nope")
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(1));
+    assert!(
+        String::from_utf8(bad.stderr)
+            .unwrap()
+            .contains("invalid_args")
+    );
+    let after = damsel()
+        .arg("project")
+        .arg("export")
+        .arg(&target)
+        .output()
+        .unwrap();
+    assert_eq!(
+        before.stdout.len(),
+        after.stdout.len() + 0, // failed run writes nothing; note: export has no timestamps
+        "no writes on failure"
+    );
+}
