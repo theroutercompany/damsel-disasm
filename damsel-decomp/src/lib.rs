@@ -7,8 +7,8 @@
 //! SSA, structuring, pseudocode — strategy D1–D5) consume the same
 //! facts plus Wave 5A semantics; no stage may emit only a string.
 
-mod ir;
 mod diff;
+mod ir;
 mod recon;
 mod render;
 mod ssa;
@@ -16,27 +16,31 @@ mod stack_frame;
 mod structure;
 mod summary;
 
-pub use ir::{
-    IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement,
-    IrTerminator, IrValue, lift_arm64, lift_x86_64,
-};
-pub use structure::{Diamond, LoopBack, NaturalLoop, ResolvedCondition, find_diamonds, find_loops, find_natural_loops, resolve_condition};
-pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
 pub use diff::{
-    DefenseFinding, DiffError, DiffFunction, DiffReport, MatchedFunction, MatchStrategy,
-    diff_defenses, diff_functions, render_diff_html, render_diff_markdown,
+    DefenseFinding, DiffError, DiffFunction, DiffReport, MatchStrategy, MatchedFunction, ShapeMap,
+    diff_defenses, diff_functions, diff_functions_with_shapes, render_diff_html,
+    render_diff_markdown,
+};
+pub use ir::{
+    IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement, IrTerminator,
+    IrValue, lift_arm64, lift_x86_64,
 };
 pub use recon::{
     AntiAnalysisIndicator, FlatteningIndicator, PackerSignature, ReconReport, SectionEntropy,
-    Verdict, assess, detect_anti_analysis, detect_cfg_flattening, detect_opaque_predicates, detect_packers, detect_string_encryption,
-    render_recon_markdown, shannon_entropy,
+    Verdict, assess, detect_anti_analysis, detect_cfg_flattening, detect_opaque_predicates,
+    detect_packers, detect_string_encryption, render_recon_markdown, shannon_entropy,
 };
 pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};
 pub use ssa::{
-    AbiRegisterRole, AbiRole, PhiCandidate, PhiNode, RenamedBlock, RenamedFunction,
-    SsaReport, arm64_abi_roles, build_phi_nodes, build_ssa, rename_registers,
-    x86_64_abi_roles,
+    AbiRegisterRole, AbiRole, PhiCandidate, PhiNode, RenamedBlock, RenamedFunction, SsaReport,
+    arm64_abi_roles, build_phi_nodes, build_ssa, rename_registers, x86_64_abi_roles,
+};
+pub use stack_frame::{StackFrameFacts, analyze_stack_frame};
+pub use structure::{
+    Diamond, LoopBack, NaturalLoop, ResolvedCondition, find_diamonds, find_loops,
+    find_natural_loops, resolve_condition,
 };
 pub use summary::{
-    CallSite, FunctionSummaryReport, SummaryError, render_summary_markdown, summarize_function, summarize_named,
+    CallSite, FunctionSummaryReport, SummaryError, render_summary_markdown, summarize_function,
+    summarize_named,
 };

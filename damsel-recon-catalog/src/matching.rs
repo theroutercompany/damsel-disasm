@@ -192,6 +192,75 @@ pub fn match_projects(
     Ok(matches)
 }
 
+/// Shape map over a project's bounded functions (address → (hash, count))
+/// for the diff shape tier.
+pub fn shape_map(
+    store: &StoreHandle,
+    image: &damsel_core::BinaryImage,
+) -> Result<std::collections::BTreeMap<u64, (u64, usize)>, String> {
+    use damsel_project::function_summaries;
+    let mut bounds: std::collections::BTreeMap<u64, (u64, u64)> = Default::default();
+    for fact in store.facts().map_err(|e| e.to_string())? {
+        if fact.kind.as_str() != "function_bound" {
+            continue;
+        }
+        let Some(object) = &fact.object_id else {
+            continue;
+        };
+        let Ok(address) = u64::from_str_radix(object.key().trim_start_matches("0x"), 16) else {
+            continue;
+        };
+        let Some(start) = fact
+            .payload
+            .split('-')
+            .next()
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        else {
+            continue;
+        };
+        let Some(end) = fact
+            .payload
+            .split('-')
+            .nth(1)
+            .map(|rest| rest.split('|').next().unwrap_or(""))
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        else {
+            continue;
+        };
+        if end > start {
+            bounds.insert(address, (start, end));
+        }
+    }
+
+    let mut map = std::collections::BTreeMap::new();
+    for summary in function_summaries(store).map_err(|e| e.to_string())? {
+        let Some((start, end)) = bounds.get(&summary.address) else {
+            continue;
+        };
+        let request = DisassemblyRequestV2 {
+            target: DisassemblyTarget::Address(*start),
+            range: Some(*start..*end),
+            limit: DisassemblyLimit::Unlimited,
+            options: DisassemblyOptions {
+                include_annotations: false,
+                include_value_flow: false,
+            },
+        };
+        let Ok(result) = damsel_macho::disassemble_v2(image, &request) else {
+            continue;
+        };
+        if result.instructions.is_empty() {
+            continue;
+        }
+        let signature = shape_signature(&result.instructions);
+        map.insert(
+            summary.address,
+            (signature.hash, signature.instruction_count),
+        );
+    }
+    Ok(map)
+}
+
 /// Transfer user renames from `left` onto matched functions in `right`.
 /// Returns the transfers applied (address, name). Unmatched functions are
 /// untouched; every applied rename is a normal annotation (provenance +

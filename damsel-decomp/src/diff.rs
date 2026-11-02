@@ -57,14 +57,36 @@ pub struct DiffFunction {
 pub enum MatchStrategy {
     ExactSymbol,
     ExactAddress,
+    /// Masked shape-signature match (plan feature 16 v2): same body at a
+    /// different address under a different name — moved/recompiled.
+    Shape,
     Structural,
 }
+
+/// Shape signatures keyed by function address (from
+/// `damsel_recon_catalog::matching::shape_signature` over recovered
+/// bounds; `None` disables the shape pass).
+pub type ShapeMap = std::collections::BTreeMap<u64, (u64, usize)>;
 
 pub fn diff_functions(
     left: &impl ProjectStore,
     right: &impl ProjectStore,
     left_name: &str,
     right_name: &str,
+) -> Result<DiffReport, DiffError> {
+    diff_functions_with_shapes(left, right, left_name, right_name, None, None)
+}
+
+/// Diff with the shape tier: after symbol and address passes, unmatched
+/// functions pair by exact masked-shape signature — same body, moved
+/// address, changed name (recompiles, relinks, ASLR).
+pub fn diff_functions_with_shapes(
+    left: &impl ProjectStore,
+    right: &impl ProjectStore,
+    left_name: &str,
+    right_name: &str,
+    left_shapes: Option<&ShapeMap>,
+    right_shapes: Option<&ShapeMap>,
 ) -> Result<DiffReport, DiffError> {
     let left_functions = damsel_project::function_summaries(left)?;
     let right_functions = damsel_project::function_summaries(right)?;
@@ -110,6 +132,50 @@ pub fn diff_functions(
                 right_matched.insert(rfn.address);
                 left_matched.insert(lfn.address);
             }
+        }
+    }
+
+    // Pass 3 (v2): masked shape signatures over the unmatched leftovers —
+    // same body, different address/name. Unique matches only: an
+    // ambiguous shape stays added/removed rather than guessed.
+    if let (Some(left_shapes), Some(right_shapes)) = (left_shapes, right_shapes) {
+        let mut right_by_shape: std::collections::BTreeMap<(u64, usize), Vec<u64>> =
+            Default::default();
+        for rfn in &right_functions {
+            if right_matched.contains(&rfn.address) {
+                continue;
+            }
+            if let Some(shape) = right_shapes.get(&rfn.address) {
+                right_by_shape.entry(*shape).or_default().push(rfn.address);
+            }
+        }
+        for lfn in &left_functions {
+            if left_matched.contains(&lfn.address) {
+                continue;
+            }
+            let Some(shape) = left_shapes.get(&lfn.address) else {
+                continue;
+            };
+            let Some(candidates) = right_by_shape.get(shape) else {
+                continue;
+            };
+            if candidates.len() != 1 {
+                continue;
+            }
+            let right_address = candidates[0];
+            let name = right_functions
+                .iter()
+                .find(|f| f.address == right_address)
+                .and_then(|f| f.name.clone())
+                .or_else(|| lfn.name.clone());
+            left_matched.insert(lfn.address);
+            right_matched.insert(right_address);
+            matched.push(MatchedFunction {
+                name,
+                left_address: lfn.address,
+                right_address,
+                strategy: MatchStrategy::Shape,
+            });
         }
     }
 
@@ -163,6 +229,7 @@ pub fn render_diff_markdown(report: &DiffReport) -> String {
             let strategy = match m.strategy {
                 MatchStrategy::ExactSymbol => "symbol",
                 MatchStrategy::ExactAddress => "address",
+                MatchStrategy::Shape => "shape",
                 MatchStrategy::Structural => "structural",
             };
             out.push_str(&format!(
@@ -203,7 +270,8 @@ pub fn render_diff_markdown(report: &DiffReport) -> String {
 /// no external dependencies — evidence profile).
 pub fn render_diff_html(report: &DiffReport) -> String {
     let mut out = String::new();
-    out.push_str(r#"<!DOCTYPE html>
+    out.push_str(
+        r#"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -229,7 +297,8 @@ th { background: #f5f5f5; }
 <div class="card"><div class="num added">#ADDED#</div>Added</div>
 <div class="card"><div class="num removed">#REMOVED#</div>Removed</div>
 </div>
-"#);
+"#,
+    );
     // Matched table
     if !report.matched.is_empty() {
         out.push_str("<h2>Matched Functions</h2>\n<table>\n<tr><th>Name</th><th>Left</th><th>Right</th><th>Strategy</th></tr>\n");
@@ -237,6 +306,7 @@ th { background: #f5f5f5; }
             let strategy = match m.strategy {
                 MatchStrategy::ExactSymbol => "symbol",
                 MatchStrategy::ExactAddress => "address",
+                MatchStrategy::Shape => "shape",
                 MatchStrategy::Structural => "structural",
             };
             out.push_str(&format!(
@@ -252,7 +322,8 @@ th { background: #f5f5f5; }
         for f in &report.added {
             out.push_str(&format!(
                 "<li class=\"added\"><code>{:#x}</code> {}</li>\n",
-                f.address, f.name.as_deref().unwrap_or("—")
+                f.address,
+                f.name.as_deref().unwrap_or("—")
             ));
         }
         out.push_str("</ul>\n");
@@ -262,7 +333,8 @@ th { background: #f5f5f5; }
         for f in &report.removed {
             out.push_str(&format!(
                 "<li class=\"removed\"><code>{:#x}</code> {}</li>\n",
-                f.address, f.name.as_deref().unwrap_or("—")
+                f.address,
+                f.name.as_deref().unwrap_or("—")
             ));
         }
         out.push_str("</ul>\n");

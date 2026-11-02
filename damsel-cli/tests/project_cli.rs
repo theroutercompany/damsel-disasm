@@ -1062,3 +1062,48 @@ fn query_paths_callers_and_rename_resolution() {
             .contains("function_not_found")
     );
 }
+
+/// Diff v2 --port (plan feature 16): renames ride matched pairs into the
+/// right project through the annotation layer.
+#[test]
+fn diff_ports_renames_to_matched_functions() {
+    let dir = smoke_dir("diff-port");
+    let left = dir.join("left");
+    let right = dir.join("right");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &left).unwrap();
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &right).unwrap();
+    damsel().arg("analyze").arg(&left).assert().success();
+    damsel().arg("analyze").arg(&right).assert().success();
+    damsel()
+        .arg("annotate")
+        .arg(&left)
+        .arg("--function")
+        .arg("_main")
+        .arg("--rename")
+        .arg("main_renamed")
+        .assert()
+        .success();
+
+    damsel()
+        .arg("diff")
+        .arg(&left)
+        .arg(&right)
+        .arg("--port")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+
+    let functions = damsel()
+        .arg("functions")
+        .arg(&right)
+        .arg("--name")
+        .arg("main_renamed")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value =
+        serde_json::from_slice(&functions.get_output().stdout).expect("functions json");
+    assert_eq!(body["count"], 1, "rename ported through diff");
+}

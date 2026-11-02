@@ -638,6 +638,11 @@ enum Command {
         markdown: bool,
         #[arg(long, help = "Output self-contained HTML report")]
         html: bool,
+        #[arg(
+            long,
+            help = "Port user renames from left onto matched functions in right (annotation layer)"
+        )]
+        port: bool,
     },
     #[command(about = "Run as an MCP server exposing typed analysis tools (Wave 7)")]
     Serve {
@@ -1488,8 +1493,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             right,
             markdown,
             html,
+            port,
         } => {
-            handle_diff(left, right, markdown, html, &output_settings)?;
+            handle_diff(left, right, markdown, html, port, &output_settings)?;
         }
         Command::Serve { project } => {
             mcp::run_mcp(mcp::McpConfig { project })?;
@@ -2391,6 +2397,7 @@ fn handle_diff(
     right: PathBuf,
     markdown: bool,
     html: bool,
+    port: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{Create, ProjectStore, open_store};
@@ -2401,13 +2408,60 @@ fn handle_diff(
     let meta_r = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
     let left_store = open_store(&left_dir.join("project.db"), Create::Existing, &meta_l)
         .map_err(map_store_error)?;
-    let right_store = open_store(&right_dir.join("project.db"), Create::Existing, &meta_r)
+    let mut right_store = open_store(&right_dir.join("project.db"), Create::Existing, &meta_r)
         .map_err(map_store_error)?;
     let left_name = left_store.meta().map_err(map_store_error)?.name;
     let right_name = right_store.meta().map_err(map_store_error)?.name;
 
-    let report = damsel_decomp::diff_functions(&left_store, &right_store, &left_name, &right_name)
-        .map_err(|e| CliRunError::command("diff_error", e.to_string()))?;
+    // Diff v2: the shape tier pairs same-body functions across
+    // address/name changes; both images materialize once for it.
+    let left_image = load_project_image(&left_dir).ok();
+    let right_image = load_project_image(&right_dir).ok();
+    let (left_shapes, right_shapes) = match (&left_image, &right_image) {
+        (Some(left_image), Some(right_image)) => (
+            damsel_recon_catalog::matching::shape_map(&left_store, left_image).ok(),
+            damsel_recon_catalog::matching::shape_map(&right_store, right_image).ok(),
+        ),
+        _ => (None, None),
+    };
+    let report = damsel_decomp::diff_functions_with_shapes(
+        &left_store,
+        &right_store,
+        &left_name,
+        &right_name,
+        left_shapes.as_ref(),
+        right_shapes.as_ref(),
+    )
+    .map_err(|e| CliRunError::command("diff_error", e.to_string()))?;
+
+    if port {
+        let pairs: Vec<damsel_recon_catalog::matching::FunctionMatch> = report
+            .matched
+            .iter()
+            .map(|m| damsel_recon_catalog::matching::FunctionMatch {
+                left_address: m.left_address,
+                right_address: m.right_address,
+                right_name: m.name.clone(),
+                instruction_count: 0,
+                tier: "diff-port",
+            })
+            .collect();
+        let applied = damsel_recon_catalog::matching::transfer_renames(
+            &pairs,
+            &left_store,
+            &mut right_store,
+            "diff-port",
+        )
+        .map_err(|e| CliRunError::command("diff_error", e))?;
+        if output_settings.format == output::OutputFormat::Json {
+            println!(
+                "{}",
+                project_json(serde_json::json!({ "ported": applied.len() }))
+            );
+        } else {
+            println!("ported renames: {}", applied.len());
+        }
+    }
 
     if markdown {
         print!("{}", damsel_decomp::render_diff_markdown(&report));
@@ -2432,6 +2486,7 @@ fn handle_diff(
             let strategy = match m.strategy {
                 damsel_decomp::MatchStrategy::ExactSymbol => "symbol",
                 damsel_decomp::MatchStrategy::ExactAddress => "address",
+                damsel_decomp::MatchStrategy::Shape => "shape",
                 damsel_decomp::MatchStrategy::Structural => "structural",
             };
             println!(

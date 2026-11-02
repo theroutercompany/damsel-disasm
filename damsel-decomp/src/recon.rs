@@ -78,10 +78,7 @@ pub fn detect_packers(section_name: &str, data: &[u8]) -> Vec<PackerSignature> {
 }
 
 /// Check for common anti-debug / anti-VM imports and strings.
-pub fn detect_anti_analysis(
-    imports: &[String],
-    strings: &[String],
-) -> Vec<AntiAnalysisIndicator> {
+pub fn detect_anti_analysis(imports: &[String], strings: &[String]) -> Vec<AntiAnalysisIndicator> {
     let mut indicators = Vec::new();
     let ptrace = ["ptrace", "_ptrace"];
     let sysctl = ["sysctl", "_sysctl"];
@@ -226,21 +223,27 @@ pub fn detect_opaque_predicates(function: &crate::ir::IrFunction) -> Vec<OpaqueP
         let IrTerminator::CondBranch { .. } = block.terminator else {
             continue;
         };
-        let last_flags = block.statements.iter().rev().find(|s| {
-            matches!(s, IrStatement::Assign { destination, .. } if destination == "flags")
-        });
+        let last_flags = block.statements.iter().rev().find(
+            |s| matches!(s, IrStatement::Assign { destination, .. } if destination == "flags"),
+        );
         let Some(IrStatement::Assign { expression, .. }) = last_flags else {
             continue;
         };
         if let IrExpr::BinOp { lhs, rhs, .. } = expression {
             if matches!(
                 (&**lhs, &**rhs),
-                (IrExpr::Value(IrValue::Const(_)), IrExpr::Value(IrValue::Const(_)))
+                (
+                    IrExpr::Value(IrValue::Const(_)),
+                    IrExpr::Value(IrValue::Const(_))
+                )
             ) {
                 out.push(OpaquePredicate {
                     branch_address: block.start_address,
                     condition: format!("const"),
-                    evidence: format!("flags = {} with constant operands", expression_text(expression)),
+                    evidence: format!(
+                        "flags = {} with constant operands",
+                        expression_text(expression)
+                    ),
                 });
             }
         }
@@ -250,9 +253,18 @@ pub fn detect_opaque_predicates(function: &crate::ir::IrFunction) -> Vec<OpaqueP
 
 fn expression_text(expression: &crate::ir::IrExpr) -> &'static str {
     match expression {
-        crate::ir::IrExpr::BinOp { op: crate::ir::IrBinOp::Sub, .. } => "a - b",
-        crate::ir::IrExpr::BinOp { op: crate::ir::IrBinOp::And, .. } => "a & b",
-        crate::ir::IrExpr::BinOp { op: crate::ir::IrBinOp::Add, .. } => "a + b",
+        crate::ir::IrExpr::BinOp {
+            op: crate::ir::IrBinOp::Sub,
+            ..
+        } => "a - b",
+        crate::ir::IrExpr::BinOp {
+            op: crate::ir::IrBinOp::And,
+            ..
+        } => "a & b",
+        crate::ir::IrExpr::BinOp {
+            op: crate::ir::IrBinOp::Add,
+            ..
+        } => "a + b",
         _ => "expr",
     }
 }
@@ -305,13 +317,20 @@ pub fn render_recon_markdown(report: &ReconReport) -> String {
     out.push_str(&format!(
         "**Symbols:** {} ({})\n\n",
         report.symbol_count,
-        if report.stripped { "stripped" } else { "not stripped" }
+        if report.stripped {
+            "stripped"
+        } else {
+            "not stripped"
+        }
     ));
     if !report.section_entropies.is_empty() {
         out.push_str("## Section Entropy\n\n| Section | Entropy |\n|---|---|\n");
         for se in &report.section_entropies {
             let indicator = if se.entropy > 7.0 { " ⚠️" } else { "" };
-            out.push_str(&format!("| {} | {:.2}{} |\n", se.section, se.entropy, indicator));
+            out.push_str(&format!(
+                "| {} | {:.2}{} |\n",
+                se.section, se.entropy, indicator
+            ));
         }
         out.push('\n');
     }
@@ -325,7 +344,10 @@ pub fn render_recon_markdown(report: &ReconReport) -> String {
     if !report.anti_analysis_indicators.is_empty() {
         out.push_str("## Anti-Analysis Indicators\n\n");
         for i in &report.anti_analysis_indicators {
-            out.push_str(&format!("- **{}**: {} at `{}`\n", i.name, i.evidence, i.location));
+            out.push_str(&format!(
+                "- **{}**: {} at `{}`\n",
+                i.name, i.evidence, i.location
+            ));
         }
     }
     out
