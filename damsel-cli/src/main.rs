@@ -679,6 +679,11 @@ enum Command {
         bind: Vec<String>,
         #[arg(long, help = "List declared types")]
         list: bool,
+        #[arg(
+            long,
+            help = "Import struct declarations from the target's DWARF (own __DWARF or sibling .dSYM)"
+        )]
+        import_dwarf: bool,
     },
     #[command(
         about = "Model-refine function names from context (provenance-tagged, undoable)",
@@ -1649,8 +1654,17 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             fields,
             bind,
             list,
+            import_dwarf,
         } => {
-            handle_type(project, r#struct, &fields, &bind, list, &output_settings)?;
+            handle_type(
+                project,
+                r#struct,
+                &fields,
+                &bind,
+                list,
+                import_dwarf,
+                &output_settings,
+            )?;
         }
         Command::Refine {
             project,
@@ -3006,12 +3020,34 @@ fn project_type_hints(
     Ok(hints)
 }
 
+/// Resolve a DWARF source for a project target: its own `__DWARF`
+/// segment when present, else a sibling `.dSYM` bundle.
+fn dwarf_source_for(project_dir: &Path) -> Option<PathBuf> {
+    let target = match project_image_source(project_dir).ok()? {
+        Some(ProjectImageSource::File(path)) => path,
+        _ => return None,
+    };
+    // Own debug sections?
+    if let Ok(bytes) = std::fs::read(&target) {
+        if bytes.windows(10).any(|w| w == b"__debug_in".as_ref()) {
+            return Some(target);
+        }
+    }
+    // Sibling dSYM bundle.
+    let name = target.file_name()?.to_string_lossy().into_owned();
+    let dsym = target
+        .parent()?
+        .join(format!("{name}.dSYM/Contents/Resources/DWARF/{name}"));
+    dsym.is_file().then_some(dsym)
+}
+
 fn handle_type(
     project: PathBuf,
     struct_name: Option<String>,
     fields: &[String],
     binds: &[String],
     list: bool,
+    import_dwarf: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{Create, open_store};
@@ -3025,6 +3061,62 @@ fn handle_type(
         &meta_for_open,
     )
     .map_err(map_store_error)?;
+
+    if import_dwarf {
+        let Some(source) = dwarf_source_for(&project_dir) else {
+            return Err(CliRunError::command(
+                "dwarf_unavailable",
+                "no DWARF in the target and no sibling .dSYM bundle",
+            ));
+        };
+        let imported = damsel_macho::import_structs(&source)
+            .map_err(|e| CliRunError::command("type_error", e.to_string()))?;
+        if imported.is_empty() {
+            return Err(CliRunError::command(
+                "dwarf_unavailable",
+                format!("{} carried no named struct declarations", source.display()),
+            ));
+        }
+        let actor = "dwarf-import";
+        let mut declared = 0;
+        let total_fields = imported.iter().map(|s| s.fields.len()).sum::<usize>();
+        for dwarf_struct in &imported {
+            let decl = StructDecl {
+                name: dwarf_struct.name.clone(),
+                fields: dwarf_struct
+                    .fields
+                    .iter()
+                    .map(|field| StructField {
+                        offset: field.offset,
+                        type_name: field.type_name.clone(),
+                        field_name: field.field_name.clone(),
+                    })
+                    .collect(),
+            };
+            TypeTable::declare(&mut store, &decl, actor)
+                .map_err(|e| CliRunError::command("type_error", e))?;
+            declared += 1;
+        }
+        if output_settings.format == output::OutputFormat::Json {
+            println!(
+                "{}",
+                project_json(serde_json::json!({
+                    "command": "type",
+                    "action": "import_dwarf",
+                    "source": source.display().to_string(),
+                    "structs": declared,
+                    "fields": total_fields,
+                    "actor": actor,
+                }))
+            );
+        } else {
+            println!(
+                "imported {declared} structs ({total_fields} fields) from {} (actor {actor})",
+                source.display()
+            );
+        }
+        return Ok(());
+    }
 
     if list {
         let table =

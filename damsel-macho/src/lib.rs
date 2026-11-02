@@ -2,9 +2,10 @@ mod analysis;
 mod cache_index;
 mod codesign;
 mod disasm;
+mod dwarf;
 mod dyld;
-mod kernelcache;
 mod errors;
+mod kernelcache;
 mod loader;
 mod objc;
 mod shared_cache;
@@ -23,10 +24,6 @@ pub use cache_index::{
     write_projection,
 };
 pub use codesign::{CodesignInfo, Entitlement, read_codesign, read_codesign_path};
-pub use kernelcache::{
-    KernelcacheEntry, KernelcacheInventory, inspect_kernelcache, inspect_kernelcache_bytes,
-    is_kernelcache_bytes, project_entry, resolve_entry,
-};
 pub use damsel_core::{
     CacheImageId, CacheImageRecord, CacheLookupResult, SharedCache, SharedCacheHeader,
     SharedCacheMapping, SharedCacheMember, SharedCacheMemberRole, SharedCacheSource,
@@ -35,7 +32,12 @@ pub use damsel_core::{
 pub use disasm::{
     analyze_disassembly, analyze_disassembly_with_image, disassemble, disassemble_v2,
 };
+pub use dwarf::{DwarfField, DwarfStruct, import_structs};
 pub use errors::{MachoError, Result};
+pub use kernelcache::{
+    KernelcacheEntry, KernelcacheInventory, inspect_kernelcache, inspect_kernelcache_bytes,
+    is_kernelcache_bytes, project_entry, resolve_entry,
+};
 pub use loader::{load, load_bytes};
 pub use shared_cache::{
     SharedCacheExportRecord, SharedCacheSession, inspect_shared_cache, load_shared_cache,
