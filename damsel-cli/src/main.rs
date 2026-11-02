@@ -1,4 +1,5 @@
 mod debug;
+mod frida_bridge;
 mod mcp;
 mod output;
 mod ui;
@@ -598,6 +599,19 @@ enum Command {
         out: PathBuf,
         #[arg(long, help = "Library label for the corpus (e.g. glibc)")]
         library: String,
+    },
+    #[command(
+        about = "Frida bridge: spawn under Frida with ObjC method tracing",
+        long_about = "Frida bridge (plan feature 12).\n\nGenerates a Frida agent script, spawns the target under frida, captures ObjC method-call events, and reports them (class, method, +/-, arguments). Requires frida on PATH — typed error when absent."
+    )]
+    Frida {
+        project: PathBuf,
+        #[arg(long, help = "Classes to trace (default: first 50 loaded)")]
+        class: Vec<String>,
+        #[arg(long, default_value_t = 10, help = "Trace duration in seconds")]
+        duration: u64,
+        #[arg(long, default_value_t = 100, help = "Maximum captured calls")]
+        max_calls: usize,
     },
     #[command(
         about = "Debug under lldb: breakpoint from bounds, registers as facts",
@@ -1525,6 +1539,14 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
+        Command::Frida {
+            project,
+            class,
+            duration,
+            max_calls,
+        } => {
+            handle_frida(project, &class, duration, max_calls, &output_settings)?;
+        }
         Command::Debug {
             project,
             function,
@@ -2266,6 +2288,60 @@ fn resolve_query_target(
             format!("`{target}` matches {} functions; pass 0xADDR", many.len()),
         )),
     }
+}
+
+fn handle_frida(
+    project: PathBuf,
+    classes: &[String],
+    duration: u64,
+    max_calls: usize,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    let project_dir = resolve_project_dir(&project)?;
+    let binary_path = project_image_source(&project_dir)?
+        .map(|source| match source {
+            ProjectImageSource::File(path) => path,
+            ProjectImageSource::SharedCache { .. } => PathBuf::new(),
+        })
+        .unwrap_or_default();
+    if binary_path.as_os_str().is_empty() || !binary_path.is_file() {
+        return Err(CliRunError::command(
+            "frida_unsupported",
+            "frida bridge requires a standalone executable target",
+        ));
+    }
+
+    let class_refs: Vec<&str> = classes.iter().map(|s| s.as_str()).collect();
+    let report =
+        crate::frida_bridge::trace_method_calls(&binary_path, &class_refs, duration, max_calls)
+            .map_err(|e| CliRunError::command("frida_error", e))?;
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "frida",
+            "target": report.target,
+            "calls": report.calls,
+            "modules": report.modules,
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+    println!(
+        "frida: {} ({} calls, {} modules)",
+        report.target,
+        report.calls.len(),
+        report.modules.len()
+    );
+    for call in report.calls.iter().take(20) {
+        println!(
+            "  {} {}{} ({})",
+            call.class_name,
+            if call.is_class_method { "+" } else { "-" },
+            call.method_name,
+            call.args.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn handle_debug(
