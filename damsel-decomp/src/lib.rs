@@ -16,6 +16,7 @@ mod ssa;
 mod stack_frame;
 mod structure;
 mod summary;
+mod taint;
 mod ttd;
 
 pub use diff::{
@@ -50,4 +51,5 @@ pub use summary::{
     CallSite, FunctionSummaryReport, SummaryError, render_summary_markdown, summarize_function,
     summarize_named,
 };
+pub use taint::{IntraSummary, TaintEngine, TaintHop, summarize};
 pub use ttd::{Trace, TraceStep, record_trace};

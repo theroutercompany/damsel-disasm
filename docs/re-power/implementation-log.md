@@ -1935,3 +1935,40 @@ both offsets, raw forms gone, undeclared offset stays raw, empty hints
 = identical output) + `decompile_applies_type_bindings` (CLI: baseline
 contract, typed contract, undeclared-struct error) + workspace 60
 suites, zero warnings.
+
+### Unit Q2 — taint queries: parameter reachability with precision — DONE
+
+Feature 10, slice 2: `damsel query --taint-from F [--taint-to G]` —
+"can data entering F's parameters reach G's parameters?".
+
+Model (damsel-decomp::taint): the eight AAPCS argument slots are the
+seeds (`x3`/`w3` normalize to slot 3); forward flow through
+Assign/Load/Store with exact spill-slot keys `(base, displacement)`
+carries taint through real prologue round-trips; constants kill. A
+mention filter removes pass-through noise — slots the caller never
+reads or writes never transfer, so unused parameter registers don't
+fabricate paths. Per-seed walks produce precise per-function facts
+(`returns_taint`: which slots reach x0 at Return; `stores_taint`:
+which escape to memory); one all-slots walk records callee slot masks
+at each resolved call site. Indirect calls (blr) report as
+approximation surfaces, never silently resolved. The engine BFSes
+functions over arg transfers with hop paths (from/via/site).
+
+MCP `damsel_query` gains taint_from/taint_to (15 tools, same count).
+
+Evidence on arm64-symbolized:
+- `_exported_sum(w0, w1)` summary: returns **2 slots** (both params →
+  return via the spill round-trip), memory 2 slots.
+- `_exported_sum` → `_helper`: **reachable** (w1 still holds the
+  second parameter at the call site 0x100000488 — a real physical
+  transfer).
+- `_main` → `_helper` and → `_exported_sum`: **NOT reachable** —
+  _main passes constants (`w0=0x2, w1=0x3`, `w0=0x1`), the kills are
+  honored, and untouched slots are mention-filtered.
+
+Proof: `taint` unit tests (slot normalization, spill round-trip
+return, constant kills, mention-filtered call masks, engine
+reachability incl. the no-edge and unmentioned-slot negatives) +
+`query_taint_reachability_with_precision` CLI test (summary facts,
+both kill cases, the positive chain with site) + workspace 60 suites,
+zero warnings.

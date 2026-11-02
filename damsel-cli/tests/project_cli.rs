@@ -1537,3 +1537,86 @@ fn decompile_applies_type_bindings() {
             .contains("undeclared struct")
     );
 }
+
+/// Taint queries (plan feature 10, slice 2): parameter-reachability
+/// with precision — constant kills honored, real transfers resolve.
+#[test]
+fn query_taint_reachability_with_precision() {
+    let dir = smoke_dir("taint");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    // Summary: _exported_sum(w0, w1) spills both, reloads, returns the
+    // sum — both params reach the return and memory.
+    let out = damsel()
+        .arg("query")
+        .arg(&target)
+        .arg("--taint-from")
+        .arg("_exported_sum")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("summary json");
+    assert_eq!(body["action"], "taint");
+    assert_eq!(body["returns_taint_slots"], 2, "{body:#?}");
+    assert_eq!(body["stores_taint_slots"], 2, "{body:#?}");
+    assert!(
+        body["reachable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["function"] == "_helper"),
+        "_exported_sum's w1 passes through to _helper: {body:#?}"
+    );
+
+    // Precision: _main passes constants (w0=0x2, w1=0x3) to
+    // _exported_sum and 0x1 to _helper — its parameters reach neither.
+    let out = damsel()
+        .arg("query")
+        .arg(&target)
+        .arg("--taint-from")
+        .arg("_main")
+        .arg("--taint-to")
+        .arg("_helper")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("kill json");
+    assert_eq!(body["reachable"], false, "constants kill the taint");
+
+    let out = damsel()
+        .arg("query")
+        .arg(&target)
+        .arg("--taint-from")
+        .arg("_main")
+        .arg("--taint-to")
+        .arg("_exported_sum")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("kill2 json");
+    assert_eq!(body["reachable"], false);
+
+    // Positive chain: _exported_sum -> _helper with the call site.
+    let out = damsel()
+        .arg("query")
+        .arg(&target)
+        .arg("--taint-from")
+        .arg("_exported_sum")
+        .arg("--taint-to")
+        .arg("_helper")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("chain json");
+    assert_eq!(body["reachable"], true);
+    assert_eq!(body["hops"][0]["via"], "args");
+    assert_eq!(body["hops"][0]["from"], "_exported_sum");
+    assert_eq!(body["hops"][0]["to"], "_helper");
+    assert_eq!(body["hops"][0]["site"], "0x100000488");
+}
