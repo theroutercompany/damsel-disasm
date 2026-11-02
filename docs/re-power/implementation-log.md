@@ -1733,3 +1733,29 @@ writes.
 Proof: `decompile_assert_persists_user_asserted_facts` CLI test
 (steered output, export payloads + provenance, failure-atomicity) +
 parser unit coverage via the typed-error path; workspace 60 suites.
+
+## Emulation (plan feature 11, slice 1) — DONE
+
+### Unit E1 — IR interpreter sandbox — DONE
+
+`damsel-decomp::emulate`: a bounded interpreter over the lifted IR —
+arithmetic (all BinOps incl. Asr/Div), loads/stores over sparse memory
+(image-backed reads, observable writes), ABI register defaults (private
+stack top, sentinel lr) so prologues interpret immediately, a step
+budget, and honest stops: calls, unresolved `Select` conditions (steer
+with value_assert facts first), unknown statements, and budget
+exhaustion are reported — never fabricated. `Select` refusal is the
+steering interlock: assertions from feature 9 are how a run gets past a
+`csel`.
+
+`damsel emulate <project> --function F --set w0=5 [--budget N]`:
+registers seed, the outcome reports kind/steps/registers/memory-writes.
+
+Evidence: `_helper(w0) = w0 + 5` — `emulate --set w0=5` → returned in 5
+steps, `w0 = 0xa`, 8 memory writes; `--budget 3` → budget_exhausted;
+`_exported_sum` (calls `_helper`) → honest `call not modeled` stop.
+
+Proof: `emulate` unit tests (arithmetic+memory interpretation,
+budget/unsupported honesty) + `emulate_runs_leaf_function_to_completion`
+CLI test (correct return value, budget guard, call stop, typed --set
+errors); workspace 60 suites.

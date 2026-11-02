@@ -1355,3 +1355,90 @@ fn decompile_assert_persists_user_asserted_facts() {
         "no writes on failure"
     );
 }
+
+/// IR emulation sandbox (plan feature 11, slice 1): seeded registers,
+/// honest stops, budget guard — verified against a leaf function whose
+/// arithmetic the test can predict.
+#[test]
+fn emulate_runs_leaf_function_to_completion() {
+    let dir = smoke_dir("emulate");
+    let target = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &target).unwrap();
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    // _helper(w0) = w0 + 5 → w0 = 0xa for w0=5.
+    let out = damsel()
+        .arg("emulate")
+        .arg(&target)
+        .arg("--function")
+        .arg("_helper")
+        .arg("--set")
+        .arg("w0=5")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("emulate json");
+    assert_eq!(body["command"], "emulate");
+    assert_eq!(body["outcome"]["kind"], "returned");
+    assert_eq!(body["outcome"]["steps"], 5, "{body:#?}");
+    let registers: &Vec<Value> = body["outcome"]["registers"].as_array().unwrap();
+    let w0 = registers
+        .iter()
+        .find(|r| r["register"] == "w0")
+        .expect("w0 present");
+    assert_eq!(w0["value"], "0xa", "helper(5) = 10");
+    assert!(body["memory_writes"].as_u64().unwrap_or(0) > 0);
+
+    // Budget guard: 3 steps cannot finish 5.
+    let out = damsel()
+        .arg("emulate")
+        .arg(&target)
+        .arg("--function")
+        .arg("_helper")
+        .arg("--set")
+        .arg("w0=5")
+        .arg("--budget")
+        .arg("3")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("budget json");
+    assert_eq!(body["outcome"]["kind"], "budget_exhausted");
+
+    // Calls stop honestly (_exported_sum calls _helper).
+    let out = damsel()
+        .arg("emulate")
+        .arg(&target)
+        .arg("--function")
+        .arg("_exported_sum")
+        .arg("--set")
+        .arg("w0=1")
+        .arg("--set")
+        .arg("w1=2")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("call json");
+    assert_eq!(body["outcome"]["kind"], "unsupported");
+    assert!(
+        body["outcome"]["what"]
+            .as_str()
+            .unwrap_or("")
+            .contains("call not modeled")
+    );
+
+    // Bad --set is a typed error.
+    let bad = damsel()
+        .arg("emulate")
+        .arg(&target)
+        .arg("--function")
+        .arg("_helper")
+        .arg("--set")
+        .arg("garbage")
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(1));
+}

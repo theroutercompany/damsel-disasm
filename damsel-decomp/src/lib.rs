@@ -8,6 +8,7 @@
 //! facts plus Wave 5A semantics; no stage may emit only a string.
 
 mod diff;
+mod emulate;
 mod ir;
 mod recon;
 mod render;
@@ -21,6 +22,7 @@ pub use diff::{
     diff_defenses, diff_functions, diff_functions_with_shapes, render_diff_html,
     render_diff_markdown,
 };
+pub use emulate::{EmulationOutcome, Emulator, Memory};
 pub use ir::{
     IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement, IrTerminator,
     IrValue, lift_arm64, lift_x86_64,
