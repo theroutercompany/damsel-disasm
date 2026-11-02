@@ -15,6 +15,7 @@ mod render;
 mod ssa;
 mod stack_frame;
 mod structure;
+mod ttd;
 mod summary;
 
 pub use diff::{
@@ -22,6 +23,7 @@ pub use diff::{
     diff_defenses, diff_functions, diff_functions_with_shapes, render_diff_html,
     render_diff_markdown,
 };
+pub use ttd::{Trace, TraceStep, record_trace};
 pub use emulate::{EmulationOutcome, Emulator, Memory};
 pub use ir::{
     IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement, IrTerminator,
