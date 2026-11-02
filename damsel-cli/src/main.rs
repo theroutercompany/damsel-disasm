@@ -601,6 +601,23 @@ enum Command {
         library: String,
     },
     #[command(
+        about = "Time-travel debugging: deterministic trace with write queries",
+        long_about = "Time-travel debugging on the IR emulator (plan feature 13).\n\nRuns a function under the emulator, records every step (pc, statement, registers written, memory writes), and answers queries: --writes-to 0xADDR shows every write to an address with its step; --register-at reg:N replays deterministically to step N. The trace is pure — no hardware counters needed on macOS."
+    )]
+    Trace {
+        project: PathBuf,
+        #[arg(long, help = "Function name or 0x address")]
+        function: String,
+        #[arg(long, value_name = "REG=VALUE", help = "Seed a register (repeatable)")]
+        set: Vec<String>,
+        #[arg(long, value_name = "ADDR", help = "Show all writes to this address")]
+        writes_to: Option<String>,
+        #[arg(long, value_name = "REG:STEP", help = "Register value at step N")]
+        register_at: Option<String>,
+        #[arg(long, default_value_t = 10_000, help = "Step budget")]
+        budget: usize,
+    },
+    #[command(
         about = "Frida bridge: spawn under Frida with ObjC method tracing",
         long_about = "Frida bridge (plan feature 12).\n\nGenerates a Frida agent script, spawns the target under frida, captures ObjC method-call events, and reports them (class, method, +/-, arguments). Requires frida on PATH — typed error when absent."
     )]
@@ -1539,6 +1556,24 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
+        Command::Trace {
+            project,
+            function,
+            set,
+            writes_to,
+            register_at,
+            budget,
+        } => {
+            handle_trace(
+                project,
+                &function,
+                &set,
+                writes_to.as_deref(),
+                register_at.as_deref(),
+                budget,
+                &output_settings,
+            )?;
+        }
         Command::Frida {
             project,
             class,
@@ -2288,6 +2323,168 @@ fn resolve_query_target(
             format!("`{target}` matches {} functions; pass 0xADDR", many.len()),
         )),
     }
+}
+
+fn handle_trace(
+    project: PathBuf,
+    selector: &str,
+    seeds: &[String],
+    writes_to: Option<&str>,
+    register_at: Option<&str>,
+    budget: usize,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_decomp::record_trace;
+
+    let project_dir = resolve_project_dir(&project)?;
+    if let Some(ProjectImageSource::File(target)) = project_image_source(&project_dir)? {
+        if is_elf_file(&target) {
+            return Err(CliRunError::command(
+                "trace_unsupported",
+                "trace v1 supports Mach-O arm64 projects",
+            ));
+        }
+    }
+    let image = load_project_image(&project_dir)?;
+    let request = damsel_core::DisassemblyRequestV2 {
+        target: if let Some(hex) = selector.strip_prefix("0x") {
+            damsel_core::DisassemblyTarget::Address(
+                u64::from_str_radix(hex, 16)
+                    .map_err(|_| CliRunError::invalid_args("bad address"))?,
+            )
+        } else {
+            damsel_core::DisassemblyTarget::Symbol(selector.to_string())
+        },
+        range: None,
+        limit: damsel_core::DisassemblyLimit::Unlimited,
+        options: damsel_core::DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: false,
+        },
+    };
+    let result = disassemble_v2(&image, &request).map_err(map_macho_error)?;
+    if result.instructions.is_empty() {
+        return Err(CliRunError::command(
+            "function_not_found",
+            selector.to_string(),
+        ));
+    }
+    let lifted = damsel_decomp::lift_arm64(&result.instructions);
+
+    let mut initial = std::collections::BTreeMap::new();
+    for seed in seeds {
+        let (register, value) = seed.split_once('=').ok_or_else(|| {
+            CliRunError::invalid_args(format!("bad --set (want REG=VALUE): {seed}"))
+        })?;
+        let value = u64::from_str_radix(value.trim_start_matches("0x"), 16)
+            .map_err(|_| CliRunError::invalid_args(format!("bad --set value: {seed}")))?;
+        initial.insert(register.to_ascii_lowercase(), value);
+    }
+
+    let (trace, _outcome) = record_trace(&lifted, &initial, budget);
+
+    if let Some(address_raw) = writes_to {
+        let address =
+            u64::from_str_radix(address_raw.trim_start_matches("0x"), 16).map_err(|_| {
+                CliRunError::invalid_args(format!("bad --writes-to address: {address_raw}"))
+            })?;
+        let writes = trace.writes_to(address);
+        if output_settings.format == output::OutputFormat::Json {
+            let value = serde_json::json!({
+                "command": "trace",
+                "action": "writes_to",
+                "address": format!("{address:#x}"),
+                "writes": writes.iter().map(|(step, bytes)| serde_json::json!({
+                    "step": step,
+                    "bytes": bytes.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                })).collect::<Vec<_>>(),
+            });
+            println!("{}", project_json(value));
+        } else {
+            println!("writes to {address:#x}: {}", writes.len());
+            for (step, bytes) in &writes {
+                let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                println!("  step {step}: {hex}");
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(query) = register_at {
+        let (register, step_raw) = query.split_once(':').ok_or_else(|| {
+            CliRunError::invalid_args(format!("bad --register-at (want REG:STEP): {query}"))
+        })?;
+        let step: usize = step_raw
+            .parse()
+            .map_err(|_| CliRunError::invalid_args(format!("bad step: {step_raw}")))?;
+        let value = trace.register_at(register, step);
+        if output_settings.format == output::OutputFormat::Json {
+            let value = serde_json::json!({
+                "command": "trace",
+                "action": "register_at",
+                "register": register,
+                "step": step,
+                "value": value.map(|v| format!("{v:#x}")),
+            });
+            println!("{}", project_json(value));
+        } else if let Some(value) = value {
+            println!("{register} at step {step} = {value:#x}");
+        } else {
+            println!("{register} not written by step {step}");
+        }
+        return Ok(());
+    }
+
+    // Default: timeline report.
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "trace",
+            "function": selector,
+            "budget": budget,
+            "outcome": trace.outcome,
+            "steps": trace.steps.len(),
+            "total_writes": trace.total_writes,
+            "timeline": trace.steps.iter().map(|step| serde_json::json!({
+                "step": step.step,
+                "pc": format!("{:#x}", step.pc),
+                "statement": step.statement,
+                "registers": step.registers_written.iter().map(|(k, v)| format!("{k}={v:#x}")).collect::<Vec<_>>(),
+                "writes": step.memory_writes.keys().map(|a| format!("{a:#x}")).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+    println!(
+        "trace: {} ({} steps, outcome {}, {} writes)",
+        selector,
+        trace.steps.len(),
+        trace.outcome,
+        trace.total_writes
+    );
+    for step in trace.steps.iter().take(20) {
+        let registers: Vec<String> = step
+            .registers_written
+            .iter()
+            .map(|(k, v)| format!("{k}={v:#x}"))
+            .collect();
+        println!(
+            "  {:>3} {:#010x}  {:<30} {} {}",
+            step.step,
+            step.pc,
+            step.statement,
+            registers.join(" "),
+            if step.memory_writes.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "[writes: {:?}]",
+                    step.memory_writes.keys().collect::<Vec<_>>()
+                )
+            }
+        );
+    }
+    Ok(())
 }
 
 fn handle_frida(

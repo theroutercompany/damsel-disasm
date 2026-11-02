@@ -1807,3 +1807,36 @@ pip install frida-tools`).
 Proof: frida_bridge::tests (script shape, event parsing, transcript
 parsing) + workspace 60 suites green. Live attach requires frida
 installation (user decision).
+
+## Time-Travel Debugging (plan feature 13, slice 1) — DONE
+
+### Unit T1 — deterministic recording traces with write queries — DONE
+
+The software-based TTD recorder the plan identifies as the biggest 2026
+gap on Apple Silicon (rr/Undo/BN-TTD absent on macOS; hardware counters
+not exposed). `damsel-decomp::ttd` runs a function under the emulator
+(#11), recording every step — pc, statement, registers written, memory
+writes with exact bytes — into a deterministic `Trace`. No hardware
+needed: the emulator is pure, so replay from step 0 reproduces the
+exact state; reverse execution = replay to step N.
+
+Queries on the trace:
+- `writes_to(address)` — every write to an address with its step and
+  byte values (survives repeated writes to the same address via direct
+  Store-statement capture, not diffing)
+- `writes_to_range(start, end)` — spatial writes
+- `register_at(register, step)` — register value at any point
+- `register_timeline(register)` — the full write history
+- `state_at(function, step, initial)` — deterministic replay to any
+  step
+
+`damsel trace <project> --function F [--set w0=5] [--writes-to 0xADDR]
+[--register-at reg:N] [--budget N]`: timeline report by default.
+
+Evidence: `_helper(w0=5)` → 5 steps traced, outcome `returned`, 8
+memory writes; `--writes-to 0x7fffffffeffc` → `step 1: 05000000…`
+(the stored w0); `--register-at w0:3` → `0xa` (computed 5+5).
+
+Proof: `ttd::tests` (steps/registers/writes recording, write queries,
+register timelines, at-step values, deterministic replay, budget stops)
++ workspace 60 suites green.
