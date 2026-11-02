@@ -1840,3 +1840,35 @@ memory writes; `--writes-to 0x7fffffffeffc` → `step 1: 05000000…`
 Proof: `ttd::tests` (steps/registers/writes recording, write queries,
 register timelines, at-step values, deterministic replay, budget stops)
 + workspace 60 suites green.
+
+## Workbench Completion (plan feature 20b/c, slice 1) — DONE
+
+### Unit W1 — server surfaces: pseudocode, CFG, hex routes + duplicate-file cleanup — DONE
+
+The workbench's missing surfaces start server-side. Three new routes:
+
+- `GET /api/projects/{id}/pseudocode/{function}` — the decompiled
+  pseudocode (lines with source addresses + unknown count). Lookup
+  misses are typed 404s (function/symbol_not_found mapped locally; the
+  global disasm 400 contract is unchanged).
+- `GET /api/projects/{id}/cfg/{function}` — the control-flow graph:
+  lifted IR blocks (id, address, statement count, terminator kind) and
+  edges with kinds (`branch`, `taken`, `fallthrough`). Verified on a
+  real branching function: `chooseValue` → 17 blocks / 19 edges with
+  cond_branch taken+fallthrough targets.
+- `GET /api/images/{id}/hex?address=&length=` — section-resolved rows
+  (offset, hex bytes, ascii), defaulting to the text section start,
+  capped at 4096; off-section addresses are typed `address_unmapped`
+  404s.
+
+Cleanup en route: 11 iCloud sync-conflict duplicates (`* 2.swift`)
+were tracked in git and broke the Swift build with duplicate
+declarations — all byte-identical to their originals, removed; the
+app builds again (12s) and all 76 Swift tests pass. iCloud note:
+codesign rejects xattrs on iCloud Drive paths — run `swift
+build/test` from a non-iCloud checkout (scratch copy verified).
+
+Proof: 3 new ui_api tests (pseudocode lines + typed 404, CFG blocks/
+edges/kinds/endpoint-consistency on swift-sample, hex rows + explicit
+address + unmapped 404) — ui_api suite 7/7; workspace 60 suites,
+zero warnings; damsel-app 76/76.

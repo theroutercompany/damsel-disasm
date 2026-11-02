@@ -435,6 +435,15 @@ async fn run_async(config: UiConfig) -> Result<(), CliRunError> {
             "/api/projects/{project_id}/summary/{function}",
             get(project_summary),
         )
+        .route(
+            "/api/projects/{project_id}/pseudocode/{function}",
+            get(project_pseudocode),
+        )
+        .route(
+            "/api/projects/{project_id}/cfg/{function}",
+            get(project_cfg),
+        )
+        .route("/api/images/{image_id}/hex", get(image_hex))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(state);
 
@@ -484,6 +493,218 @@ async fn favicon() -> Response {
         .status(StatusCode::NO_CONTENT)
         .body(axum::body::Body::empty())
         .expect("empty favicon response")
+}
+
+/// GET /api/projects/{id}/pseudocode/{function} — the decompiled
+/// pseudocode (plan feature 20b): lines with source addresses.
+async fn project_pseudocode(
+    State(_state): State<AppState>,
+    Path((project_id, function)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let project_dir = std::path::PathBuf::from(&project_id);
+    let image = crate::load_project_image(&project_dir).map_err(ApiError::from)?;
+    let decompiled = crate::decompile_project_function(&image, &function).map_err(|error| {
+        let status = if matches!(error.code, "function_not_found" | "symbol_not_found") {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        ApiError {
+            status,
+            error: error.to_error_response(),
+        }
+    })?;
+    let lines: Vec<serde_json::Value> = decompiled
+        .pseudocode
+        .lines
+        .iter()
+        .map(|line| {
+            json!({
+                "text": line.text,
+                "addresses": line.source_addresses.iter().map(|a| format!("{a:#x}")).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "function": function,
+        "unknown_count": decompiled.unknown_count,
+        "lines": lines,
+    }))
+    .into_response())
+}
+
+/// GET /api/projects/{id}/cfg/{function} — the control-flow graph (plan
+/// feature 20c): lifted IR blocks with statement counts and edges
+/// (branch / conditional-taken / fallthrough), laid out by the client.
+async fn project_cfg(
+    State(_state): State<AppState>,
+    Path((project_id, function)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let project_dir = std::path::PathBuf::from(&project_id);
+    let image = crate::load_project_image(&project_dir).map_err(ApiError::from)?;
+    let selector = function
+        .strip_prefix("0x")
+        .map(|hex| {
+            u64::from_str_radix(hex, 16)
+                .map(damsel_core::DisassemblyTarget::Address)
+                .unwrap_or_else(|_| damsel_core::DisassemblyTarget::Symbol(function.clone()))
+        })
+        .unwrap_or_else(|| damsel_core::DisassemblyTarget::Symbol(function.clone()));
+    let request = damsel_core::DisassemblyRequestV2 {
+        target: selector,
+        range: None,
+        limit: damsel_core::DisassemblyLimit::Unlimited,
+        options: damsel_core::DisassemblyOptions {
+            include_annotations: false,
+            include_value_flow: false,
+        },
+    };
+    let result = damsel_macho::disassemble_v2(&image, &request)
+        .map_err(|_| ApiError::not_found("function_not_found", function.clone()))?;
+    if result.instructions.is_empty() {
+        return Err(ApiError::not_found("function_not_found", function));
+    }
+    let lifted = damsel_decomp::lift_arm64(&result.instructions);
+
+    let blocks: Vec<serde_json::Value> = lifted
+        .blocks
+        .iter()
+        .map(|block| {
+            let terminator = &block.terminator;
+            let (kind, targets) = match terminator {
+                damsel_decomp::IrTerminator::Return => ("return".to_string(), vec![]),
+                damsel_decomp::IrTerminator::Branch(target) => {
+                    ("branch".to_string(), vec![format!("{target:#x}")])
+                }
+                damsel_decomp::IrTerminator::CondBranch {
+                    taken, fallthrough, ..
+                } => (
+                    "cond_branch".to_string(),
+                    vec![format!("{taken:#x}"), format!("{fallthrough:#x}")],
+                ),
+                damsel_decomp::IrTerminator::WindowEnd => ("window_end".to_string(), vec![]),
+                damsel_decomp::IrTerminator::Trap => ("trap".to_string(), vec![]),
+                damsel_decomp::IrTerminator::Unknown { mnemonic } => {
+                    (format!("unknown:{mnemonic}"), vec![])
+                }
+            };
+            json!({
+                "id": block.id,
+                "address": format!("{:#x}", block.start_address),
+                "statements": block.statements.len(),
+                "terminator": kind,
+                "targets": targets,
+            })
+        })
+        .collect();
+    let edges: Vec<serde_json::Value> = lifted
+        .blocks
+        .iter()
+        .filter_map(|block| {
+            let source = format!("{:#x}", block.start_address);
+            match &block.terminator {
+                damsel_decomp::IrTerminator::Branch(target) => {
+                    Some(vec![json!({ "from": source, "to": format!("{target:#x}"), "kind": "branch" })])
+                }
+                damsel_decomp::IrTerminator::CondBranch { taken, fallthrough, .. } => Some(vec![
+                    json!({ "from": source, "to": format!("{taken:#x}"), "kind": "taken" }),
+                    json!({ "from": source, "to": format!("{fallthrough:#x}"), "kind": "fallthrough" }),
+                ]),
+                _ => None,
+            }
+        })
+        .flatten()
+        .collect();
+
+    Ok(Json(json!({
+        "function": function,
+        "blocks": blocks,
+        "edges": edges,
+    }))
+    .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct HexQuery {
+    address: Option<String>,
+    length: Option<u64>,
+}
+
+/// GET /api/images/{id}/hex?address=0x..&length=N — raw bytes for the
+/// hex view (plan feature 20b): section-resolved, hex + ascii rows.
+async fn image_hex(
+    State(state): State<AppState>,
+    Path(image_id): Path<String>,
+    Query(query): Query<HexQuery>,
+) -> Result<Response, ApiError> {
+    let stored = lookup_image(&state, &image_id)?;
+    let length = query.length.unwrap_or(256).min(4096);
+    let address = match query.address.as_deref() {
+        None => {
+            // Default: the __TEXT:__text section start.
+            stored
+                .image
+                .sections()
+                .iter()
+                .find(|section| section.full_name() == "__TEXT:__text")
+                .map(|section| section.address)
+                .ok_or_else(|| ApiError::not_found("hex_unavailable", "no text section"))?
+        }
+        Some(raw) => parse_address(raw).map_err(|error| {
+            CliRunError::invalid_args(format!("invalid address `{raw}`: {error}"))
+        })?,
+    };
+
+    // Resolve through the containing section.
+    let containing = stored.image.sections().iter().find(|section| {
+        address >= section.address && address < section.address.saturating_add(section.size)
+    });
+    let Some(section) = containing else {
+        return Err(ApiError::not_found(
+            "address_unmapped",
+            format!("{address:#x} is not inside any section"),
+        ));
+    };
+    let section_bytes = stored
+        .image
+        .bytes_for_section(section)
+        .ok_or_else(|| ApiError::not_found("hex_unavailable", "section bytes unreadable"))?;
+    let offset_into = (address - section.address) as usize;
+    let available = section_bytes.len().saturating_sub(offset_into);
+    let take = (length as usize).min(available);
+    let bytes = &section_bytes[offset_into..offset_into + take];
+
+    // 16-byte rows: offset, hex pairs, ascii.
+    let rows: Vec<serde_json::Value> = bytes
+        .chunks(16)
+        .enumerate()
+        .map(|(index, chunk)| {
+            let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02x}")).collect();
+            let ascii: String = chunk
+                .iter()
+                .map(|b| {
+                    if b.is_ascii_graphic() || *b == b' ' {
+                        *b as char
+                    } else {
+                        '.'
+                    }
+                })
+                .collect();
+            json!({
+                "address": format!("{:#x}", address + (index * 16) as u64),
+                "hex": hex,
+                "ascii": ascii,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "address": format!("{address:#x}"),
+        "section": section.full_name(),
+        "length": take,
+        "rows": rows,
+    }))
+    .into_response())
 }
 
 async fn project_search(
