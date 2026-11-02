@@ -1,3 +1,4 @@
+mod debug;
 mod mcp;
 mod output;
 mod ui;
@@ -597,6 +598,22 @@ enum Command {
         out: PathBuf,
         #[arg(long, help = "Library label for the corpus (e.g. glibc)")]
         library: String,
+    },
+    #[command(
+        about = "Debug under lldb: breakpoint from bounds, registers as facts",
+        long_about = "LLDB debug workbench (plan feature 14).\n\nRuns the target under batch-mode lldb with a breakpoint at the named function (resolved from the project), reads registers and backtrace at the stop, and persists every register observation as a provenance-carrying fact (pass lldb_v1).\n\nRequires lldb; typed error when absent."
+    )]
+    Debug {
+        project: PathBuf,
+        #[arg(long, help = "Function name (project-resolved, renames included)")]
+        function: String,
+        #[arg(long, help = "Registers to read (default: x0-x3 sp pc lr)")]
+        registers: Vec<String>,
+        #[arg(
+            long,
+            help = "Persist register observations as facts (default: report only)"
+        )]
+        persist: bool,
     },
     #[command(
         about = "Emulate a function's IR in a bounded sandbox",
@@ -1508,6 +1525,14 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
+        Command::Debug {
+            project,
+            function,
+            registers,
+            persist,
+        } => {
+            handle_debug(project, &function, &registers, persist, &output_settings)?;
+        }
         Command::Emulate {
             project,
             function,
@@ -2241,6 +2266,129 @@ fn resolve_query_target(
             format!("`{target}` matches {} functions; pass 0xADDR", many.len()),
         )),
     }
+}
+
+fn handle_debug(
+    project: PathBuf,
+    selector: &str,
+    registers: &[String],
+    persist: bool,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    let project_dir = resolve_project_dir(&project)?;
+
+    // Resolve the function (renames included) for the report; the
+    // breakpoint uses the name directly.
+    let store_meta = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let store = damsel_project::open_store(
+        &project_dir.join("project.db"),
+        damsel_project::Create::Existing,
+        &store_meta,
+    )
+    .map_err(map_store_error)?;
+    let summaries = damsel_project::function_summaries(&store).map_err(map_store_error)?;
+    let resolved = summaries
+        .iter()
+        .find(|s| s.name.as_deref() == Some(selector))
+        .ok_or_else(|| {
+            CliRunError::command(
+                "function_not_found",
+                format!("no function named `{selector}`"),
+            )
+        })?;
+
+    let binary_path = project_image_source(&project_dir)?
+        .map(|source| match source {
+            ProjectImageSource::File(path) => path,
+            ProjectImageSource::SharedCache { cache, selector } => {
+                // Cache-backed targets cannot run standalone; note honestly.
+                let _ = (cache, selector);
+                PathBuf::new()
+            }
+        })
+        .unwrap_or_default();
+    if binary_path.as_os_str().is_empty() || !binary_path.is_file() {
+        return Err(CliRunError::command(
+            "debug_unsupported",
+            "debugging requires a standalone executable target (cache images are not runnable)",
+        ));
+    }
+
+    let register_refs: Vec<&str> = registers.iter().map(|s| s.as_str()).collect();
+    let report = crate::debug::debug_function(&binary_path, selector, &register_refs)
+        .map_err(|e| CliRunError::command("debug_error", e))?;
+
+    // Persist register observations as facts when asked.
+    let mut persisted = 0;
+    if persist && !report.stops.is_empty() {
+        use damsel_project::{
+            AnalysisFact, Confidence, FactKind, FactProvenance, ObjectId, ProjectStore as _,
+            TypedStore as _,
+        };
+        let mut store = damsel_project::open_store(
+            &project_dir.join("project.db"),
+            damsel_project::Create::Existing,
+            &store_meta,
+        )
+        .map_err(map_store_error)?;
+        let source_id = store
+            .sources()
+            .map_err(map_store_error)?
+            .first()
+            .map(|r| r.source_id)
+            .ok_or_else(|| CliRunError::command("project_not_found", "no sources"))?;
+        for stop in &report.stops {
+            for observation in &stop.registers {
+                store
+                    .put_fact(AnalysisFact {
+                        source_id,
+                        object_id: Some(ObjectId::new("instruction", format!("{:#x}", stop.pc))),
+                        kind: FactKind::new("runtime_register"),
+                        payload: format!(
+                            "{}={:#x}|function={}|stop={}",
+                            observation.register,
+                            observation.value,
+                            stop.function,
+                            stop.stop_reason
+                        ),
+                        confidence: Confidence::Strong,
+                        provenance: FactProvenance::analyzer("lldb_v1", "debugger"),
+                    })
+                    .map_err(map_store_error)?;
+                persisted += 1;
+            }
+        }
+    }
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "debug",
+            "function": selector,
+            "address": format!("{:#x}", resolved.address),
+            "target": report.target,
+            "stops": report.stops,
+            "persisted_facts": persisted,
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+    println!("debug: {} ({:#x}) under lldb", selector, resolved.address);
+    for stop in &report.stops {
+        println!(
+            "  stopped at {:#x} in {} ({})",
+            stop.pc, stop.function, stop.stop_reason
+        );
+        for observation in &stop.registers {
+            println!("    {:<6} = {:#x}", observation.register, observation.value);
+        }
+        for frame in stop.backtrace.iter().take(5) {
+            println!("    {frame}");
+        }
+    }
+    if persisted > 0 {
+        println!("persisted: {persisted} runtime_register facts (pass lldb_v1)");
+    }
+    Ok(())
 }
 
 fn handle_emulate(

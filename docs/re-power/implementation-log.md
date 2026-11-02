@@ -1759,3 +1759,28 @@ Proof: `emulate` unit tests (arithmetic+memory interpretation,
 budget/unsupported honesty) + `emulate_runs_leaf_function_to_completion`
 CLI test (correct return value, budget guard, call stop, typed --set
 errors); workspace 60 suites.
+
+## LLDB Workbench (plan feature 14, slice 1) — DONE
+
+### Unit D1 — batch-mode lldb: breakpoints from bounds, registers as facts — DONE
+
+`damsel debug <project> --function F [--registers …] [--persist]`: the
+static↔dynamic bridge. The function resolves through the project
+(renames included); batch-mode lldb runs the standalone target with a
+breakpoint at the named entry; registers and backtrace are captured at
+the stop; `--persist` promotes every register observation to a
+`runtime_register` fact (confidence Strong, provenance `lldb_v1`,
+object = instruction site, payload = `reg=value|function=…|stop=…`).
+
+Typed errors: absent lldb (`debug_error`), cache-image targets
+(`debug_unsupported` — projected images are not runnable), unknown
+functions. The transcript parser handles the mid-line stop reason,
+backtick function names, and register annotations.
+
+Evidence: `debug --function _main` on arm64-symbolized → breakpoint
+hit at `main` (pc=0x1000004b8), `x0=0x1` (argc), full register set,
+backtrace frame; `--persist` wrote 7 `runtime_register` facts with
+`lldb_v1` provenance into the canonical export.
+
+Proof: debug::tests (register line parsing, full transcript parsing
+with function/pc/stop-reason/backtrace) + workspace 60 suites green.
