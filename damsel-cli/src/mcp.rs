@@ -265,7 +265,8 @@ fn handle_list_tools() -> Value {
                     "type": "object",
                     "properties": {
                         "project": { "type": "string", "description": "Path to the .damsel directory or target" },
-                        "apply": { "type": "boolean", "description": "Write proposals through the annotation layer (default: dry-run)" }
+                        "apply": { "type": "boolean", "description": "Write proposals through the annotation layer (default: dry-run)" },
+                        "llm": { "type": "boolean", "description": "Use the external-LLM refiner (env: DAMSEL_LLM_PROVIDER/API_KEY/MODEL/BASE_URL)" }
                     },
                     "required": ["project"]
                 })),

@@ -46,10 +46,82 @@ fn sanitize_hint(raw: &str) -> String {
     hint
 }
 
-/// Propose renames for every unnamed or `sub_`-named function that has
-/// usable context. Deterministic: same facts → same proposals, in
-/// address order.
-pub fn propose(store: &StoreHandle) -> Result<Vec<RefinementProposal>, String> {
+/// Provider-agnostic context for one function (plan feature 17): what
+/// any refiner — heuristic or external LLM — sees. String *content*
+/// stays out (privacy by design); imports called (with counts) and
+/// string-reference counts are the signals.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct FunctionContext {
+    pub address: u64,
+    pub current_name: Option<String>,
+    /// Imports the function calls: (name, count), most-called first.
+    pub imports: Vec<(String, usize)>,
+    pub string_refs: usize,
+}
+
+/// A rename proposer. Implementations: the deterministic heuristic
+/// (v1, default) and external LLM adapters (damsel-cli).
+pub trait Refiner {
+    /// Annotation actor for writes: `model:<identity>`.
+    fn actor(&self) -> String;
+    /// Propose renames from contexts. Deterministic implementations
+    /// return address-ordered proposals.
+    fn propose(&self, contexts: &[FunctionContext]) -> Result<Vec<RefinementProposal>, String>;
+}
+
+/// The deterministic v1 refiner (default; no network).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HeuristicRefiner;
+
+impl Refiner for HeuristicRefiner {
+    fn actor(&self) -> String {
+        MODEL_ACTOR.to_string()
+    }
+
+    fn propose(&self, contexts: &[FunctionContext]) -> Result<Vec<RefinementProposal>, String> {
+        let mut proposals = Vec::new();
+        for context in contexts {
+            let needs_name = context
+                .current_name
+                .as_deref()
+                .is_none_or(|name| name.starts_with("sub_"));
+            if !needs_name {
+                continue;
+            }
+            let hint = context
+                .imports
+                .first()
+                .map(|(name, count)| {
+                    (
+                        format!("calls_{}", sanitize_hint(name)),
+                        format!("imports: {name} x{count}"),
+                    )
+                })
+                .filter(|_| context.string_refs == 0)
+                .or_else(|| {
+                    (context.string_refs > 0).then(|| {
+                        (
+                            format!("refs_{}_str", context.string_refs),
+                            format!("string references: {}", context.string_refs),
+                        )
+                    })
+                });
+            if let Some((name, evidence)) = hint {
+                proposals.push(RefinementProposal {
+                    address: context.address,
+                    current_name: context.current_name.clone(),
+                    proposed_name: format!("fn_{:x}_{}", context.address, name),
+                    evidence,
+                });
+            }
+        }
+        Ok(proposals)
+    }
+}
+
+/// Collect per-function contexts from a project's facts. Deterministic:
+/// imports sorted by (count desc, name) per function.
+pub fn collect_contexts(store: &StoreHandle) -> Result<Vec<FunctionContext>, String> {
     let facts = store.facts().map_err(|e| e.to_string())?;
 
     // String addresses → values come from string facts; the values live
@@ -134,57 +206,37 @@ pub fn propose(store: &StoreHandle) -> Result<Vec<RefinementProposal>, String> {
         }
     }
 
-    // Names (post-rename view).
+    // Contexts in address order; imports sorted by (count desc, name).
     let summaries = damsel_project::function_summaries(store).map_err(|e| e.to_string())?;
-    let mut proposals = Vec::new();
+    let mut contexts = Vec::new();
     for summary in summaries {
-        let needs_name = summary
-            .name
-            .as_deref()
-            .is_none_or(|name| name.starts_with("sub_"));
-        if !needs_name {
-            continue;
-        }
-        let imports = called_imports.get(&summary.address);
-        let strings = string_refs.get(&summary.address).copied().unwrap_or(0);
-        let hint = imports
-            .and_then(|map| {
-                map.iter()
-                    .max_by_key(|(name, count)| (**count, name.to_string()))
-                    .map(|(name, count)| (name.clone(), *count))
-            })
-            .map(|(name, count)| {
-                (
-                    format!("calls_{}", sanitize_hint(&name)),
-                    format!("imports: {name} x{count}"),
-                )
-            })
-            .filter(|_| strings == 0)
-            .or_else(|| {
-                (strings > 0).then(|| {
-                    (
-                        format!("refs_{}_str", strings),
-                        format!("string references: {strings}"),
-                    )
-                })
-            });
-        if let Some((name, evidence)) = hint {
-            proposals.push(RefinementProposal {
-                address: summary.address,
-                current_name: summary.name.clone(),
-                proposed_name: format!("fn_{:x}_{}", summary.address, name),
-                evidence,
-            });
-        }
+        let mut imports: Vec<(String, usize)> = called_imports
+            .get(&summary.address)
+            .map(|map| map.iter().map(|(k, v)| (k.clone(), *v)).collect())
+            .unwrap_or_default();
+        imports.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        contexts.push(FunctionContext {
+            address: summary.address,
+            current_name: summary.name,
+            imports,
+            string_refs: string_refs.get(&summary.address).copied().unwrap_or(0),
+        });
     }
-    Ok(proposals)
+    Ok(contexts)
 }
 
-/// Apply proposals through the annotation layer (actor `model:*`).
-/// Returns the applied (address, name) pairs.
-pub fn apply(
+/// Propose with the default heuristic refiner (compatibility shim).
+pub fn propose(store: &StoreHandle) -> Result<Vec<RefinementProposal>, String> {
+    let contexts = collect_contexts(store)?;
+    HeuristicRefiner.propose(&contexts)
+}
+
+/// Apply proposals through the annotation layer with the given actor
+/// (`model:*`). Returns the applied (address, name) pairs.
+pub fn apply_as(
     store: &mut StoreHandle,
     proposals: &[RefinementProposal],
+    actor: &str,
 ) -> Result<Vec<(u64, String)>, String> {
     let mut applied = Vec::new();
     for proposal in proposals {
@@ -194,12 +246,20 @@ pub fn apply(
             &object,
             AnnotationKind::Rename,
             &proposal.proposed_name,
-            MODEL_ACTOR,
+            actor,
         )
         .map_err(|e| e.to_string())?;
         applied.push((proposal.address, proposal.proposed_name.clone()));
     }
     Ok(applied)
+}
+
+/// Apply with the default heuristic actor (compatibility shim).
+pub fn apply(
+    store: &mut StoreHandle,
+    proposals: &[RefinementProposal],
+) -> Result<Vec<(u64, String)>, String> {
+    apply_as(store, proposals, MODEL_ACTOR)
 }
 
 /// Refinements currently attributed to the model actor (review surface).
