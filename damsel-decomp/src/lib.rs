@@ -15,15 +15,14 @@ mod render;
 mod ssa;
 mod stack_frame;
 mod structure;
-mod ttd;
 mod summary;
+mod ttd;
 
 pub use diff::{
     DefenseFinding, DiffError, DiffFunction, DiffReport, MatchStrategy, MatchedFunction, ShapeMap,
     diff_defenses, diff_functions, diff_functions_with_shapes, render_diff_html,
     render_diff_markdown,
 };
-pub use ttd::{Trace, TraceStep, record_trace};
 pub use emulate::{EmulationOutcome, Emulator, Memory};
 pub use ir::{
     IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement, IrTerminator,
@@ -34,7 +33,10 @@ pub use recon::{
     Verdict, assess, detect_anti_analysis, detect_cfg_flattening, detect_opaque_predicates,
     detect_packers, detect_string_encryption, render_recon_markdown, shannon_entropy,
 };
-pub use render::{Pseudocode, PseudocodeLine, render_pseudocode};
+pub use render::{
+    Pseudocode, PseudocodeLine, StructFieldHint, TypeHints, render_pseudocode,
+    render_pseudocode_with_types,
+};
 pub use ssa::{
     AbiRegisterRole, AbiRole, PhiCandidate, PhiNode, RenamedBlock, RenamedFunction, SsaReport,
     arm64_abi_roles, build_phi_nodes, build_ssa, rename_registers, x86_64_abi_roles,
@@ -48,3 +50,4 @@ pub use summary::{
     CallSite, FunctionSummaryReport, SummaryError, render_summary_markdown, summarize_function,
     summarize_named,
 };
+pub use ttd::{Trace, TraceStep, record_trace};

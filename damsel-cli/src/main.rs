@@ -669,6 +669,12 @@ enum Command {
         r#struct: Option<String>,
         #[arg(long = "field", help = "Field: 0xOFFSET:TYPE:NAME (repeatable)")]
         fields: Vec<String>,
+        #[arg(
+            long,
+            value_name = "REG=STRUCT",
+            help = "Bind a pointer base to a struct (repeatable; applied in decompile)"
+        )]
+        bind: Vec<String>,
         #[arg(long, help = "List declared types")]
         list: bool,
     },
@@ -1602,9 +1608,10 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             project,
             r#struct,
             fields,
+            bind,
             list,
         } => {
-            handle_type(project, r#struct, &fields, list, &output_settings)?;
+            handle_type(project, r#struct, &fields, &bind, list, &output_settings)?;
         }
         Command::Refine { project, apply } => {
             handle_refine(project, apply, &output_settings)?;
@@ -2773,10 +2780,38 @@ fn handle_emulate(
     Ok(())
 }
 
+/// Convert a project's type table into renderer hints (plan feature 7,
+/// slice 2): bindings whose struct is declared survive; dangling ones
+/// are dropped, never guessed.
+fn project_type_hints(
+    store: &damsel_project::StoreHandle,
+) -> Result<damsel_decomp::TypeHints, CliRunError> {
+    use damsel_recon_catalog::types::TypeTable;
+    let table = TypeTable::from_store(store).map_err(|e| CliRunError::command("type_error", e))?;
+    let mut hints = damsel_decomp::TypeHints::new();
+    for (base, struct_name) in &table.bindings {
+        let Some(decl) = table.structs.get(struct_name) else {
+            continue;
+        };
+        hints.bind(
+            base,
+            decl.fields
+                .iter()
+                .map(|field| damsel_decomp::StructFieldHint {
+                    offset: field.offset,
+                    field_name: field.field_name.clone(),
+                })
+                .collect(),
+        );
+    }
+    Ok(hints)
+}
+
 fn handle_type(
     project: PathBuf,
     struct_name: Option<String>,
     fields: &[String],
+    binds: &[String],
     list: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
@@ -2819,9 +2854,50 @@ fn handle_type(
         return Ok(());
     }
 
+    // Bindings: --bind REG=STRUCT (works with or without a --struct in
+    // the same invocation).
+    if !binds.is_empty() {
+        for raw in binds {
+            let (register, target_struct) = raw.split_once('=').ok_or_else(|| {
+                CliRunError::invalid_args(format!("bad --bind (want REG=STRUCT): {raw}"))
+            })?;
+            if register.is_empty() || target_struct.is_empty() {
+                return Err(CliRunError::invalid_args(format!("bad --bind: {raw}")));
+            }
+            let table =
+                TypeTable::from_store(&store).map_err(|e| CliRunError::command("type_error", e))?;
+            if !table.structs.contains_key(target_struct) {
+                return Err(CliRunError::command(
+                    "type_error",
+                    format!("cannot bind {register} to undeclared struct `{target_struct}`"),
+                ));
+            }
+            let actor = annotation_actor();
+            TypeTable::bind(&mut store, register, target_struct, &actor)
+                .map_err(|e| CliRunError::command("type_error", e))?;
+            if output_settings.format == output::OutputFormat::Json {
+                println!(
+                    "{}",
+                    project_json(serde_json::json!({
+                        "command": "type",
+                        "action": "bind",
+                        "register": register,
+                        "struct": target_struct,
+                        "actor": actor,
+                    }))
+                );
+            } else {
+                println!("bound {register} -> {target_struct} (actor {actor})");
+            }
+        }
+        if struct_name.is_none() {
+            return Ok(());
+        }
+    }
+
     let Some(name) = struct_name else {
         return Err(CliRunError::invalid_args(
-            "pass --struct NAME --field 0xOFF:TYPE:NAME (repeatable), or --list",
+            "pass --struct NAME --field 0xOFF:TYPE:NAME (repeatable), --bind REG=STRUCT, or --list",
         ));
     };
     if fields.is_empty() {
@@ -3835,6 +3911,48 @@ pub(crate) struct DecompiledFunction {
 
 /// Decompile one function from an already-materialized image (the CLI
 /// loads the image fresh; the MCP server keeps it cached across calls).
+/// Decompile with user type hints applied to the rendering (plan
+/// feature 7, slice 2).
+pub(crate) fn decompile_project_function_with_types(
+    image: &BinaryImage,
+    selector: &str,
+    hints: &damsel_decomp::TypeHints,
+) -> Result<DecompiledFunction, CliRunError> {
+    // v1: apply hints by re-rendering through the typed entry point —
+    // lift once, render twice (typed wins).
+    let request = damsel_core::DisassemblyRequestV2 {
+        target: if let Some(hex) = selector.strip_prefix("0x") {
+            damsel_core::DisassemblyTarget::Address(
+                u64::from_str_radix(hex, 16)
+                    .map_err(|_| CliRunError::invalid_args("bad address"))?,
+            )
+        } else {
+            damsel_core::DisassemblyTarget::Symbol(selector.to_string())
+        },
+        range: None,
+        limit: damsel_core::DisassemblyLimit::Unlimited,
+        options: damsel_core::DisassemblyOptions {
+            include_annotations: true,
+            include_value_flow: false,
+        },
+    };
+    let result = disassemble_v2(image, &request).map_err(map_macho_error)?;
+    if result.instructions.is_empty() {
+        return Err(CliRunError::command(
+            "function_not_found",
+            selector.to_string(),
+        ));
+    }
+    let function = damsel_decomp::lift_arm64(&result.instructions);
+    let pseudocode = damsel_decomp::render_pseudocode_with_types(&function, Some(selector), hints);
+    Ok(DecompiledFunction {
+        frame: serde_json::to_value(damsel_decomp::analyze_stack_frame(&function))
+            .unwrap_or_default(),
+        pseudocode,
+        unknown_count: function.unknown_count,
+    })
+}
+
 pub(crate) fn decompile_project_function(
     image: &BinaryImage,
     selector: &str,
@@ -3966,6 +4084,22 @@ fn handle_decompile(
 
     let image = load_project_image(&project_dir)?;
 
+    // User types (plan feature 7, slice 2): declared structs bound to
+    // pointer bases refine the pseudocode rendering — `&sp[0x10]`
+    // becomes `sp->field` when a field is declared at that offset.
+    let type_hints = {
+        use damsel_project::{Create, open_store};
+        let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+        let store = open_store(
+            &project_dir.join("project.db"),
+            Create::Existing,
+            &meta_for_open,
+        )
+        .map_err(map_store_error)?;
+        project_type_hints(&store)?
+    };
+    let typed_decompile = !type_hints.is_empty();
+
     // Steering (plan feature 9): parse, persist as user_asserted facts
     // (provenance steer_v1 + actor), and surface the pins in the output.
     let mut parsed_assertions = Vec::new();
@@ -4011,7 +4145,11 @@ fn handle_decompile(
         drop(store);
     }
 
-    let decompiled = decompile_project_function(&image, selector)?;
+    let decompiled = if typed_decompile {
+        decompile_project_function_with_types(&image, selector, &type_hints)?
+    } else {
+        decompile_project_function(&image, selector)?
+    };
     let DecompiledFunction {
         pseudocode,
         frame,
@@ -4021,6 +4159,7 @@ fn handle_decompile(
     if output_settings.format == output::OutputFormat::Json {
         let value = serde_json::json!({
             "command": "decompile",
+            "typed": typed_decompile,
             "steered": !steer_note.is_empty(),
             "steer_note": if steer_note.is_empty() { serde_json::Value::Null } else { serde_json::json!(steer_note.trim()) },
             "pseudocode": serde_json::to_value(&pseudocode).unwrap_or_default(),
@@ -4029,6 +4168,9 @@ fn handle_decompile(
         });
         println!("{}", project_json(value));
     } else {
+        if typed_decompile {
+            println!(" // types applied: {} binding(s)", type_hints.len());
+        }
         if !steer_note.is_empty() {
             println!("{steer_note}");
         }

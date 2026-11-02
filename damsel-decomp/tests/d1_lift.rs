@@ -238,3 +238,88 @@ fn lifts_fp_arithmetic_and_accumulate() {
         "madd shows the multiply-accumulate shape: {text:?}"
     );
 }
+
+/// Type application (plan feature 7, slice 2): bound structs replace
+/// raw displacements in pseudocode — typed bases render `base->field`;
+/// untyped bases and unmatched offsets are untouched.
+#[test]
+fn type_hints_refine_addrof_rendering() {
+    use damsel_decomp::{StructFieldHint, TypeHints, render_pseudocode_with_types};
+
+    let instructions = disassemble_main();
+    let function = damsel_decomp::lift_arm64(&instructions);
+
+    // _main's rendering carries &sp[0x10] and &sp[0x18] — bind sp to a
+    // struct with fields at exactly those offsets.
+    let untyped = damsel_decomp::render_pseudocode(&function, Some("_main"));
+    let untyped_text: Vec<&str> = untyped.lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(
+        untyped_text.iter().any(|l| l.contains("&sp[0x10]"))
+            && untyped_text.iter().any(|l| l.contains("&sp[0x18]")),
+        "fixture expectation: sp offsets present, got {untyped_text:#?}"
+    );
+
+    let mut hints = TypeHints::new();
+    hints.bind(
+        "sp",
+        vec![
+            StructFieldHint {
+                offset: 0x10,
+                field_name: "saved_fp".to_string(),
+            },
+            StructFieldHint {
+                offset: 0x18,
+                field_name: "saved_lr".to_string(),
+            },
+        ],
+    );
+    let typed = render_pseudocode_with_types(&function, Some("_main"), &hints);
+    let typed_text: Vec<&str> = typed.lines.iter().map(|l| l.text.as_str()).collect();
+
+    assert!(
+        typed_text.iter().any(|l| l.contains("sp->saved_fp")),
+        "field at 0x10 named: {typed_text:#?}"
+    );
+    assert!(
+        typed_text.iter().any(|l| l.contains("sp->saved_lr")),
+        "field at 0x18 named: {typed_text:#?}"
+    );
+    assert!(
+        !typed_text
+            .iter()
+            .any(|l| l.contains("&sp[0x10]") || l.contains("&sp[0x18]")),
+        "raw forms replaced: {typed_text:#?}"
+    );
+    // Untouched neighbors stay raw (&sp[0x8] has no field).
+    if untyped_text.iter().any(|l| l.contains("&sp[0x8]")) {
+        assert!(
+            typed_text.iter().any(|l| l.contains("&sp[0x8]")),
+            "undeclared offset stays raw: {typed_text:#?}"
+        );
+    }
+
+    // Offsets without a declared field and unbound bases render
+    // identically to the untyped pass.
+    let no_hints = TypeHints::new();
+    let plain = render_pseudocode_with_types(&function, Some("_main"), &no_hints);
+    let plain_text: Vec<String> = plain.lines.iter().map(|l| l.text.clone()).collect();
+    let untyped_lines: Vec<String> = untyped.lines.iter().map(|l| l.text.clone()).collect();
+    assert_eq!(plain_text, untyped_lines, "empty hints = identical output");
+
+    // A bound base with a non-matching offset keeps the raw form.
+    let mut wrong = TypeHints::new();
+    wrong.bind(
+        "fp",
+        vec![StructFieldHint {
+            offset: 0x50,
+            field_name: "nope".to_string(),
+        }],
+    );
+    let wrong_render = render_pseudocode_with_types(&function, Some("_main"), &wrong);
+    let wrong_text: Vec<&str> = wrong_render.lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(
+        !wrong_text.iter().any(|l| l.contains("fp->nope")),
+        "unmatched offset never invents a field: {wrong_text:#?}"
+    );
+    assert_eq!(wrong_text, untyped_text.iter().copied().collect::<Vec<_>>());
+}

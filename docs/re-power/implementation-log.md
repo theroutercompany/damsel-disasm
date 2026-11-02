@@ -1903,3 +1903,35 @@ decoding from server shapes, CfgLayout diamond/cycle/determinism,
 client POST paths + hex query building); ui_api 8/8 (image
 decompile/cfg + missing-symbol 404); workspace 60 suites, zero
 warnings.
+
+### Unit T2 — renderer application: typed fields in pseudocode — DONE
+
+Feature 7, slice 2: declared types now *apply*. `damsel type --bind
+REG=STRUCT` persists a pointer binding (annotation layer,
+`type:bind:REG` objects, `bind|reg=…|struct=…` payloads,
+re-bind=replace, actor-scoped); `damsel decompile` loads the project's
+table and renders through `render_pseudocode_with_types` — a bound
+base with a declared field at the displacement renders `sp->field`
+instead of `&sp[0x10]`. Negative displacements never match (field
+offsets are non-negative); undeclared offsets and unbound bases render
+byte-identically to the untyped pass; dangling bindings (struct not
+declared) are dropped, never guessed; binding to an undeclared struct
+is a typed error.
+
+Plumbing: `damsel-decomp::TypeHints` (base → field list, thread-local
+like the ObjC context) + `render_pseudocode_with_types`;
+`TypeTable::{bindings, bind}`; `damsel-cli::project_type_hints`
+converts at the CLI layer (decomp cannot depend on recon-catalog —
+cycle avoided by keeping conversion where both crates are visible).
+JSON output gains `"typed": true/false`.
+
+Evidence: `Frame {+0x10 u64 saved_fp, +0x18 u64 saved_lr}` bound to
+`sp` → `_main` renders `*(sp->saved_fp) = fp; *(sp->saved_lr) = lr;`
+— the prologue becomes readable; baseline (pre-bind) contains
+`&sp[0x10]` and zero `sp->` forms, proving the delta.
+
+Proof: `type_hints_refine_addrof_rendering` (decomp: replacement at
+both offsets, raw forms gone, undeclared offset stays raw, empty hints
+= identical output) + `decompile_applies_type_bindings` (CLI: baseline
+contract, typed contract, undeclared-struct error) + workspace 60
+suites, zero warnings.

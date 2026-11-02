@@ -31,8 +31,88 @@ thread_local! {
     static OBJC_CONTEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+thread_local! {
+    static TYPE_HINTS: std::cell::RefCell<Option<TypeHints>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// A declared struct field available to the renderer (plan feature 7,
+/// slice 2): offset → name, supplied by the type system's bindings.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StructFieldHint {
+    pub offset: u64,
+    pub field_name: String,
+}
+
+/// User type bindings for pseudocode rendering: base pointer name →
+/// the fields of the struct it is declared to point at.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TypeHints {
+    bindings: std::collections::BTreeMap<String, Vec<StructFieldHint>>,
+}
+
+impl TypeHints {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Bind a pointer base name (register or variable) to a struct's
+    /// fields. Later binds replace earlier ones for the same base.
+    pub fn bind(&mut self, base: &str, fields: Vec<StructFieldHint>) {
+        self.bindings.insert(base.to_ascii_lowercase(), fields);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
+    }
+
+    /// Number of active bindings.
+    pub fn len(&self) -> usize {
+        self.bindings.len()
+    }
+
+    fn field_for(&self, base: &str, displacement: i64) -> Option<&str> {
+        if displacement < 0 {
+            // Field offsets are non-negative; a negative displacement
+            // never matches — render the raw form rather than guess.
+            return None;
+        }
+        self.bindings
+            .get(&base.to_ascii_lowercase())?
+            .iter()
+            .find(|field| field.offset == displacement as u64)
+            .map(|field| field.field_name.as_str())
+    }
+}
+
 fn is_objc_context() -> bool {
     OBJC_CONTEXT.with(|c| c.get())
+}
+
+fn typed_field(base: &str, displacement: i64) -> Option<String> {
+    TYPE_HINTS.with(|cell| {
+        cell.borrow()
+            .as_ref()?
+            .field_for(base, displacement)
+            .map(ToString::to_string)
+    })
+}
+
+/// Render with user type hints applied (plan feature 7, slice 2):
+/// `&fp[0x10]` under a bound struct with a field at 0x10 renders
+/// `fp->field`. Untyped bases and unmatched offsets render exactly as
+/// before — types refine, never rewrite.
+pub fn render_pseudocode_with_types(
+    function: &IrFunction,
+    name: Option<&str>,
+    hints: &TypeHints,
+) -> Pseudocode {
+    TYPE_HINTS.with(|cell| {
+        *cell.borrow_mut() = Some(hints.clone());
+        let result = render_pseudocode(function, name);
+        *cell.borrow_mut() = None;
+        result
+    })
 }
 
 pub fn render_pseudocode(function: &IrFunction, name: Option<&str>) -> Pseudocode {
@@ -343,6 +423,9 @@ fn render_expr(expression: &IrExpr) -> String {
             render_expr(not_taken)
         ),
         IrExpr::AddrOf { base, displacement } => {
+            if let Some(field) = typed_field(base, *displacement) {
+                return format!("{base}->{field}");
+            }
             if *displacement == 0 {
                 format!("&{base}[0]")
             } else if *displacement < 0 {

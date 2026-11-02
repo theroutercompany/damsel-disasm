@@ -69,10 +69,13 @@ impl StructDecl {
     }
 }
 
-/// The user-type environment: all declared structs, offset-applied.
+/// The user-type environment: declared structs plus pointer bindings
+/// (base name → struct name), offset-applied.
 #[derive(Debug, Clone, Default)]
 pub struct TypeTable {
     pub structs: BTreeMap<String, StructDecl>,
+    /// Base pointer name (lowercased) → struct name.
+    pub bindings: BTreeMap<String, String>,
 }
 
 impl TypeTable {
@@ -86,6 +89,12 @@ impl TypeTable {
             }
             if let Some(decl) = StructDecl::parse_payload(&annotation.value) {
                 table.structs.insert(decl.name.clone(), decl);
+                continue;
+            }
+            if let Some((register, struct_name)) = parse_bind_payload(&annotation.value) {
+                table
+                    .bindings
+                    .insert(register.to_ascii_lowercase(), struct_name);
             }
         }
         Ok(table)
@@ -99,6 +108,24 @@ impl TypeTable {
         Ok(())
     }
 
+    /// Bind a base pointer name to a declared struct (annotation layer,
+    /// actor-scoped, re-bind = replace).
+    pub fn bind(
+        store: &mut StoreHandle,
+        register: &str,
+        struct_name: &str,
+        actor: &str,
+    ) -> Result<(), String> {
+        let object = damsel_project::ObjectId::new(
+            "type",
+            format!("bind:{}", register.to_ascii_lowercase()),
+        );
+        let payload = format!("bind|reg={register}|struct={struct_name}");
+        put_annotation(store, &object, AnnotationKind::Tag, &payload, actor)
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Apply typed field names to a base-relative access: given the
     /// pointer's base value expression text and a displacement, render
     /// `base->field` when a struct field matches the offset.
@@ -108,6 +135,20 @@ impl TypeTable {
         let field = decl.field_at(offset)?;
         Some(format!("{struct_name}->{}", field.field_name))
     }
+}
+
+/// `bind|reg=fp|struct=Frame` → `("fp", "Frame")`.
+fn parse_bind_payload(payload: &str) -> Option<(String, String)> {
+    let mut parts = payload.split('|');
+    if parts.next()? != "bind" {
+        return None;
+    }
+    let register = parts.next()?.strip_prefix("reg=")?.to_string();
+    let struct_name = parts.next()?.strip_prefix("struct=")?.to_string();
+    if register.is_empty() || struct_name.is_empty() {
+        return None;
+    }
+    Some((register, struct_name))
 }
 
 #[cfg(test)]
@@ -134,6 +175,16 @@ mod tests {
         let payload = decl.payload();
         assert_eq!(StructDecl::parse_payload(&payload).as_ref(), Some(&decl));
         assert!(StructDecl::parse_payload("rename|to=x").is_none());
+    }
+
+    #[test]
+    fn bind_payloads_parse() {
+        assert_eq!(
+            parse_bind_payload("bind|reg=fp|struct=Frame"),
+            Some(("fp".to_string(), "Frame".to_string()))
+        );
+        assert_eq!(parse_bind_payload("struct|Frame|0x10:u64:x"), None);
+        assert_eq!(parse_bind_payload("bind|reg=|struct=Frame"), None);
     }
 
     #[test]
