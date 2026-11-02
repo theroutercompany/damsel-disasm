@@ -60,9 +60,10 @@ pub fn render_pseudocode_with_loops(
             // Bare `goto sub_X;` lines (Branch terminators).
             if let Some(address) = parse_goto_target(&line.text) {
                 if loops.iter().any(|l| l.to_address == address) {
-                    line.text = line
-                        .text
-                        .replace(&format!("goto sub_{address:x};"), &format!("goto sub_{address:x}; /* loop back */"));
+                    line.text = line.text.replace(
+                        &format!("goto sub_{address:x};"),
+                        &format!("goto sub_{address:x}; /* loop back */"),
+                    );
                 }
             }
             continue;
@@ -92,10 +93,7 @@ fn parse_goto_branch(text: &str) -> Option<(u64, u64)> {
     // Only the hex run immediately after each "sub_" counts.
     let mut targets = Vec::new();
     for part in text.split("goto sub_").skip(1) {
-        let hex: String = part
-            .chars()
-            .take_while(|c| c.is_ascii_hexdigit())
-            .collect();
+        let hex: String = part.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
         if let Ok(address) = u64::from_str_radix(&hex, 16) {
             targets.push(address);
         }
@@ -119,7 +117,10 @@ fn render_pseudocode_impl(
 ) -> Pseudocode {
     let mut lines = vec![PseudocodeLine {
         indent: 0,
-        text: format!("fn {}() {{", name.unwrap_or(&function.function_id_placeholder())),
+        text: format!(
+            "fn {}() {{",
+            name.unwrap_or(&function.function_id_placeholder())
+        ),
         source_addresses: vec![function.entry_address],
         warnings: Vec::new(),
     }];
@@ -241,19 +242,27 @@ impl IrFunction {
 
 fn render_statement(statement: &IrStatement) -> (String, Vec<String>) {
     match statement {
-        IrStatement::Assign { destination, expression } => {
-            (format!("{destination} = {};", render_expr(expression)), Vec::new())
-        }
-        IrStatement::Load { destination, address } => {
-            (format!("{destination} = *({});", render_expr(address)), Vec::new())
-        }
-        IrStatement::Store { address, value } => {
-            (format!("*({}) = {};", render_expr(address), render_expr(value)), Vec::new())
-        }
+        IrStatement::Assign {
+            destination,
+            expression,
+        } => (
+            format!("{destination} = {};", render_expr(expression)),
+            Vec::new(),
+        ),
+        IrStatement::Load {
+            destination,
+            address,
+        } => (
+            format!("{destination} = *({});", render_expr(address)),
+            Vec::new(),
+        ),
+        IrStatement::Store { address, value } => (
+            format!("*({}) = {};", render_expr(address), render_expr(value)),
+            Vec::new(),
+        ),
         IrStatement::Call { target, .. } => match target {
-            IrCallTarget::Function(address) => {
-                (format!("sub_{address:x}();"), Vec::new())
-            }
+            IrCallTarget::Function(address) => (format!("sub_{address:x}();"), Vec::new()),
+            IrCallTarget::Register(register) => (format!("call_via_{register}();"), Vec::new()),
             IrCallTarget::Unknown(via) if via.starts_with("objc:") => {
                 (format!("{via}(x0, x1);"), Vec::new())
             }
@@ -273,7 +282,11 @@ fn render_terminator(terminator: &IrTerminator) -> (String, Vec<String>) {
     match terminator {
         IrTerminator::Return => ("return;".to_string(), Vec::new()),
         IrTerminator::Branch(target) => (format!("goto sub_{target:x};"), Vec::new()),
-        IrTerminator::CondBranch { condition, taken, fallthrough } => (
+        IrTerminator::CondBranch {
+            condition,
+            taken,
+            fallthrough,
+        } => (
             format!(
                 "if ({}) {{ goto sub_{taken:x}; }} else {{ goto sub_{fallthrough:x}; }}",
                 render_condition(condition)
@@ -312,11 +325,23 @@ fn render_expr(expression: &IrExpr) -> String {
                 crate::ir::IrBinOp::Mul => "*",
                 crate::ir::IrBinOp::Shl => "<<",
                 crate::ir::IrBinOp::Shr => ">>",
+                crate::ir::IrBinOp::Asr => ">>",
+                crate::ir::IrBinOp::Div => "/",
                 crate::ir::IrBinOp::CmpEq => "==",
                 crate::ir::IrBinOp::CmpGt => ">",
             };
             format!("({} {} {})", render_expr(lhs), op, render_expr(rhs))
         }
+        IrExpr::Select {
+            condition,
+            taken,
+            not_taken,
+        } => format!(
+            "({} ? {} : {})",
+            condition,
+            render_expr(taken),
+            render_expr(not_taken)
+        ),
         IrExpr::AddrOf { base, displacement } => {
             if *displacement == 0 {
                 format!("&{base}[0]")
@@ -326,10 +351,18 @@ fn render_expr(expression: &IrExpr) -> String {
                 format!("&{base}[{displacement:#x}]")
             }
         }
-        IrExpr::SegmentAddr { segment, displacement } => {
+        IrExpr::SegmentAddr {
+            segment,
+            displacement,
+        } => {
             format!("&{segment}[{displacement:#x}]")
         }
-        IrExpr::IndexedAddr { base, index, scale, displacement } => {
+        IrExpr::IndexedAddr {
+            base,
+            index,
+            scale,
+            displacement,
+        } => {
             let scaled = if *scale == 1 {
                 index.clone()
             } else {

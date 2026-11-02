@@ -19,13 +19,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 
 /// Committed floors — bump DOWN only with evidence (implementation log).
-const GLOBAL_UNKNOWN_RATE_MAX: f64 = 0.05;
+/// Baseline 0.0371 (Q1) → 0.0028 (Q2: csel/blr/width-memory/FP/MADD lifts).
+const GLOBAL_UNKNOWN_RATE_MAX: f64 = 0.01;
 /// Fixtures allowed a higher unknown rate (documented honesty cases).
 const FIXTURE_CEILINGS: &[(&str, f64)] = &[
-    // arm64e: pacibsp/braa surface honestly as unknowns.
-    ("arm64e-sample", 0.35),
-    // SIMD floor-set fixtures keep vector ops visible, not fabricated.
-    ("adversarial/swift-rich-arm64", 0.10),
+    // arm64e: pacibsp/braa surface honestly as unknowns until PAC
+    // modeling (feature 5) lands.
+    ("arm64e-sample", 0.05),
 ];
 
 fn repo_root() -> PathBuf {

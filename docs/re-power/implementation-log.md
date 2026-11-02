@@ -1543,3 +1543,36 @@ documented next target for the SIMD/PAC modeling work.
 Proof: `cargo test -p damsel-cli --test fidelity
 -- --nocapture` prints the scoreboard and enforces both gates; workspace
 59 suites green. Floors move DOWN only with evidence in this log.
+
+### Unit Q2 — lift floor set: unknown-rate 0.0371 → 0.0028 — DONE
+
+The fidelity scoreboard named the worst offenders and they were not
+exotic: bread-and-butter arm64 fell through the lifter (`csel` 27,
+`blr` 15, `ldrb`/`strb` 27, `fmul`/`fadd`/`fsub` 13, `madd` 4, `asr` 4,
+`fmov` 3, `movi` 2, `stlr` 2, `csinc` 2 across the corpus).
+
+Modeled:
+
+- `csel`/`csinc`/`csinv`/`csneg` → new `IrExpr::Select { condition,
+  taken, not_taken }` rendered `(cond ? a : b)`; the condition code is
+  not decoded v1 — shown as `cond` with the line's provenance pointing
+  at the instruction (D4 flag resolution replaces it).
+- `blr`/`blraa`/`blraaz`/`blrab`/`blrabz` → inline `Call` via new
+  `IrCallTarget::Register` (`call_via_x8();`), no longer terminators —
+  indirect calls return like direct calls.
+- Byte/half/word + acquire/exclusive loads and stores (`ldrb`…
+  `ldxr`, `strb`… `stxrh`) join the shared Load/Store arms; width is
+  type information (feature 7), not control flow.
+- FP arithmetic maps onto the existing BinOps (`fmul`→Mul, `fadd`→Add,
+  `fsub`→Sub, `sdiv`/`udiv`/`fdiv`→Div); `asr` → new `IrBinOp::Asr`;
+  `fmov` → move; `madd`/`msub` → `a ± b*c` shape; `movi` → constant when
+  an immediate is decoded (vector lane specs stay unknown).
+
+Scoreboard: global unknown-rate **0.0371 → 0.0028 (13×)**; swift-rich
+0.0569 → 0.0028 (remaining: 3×`ccmp`, `smulh`, `bic` — each needs
+semantics we don't model yet, left honest). Gate floors tightened:
+global ≤ 0.01, arm64e ceiling 0.35 → 0.05.
+
+Proof: 4 new d1 lift tests (Select shape, blr inline call, width
+memory, FP/MADD) mining one-instruction windows from the fixture;
+fidelity gate green at the tightened floors; workspace 60 suites.

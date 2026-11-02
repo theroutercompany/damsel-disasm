@@ -56,7 +56,9 @@ pub fn build_ssa(function: &IrFunction) -> SsaReport {
         let mut targets: Vec<u64> = Vec::new();
         match &block.terminator {
             IrTerminator::Branch(target) => targets.push(*target),
-            IrTerminator::CondBranch { taken, fallthrough, .. } => {
+            IrTerminator::CondBranch {
+                taken, fallthrough, ..
+            } => {
                 targets.push(*taken);
                 targets.push(*fallthrough);
             }
@@ -81,14 +83,20 @@ pub fn build_ssa(function: &IrFunction) -> SsaReport {
 
         for statement in &block.statements {
             match statement {
-                IrStatement::Assign { destination, expression } => {
+                IrStatement::Assign {
+                    destination,
+                    expression,
+                } => {
                     *defs.entry(destination.clone()).or_insert(0) += 1;
                     read_registers(expression, &mut |r| {
                         *uses.entry(r.to_string()).or_insert(0) += 1;
                         use_blocks.entry(r.to_string()).or_default().push(block.id);
                     });
                 }
-                IrStatement::Load { destination, address } => {
+                IrStatement::Load {
+                    destination,
+                    address,
+                } => {
                     *defs.entry(destination.clone()).or_insert(0) += 1;
                     read_registers(address, &mut |r| {
                         *uses.entry(r.to_string()).or_insert(0) += 1;
@@ -142,6 +150,12 @@ fn read_registers(expression: &IrExpr, visit: &mut impl FnMut(&str)) {
     match expression {
         IrExpr::Value(IrValue::Register(register)) => visit(register),
         IrExpr::Value(_) => {}
+        IrExpr::Select {
+            taken, not_taken, ..
+        } => {
+            read_registers(taken, visit);
+            read_registers(not_taken, visit);
+        }
         IrExpr::BinOp { lhs, rhs, .. } => {
             read_registers(lhs, visit);
             read_registers(rhs, visit);
@@ -195,7 +209,10 @@ fn rename_statement(
 ) -> crate::ir::IrStatement {
     use crate::ir::IrStatement;
     match statement {
-        IrStatement::Assign { destination, expression } => {
+        IrStatement::Assign {
+            destination,
+            expression,
+        } => {
             let version = versions.entry(destination.clone()).or_insert(0);
             *version += 1;
             let renamed_dest = format!("{destination}_v{version}");
@@ -204,7 +221,10 @@ fn rename_statement(
                 expression: rename_expr(expression, versions, false),
             }
         }
-        IrStatement::Load { destination, address } => {
+        IrStatement::Load {
+            destination,
+            address,
+        } => {
             let version = versions.entry(destination.clone()).or_insert(0);
             *version += 1;
             let renamed_dest = format!("{destination}_v{version}");
@@ -241,11 +261,25 @@ fn rename_expr(
             lhs: Box::new(rename_expr(lhs, versions, false)),
             rhs: Box::new(rename_expr(rhs, versions, false)),
         },
+        IrExpr::Select {
+            condition,
+            taken,
+            not_taken,
+        } => IrExpr::Select {
+            condition: condition.clone(),
+            taken: Box::new(rename_expr(taken, versions, false)),
+            not_taken: Box::new(rename_expr(not_taken, versions, false)),
+        },
         IrExpr::AddrOf { base, displacement } => IrExpr::AddrOf {
             base: rename_register(base, versions),
             displacement: *displacement,
         },
-        IrExpr::IndexedAddr { base, index, scale, displacement } => IrExpr::IndexedAddr {
+        IrExpr::IndexedAddr {
+            base,
+            index,
+            scale,
+            displacement,
+        } => IrExpr::IndexedAddr {
             base: rename_register(base, versions),
             index: rename_register(index, versions),
             scale: *scale,
@@ -255,10 +289,7 @@ fn rename_expr(
     }
 }
 
-fn rename_register(
-    register: &str,
-    versions: &std::collections::BTreeMap<String, usize>,
-) -> String {
+fn rename_register(register: &str, versions: &std::collections::BTreeMap<String, usize>) -> String {
     let version = versions.get(register).copied().unwrap_or(0);
     if version > 0 {
         format!("{register}_v{version}")
@@ -301,11 +332,27 @@ pub fn arm64_abi_roles() -> Vec<AbiRegisterRole> {
         });
     }
     // Return x0
-    roles.push(AbiRegisterRole { register: "x0".into(), role: AbiRole::Return, width_bits: 64 });
+    roles.push(AbiRegisterRole {
+        register: "x0".into(),
+        role: AbiRole::Return,
+        width_bits: 64,
+    });
     // SP / FP / LR
-    roles.push(AbiRegisterRole { register: "sp".into(), role: AbiRole::StackPointer, width_bits: 64 });
-    roles.push(AbiRegisterRole { register: "fp".into(), role: AbiRole::FramePointer, width_bits: 64 });
-    roles.push(AbiRegisterRole { register: "lr".into(), role: AbiRole::LinkRegister, width_bits: 64 });
+    roles.push(AbiRegisterRole {
+        register: "sp".into(),
+        role: AbiRole::StackPointer,
+        width_bits: 64,
+    });
+    roles.push(AbiRegisterRole {
+        register: "fp".into(),
+        role: AbiRole::FramePointer,
+        width_bits: 64,
+    });
+    roles.push(AbiRegisterRole {
+        register: "lr".into(),
+        role: AbiRole::LinkRegister,
+        width_bits: 64,
+    });
     // Callee-saved x19–x28
     for index in 19..29 {
         roles.push(AbiRegisterRole {
@@ -335,11 +382,27 @@ pub fn x86_64_abi_roles() -> Vec<AbiRegisterRole> {
             width_bits: 64,
         });
     }
-    roles.push(AbiRegisterRole { register: "rax".into(), role: AbiRole::Return, width_bits: 64 });
-    roles.push(AbiRegisterRole { register: "rsp".into(), role: AbiRole::StackPointer, width_bits: 64 });
-    roles.push(AbiRegisterRole { register: "rbp".into(), role: AbiRole::FramePointer, width_bits: 64 });
+    roles.push(AbiRegisterRole {
+        register: "rax".into(),
+        role: AbiRole::Return,
+        width_bits: 64,
+    });
+    roles.push(AbiRegisterRole {
+        register: "rsp".into(),
+        role: AbiRole::StackPointer,
+        width_bits: 64,
+    });
+    roles.push(AbiRegisterRole {
+        register: "rbp".into(),
+        role: AbiRole::FramePointer,
+        width_bits: 64,
+    });
     for register in ["rbx", "r12", "r13", "r14", "r15"] {
-        roles.push(AbiRegisterRole { register: register.into(), role: AbiRole::CalleeSaved, width_bits: 64 });
+        roles.push(AbiRegisterRole {
+            register: register.into(),
+            role: AbiRole::CalleeSaved,
+            width_bits: 64,
+        });
     }
     roles
 }
@@ -371,7 +434,9 @@ pub fn build_phi_nodes(
         let mut targets = Vec::new();
         match &block.terminator {
             crate::ir::IrTerminator::Branch(t) => targets.push(*t),
-            crate::ir::IrTerminator::CondBranch { taken, fallthrough, .. } => {
+            crate::ir::IrTerminator::CondBranch {
+                taken, fallthrough, ..
+            } => {
                 targets.push(*taken);
                 targets.push(*fallthrough);
             }
@@ -428,7 +493,12 @@ pub fn build_phi_nodes(
                     merged_version: format!("{register}_phi{version_counter}"),
                     incoming: preds
                         .iter()
-                        .filter_map(|p| block_defs.get(p)?.contains(&register).then(|| p.to_string()))
+                        .filter_map(|p| {
+                            block_defs
+                                .get(p)?
+                                .contains(&register)
+                                .then(|| p.to_string())
+                        })
                         .collect(),
                 });
             }
