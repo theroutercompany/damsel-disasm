@@ -1835,3 +1835,130 @@ fn timeline_chains_versions_into_histories() {
     let bad = damsel().arg("timeline").arg(&v1).output().unwrap();
     assert_eq!(bad.status.code(), Some(1));
 }
+
+/// DWARF import (plan feature 7, slice 3): struct declarations from
+/// the dSYM land in the type system, then apply in pseudocode — the
+/// compiler-debug-info to typed-pseudocode loop.
+#[test]
+fn type_imports_dwarf_and_applies_in_pseudocode() {
+    let dir = smoke_dir("dwarf");
+    // The binary and its dSYM bundle (names must match).
+    let target = dir.join("arm64-symbolized-dwarf");
+    std::fs::copy(
+        repo_root().join("fixtures/bin/arm64-symbolized-dwarf"),
+        &target,
+    )
+    .unwrap();
+    let dsym_src = repo_root().join("fixtures/bin/arm64-symbolized-dwarf.dSYM");
+    let dsym_dst = dir.join("arm64-symbolized-dwarf.dSYM");
+    let _ = std::fs::remove_dir_all(&dsym_dst);
+    fs_extra_copy_dir(&dsym_src, &dsym_dst);
+    damsel().arg("analyze").arg(&target).assert().success();
+
+    // Import: both structs with exact layouts.
+    let out = damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--import-dwarf")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("import json");
+    assert_eq!(body["action"], "import_dwarf");
+    assert_eq!(body["structs"], 2, "{body:#?}");
+    assert_eq!(body["fields"], 6);
+    assert_eq!(body["actor"], "dwarf-import");
+
+    // Listed back field-exact.
+    let out = damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--list")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("list json");
+    let shape = body["structs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "Shape")
+        .expect("Shape declared");
+    let fields: Vec<&str> = shape["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["field_name"].as_str().unwrap())
+        .collect();
+    assert_eq!(fields, vec!["origin", "sides", "padding", "label"]);
+
+    // Bind and apply: _area_of reads through x8 (sides) and x9 (origin).
+    damsel()
+        .arg("type")
+        .arg(&target)
+        .arg("--bind")
+        .arg("x8=Shape")
+        .arg("--bind")
+        .arg("x9=Shape")
+        .assert()
+        .success();
+    let out = damsel()
+        .arg("decompile")
+        .arg(&target)
+        .arg("--function")
+        .arg("_area_of")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("decompile json");
+    assert_eq!(body["typed"], true);
+    let text = body["pseudocode"]["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["text"].as_str().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("x8->sides"), "sides field applied:\n{text}");
+    assert!(text.contains("x9->origin"), "origin field applied:\n{text}");
+    // Offset 0x8 is inside origin (origin.y) — not a Shape field, so
+    // it stays raw: types refine, never guess.
+    assert!(
+        text.contains("&x10[0x8]") || !text.contains("x10->"),
+        "no invented fields"
+    );
+
+    // No dSYM → typed error.
+    let bare = dir.join("arm64-symbolized");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &bare).unwrap();
+    damsel().arg("analyze").arg(&bare).assert().success();
+    let missing = damsel()
+        .arg("type")
+        .arg(&bare)
+        .arg("--import-dwarf")
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("dwarf_unavailable")
+    );
+}
+
+/// Minimal recursive copy (dev-dependency-free).
+fn fs_extra_copy_dir(source: &std::path::Path, destination: &std::path::Path) {
+    std::fs::create_dir_all(destination).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            fs_extra_copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}

@@ -322,6 +322,7 @@ detect_macos_build_tools() {
 }
 
 build_fixtures() {
+  DSYMUTIL="${DSYMUTIL:-$(xcrun --find dsymutil 2>/dev/null || echo dsymutil)}"
   detect_macos_build_tools
 
   mkdir -p "$BIN"
@@ -353,6 +354,23 @@ build_fixtures() {
     -mmacosx-version-min=13.0 \
     "$SRC/hello-v3.c" \
     -o "$BIN/arm64-symbolized-v3"
+
+  # DWARF fixture: -g object linked explicitly (dsymutil needs the
+  # .o to survive) plus its dSYM bundle — Apple's linked executables
+  # drop __DWARF, the bundle carries it.
+  "$CLANG" \
+    -arch arm64 -g \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    -c "$SRC/hello-dwarf.c" \
+    -o "$BIN/hello-dwarf.o"
+  "$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDKROOT" \
+    -mmacosx-version-min=13.0 \
+    "$BIN/hello-dwarf.o" \
+    -o "$BIN/arm64-symbolized-dwarf"
+  "$DSYMUTIL" "$BIN/arm64-symbolized-dwarf" -o "$BIN/arm64-symbolized-dwarf.dSYM"
 
   cp "$BIN/arm64-symbolized" "$BIN/arm64-stripped"
   "$STRIP" -S -x "$BIN/arm64-stripped"

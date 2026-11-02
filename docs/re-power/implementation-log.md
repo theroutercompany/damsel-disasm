@@ -2118,3 +2118,35 @@ cmp), `if ((w8 & (1 << 0)) != 0)` (tbnz); zero raw-mnemonic leaks.
 Proof: `conditions_render_semantically` (all three forms present, no
 flags: leaks) + fidelity gate green with the goto-rate assertion +
 workspace 61 suites, zero warnings.
+
+### Unit T3 — DWARF/dSYM import: compiler types into the system — DONE
+
+Feature 7, slice 3: `damsel type <project> --import-dwarf` closes the
+loop from compiler debug info to typed pseudocode. `damsel-macho::
+dwarf` (object sections + gimli DIE parsing) extracts every named
+`DW_TAG_structure_type`: member offsets from
+`DW_AT_data_member_location`, field names, and type names resolved
+through `DW_AT_type` (base types by size class, typedefs by DWARF
+name, pointers suffixed, nested structs by name). Source resolution
+follows Apple's flow: linked executables drop `__DWARF`, so the
+importer checks the target's own debug sections first, then the
+sibling `.dSYM/Contents/Resources/DWARF/<name>` bundle.
+
+New fixture: `arm64-symbolized-dwarf` + dSYM (hello-dwarf.c with
+Point/Shape structs; built via explicit `.o` so dsymutil can see the
+debug map).
+
+Evidence — the full chain: `--import-dwarf` → **2 structs, 6 fields**
+(Point {x@0, y@8}, Shape {origin@0: Point, sides@0x10, padding@0x14,
+label@0x18: char *}), actor `dwarf-import`; `--bind x8=Shape x9=Shape`
+→ `_area_of` renders **`w8 = *(x8->sides); x9 = *(x9->origin);`** —
+DWARF-extracted names in real pseudocode. Offset 0x8 (inside origin —
+origin.y) stays raw: nested-type propagation is future work, and
+types refine, never guess. Missing dSYM → typed `dwarf_unavailable`.
+
+Proof: damsel-macho dwarf tests (Point/Shape layouts with offsets and
+type names, no-DWARF binary yields nothing) +
+`type_imports_dwarf_and_applies_in_pseudocode` CLI test (import
+counts/actor, field-exact listing, bind+apply with `x8->sides` /
+`x9->origin`, no invented fields, typed absence) + workspace 62
+suites, zero warnings.
