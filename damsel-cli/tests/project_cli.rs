@@ -1755,3 +1755,83 @@ fn match_fuzzy_finds_restructured_function() {
     assert_eq!(body["fuzzy_matches"].as_array().unwrap().len(), 0);
     assert_eq!(body["matches"], 0);
 }
+
+/// Version timelines (plan feature 16, slice 3): chained diffs across
+/// the v1/v2/v3 family — birth, per-interval change, and stability.
+#[test]
+fn timeline_chains_versions_into_histories() {
+    let dir = smoke_dir("timeline");
+    let v1 = dir.join("v1");
+    let v2 = dir.join("v2");
+    let v3 = dir.join("v3");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &v1).unwrap();
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized-v2"), &v2).unwrap();
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized-v3"), &v3).unwrap();
+    for target in [&v1, &v2, &v3] {
+        damsel().arg("analyze").arg(target).assert().success();
+    }
+
+    let out = damsel()
+        .arg("timeline")
+        .arg(&v1)
+        .arg(&v2)
+        .arg(&v3)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("timeline json");
+    assert_eq!(body["versions"], serde_json::json!(["v1", "v2", "v3"]));
+
+    let history = |name: &str| {
+        body["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == name)
+            .unwrap_or_else(|| panic!("missing {name}: {:#?}", body["functions"]))
+            .clone()
+    };
+
+    // _helper: changed in both intervals (+5→+7, then the multiply
+    // restructure).
+    let helper = history("_helper");
+    assert_eq!(helper["addresses"].as_array().unwrap().len(), 3);
+    assert_eq!(helper["changed"], serde_json::json!([true, true]));
+
+    // _exported_sum: changed v1→v2 (helper(1)→helper(2)), stable v2→v3.
+    let sum = history("_exported_sum");
+    assert_eq!(sum["changed"], serde_json::json!([true, false]));
+
+    // Every function present across all three versions.
+    for name in ["__mh_execute_header", "_exported_sum", "_helper", "_main"] {
+        let entry = history(name);
+        assert_eq!(
+            entry["first_version"], 0,
+            "{name} present from the start: {entry:#?}"
+        );
+        assert_eq!(
+            entry["last_version"], 2,
+            "{name} survives to v3: {entry:#?}"
+        );
+    }
+
+    // Text mode renders the marker timeline.
+    let out = damsel()
+        .arg("timeline")
+        .arg(&v1)
+        .arg(&v2)
+        .arg(&v3)
+        .output()
+        .unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("+cc  _helper"), "{text}");
+    assert!(
+        text.contains("+c·  _exported_sum") || text.contains("+c\u{b7}  _exported_sum"),
+        "{text}"
+    );
+
+    // Fewer than two projects is a typed error.
+    let bad = damsel().arg("timeline").arg(&v1).output().unwrap();
+    assert_eq!(bad.status.code(), Some(1));
+}
