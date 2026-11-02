@@ -745,6 +745,11 @@ enum Command {
             help = "Port user renames from left onto matched functions in right (annotation layer)"
         )]
         port: bool,
+        #[arg(
+            long,
+            help = "Diff pseudocode for matched pairs (LCS line diff; needs both images)"
+        )]
+        pseudocode: bool,
     },
     #[command(about = "Run as an MCP server exposing typed analysis tools (Wave 7)")]
     Serve {
@@ -1661,8 +1666,17 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
             markdown,
             html,
             port,
+            pseudocode,
         } => {
-            handle_diff(left, right, markdown, html, port, &output_settings)?;
+            handle_diff(
+                left,
+                right,
+                markdown,
+                html,
+                port,
+                pseudocode,
+                &output_settings,
+            )?;
         }
         Command::Serve { project } => {
             mcp::run_mcp(mcp::McpConfig { project })?;
@@ -3401,6 +3415,7 @@ fn handle_diff(
     markdown: bool,
     html: bool,
     port: bool,
+    pseudocode: bool,
     output_settings: &output::OutputSettings,
 ) -> Result<(), CliRunError> {
     use damsel_project::{Create, ProjectStore, open_store};
@@ -3436,6 +3451,58 @@ fn handle_diff(
         right_shapes.as_ref(),
     )
     .map_err(|e| CliRunError::command("diff_error", e.to_string()))?;
+
+    // Pseudocode diff (plan feature 16, slice 2): LCS line diff over
+    // the decompiled text of every matched pair.
+    let pseudocode_diffs: Vec<damsel_decomp::PseudocodeDiff> = if pseudocode {
+        if let (Some(left_image), Some(right_image)) = (&left_image, &right_image) {
+            let left_functions = crate::taint::lifted_functions(&left_dir)
+                .map_err(|e| CliRunError::command("diff_error", e))?
+                .0;
+            let right_functions = crate::taint::lifted_functions(&right_dir)
+                .map_err(|e| CliRunError::command("diff_error", e))?
+                .0;
+            let _ = (left_image, right_image);
+            report
+                .matched
+                .iter()
+                .filter_map(|m| {
+                    let left_fn = left_functions.get(&m.left_address)?;
+                    let right_fn = right_functions.get(&m.right_address)?;
+                    let name = m
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| format!("sub_{:x}", m.left_address));
+                    Some(damsel_decomp::diff_pseudocode(&name, left_fn, right_fn))
+                })
+                .collect()
+        } else {
+            return Err(CliRunError::command(
+                "diff_error",
+                "pseudocode diff requires both project images",
+            ));
+        }
+    } else {
+        Vec::new()
+    };
+
+    if !pseudocode_diffs.is_empty()
+        && output_settings.format != output::OutputFormat::Json
+        && !markdown
+        && !html
+    {
+        println!("pseudocode diffs ({} pairs):", pseudocode_diffs.len());
+        for diff in &pseudocode_diffs {
+            println!(
+                "  {} {} lines -> {} (+{} -{})",
+                diff.function, diff.left_lines, diff.right_lines, diff.added, diff.removed
+            );
+            for line in diff.lines.iter().filter(|l| l.kind != "same").take(8) {
+                let marker = if line.kind == "add" { '+' } else { '-' };
+                println!("    {marker} {}", line.text);
+            }
+        }
+    }
 
     if port {
         let pairs: Vec<damsel_recon_catalog::matching::FunctionMatch> = report
@@ -3479,6 +3546,7 @@ fn handle_diff(
         let value = serde_json::json!({
             "command": "diff",
             "report": serde_json::to_value(&report).unwrap_or_default(),
+            "pseudocode_diffs": pseudocode_diffs,
         });
         println!("{}", project_json(value));
     } else {

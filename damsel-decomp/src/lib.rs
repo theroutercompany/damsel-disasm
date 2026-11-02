@@ -10,6 +10,7 @@
 mod diff;
 mod emulate;
 mod ir;
+mod pseudodiff;
 mod recon;
 mod render;
 mod ssa;
@@ -29,6 +30,7 @@ pub use ir::{
     IrBinOp, IrBlock, IrCallTarget, IrCondition, IrExpr, IrFunction, IrStatement, IrTerminator,
     IrValue, lift_arm64, lift_x86_64,
 };
+pub use pseudodiff::{PseudocodeDiff, PseudocodeDiffLine, diff_lines, diff_pseudocode};
 pub use recon::{
     AntiAnalysisIndicator, FlatteningIndicator, PackerSignature, ReconReport, SectionEntropy,
     Verdict, assess, detect_anti_analysis, detect_cfg_flattening, detect_opaque_predicates,
