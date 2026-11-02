@@ -1593,3 +1593,23 @@ covers the whole corpus, actual **0.0021**.
 
 Proof: fidelity gate green with no per-fixture exceptions; workspace 60
 suites.
+
+### Unit M3 — shape-exact matching + annotation transfer — DONE
+
+Feature 15, tier 1: masked shape signatures — FNV-1a over
+(mnemonic, operand-kind) sequences plus instruction count, so constants
+and addresses never enter the hash (WARP's masking principle on
+damsel's own decoded shapes). `damsel match <left> <right>`:
+
+- tier-1 shape-exact pairs over both projects' recovered bounds;
+- `--transfer` moves user renames from left onto matched functions in
+  right through the annotation layer (facts, provenance, actor =
+  `match` by default, undoable) — never silently;
+- negative control: unrelated binaries match 0.
+
+Evidence: identical-binary pair → 3/3 functions matched, rename
+`_main → main_v2` transferred and visible via `functions --name
+main_v2`; `import-rich` negative control → 0 matches.
+
+Proof: `match_transfers_renames_across_projects` CLI test (match +
+transfer + landing + negative); workspace 60 suites green.

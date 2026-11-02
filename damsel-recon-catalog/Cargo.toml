@@ -5,6 +5,8 @@ edition.workspace = true
 
 [dependencies]
 damsel-core = { path = "../damsel-core" }
+damsel-macho = { path = "../damsel-macho" }
+damsel-project = { path = "../damsel-project" }
 serde = { workspace = true }
 
 [dev-dependencies]

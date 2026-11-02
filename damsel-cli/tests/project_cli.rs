@@ -894,3 +894,72 @@ fn annotate_rename_undo_round_trip() {
             .contains("function_not_found")
     );
 }
+
+/// Function matching + annotation transfer (plan feature 15, slice 1):
+/// shape-exact matching, rename transfer, negative control.
+#[test]
+fn match_transfers_renames_across_projects() {
+    let dir = smoke_dir("match");
+    let left = dir.join("left");
+    let right = dir.join("right");
+    let other = dir.join("other");
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &left).unwrap();
+    std::fs::copy(repo_root().join("fixtures/bin/arm64-symbolized"), &right).unwrap();
+    std::fs::copy(repo_root().join("fixtures/bin/import-rich"), &other).unwrap();
+    for target in [&left, &right, &other] {
+        damsel().arg("analyze").arg(target).assert().success();
+    }
+    damsel()
+        .arg("annotate")
+        .arg(&left)
+        .arg("--function")
+        .arg("_main")
+        .arg("--rename")
+        .arg("main_v2")
+        .assert()
+        .success();
+
+    // Shape-exact match: identical binaries match; the unrelated binary
+    // is a negative control.
+    let out = damsel()
+        .arg("match")
+        .arg(&left)
+        .arg(&right)
+        .arg("--transfer")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&out.get_output().stdout).expect("match json");
+    assert_eq!(body["command"], "match");
+    assert!(body["matches"].as_u64().unwrap_or(0) >= 3);
+    assert_eq!(body["transferred"], 1);
+
+    // The rename landed in the right project via the annotation layer.
+    let functions = damsel()
+        .arg("functions")
+        .arg(&right)
+        .arg("--name")
+        .arg("main_v2")
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value =
+        serde_json::from_slice(&functions.get_output().stdout).expect("functions json");
+    assert_eq!(body["count"], 1, "rename transferred");
+
+    let negative = damsel()
+        .arg("match")
+        .arg(&left)
+        .arg(&other)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success();
+    let body: Value = serde_json::from_slice(&negative.get_output().stdout).expect("negative json");
+    assert_eq!(
+        body["matches"], 0,
+        "unrelated binaries must not shape-match"
+    );
+}

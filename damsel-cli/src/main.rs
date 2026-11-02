@@ -598,6 +598,21 @@ enum Command {
         #[arg(long, help = "Library label for the corpus (e.g. glibc)")]
         library: String,
     },
+    #[command(
+        about = "Match functions across two analyzed projects and transfer annotations",
+        long_about = "Match functions across two analyzed projects.\n\nTier 1: exact shape signatures (masked mnemonic/operand-kind sequences — constants and addresses never enter the hash, WARP-style). Matched pairs can transfer user renames from the left project into the right through the annotation layer (provenance, undoable)."
+    )]
+    Match {
+        left: PathBuf,
+        right: PathBuf,
+        #[arg(
+            long,
+            help = "Transfer user renames from left onto matched functions in right"
+        )]
+        transfer: bool,
+        #[arg(long, help = "Actor for transferred annotations (default: match)")]
+        actor: Option<String>,
+    },
     #[command(about = "Diff two analyzed projects (function-level, Wave 7)")]
     Diff {
         left: PathBuf,
@@ -1429,6 +1444,14 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
+        Command::Match {
+            left,
+            right,
+            transfer,
+            actor,
+        } => {
+            handle_match(left, right, transfer, actor.as_deref(), &output_settings)?;
+        }
         Command::Diff {
             left,
             right,
@@ -2094,6 +2117,76 @@ fn run_batch_target(
 
 fn line_of(path: &std::path::Path) -> String {
     path.display().to_string()
+}
+
+fn handle_match(
+    left: PathBuf,
+    right: PathBuf,
+    transfer: bool,
+    actor: Option<&str>,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    let left_dir = resolve_project_dir(&left)?;
+    let right_dir = resolve_project_dir(&right)?;
+    let left_store = damsel_recon_catalog::matching::open_project(&left_dir)
+        .map_err(|e| CliRunError::command("store_error", e))?;
+    let mut right_store = damsel_recon_catalog::matching::open_project(&right_dir)
+        .map_err(|e| CliRunError::command("store_error", e))?;
+    let left_image = load_project_image(&left_dir)?;
+    let right_image = load_project_image(&right_dir)?;
+
+    let matches = damsel_recon_catalog::matching::match_projects(
+        &left_store,
+        &right_store,
+        &left_image,
+        &right_image,
+    )
+    .map_err(|e| CliRunError::command("match_error", e))?;
+
+    let transfers = if transfer {
+        damsel_recon_catalog::matching::transfer_renames(
+            &matches,
+            &left_store,
+            &mut right_store,
+            actor.unwrap_or("match"),
+        )
+        .map_err(|e| CliRunError::command("match_error", e))?
+    } else {
+        Vec::new()
+    };
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "match",
+            "matches": matches.len(),
+            "pairs": matches.iter().map(|m| serde_json::json!({
+                "left": format!("{:#x}", m.left_address),
+                "right": format!("{:#x}", m.right_address),
+                "right_name": m.right_name,
+                "instructions": m.instruction_count,
+                "tier": m.tier,
+            })).collect::<Vec<_>>(),
+            "transferred": transfers.len(),
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+    println!("matches: {} (tier: shape-exact)", matches.len());
+    for m in matches.iter().take(20) {
+        println!(
+            "  {:#010x} -> {:#010x}  {}",
+            m.left_address,
+            m.right_address,
+            m.right_name.as_deref().unwrap_or("(stripped)")
+        );
+    }
+    if transfer {
+        println!("transferred renames: {}", transfers.len());
+        for (address, name) in transfers.iter().take(10) {
+            println!("  {address:#010x} -> {name}");
+        }
+    }
+    Ok(())
 }
 
 fn handle_diff(

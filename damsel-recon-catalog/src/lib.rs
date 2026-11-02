@@ -12,4 +12,5 @@ pub use catalog::{
     render_markdown, scan_code_bytes_for_xor_loop, scan_imports, scan_instructions, scan_strings,
 };
 pub mod swift;
+pub mod matching;
 pub mod reuse;
