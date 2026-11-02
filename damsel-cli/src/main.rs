@@ -599,6 +599,15 @@ enum Command {
         library: String,
     },
     #[command(
+        about = "Model-refine function names from context (provenance-tagged, undoable)",
+        long_about = "Model refinement pass (plan feature 17).\n\nProposes renames for stripped functions from decompiler context (imports called, string references). Dry-run by default; --apply writes through the annotation layer with actor `model:heuristic-v1` — provenance-tagged, reviewable via `annotate --list`, undoable via `annotate --undo`."
+    )]
+    Refine {
+        project: PathBuf,
+        #[arg(long, help = "Apply proposals (default: dry-run)")]
+        apply: bool,
+    },
+    #[command(
         about = "Query the call graph: paths, reachability, callers/callees",
         long_about = "Query the call graph derived from stored xref facts.\n\n--from/--to resolve names (renames included) or 0xADDR and report the shortest call path; --from alone lists reachable functions; --callers lists direct callers. Every edge is a stored fact — paths carry provenance by construction."
     )]
@@ -1466,6 +1475,9 @@ fn run(cli: Cli, output_settings: output::OutputSettings) -> Result<CliRunOutcom
         } => {
             handle_batch(inputs, out, fail_fast, &output_settings)?;
         }
+        Command::Refine { project, apply } => {
+            handle_refine(project, apply, &output_settings)?;
+        }
         Command::Query {
             project,
             from,
@@ -2180,6 +2192,83 @@ fn resolve_query_target(
             format!("`{target}` matches {} functions; pass 0xADDR", many.len()),
         )),
     }
+}
+
+fn handle_refine(
+    project: PathBuf,
+    apply: bool,
+    output_settings: &output::OutputSettings,
+) -> Result<(), CliRunError> {
+    use damsel_project::{Create, open_store};
+
+    let project_dir = resolve_project_dir(&project)?;
+    let meta_for_open = AnalysisProjectMetaShim::meta_for_open(analyzer_version());
+    let mut store = open_store(
+        &project_dir.join("project.db"),
+        Create::Existing,
+        &meta_for_open,
+    )
+    .map_err(map_store_error)?;
+    if !damsel_recon_catalog::refine::supported(&store)
+        .map_err(|e| CliRunError::command("refine_error", e))?
+    {
+        return Err(CliRunError::command(
+            "refine_unsupported",
+            "refinement v1 supports Mach-O image projects",
+        ));
+    }
+
+    let proposals = damsel_recon_catalog::refine::propose(&store)
+        .map_err(|e| CliRunError::command("refine_error", e))?;
+    let applied = if apply {
+        damsel_recon_catalog::refine::apply(&mut store, &proposals)
+            .map_err(|e| CliRunError::command("refine_error", e))?
+    } else {
+        Vec::new()
+    };
+
+    if output_settings.format == output::OutputFormat::Json {
+        let value = serde_json::json!({
+            "command": "refine",
+            "actor": damsel_recon_catalog::refine::MODEL_ACTOR,
+            "applied": apply,
+            "proposals": proposals.len(),
+            "items": proposals.iter().map(|p| serde_json::json!({
+                "address": format!("{:#x}", p.address),
+                "current": p.current_name,
+                "proposed": p.proposed_name,
+                "evidence": p.evidence,
+            })).collect::<Vec<_>>(),
+            "applied_count": applied.len(),
+        });
+        println!("{}", project_json(value));
+        return Ok(());
+    }
+    println!(
+        "refine (actor {}, {}):",
+        damsel_recon_catalog::refine::MODEL_ACTOR,
+        if apply { "APPLY" } else { "dry-run" }
+    );
+    for proposal in &proposals {
+        println!(
+            "  {:#010x} {} -> {}  [{}]",
+            proposal.address,
+            proposal.current_name.as_deref().unwrap_or("(stripped)"),
+            proposal.proposed_name,
+            proposal.evidence
+        );
+    }
+    if apply {
+        println!("applied: {}", applied.len());
+        println!(
+            "review: damsel annotate {} --list   |   undo: damsel annotate {} --undo",
+            project_dir.display(),
+            project_dir.display()
+        );
+    } else {
+        println!("dry-run: pass --apply to write through the annotation layer");
+    }
+    Ok(())
 }
 
 fn handle_query(

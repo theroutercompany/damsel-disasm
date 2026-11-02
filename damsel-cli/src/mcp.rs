@@ -261,6 +261,14 @@ fn handle_list_tools() -> Value {
                     },
                     "required": ["project"]
                 })),
+                tool("damsel_refine", "Model-refine function names from context (provenance-tagged annotations, dry-run by default)", json!({
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Path to the .damsel directory or target" },
+                        "apply": { "type": "boolean", "description": "Write proposals through the annotation layer (default: dry-run)" }
+                    },
+                    "required": ["project"]
+                })),
                 tool("damsel_query", "Query the call graph: shortest path between functions, reachability, or direct callers", json!({
                     "type": "object",
                     "properties": {
