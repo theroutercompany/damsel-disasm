@@ -1516,3 +1516,30 @@ fileset incl. projection + typed refusals; real-host env hook) and
 `cargo test -p damsel-cli --test cli_json kernelcache_list_and_entry_contract`
 (list + entry + ambiguous/miss error contracts); workspace 59 suites
 green.
+
+## Decompiler Quality (plan feature 8, slice 1) — DONE
+
+### Unit Q1 — fidelity scoreboard + regression gate — DONE
+
+The quality program starts measuring before it starts changing: a
+scoreboard harness decompiles every named, bounded function across the
+Mach-O fixture corpus through the committed CLI surface
+(`analyze` → `decompile --all`), aggregates pseudocode volume and
+unknown-rate, prints per-fixture rates and the worst offenders, and
+gates on committed thresholds — structuring changes can no longer
+silently regress readability.
+
+Metrics (v1, honest and cheap): function count, pseudocode lines,
+unknown-rate (unknown pseudo-ops / rendered lines). Committed floors:
+global ≤ 5%; documented honesty ceilings for fixtures whose unknowns are
+by design (arm64e PAC ops, Swift witness thunks' vector/pac bodies).
+
+Baseline (this commit): 115 functions, 2,883 lines, unknown-rate
+**0.0371**; per-fixture: arm64e-sample 0.0400 (ceiling 0.35),
+swift-rich-arm64 0.0569 (ceiling 0.10). Worst offenders are Swift
+witness thunks (`ColorOwst`, `_ArrayBuffer` grow-for-append) — the
+documented next target for the SIMD/PAC modeling work.
+
+Proof: `cargo test -p damsel-cli --test fidelity
+-- --nocapture` prints the scoreboard and enforces both gates; workspace
+59 suites green. Floors move DOWN only with evidence in this log.
